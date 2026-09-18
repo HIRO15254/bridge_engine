@@ -108,3 +108,25 @@ pub struct Comment {
     /// 1-based line.
     pub line: u32,
 }
+
+/// What a section's tokens are.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum SectionKind {
+    Auction,
+    Play,
+    /// `*Table`: rows kept as [`Token::Raw`].
+    Table,
+}
+
+/// Whether a tag of this name opens a section.
+pub(crate) fn is_section_tag(name: &str) -> bool {
+    name == "Auction" || name == "Play" || (name.len() > 5 && name.ends_with("Table"))
+}
+
+pub(crate) fn section_kind(tag: &str) -> SectionKind {
+    match tag {
+        "Auction" => SectionKind::Auction,
+        "Play" => SectionKind::Play,
+        _ => SectionKind::Table,
+    }
+}

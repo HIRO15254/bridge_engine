@@ -13,6 +13,22 @@ pub struct Warning {
     pub message: String,
 }
 
+impl Warning {
+    pub(crate) fn new(
+        game: usize,
+        line: u32,
+        kind: WarningKind,
+        message: impl Into<String>,
+    ) -> Warning {
+        Warning {
+            game,
+            line,
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
 /// Warning categories.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[allow(missing_docs)]
