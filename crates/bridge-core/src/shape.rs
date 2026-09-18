@@ -551,37 +551,86 @@ impl ShapeSet {
         }
     }
 
+    /// Indices into [`SHAPES`] of the members, ascending.
+    fn indices(self) -> impl Iterator<Item = usize> {
+        self.0.into_iter().enumerate().flat_map(|(w, mut word)| {
+            core::iter::from_fn(move || {
+                if word == 0 {
+                    None
+                } else {
+                    let tz = word.trailing_zeros() as usize;
+                    word &= word - 1;
+                    Some(w * 64 + tz)
+                }
+            })
+        })
+    }
+
     /// Projection: the range of lengths of `suit` over the members, or `None` when empty.
     ///
     /// This is an over-approximation for sets that are not products of per-suit ranges; it is
     /// a summary for pruning and display, never a substitute for [`ShapeSet::contains`].
     pub fn suit_len(self, suit: Suit) -> Option<RangeInclusive<u8>> {
-        todo!("phase 2")
+        let mut lo = 13u8;
+        let mut hi = 0u8;
+        let mut any = false;
+        for i in self.indices() {
+            let l = SHAPES[i].len(suit);
+            lo = lo.min(l);
+            hi = hi.max(l);
+            any = true;
+        }
+        any.then_some(lo..=hi)
     }
 
     /// Projection: the classes that have at least one member ordering, as a 39-bit mask
     /// indexed like [`CLASSES`].
     pub fn classes(self) -> u64 {
-        todo!("phase 2")
+        self.indices()
+            .fold(0u64, |mask, i| mask | (1u64 << CLASS_OF[i]))
     }
 
     /// `Some(ranges)` exactly when the set equals the product of its per-suit projections
     /// (i.e. it can be written as four independent length ranges).
     pub fn factor(self) -> Option<[RangeInclusive<u8>; 4]> {
-        todo!("phase 2")
+        let ranges = [
+            self.suit_len(Suit::Clubs)?,
+            self.suit_len(Suit::Diamonds)?,
+            self.suit_len(Suit::Hearts)?,
+            self.suit_len(Suit::Spades)?,
+        ];
+        let bounds = |r: &RangeInclusive<u8>| (*r.start(), *r.end());
+        let product = ShapeSet::from_suit_lens([
+            bounds(&ranges[0]),
+            bounds(&ranges[1]),
+            bounds(&ranges[2]),
+            bounds(&ranges[3]),
+        ]);
+        (product == self).then_some(ranges)
     }
 
     /// Minimum over members of the sum of `MIN_HCP` per suit (a lower bound on the HCP any
-    /// member hand must hold).
+    /// member hand must hold). `0` for the empty set.
     pub fn min_hcp(self) -> u8 {
-        todo!("phase 2")
+        self.indices()
+            .map(|i| hcp_bound(SHAPES[i], &MIN_HCP))
+            .min()
+            .unwrap_or(0)
     }
 
     /// Maximum over members of the sum of `MAX_HCP` per suit (an upper bound on the HCP any
-    /// member hand can hold).
+    /// member hand can hold). `0` for the empty set.
     pub fn max_hcp(self) -> u8 {
-        todo!("phase 2")
+        self.indices()
+            .map(|i| hcp_bound(SHAPES[i], &MAX_HCP))
+            .max()
+            .unwrap_or(0)
     }
+}
+
+/// Sum over the four suits of `table[len]`.
+fn hcp_bound(shape: Shape, table: &[u8; 14]) -> u8 {
+    shape.lens().iter().map(|&l| table[l as usize]).sum()
 }
 
 /// Iterator over the members of a [`ShapeSet`] in index order.
@@ -594,8 +643,40 @@ pub struct ShapeSetIter {
 impl Iterator for ShapeSetIter {
     type Item = Shape;
 
+    #[inline]
     fn next(&mut self) -> Option<Shape> {
-        todo!("phase 2")
+        while self.word < 9 {
+            let w = self.words[self.word];
+            if w == 0 {
+                self.word += 1;
+                continue;
+            }
+            let tz = w.trailing_zeros() as usize;
+            self.words[self.word] = w & (w - 1);
+            return Some(SHAPES[self.word * 64 + tz]);
+        }
+        None
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.words[self.word.min(9)..]
+            .iter()
+            .map(|w| w.count_ones() as usize)
+            .sum();
+        (n, Some(n))
+    }
+}
+
+impl ExactSizeIterator for ShapeSetIter {}
+impl core::iter::FusedIterator for ShapeSetIter {}
+
+impl IntoIterator for ShapeSet {
+    type Item = Shape;
+    type IntoIter = ShapeSetIter;
+
+    fn into_iter(self) -> ShapeSetIter {
+        self.iter()
     }
 }
 
@@ -660,5 +741,84 @@ mod tests {
         assert_eq!(MAX_HCP[4], 10);
         assert_eq!(MIN_HCP[10], 1);
         assert_eq!(MIN_HCP[13], 10);
+    }
+
+    /// `MAX_HCP` / `MIN_HCP` agree with a brute force over all 8192 holdings.
+    #[test]
+    fn hcp_bounds_match_brute_force() {
+        let mut max = [0u8; 14];
+        let mut min = [u8::MAX; 14];
+        for bits in 0u16..8192 {
+            let len = bits.count_ones() as usize;
+            let hcp: u8 = (0..13u8)
+                .filter(|r| (bits >> r) & 1 == 1)
+                .map(|r| crate::Rank::from_index(r).hcp())
+                .sum();
+            max[len] = max[len].max(hcp);
+            min[len] = min[len].min(hcp);
+        }
+        assert_eq!(max, MAX_HCP);
+        assert_eq!(min, MIN_HCP);
+    }
+
+    #[test]
+    fn projections() {
+        for suit in Suit::ALL {
+            assert_eq!(ShapeSet::BALANCED.suit_len(suit), Some(2..=5));
+            assert_eq!(ShapeSet::ALL.suit_len(suit), Some(0..=13));
+            assert_eq!(ShapeSet::EMPTY.suit_len(suit), None);
+        }
+        assert_eq!(ShapeSet::BALANCED.classes().count_ones(), 3);
+        assert_eq!(ShapeSet::ALL.classes(), (1u64 << 39) - 1);
+        assert_eq!(ShapeSet::EMPTY.classes(), 0);
+
+        // The 13-card total tightens the loose ranges: D <= 13 - 2 - 4 - 3, S <= 13 - 2 - 4.
+        let product = ShapeSet::from_suit_lens([(2, 5), (0, 13), (4, 4), (3, 13)]);
+        let ranges = product.factor().expect("a product factors");
+        assert_eq!(ranges, [2..=5, 0..=4, 4..=4, 3..=7]);
+        let tight = ShapeSet::from_suit_lens([(2, 5), (0, 4), (4, 4), (3, 7)]);
+        assert_eq!(product, tight);
+        assert_eq!(product.factor(), Some([2..=5, 0..=4, 4..=4, 3..=7]));
+        assert_eq!(ShapeSet::BALANCED.factor(), None);
+        assert_eq!(ShapeSet::EMPTY.factor(), None);
+        assert_eq!(
+            ShapeSet::ALL.factor(),
+            Some([0..=13, 0..=13, 0..=13, 0..=13])
+        );
+
+        assert_eq!(ShapeSet::ALL.max_hcp(), 37);
+        assert_eq!(ShapeSet::ALL.min_hcp(), 0);
+        let six_six = ShapeSet::from_suit_lens([(6, 6), (6, 6), (0, 13), (0, 13)]);
+        assert_eq!(six_six.len(), 2);
+        assert_eq!(six_six.max_hcp(), 24);
+        let thirteen = ShapeSet::EMPTY.insert(Shape::new(13, 0, 0, 0));
+        assert_eq!(thirteen.min_hcp(), 10);
+        assert_eq!(thirteen.max_hcp(), 10);
+        assert_eq!(ShapeSet::EMPTY.min_hcp(), 0);
+        assert_eq!(ShapeSet::EMPTY.max_hcp(), 0);
+    }
+
+    #[test]
+    fn iteration_matches_len_and_contains() {
+        for set in [
+            ShapeSet::EMPTY,
+            ShapeSet::ALL,
+            ShapeSet::BALANCED,
+            ShapeSet::SEMI_BALANCED,
+            ShapeSet::from_suit_len(Suit::Spades, 5, 13),
+        ] {
+            let members: Vec<Shape> = set.iter().collect();
+            assert_eq!(members.len(), set.len() as usize);
+            assert_eq!(set.iter().len(), set.len() as usize);
+            let mut prev: Option<u16> = None;
+            for s in &members {
+                assert!(set.contains(*s));
+                assert!(prev.is_none_or(|p| p < s.index()));
+                prev = Some(s.index());
+            }
+            assert_eq!(set.complement().union(set), ShapeSet::ALL);
+            assert!(set.complement().intersect(set).is_empty());
+        }
+        assert_eq!(ShapeSet::ALL.into_iter().count(), 560);
     }
 }
