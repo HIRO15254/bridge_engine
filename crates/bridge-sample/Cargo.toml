@@ -1,0 +1,34 @@
+[package]
+name = "bridge-sample"
+description = "Weighted deal sampling from auction and play constraints, with pluggable proposal distributions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = ["std"]
+std = ["bridge-core/std", "bridge-constraint/std", "bridge-bidding/std", "bridge-play/std"]
+serde = ["dep:serde", "bridge-core/serde", "bridge-constraint/serde"]
+parallel = ["dep:rayon"]
+
+[dependencies]
+bridge-bidding = { workspace = true }
+bridge-constraint = { workspace = true }
+bridge-core = { workspace = true }
+bridge-play = { workspace = true }
+rand_core = { workspace = true }
+rand_xoshiro = { workspace = true }
+rayon = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "deals"
+harness = false

@@ -1,0 +1,49 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/HIRO15254/bridge_engine"
+authors = ["HIRO15254"]
+
+[workspace.dependencies]
+# Internal crates (paths are relative to the workspace root)
+bridge-core = { path = "crates/bridge-core", version = "0.0.1", default-features = false }
+bridge-format = { path = "crates/bridge-format", version = "0.0.1", default-features = false }
+bridge-eval = { path = "crates/bridge-eval", version = "0.0.1", default-features = false }
+bridge-constraint = { path = "crates/bridge-constraint", version = "0.0.1", default-features = false }
+bridge-system = { path = "crates/bridge-system", version = "0.0.1", default-features = false }
+bridge-bidding = { path = "crates/bridge-bidding", version = "0.0.1", default-features = false }
+bridge-play = { path = "crates/bridge-play", version = "0.0.1", default-features = false }
+bridge-sample = { path = "crates/bridge-sample", version = "0.0.1", default-features = false }
+bridge-dds = { path = "crates/bridge-dds", version = "0.0.1" }
+
+# External
+thiserror = "2"
+serde = { version = "1", features = ["derive", "rc"] }
+winnow = "1.0"
+rand = { version = "0.10", default-features = false }
+rand_core = { version = "0.10", default-features = false }
+rand_xoshiro = "0.8"
+rayon = "1.12"
+tracing = { version = "0.1", default-features = false }
+smallvec = "1"
+postcard = { version = "1", features = ["alloc"] }
+blake3 = "1"
+cc = "1.4"
+
+# Dev / tooling
+proptest = "1.11"
+criterion = { version = "0.8", features = ["html_reports"] }
+insta = "1"
+
+[profile.release]
+debug = 1          # keep symbols for profiling the sampler
+lto = "thin"
+
+[profile.bench]
+inherits = "release"

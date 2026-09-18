@@ -1,0 +1,21 @@
+[package]
+name = "bridge-core"
+description = "Core domain types for contract bridge: cards, hands, shapes, seats, calls, auctions, deals and play"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = ["std"]
+std = []
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

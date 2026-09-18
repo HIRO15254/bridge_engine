@@ -1,0 +1,64 @@
+# Test corpora. Nothing here is committed; `cargo xtask corpus fetch` downloads every entry
+# into corpus/data/<dest>, verifies the SHA-256, and unpacks archives. Tests read
+# BRIDGE_CORPUS_DIR (default corpus/data) and skip when an entry is missing.
+#
+# sha256 = "" means "not pinned yet": xtask fetches it, prints the hash, and refuses to mark the
+# entry as verified until the value is filled in here.
+
+[[entry]]
+name = "dds-list100"
+description = "DDS v2.9.0 test hands with double-dummy tables (100 deals); tag-pinned, immutable"
+url = "https://raw.githubusercontent.com/dds-bridge/dds/v2.9.0/hands/list100.txt"
+sha256 = ""
+unpack = "none"
+dest = "dds/list100.txt"
+formats = ["deal-string", "dd-table"]
+
+[[entry]]
+name = "dds-masterdd"
+description = "DDS v2.9.0 master double-dummy set (83,691 deals); used by the --ignored differential test"
+url = "https://raw.githubusercontent.com/dds-bridge/dds/v2.9.0/hands/masterDD.txt"
+sha256 = ""
+unpack = "none"
+dest = "dds/masterDD.txt"
+formats = ["deal-string", "dd-table"]
+
+[[entry]]
+name = "pbn-optimum-result-table"
+description = "PBN 2.1 reference example with an OptimumResultTable section"
+url = "https://www.tistis.nl/pbn/OptimumResultTable.pbn"
+sha256 = ""
+unpack = "none"
+dest = "pbn/OptimumResultTable.pbn"
+formats = ["pbn"]
+
+[[entry]]
+name = "pbn-optimum-play-table"
+description = "PBN 2.1 reference example with an OptimumPlayTable section"
+url = "https://www.tistis.nl/pbn/OptimumPlayTable.pbn"
+sha256 = ""
+unpack = "none"
+dest = "pbn/OptimumPlayTable.pbn"
+formats = ["pbn"]
+
+# Tournament records with full auctions and play (computerbridge.se). The CDN links carry a
+# `?ph=` token; pin the exact URL and hash, and re-verify if it rots.
+[[entry]]
+name = "bermuda-bowl-2019-final"
+description = "Bermuda Bowl 2019 final, PBN with auctions and play"
+url = "https://www.computerbridge.se/finals-world-championship-in-pbn/"
+sha256 = ""
+unpack = "zip"
+dest = "pbn/bermuda-bowl-2019-final/"
+formats = ["pbn"]
+note = "URL is the index page; replace with the direct zip link when pinning"
+
+# BBO vugraph LIN files: fix twenty ids, fetch at most one per second.
+[[entry]]
+name = "bbo-vugraph-87143"
+description = "BBO vugraph LIN sample (real-world irregularities: 8 names, qx|o/c, claims, chat)"
+url = "https://www.bridgebase.com/tools/vugraph_linfetch.php?id=87143"
+sha256 = ""
+unpack = "none"
+dest = "lin/87143.lin"
+formats = ["lin"]

@@ -1,0 +1,22 @@
+[package]
+name = "bridge-dds"
+description = "Safe wrapper around Bo Haglund's DDS double-dummy solver (vendored C++ sources)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+links = "dds"
+build = "build.rs"
+
+[features]
+default = []
+openmp = []
+
+[dependencies]
+bridge-core = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }
+
+[build-dependencies]
+cc = { workspace = true }

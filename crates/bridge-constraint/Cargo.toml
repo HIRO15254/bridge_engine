@@ -1,0 +1,31 @@
+[package]
+name = "bridge-constraint"
+description = "Hand constraint language and exact constraint-satisfying hand sampler for contract bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = ["std"]
+std = ["bridge-core/std", "bridge-eval/std"]
+serde = ["dep:serde", "bridge-core/serde", "bridge-eval/serde"]
+
+[dependencies]
+bridge-core = { workspace = true }
+bridge-eval = { workspace = true }
+rand_core = { workspace = true }
+serde = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+proptest = { workspace = true }
+rand_xoshiro = { workspace = true }
+
+[[bench]]
+name = "sampler"
+harness = false

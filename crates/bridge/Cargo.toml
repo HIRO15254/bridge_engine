@@ -1,0 +1,48 @@
+[package]
+name = "bridge"
+description = "Contract bridge foundation library: facade re-exporting the bridge-* crates"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = ["std", "format"]
+std = [
+    "bridge-core/std",
+    "bridge-eval/std",
+    "bridge-constraint/std",
+    "bridge-system/std",
+    "bridge-bidding/std",
+    "bridge-play/std",
+    "bridge-sample/std",
+]
+serde = [
+    "bridge-core/serde",
+    "bridge-eval/serde",
+    "bridge-constraint/serde",
+    "bridge-system/serde",
+    "bridge-bidding/serde",
+    "bridge-play/serde",
+    "bridge-sample/serde",
+]
+format = ["dep:bridge-format"]
+parallel = ["bridge-sample/parallel"]
+cache = ["bridge-system/cache"]
+dds = ["dep:bridge-dds"]
+
+[dependencies]
+bridge-bidding = { workspace = true }
+bridge-constraint = { workspace = true }
+bridge-core = { workspace = true }
+bridge-eval = { workspace = true }
+bridge-format = { workspace = true, optional = true }
+bridge-play = { workspace = true }
+bridge-sample = { workspace = true }
+bridge-system = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bridge-dds = { workspace = true, optional = true }

@@ -1,0 +1,30 @@
+[package]
+name = "bridge-system"
+description = "Bidding-system definitions for contract bridge: BML parser, constraint compiler, SystemIR, natural inference"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = ["std"]
+std = ["bridge-core/std", "bridge-constraint/std"]
+serde = ["dep:serde", "bridge-core/serde", "bridge-constraint/serde"]
+cache = ["std", "serde", "dep:postcard", "dep:blake3"]
+
+[dependencies]
+bridge-constraint = { workspace = true }
+bridge-core = { workspace = true }
+bridge-eval = { workspace = true }
+blake3 = { workspace = true, optional = true }
+postcard = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+smallvec = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+winnow = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

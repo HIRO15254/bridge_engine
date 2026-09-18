@@ -1,0 +1,24 @@
+[package]
+name = "bridge-format"
+description = "PBN, LIN and deal-string readers and writers for contract bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = ["std"]
+std = ["bridge-core/std"]
+serde = ["dep:serde", "bridge-core/serde"]
+
+[dependencies]
+bridge-core = { workspace = true }
+serde = { workspace = true, optional = true }
+thiserror = { workspace = true }
+winnow = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+proptest = { workspace = true }

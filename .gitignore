@@ -1,0 +1,16 @@
+/target/
+**/target/
+Cargo.lock.bak
+
+# Downloaded test data (never committed; see corpus/manifest.toml and systems/vendor/manifest.toml)
+/corpus/data/
+/systems/vendor/data/
+
+# Vendored DDS sources are fetched by `cargo xtask dds vendor` (see crates/bridge-dds/VENDOR.md)
+/crates/bridge-dds/vendor/
+
+# Local tooling
+.DS_Store
+*.swp
+/.idea/
+/.vscode/
