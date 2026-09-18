@@ -1,6 +1,6 @@
 //! The auction and its legality rules.
 
-use crate::{Bid, Call, Contract, Seat, Vulnerability};
+use crate::{Bid, Call, Contract, Doubling, Seat, Vulnerability};
 
 /// The sequence of calls of one board, together with the dealer and vulnerability.
 ///
@@ -33,12 +33,24 @@ impl Auction {
         vulnerability: Vulnerability,
         calls: impl IntoIterator<Item = Call>,
     ) -> Result<Auction, AuctionError> {
-        todo!("phase 1")
+        let mut auction = Auction::new(dealer, vulnerability);
+        for call in calls {
+            auction.push(call)?;
+        }
+        Ok(auction)
     }
 
     /// Appends `call`, or returns an error and leaves the auction unchanged.
     pub fn push(&mut self, call: Call) -> Result<(), AuctionError> {
-        todo!("phase 1")
+        if self.is_legal(call) {
+            self.calls.push(call);
+            Ok(())
+        } else {
+            Err(AuctionError::IllegalCall {
+                call,
+                index: self.calls.len(),
+            })
+        }
     }
 
     /// A copy of this auction with `call` appended.
@@ -94,12 +106,26 @@ impl Auction {
 
     /// The last bid and its index, if any.
     pub fn last_bid(&self) -> Option<(usize, Bid)> {
-        todo!("phase 1")
+        self.calls
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(i, c)| c.bid().map(|b| (i, b)))
     }
 
     /// The last call that is not a pass, with its index, if any.
     pub fn last_non_pass(&self) -> Option<(usize, Call)> {
-        todo!("phase 1")
+        self.calls
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, c)| **c != Call::Pass)
+            .map(|(i, c)| (i, *c))
+    }
+
+    /// Whether the call at `index` was made by an opponent of the seat to call next.
+    fn is_by_opponent(&self, index: usize) -> bool {
+        self.seat_at(index).side() != self.next_seat().side()
     }
 
     /// Whether `call` may be made now.
@@ -110,7 +136,19 @@ impl Auction {
     /// 4. `Double` is legal iff the last non-pass call is a bid by the opponents.
     /// 5. `Redouble` is legal iff the last non-pass call is a double by the opponents.
     pub fn is_legal(&self, call: Call) -> bool {
-        todo!("phase 1")
+        if self.is_complete() {
+            return false;
+        }
+        match call {
+            Call::Pass => true,
+            Call::Bid(b) => self.last_bid().is_none_or(|(_, last)| b > last),
+            Call::Double => {
+                matches!(self.last_non_pass(), Some((i, Call::Bid(_))) if self.is_by_opponent(i))
+            }
+            Call::Redouble => {
+                matches!(self.last_non_pass(), Some((i, Call::Double)) if self.is_by_opponent(i))
+            }
+        }
     }
 
     /// The calls that may be made now, in index order.
@@ -123,12 +161,13 @@ impl Auction {
 
     /// `true` when at least four calls have been made and the last three are passes.
     pub fn is_complete(&self) -> bool {
-        todo!("phase 1")
+        let n = self.calls.len();
+        n >= 4 && self.calls[n - 3..].iter().all(|c| *c == Call::Pass)
     }
 
     /// `true` when the auction is complete and contains no bid.
     pub fn is_passed_out(&self) -> bool {
-        todo!("phase 1")
+        self.is_complete() && self.last_bid().is_none()
     }
 
     /// The final contract, or `None` if the auction is incomplete or passed out.
@@ -136,12 +175,31 @@ impl Auction {
     /// The declarer is the first player of the side that made the last bid to have named that
     /// bid's strain; the doubling state comes from the last non-pass call.
     pub fn contract(&self) -> Option<Contract> {
-        todo!("phase 1")
+        if !self.is_complete() {
+            return None;
+        }
+        let (i, bid) = self.last_bid()?;
+        let side = self.seat_at(i).side();
+        let doubling = match self.last_non_pass() {
+            Some((_, Call::Double)) => Doubling::Doubled,
+            Some((_, Call::Redouble)) => Doubling::Redoubled,
+            _ => Doubling::Undoubled,
+        };
+        let strain = bid.strain();
+        let first = (0..=i).find(|&j| {
+            self.seat_at(j).side() == side
+                && self.calls[j].bid().is_some_and(|b| b.strain() == strain)
+        })?;
+        Some(Contract {
+            bid,
+            declarer: self.seat_at(first),
+            doubling,
+        })
     }
 
     /// Number of passes before the first bid (`0..=3`; `4` for a passed-out auction).
     pub fn leading_passes(&self) -> usize {
-        todo!("phase 1")
+        self.calls.iter().take_while(|c| **c == Call::Pass).count()
     }
 
     /// The position (`1..=4`) in which `seat` would open: `1` for the dealer, `4` for the
@@ -163,9 +221,17 @@ impl Iterator for CallsBy<'_> {
     type Item = (usize, Call);
 
     fn next(&mut self) -> Option<(usize, Call)> {
-        todo!("phase 1")
+        let auction = self.auction;
+        // Call indices of `seat` are those congruent to its distance from the dealer mod 4.
+        let residue = (self.seat.index() + 4 - auction.dealer.index()) as usize % 4;
+        let i = self.next + (residue + 4 - self.next % 4) % 4;
+        let call = *auction.calls.get(i)?;
+        self.next = i + 1;
+        Some((i, call))
     }
 }
+
+impl core::iter::FusedIterator for CallsBy<'_> {}
 
 /// Iterator over the legal calls at the current point (see [`Auction::legal_calls`]).
 #[derive(Clone, Debug)]
@@ -178,9 +244,37 @@ impl Iterator for LegalCalls<'_> {
     type Item = Call;
 
     fn next(&mut self) -> Option<Call> {
-        todo!("phase 1")
+        let auction = self.auction;
+        if auction.is_complete() {
+            self.next = 38;
+            return None;
+        }
+        while self.next < 38 {
+            let i = self.next;
+            if i >= 3 {
+                // Every bid above the last one is legal, so jump straight to it.
+                let floor = match auction.last_bid() {
+                    Some((_, b)) => 3 + b.index() + 1,
+                    None => 3,
+                };
+                if i < floor {
+                    self.next = floor;
+                    continue;
+                }
+                self.next = i + 1;
+                return Call::from_index(i);
+            }
+            self.next = i + 1;
+            let call = Call::from_index(i)?;
+            if auction.is_legal(call) {
+                return Some(call);
+            }
+        }
+        None
     }
 }
+
+impl core::iter::FusedIterator for LegalCalls<'_> {}
 
 /// An illegal call was offered to an [`Auction`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug, thiserror::Error)]

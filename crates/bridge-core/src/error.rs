@@ -1,6 +1,6 @@
 //! Errors of the text formats.
 
-use crate::Card;
+use crate::{Card, DealError, Seat};
 
 /// A text form of a core type could not be parsed.
 ///
@@ -23,6 +23,14 @@ pub enum ParseError {
     /// A deal did not have four hands.
     #[error("expected 4 hands, found {0}")]
     HandCount(usize),
+    /// A hand of a deal string does not have exactly 13 cards.
+    #[error("{seat} holds {count} cards, expected 13")]
+    HandSize {
+        /// The seat.
+        seat: Seat,
+        /// Its card count.
+        count: u8,
+    },
     /// The same card appeared twice.
     #[error("duplicate card {0}")]
     DuplicateCard(Card),
@@ -41,4 +49,13 @@ pub enum ParseError {
     /// Empty input.
     #[error("empty input")]
     Empty,
+}
+
+impl From<DealError> for ParseError {
+    fn from(e: DealError) -> ParseError {
+        match e {
+            DealError::HandSize { seat, count } => ParseError::HandSize { seat, count },
+            DealError::Duplicate(card) => ParseError::DuplicateCard(card),
+        }
+    }
 }

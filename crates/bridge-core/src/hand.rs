@@ -138,10 +138,25 @@ pub struct HandCards {
 impl Iterator for HandCards {
     type Item = Card;
 
+    #[inline]
     fn next(&mut self) -> Option<Card> {
-        todo!("phase 1")
+        if self.bits == 0 {
+            return None;
+        }
+        let i = self.bits.trailing_zeros() as u8;
+        self.bits &= self.bits - 1;
+        Card::from_index(i)
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.bits.count_ones() as usize;
+        (n, Some(n))
     }
 }
+
+impl ExactSizeIterator for HandCards {}
+impl core::iter::FusedIterator for HandCards {}
 
 impl core::ops::BitOr for Hand {
     type Output = Hand;

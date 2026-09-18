@@ -133,10 +133,25 @@ pub struct HoldingRanks {
 impl Iterator for HoldingRanks {
     type Item = Rank;
 
+    #[inline]
     fn next(&mut self) -> Option<Rank> {
-        todo!("phase 1")
+        if self.bits == 0 {
+            return None;
+        }
+        let r = (15 - self.bits.leading_zeros()) as u8;
+        self.bits &= !(1 << r);
+        Some(Rank::from_index(r))
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.bits.count_ones() as usize;
+        (n, Some(n))
     }
 }
+
+impl ExactSizeIterator for HoldingRanks {}
+impl core::iter::FusedIterator for HoldingRanks {}
 
 /// Iterator over every sub-holding of a [`Holding`] (see [`Holding::submasks`]).
 #[derive(Clone, Debug)]
@@ -148,10 +163,19 @@ pub struct Submasks {
 impl Iterator for Submasks {
     type Item = Holding;
 
+    #[inline]
     fn next(&mut self) -> Option<Holding> {
-        todo!("phase 2")
+        let current = self.current?;
+        self.current = if current == 0 {
+            None
+        } else {
+            Some((current - 1) & self.mask)
+        };
+        Some(Holding(current))
     }
 }
+
+impl core::iter::FusedIterator for Submasks {}
 
 impl core::ops::BitOr for Holding {
     type Output = Holding;
