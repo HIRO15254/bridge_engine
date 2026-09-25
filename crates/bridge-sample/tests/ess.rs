@@ -83,21 +83,23 @@ fn scenarios() -> Vec<Scenario> {
 
     vec![
         Scenario {
-            name: "1NT-ish opener (balanced 12-17)",
+            name: "1NT opener (balanced 15-17)",
             calls: vec![SeatCall {
                 seat: Seat::North,
-                primary: balanced(12..=17),
+                primary: balanced(15..=17),
                 eps: 0.02,
             }],
         },
         Scenario {
-            name: "1C - 1H - 1NT rebid (balanced 8-17)",
+            name: "1C - 1H - 1NT rebid (balanced 12-14)",
             calls: vec![SeatCall {
                 seat: Seat::North,
                 // The combined effect of opening 1C and rebidding 1NT (Step B of 07-bidding.md
                 // §4.4 would AND the two calls' own constraints together; a hand-built scenario
-                // states the combined result directly).
-                primary: balanced(8..=17),
+                // states the combined result directly). SAYC's minimum-balanced 1NT rebid: 12-14
+                // HCP, narrower than the opening 1NT range above (D-row of §9's table needs both
+                // to be genuinely SAYC-realistic, not widened to make ESS pass).
+                primary: balanced(12..=14),
                 eps: 0.02,
             }],
         },
@@ -197,7 +199,7 @@ fn scenarios() -> Vec<Scenario> {
             calls: vec![
                 SeatCall {
                     seat: Seat::North,
-                    primary: balanced(12..=17),
+                    primary: balanced(15..=17),
                     eps: 0.02,
                 },
                 SeatCall {
@@ -216,7 +218,7 @@ fn scenarios() -> Vec<Scenario> {
             calls: vec![
                 SeatCall {
                     seat: Seat::North,
-                    primary: balanced(12..=17),
+                    primary: balanced(15..=17),
                     eps: 0.02,
                 },
                 SeatCall {

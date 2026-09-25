@@ -12,21 +12,28 @@
 //! **log_prob.** Replay the same order and pools; `π_k(h) = Σ_{components ∋ h} u / count`,
 //! summing over every component that could have produced `h`; the last seat contributes 0.
 //!
-//! **§6.4 (c), coarse re-preparation.** A bench (task 5.4; see `09-sample.md` §10 row 1) showed
-//! the cached first seat and the direct-dealt seats (§6.4 (a)) already meet the 10^4 deals/s/core
-//! target, but a seat re-prepared on every `propose`/`log_prob` call (every `Sampled` seat other
-//! than the first, which is cached, and the last, which only needs a `satisfies` check) did not:
-//! its candidates keep their original `cards` / `eval` detail, so every draw pays for the
-//! detailed literal filtering `Sampler::prepare` needs for that. Those re-prepared seats use
-//! [`coarsen`] instead: a summary `Atom` (shapes + HCP range only, from `HandConstraint::shapes`
-//! / `HandConstraint::hcp_range`) that always covers a superset of the original candidate (`Or`
+//! **§6.4 (c), coarse re-preparation.** Every `Sampled` seat other than the first (cached) and
+//! the last (only ever `satisfies`-checked, never `Sampler::prepare`d) is re-prepared on every
+//! `propose`/`log_prob` call. Those re-prepared seats use [`coarsen`] instead of their original
+//! candidates: a summary `Atom` (shapes + HCP range only, from `HandConstraint::shapes` /
+//! `HandConstraint::hcp_range`) that always covers a superset of the original candidate (`Or`
 //! unions, `And` intersects, so the summary's satisfying set is never smaller), so it never turns
-//! a satisfiable candidate unsatisfiable. `Sampler::prepare` on a bare `Atom` takes the shape-DP
-//! fast path (05-constraint.md) instead of literal-level filtering. The resulting proposal can
-//! land on hands the fine candidate would have rejected; `Interpretation::likelihood` still
-//! scores those against the fine constraint, so the importance weight absorbs the mismatch — ESS
-//! drops but stays finite, exactly as §6.4 describes. `log_prob` replays the same coarsened
-//! candidates for these seats, since it must match the density `propose` actually drew from.
+//! a satisfiable candidate unsatisfiable. The resulting proposal can land on hands the fine
+//! candidate would have rejected; `Interpretation::likelihood` still scores those against the
+//! fine constraint, so the importance weight absorbs the mismatch — ESS drops but stays finite,
+//! exactly as §6.4 describes. `log_prob` replays the same coarsened candidates for these seats,
+//! since it must match the density `propose` actually drew from.
+//!
+//! This is *not* a fix for a per-literal filtering cost at `Sampler::prepare` — measured on the
+//! bench cases (`09-sample.md` §10.1) and on `Sampler::prepare` directly, a `cards` literal adds
+//! no measurable cost on the pool sizes (c) applies to (39 and 26 unknown cards): the DNF/atom
+//! evaluation there is dominated by the shape/HCP walk regardless of whether a `cards` literal
+//! rides along. (c) *does* help when coarsening removes something that changes which code path
+//! `Sampler::prepare` takes — most obviously when the summary collapses to (or near) `ANY`, or
+//! drops enough of the HCP window that shape-DP pruning does less work — and it always costs
+//! acceptance and ESS, because it drops `cards` / `eval`, `Not`-inferences and card-level hard
+//! play constraints at every re-prepared seat, whether or not that seat's own bench case happens
+//! to exercise them.
 
 use bridge_constraint::{Atom, HandConstraint, Sampler};
 use bridge_core::{Deal, Hand, Seat};
@@ -48,6 +55,17 @@ pub struct ConstraintProposal {
     /// gives up. `sample_deals`'s own outer retry loop (`SampleOptions::max_attempts_per_sample`
     /// in `report.rs`) is a separate knob: it retries the whole `propose` → `log_prob` pair, not
     /// a single `Sampler`'s internal rejection loop.
+    ///
+    /// This default is lower than [`bridge_constraint::SampleOptions`]'s own default of 256 (the
+    /// value `sample_deals`'s own §2.3 support probe uses). For a rejection-sampled term with
+    /// acceptance rate `α`, the probability the term's `Sampler` gives up within `max_retries`
+    /// draws is `(1 − α)^max_retries`, so a lower `max_retries` gives up more often, and does so
+    /// unevenly across terms and components with different `α` — which skews `log_prob` for the
+    /// (already only approximate; see `SampleWarning::CustomConstraint`) inexact case. Raising
+    /// this default to 256 would even out that skew at the cost of up to 16× more retries per
+    /// inexact term; `sample_deals`'s own bench (`benches/deals.rs`) has no inexact terms in its
+    /// cases, so this trade was left as `SampleWarning::CustomConstraint`'s documented caveat
+    /// rather than measured and changed here.
     pub max_retries: u32,
 }
 
@@ -71,9 +89,9 @@ enum SeatPlan {
     /// uniformly at random from whatever pool remains, no `Sampler` involved. `log_prob =
     /// −ln C(|pool|, needed)`.
     Direct,
-    /// Drawn by choosing one candidate proportional to its weight (a genuine prior over "which
-    /// alternative is true"; the count-weighting that orders seats by `mass_s` does not apply
-    /// here — see §6.1 point 4 and §6.2 step 3), then sampling uniformly within it.
+    /// Drawn by choosing one candidate proportional to `w_i · count_i` — the same count-weighting
+    /// that orders seats by `mass_s` (§6.1 point 4, §6.2 step 3), applied per candidate this time
+    /// instead of summed over all of them — then sampling uniformly within it.
     ///
     /// `coarse` (§6.4 (c)) is the same candidates with [`coarsen`] applied, used instead of
     /// `candidates` whenever this seat is re-prepared per draw (every position except the cached
@@ -94,8 +112,8 @@ struct SeatEntry {
 }
 
 /// The first seat's prepared samplers, cached because its pool (`known.pool()`) never shrinks
-/// before it is drawn (§6.1 point 4): `(Sampler, v_i)` with `v_i = w_i / Σ_j w_j` normalised over
-/// the candidates that survived (`count() > 0`).
+/// before it is drawn (§6.1 point 4): `(Sampler, v_i)` with `v_i = w_i · cnt_i / Σ_j w_j · cnt_j`
+/// normalised over the candidates that survived (`count() > 0`).
 struct CachedFirst {
     components: Vec<(Sampler, f64)>,
 }
@@ -114,11 +132,18 @@ impl Proposal for ConstraintProposal {
         let mut order: Vec<(SeatEntry, f64)> = Vec::new();
         for seat in Seat::ALL {
             let needed = ctx.known.needed(seat);
-            if needed == 0 {
-                continue;
-            }
             let fixed = ctx.known.known[seat.index() as usize];
             let hard = &ctx.play_constraints[seat.index() as usize];
+            if needed == 0 {
+                // Fully known already (the viewer, or an exposed dummy): still must satisfy this
+                // seat's own hard play constraint, or no deal exists at all (§2.3 of
+                // `09-sample.md`). `sample_deals` checks this too before calling `prepare`, but
+                // `ConstraintProposal::prepare` is public and can be called directly.
+                if !hard.satisfies(fixed) {
+                    return Err(SampleError::EmptySupport);
+                }
+                continue;
+            }
 
             let mut candidates = seat_candidates(ctx, seat, hard);
             candidates.sort_by(|a, b| {
@@ -154,12 +179,17 @@ impl Proposal for ConstraintProposal {
                 // `sample_deals` (§2.3 of `09-sample.md`) already checked that at least one
                 // interpretation alternative survives AND-ing with `hard` against the full pool;
                 // this can still be empty when `play_soft` narrows further than that check
-                // accounts for. Fall back to the hard constraint alone (already known
-                // satisfiable, or `sample_deals` would have returned `SampleError::EmptySupport`)
-                // rather than leaving this seat with no way to be drawn at all.
+                // accounts for. Fall back to the hard constraint alone rather than leaving this
+                // seat with no way to be drawn at all — but if even `hard` alone has no support
+                // against the full pool, no deal exists, and that must surface as
+                // `EmptySupport`, not a fabricated single-hand fallback (`count().max(1)` would
+                // silently claim support that isn't there).
                 let sampler = Sampler::prepare(hard, pool, fixed, &sampler_opts)
                     .map_err(|e| SampleError::Prepare(e.to_string()))?;
-                let count = sampler.count().max(1);
+                let count = sampler.count();
+                if count == 0 {
+                    return Err(SampleError::EmptySupport);
+                }
                 alts.push((
                     Candidate {
                         constraint: hard.clone(),
@@ -327,9 +357,19 @@ fn coarsen(constraint: &HandConstraint) -> HandConstraint {
 }
 
 /// Prepares one `Sampler` per candidate against `(pool, fixed)`, drops the ones with
-/// `count() == 0`, and normalises the survivors' weights into `v_i = w_i / Σ_j w_j` (§6.1 point
-/// 4, §6.2 step 2). `None` when nothing survives (`propose`/`log_prob` treat that as "no deal is
-/// possible from here").
+/// `count() == 0`, and normalises the survivors' weights into `v_i = w_i · cnt_i / Σ_j w_j ·
+/// cnt_j` (§6.1 point 4, §6.2 step 2 of `09-sample.md`). `None` when nothing survives
+/// (`propose`/`log_prob` treat that as "no deal is possible from here").
+///
+/// The `cnt_i` factor matters: without it, a component's *share of the draw* would not match its
+/// *share of the likelihood mass* `Interpretation::likelihood` actually scores against. That
+/// target sums `w_i` over every alternative a hand satisfies (07-bidding.md §4.4), so a component
+/// with a broader satisfying set contributes more total likelihood mass across the pool, not just
+/// more per-hand likelihood — an ε-mixture's defensive `ANY` branch, in particular, satisfies far
+/// more hands than the primary alternative it sits beside. Weighting by `w_i` alone would draw
+/// `ANY` only in proportion to its raw `ε`, far less often than the mass it actually accounts for;
+/// the few hands it then does produce would carry disproportionately large importance weights and
+/// ESS would collapse.
 fn prepare_components(
     candidates: &[Candidate],
     pool: Hand,
@@ -339,10 +379,11 @@ fn prepare_components(
     let mut survivors: Vec<(Sampler, f64)> = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         let sampler = Sampler::prepare(&candidate.constraint, pool, fixed, opts).ok()?;
-        if sampler.count() == 0 {
+        let count = sampler.count();
+        if count == 0 {
             continue;
         }
-        survivors.push((sampler, candidate.weight));
+        survivors.push((sampler, candidate.weight * count as f64));
     }
     let total: f64 = survivors.iter().map(|(_, w)| *w).sum();
     if survivors.is_empty() || total <= 0.0 {
@@ -533,5 +574,74 @@ impl PreparedProposal for PreparedConstraint<'_> {
         }
 
         ln_pi
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bridge_bidding::Interpretation;
+    use bridge_constraint::{CardRequirement, KnownCards, ShapeSet};
+    use bridge_core::Suit;
+
+    use super::*;
+
+    /// `ConstraintProposal::prepare` is public and can be called directly, without going through
+    /// `sample_deals`'s own §2.3 probe. A hard play constraint with no support against the full
+    /// pool must surface as `SampleError::EmptySupport`, not a misleading `SampleError::Prepare`
+    /// (the `alts.is_empty()` fallback used to mask a zero count with `count().max(1)`, claiming
+    /// a single fabricated hand of support that did not exist).
+    #[test]
+    fn direct_prepare_unsat_hard() {
+        // East, South and West are fully known and between them hold every club, diamond and
+        // heart; North (needed = 13) draws from what's left — only spades — but its own hard
+        // play constraint requires at least one club, which the pool cannot supply.
+        let clubs = Hand::EMPTY.with_holding(Suit::Clubs, bridge_core::Holding::FULL);
+        let diamonds = Hand::EMPTY.with_holding(Suit::Diamonds, bridge_core::Holding::FULL);
+        let hearts = Hand::EMPTY.with_holding(Suit::Hearts, bridge_core::Holding::FULL);
+        let known = KnownCards::new([Hand::EMPTY, clubs, diamonds, hearts])
+            .expect("the three fixed hands are pairwise disjoint by construction");
+        assert_eq!(known.needed(Seat::North), 13);
+        assert_eq!(
+            known.pool().holding(Suit::Clubs),
+            bridge_core::Holding::EMPTY
+        );
+
+        let requires_a_club = HandConstraint::Atom(Atom {
+            shapes: ShapeSet::ALL,
+            hcp: 0..=37,
+            cards: vec![CardRequirement {
+                mask: clubs,
+                count: 1..=13,
+            }],
+            eval: Vec::new(),
+        });
+        let play_constraints = [
+            requires_a_club,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+        ];
+        let interpretation = Interpretation {
+            seats: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            per_call: Vec::new(),
+            divergence: None,
+        };
+        let ctx = SampleContext {
+            known,
+            interpretation: &interpretation,
+            play_constraints: &play_constraints,
+            play_soft: None,
+            bidding: None,
+        };
+
+        let result = ConstraintProposal::default().prepare(&ctx);
+        assert!(
+            result.is_err(),
+            "expected an error, got a successfully prepared proposal"
+        );
+        assert!(
+            matches!(result.err(), Some(SampleError::EmptySupport)),
+            "expected SampleError::EmptySupport"
+        );
     }
 }

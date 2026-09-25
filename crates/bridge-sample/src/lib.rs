@@ -50,18 +50,28 @@ pub enum SampleError {
 /// `n` deals have been produced or `n × max_attempt_factor` attempts have been made in total,
 /// and the first `n` produced deals (in slot order) are returned.
 ///
-/// Before `proposal.prepare` is even called, every seat needing cards is probed with
-/// `bridge_constraint::Sampler` against `ctx.known.pool()` (§2.3 of `09-sample.md`):
+/// Before `proposal.prepare` is even called, every seat is probed against `ctx.known.pool()`
+/// (§2.3 of `09-sample.md`):
 ///
-/// - If a seat's hard play constraint (`ctx.play_constraints[s]`) admits no hand at all once the
-///   known cards are fixed, no proposal could ever produce a deal, so sampling returns
-///   `Err(SampleError::EmptySupport)` immediately, with zero attempts.
+/// - A seat already fully known (`needed(seat) == 0`: the viewer, or an exposed dummy) has
+///   nothing to sample, but its fixed hand must still satisfy its own hard play constraint
+///   (`ctx.play_constraints[s]`), or no deal exists at all: `Err(SampleError::EmptySupport)`,
+///   zero attempts.
+/// - Otherwise, if the hard play constraint admits no hand at all once the known cards are
+///   fixed (via `bridge_constraint::Sampler`), no proposal could ever produce a deal, so sampling
+///   returns `Err(SampleError::EmptySupport)` immediately, with zero attempts.
 /// - If a seat's interpretation alternatives (`ctx.interpretation.seats[s]`) are all inconsistent
 ///   with the known cards (once each is AND-ed with the hard constraint just checked), the
 ///   auction's evidence for that seat cannot be used at all; sampling continues with that seat
 ///   dealt (and weighted) as `ANY` instead — its `seats[s]` becomes a single unconstrained
 ///   alternative and its `per_call` entries are dropped, so `Interpretation::likelihood` also
 ///   treats it as vacuous — and `SampleWarning::EmptySupport { seat }` records the fallback.
+/// - Whichever `Sampler`s this probe prepares (the hard constraint's, and each alternative's
+///   combined with it) are also checked for exactness: if any that survives with `count() > 0`
+///   is not `Sampler::is_exact()` (a `Custom` node, a DNF residual, or any other rejection-sampled
+///   term), `SampleWarning::CustomConstraint { seat }` records that `log_prob`'s density for that
+///   seat is approximate — `Sampler`'s own rejection loop only ever under-estimates a term's true
+///   mass, never over-estimates it, so `log_prob` and hence the importance weight can be biased.
 ///
 /// This probing context (not `ctx` itself) is what `proposal.prepare`, `run_chunk` and
 /// `ln_likelihood` below actually use.
@@ -97,36 +107,58 @@ pub fn sample_deals(
     let mut warnings = Vec::new();
     let mut fallback_to_any = [false; 4];
     for seat in Seat::ALL {
-        if ctx.known.needed(seat) == 0 {
-            // Already fully known (the viewer, or an exposed dummy): nothing to sample, nothing
-            // to check.
-            continue;
-        }
         let idx = seat.index() as usize;
         let fixed = ctx.known.known[idx];
         let hard = &ctx.play_constraints[idx];
+
+        if ctx.known.needed(seat) == 0 {
+            // Already fully known (the viewer, or an exposed dummy): nothing to sample, but the
+            // fixed hand must still satisfy this seat's own hard play constraint, or no deal
+            // exists at all (§2.3 of `09-sample.md`) — the probe below (built around `Sampler`,
+            // which needs at least one card to draw) can't check this case, so it is checked
+            // directly instead.
+            if !hard.satisfies(fixed) {
+                return Err(SampleError::EmptySupport);
+            }
+            continue;
+        }
 
         let hard_sampler = Sampler::prepare(hard, pool, fixed, &support_opts)
             .map_err(|e| SampleError::Prepare(e.to_string()))?;
         if hard_sampler.count() == 0 {
             return Err(SampleError::EmptySupport);
         }
+        // `hard`'s own exactness matters even if this seat later falls back to `ANY` below,
+        // since `ConstraintProposal` (and any other `Proposal`) still ANDs every alternative
+        // with `hard`.
+        let mut inexact = !hard_sampler.is_exact();
 
         let alternatives = &ctx.interpretation.seats[idx];
         if alternatives.is_empty() {
             // No calls at all for this seat: `Interpretation::likelihood` already treats this as
             // vacuously `ANY` (07-bidding.md §4.4 point 1), so there is nothing to fall back from.
+            if inexact {
+                warnings.push(SampleWarning::CustomConstraint { seat });
+            }
             continue;
         }
-        let any_consistent = alternatives.iter().any(|(constraint, _, _)| {
+        let mut any_consistent = false;
+        for (constraint, _, _) in alternatives {
             let combined = constraint.clone().and(hard.clone());
-            Sampler::prepare(&combined, pool, fixed, &support_opts)
-                .map(|sampler| sampler.count() > 0)
-                .unwrap_or(false)
-        });
+            if let Ok(sampler) = Sampler::prepare(&combined, pool, fixed, &support_opts) {
+                if sampler.count() > 0 {
+                    any_consistent = true;
+                    if !sampler.is_exact() {
+                        inexact = true;
+                    }
+                }
+            }
+        }
         if !any_consistent {
             warnings.push(SampleWarning::EmptySupport { seat });
             fallback_to_any[idx] = true;
+        } else if inexact {
+            warnings.push(SampleWarning::CustomConstraint { seat });
         }
     }
 
@@ -167,16 +199,6 @@ pub fn sample_deals(
     let ctx = &effective_ctx;
 
     let prepared = proposal.prepare(ctx)?;
-
-    for seat in Seat::ALL {
-        let hard_samplable = ctx.play_constraints[seat.index() as usize].is_samplable();
-        let alternatives_samplable = ctx.interpretation.seats[seat.index() as usize]
-            .iter()
-            .all(|(constraint, _, _)| constraint.is_samplable());
-        if !hard_samplable || !alternatives_samplable {
-            warnings.push(SampleWarning::CustomConstraint { seat });
-        }
-    }
 
     let mut deals: Vec<WeightedDeal> = Vec::new();
     let mut attempts: u64 = 0;
@@ -367,8 +389,11 @@ mod tests {
     use bridge_bidding::{
         CallExplanation, CallInterpretation, Explanation, Interpretation, ResolutionKind,
     };
-    use bridge_constraint::{Atom, CardRequirement, HandConstraint, KnownCards, ShapeSet};
+    use bridge_constraint::{
+        Atom, CardRequirement, CustomPred, HandConstraint, KnownCards, ShapeSet,
+    };
     use bridge_core::{Bid, Call, Card, Hand, Rank, Strain, Suit};
+    use std::sync::Arc;
 
     use super::*;
 
@@ -637,6 +662,107 @@ mod tests {
                 weighted.deal.hand(Seat::North).contains(club_ace),
                 "the known club ace must still be in North's hand"
             );
+        }
+    }
+
+    /// A fully-known seat (`needed == 0`) whose fixed hand violates its own hard play constraint
+    /// makes no deal possible at all, whatever the other seats hold — this must be caught
+    /// up front (§2.3 of `09-sample.md`), not discovered by exhausting the attempt budget.
+    #[test]
+    fn known_seat_hard_violation() {
+        // North is fully known (all clubs — no spades at all), but its hard play constraint
+        // requires at least one spade.
+        let north_hand = Hand::EMPTY.with_holding(Suit::Clubs, bridge_core::Holding::FULL);
+        let known = KnownCards::from_viewer(Seat::North, north_hand);
+        assert_eq!(known.needed(Seat::North), 0);
+
+        let requires_a_spade = HandConstraint::Atom(Atom {
+            shapes: ShapeSet::ALL,
+            hcp: 0..=37,
+            cards: vec![CardRequirement {
+                mask: Hand::EMPTY.with_holding(Suit::Spades, bridge_core::Holding::FULL),
+                count: 1..=13,
+            }],
+            eval: Vec::new(),
+        });
+        let play_constraints = [
+            requires_a_spade,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+        ];
+        let interpretation = Interpretation {
+            seats: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            per_call: Vec::new(),
+            divergence: None,
+        };
+        let ctx = SampleContext {
+            known,
+            interpretation: &interpretation,
+            play_constraints: &play_constraints,
+            play_soft: None,
+            bidding: None,
+        };
+
+        let result = sample_deals(&ctx, &UniformProposal, 20, &SampleOptions::default());
+        assert!(
+            matches!(result, Err(SampleError::EmptySupport)),
+            "expected Err(SampleError::EmptySupport), got {result:?}"
+        );
+    }
+
+    /// A seat whose only alternative is a `HandConstraint::Custom` predicate is not
+    /// `Sampler::is_exact()` — `log_prob`'s density for it is only approximate — and that must be
+    /// surfaced as `SampleWarning::CustomConstraint`, not silently dropped (the §2.3 probe used to
+    /// check `HandConstraint::is_samplable()` instead, which is blind to inexactness that isn't a
+    /// bare `Custom` node, and in any case never ran the check for a seat with no calls at all).
+    #[test]
+    fn custom_constraint_warns_for_inexact_alternative() {
+        let never_void_in_spades = HandConstraint::Custom(CustomPred {
+            name: "never void in spades".to_string(),
+            f: Arc::new(|hand: Hand| !hand.holding(Suit::Spades).is_empty()),
+        });
+        let interpretation = Interpretation {
+            seats: [
+                vec![(never_void_in_spades, 1.0, empty_explanation())],
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ],
+            per_call: Vec::new(),
+            divergence: None,
+        };
+        let play_constraints = [
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+        ];
+        let ctx = SampleContext {
+            known: KnownCards::EMPTY,
+            interpretation: &interpretation,
+            play_constraints: &play_constraints,
+            play_soft: None,
+            bidding: None,
+        };
+
+        let (_, report) = sample_deals(&ctx, &UniformProposal, 20, &SampleOptions::default())
+            .expect("a Custom predicate is still satisfiable by most deals, just not exactly");
+        assert!(
+            report
+                .warnings
+                .contains(&SampleWarning::CustomConstraint { seat: Seat::North }),
+            "warnings = {:?}",
+            report.warnings
+        );
+    }
+
+    fn empty_explanation() -> Explanation {
+        Explanation {
+            text: String::new(),
+            node: None,
+            resolution: ResolutionKind::Exact,
+            parts: Vec::new(),
         }
     }
 }
