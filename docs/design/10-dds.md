@@ -1,6 +1,6 @@
 # 10. `bridge-dds`: DDS v2.9.0 の FFI ラッパー
 
-本文書は D10 の決定、すなわち DDS (Bo Haglund, Soren Hein) の v2.9.0 を `cc` でビルドし、手書きの `#[repr(C)]` バインディングを C++ 側の `sizeof`/`offsetof` プローブで検証する方式を確定する。DDS のソースは `crates/bridge-dds/vendor/` に置くが git には含めず `cargo xtask dds vendor` で取得し、未取得でも `cargo:warning` を出してワークスペース全体のビルドは通す。安全ラッパーは `SolveBoard` の `thrId` スロットで Rust スレッド間の並行を許し、非再入のバルク関数は `Mutex` で直列化する。
+本文書は D10 の決定、すなわち DDS (Bo Haglund, Soren Hein) の v2.9.0 を `cc` でビルドし、手書きの `#[repr(C)]` バインディングを C++ 側の `sizeof`/`offsetof` プローブで検証する方式を確定する。DDS のソースは `crates/bridge-dds/vendor/` に置くが git には含めず `cargo xtask dds vendor` で取得し、未取得でも `cargo:warning` を出してワークスペース全体のビルドは通す。安全ラッパーは `SolveBoard`/`AnalysePlayBin` の `thrId` スロットで Rust スレッド間の並行を許し、非再入のバルク関数はスロットを全部集めることで直列化する (両者が同じ `thrId` 空間を奪い合わないよう、単なる別ロックではなく同じスロットプールを使う。§7.2 参照)。
 
 ## 1. 検証済みの DDS の事実
 
@@ -366,11 +366,11 @@ pub enum DdsError {
 
 | 関数 | DDS 呼び出し | ロック | 備考 |
 | --- | --- | --- | --- |
-| `calc_dd_table` | `CalcDDtable` (内部でスレッド並列) | `batch` | 単発。`resTable` を `DdTable::new` に変換 (ストレイン軸反転) |
-| `calc_dd_tables` | `CalcAllTables` を 40 件ずつ (`MAXNOOFTABLES` = 200 boards / 5 strains)、`mode = -1` (パー計算なし)、`trumpFilter = [0; 5]` (全ストレイン) | `batch` (チャンクごと) | |
+| `calc_dd_table` | `CalcDDtable` (内部でスレッド並列) | `slots` を全部 | 単発。`resTable` を `DdTable::new` に変換 (ストレイン軸反転) |
+| `calc_dd_tables` | `CalcAllTables` を 40 件ずつ (`MAXNOOFTABLES` = 200 boards / 5 strains)、`mode = -1` (パー計算なし)、`trumpFilter = [0; 5]` (全ストレイン) | `slots` を全部 (チャンクごと) | |
 | `solve_board` | `SolveBoard(dl, target, solutions, mode, &mut fut, thrId)` | `slots` から 1 スロット (ブロッキング取得) | Rust スレッド間で並行可 |
-| `solve_all_boards` | `SolveAllChunksBin(bop, solvedp, chunkSize = 1)` を 200 件ずつ | `batch` | 200 超は `TooManyBoards` ではなく分割。`boards` はヒープ |
-| `analyse_play` | `AnalysePlayBin(dl, play, &mut solved, thrId)` | `slots` | 戻り値 `tricks[0..=n]` (`tricks[0]` = プレイ前の DD 結果)。`trump`/`leader` は `PlayHistory::trump()`/`leader()` |
+| `solve_all_boards` | `SolveAllChunksBin(bop, solvedp, chunkSize = 1)` を 200 件ずつ | `slots` を全部 | 200 超は `TooManyBoards` ではなく分割。`boards` はヒープ |
+| `analyse_play` | `AnalysePlayBin(dl, play, &mut solved, thrId)` | `slots` から 1 スロット | 戻り値 `tricks[0..=n]` (`tricks[0]` = プレイ前の DD 結果)。`trump`/`leader` は `PlayHistory::trump()`/`leader()` |
 | `dealer_par` | `DealerParBin(&mut table, &mut pres, dealer, vul)` | なし (純関数) | |
 | `info` | `GetDDSInfo` | なし | `versionString`, `noOfThreads`, `threading`, `systemString` を写す |
 
@@ -380,7 +380,7 @@ pub enum DdsError {
 
 1. `init` は `OnceLock<Runtime>` (非公開) で 1 回だけ `SetResources(max_memory_mb, max_threads)` を呼び、続けて `GetDDSInfo` で `noOfThreads` を読んでスロット数とする。`SetMaxThreads` は使わない (DDS3 では no-op)。`init` を呼ばずにラッパー関数を呼んだ場合は `DdsConfig::default()` で暗黙に初期化する。
 2. `SolveBoard` と `AnalysePlayBin` は `thrId` (0..threads) ごとに独立した作業領域を使うので、空きスロットを 1 つ貸し出す間だけ並行して呼べる。空きが無ければ `Condvar` で待つ (非ブロッキング版は持たない)。
-3. `SolveAllChunksBin`、`CalcAllTables`、`CalcDDtable`、`AnalyseAllPlaysBin` は 2.9 のドキュメント通り非再入なので `batch: Mutex<()>` を保持している間だけ呼ぶ。バルク呼び出しは DDS 内部で全スレッドを使うため、同時に `solve_board` を走らせても速くならない。
+3. `SolveAllChunksBin`、`CalcAllTables`、`CalcDDtable`、`AnalyseAllPlaysBin` は 2.9 のドキュメント通り非再入である「だけ」ではなく、バルク呼び出し自身も DDS 内部でこの同じ `thrId` 空間 (`track[]` などの per-thread-index 状態) を使って複数スレッドを回す。そのためバルク呼び出しは `slots` の全スロットを (空くまで `Condvar` で待って) 取ってから DDS を呼び、呼び終えたら全部返す。単に別の `Mutex` でバルク呼び出し同士だけを排他しても、バルク呼び出し中に外部から `solve_board`/`analyse_play` が同じ `thrId` に触れてしまい、DDS 内部状態が壊れる (`Moves::GetTrickData` の `"Sum N is not four"` や `ABsearch.cpp` のアサート落ち。`--include-ignored` で `masterdd_matches_upstream` と `list100_matches_upstream` が同一プロセス内で並行実行されたときに実際に踏んだ)。`acquire_slot` はバルク呼び出しが待機/保持中は新規スロットを渡さない (`batch_waiting` フラグ) ので、バルク呼び出し側が `solve_board`/`analyse_play` の絶え間ない要求で永久に待たされることもない。バルク呼び出しは DDS 内部で全スレッドを使うため、同時に `solve_board` を走らせても速くならない。
 4. `FreeMemory()` はプロセス寿命の間呼ばない (ドキュメントに明記)。
 5. `Runtime` は `Send + Sync`。`Position` の検証 (`trick.len() <= 3`、`trick` のカードが `deal` に含まれる、枚数の整合) はラッパーで行い、それ以外の不正は DDS の戻りコードを `DdsError::Code` に変換する (`ErrorMessage` の 80 バイト行)。
 

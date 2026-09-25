@@ -4,11 +4,13 @@
 //! `cargo xtask dds vendor` and compiled by `build.rs`; without them the crate builds with the
 //! FFI compiled out and every call returns [`DdsError::Unavailable`].
 //!
-//! Threading: `SolveBoard` is reentrant per thread index and may run concurrently from several
-//! Rust threads (a slot is handed out per call); the bulk functions (`SolveAllChunksBin`,
-//! `CalcAllTables`, `AnalyseAllPlaysBin`) are not reentrant and are serialised by a mutex.
-//! DDS is initialised once (`SetResources`) with explicit limits, because 2.9's own memory
-//! probing shells out to `sysctl` / `free` and can fail in sandboxes.
+//! Threading: `SolveBoard`/`AnalysePlayBin` are reentrant per thread index and may run
+//! concurrently from several Rust threads (a slot is handed out per call); the bulk functions
+//! (`SolveAllChunksBin`, `CalcAllTables`, `CalcDDtable`, `AnalyseAllPlaysBin`) are not reentrant
+//! with each other *or* with a slot-holding call, since they also drive DDS's own
+//! per-thread-index state internally, so a bulk call takes every slot for its duration. DDS is
+//! initialised once (`SetResources`) with explicit limits, because 2.9's own memory probing
+//! shells out to `sysctl` / `free` and can fail in sandboxes.
 #![warn(missing_docs)]
 
 #[cfg(target_arch = "wasm32")]
@@ -268,14 +270,115 @@ mod backend {
         Solutions, Target, convert, sys,
     };
 
-    /// Per-process DDS state: the config that won the `init`/first-call race, the thread-index
-    /// slots `SolveBoard`/`AnalysePlayBin` hand out, and the mutex serialising the non-reentrant
-    /// bulk calls (see docs/design/10-dds.md §7.2).
+    /// The `free_slots`/`batch_waiting` state behind `Runtime`'s single `Mutex` (see
+    /// `SlotPool` below for why both live under one lock).
+    struct SlotState {
+        /// Thread-index slots not currently held by a `solve_board`/`analyse_play` call.
+        free: Vec<c_int>,
+        /// Total slot count (`= noOfThreads`), i.e. `free.len()` once every slot is back.
+        total: c_int,
+        /// Set while a batch call is waiting for (or holding) every slot; blocks new
+        /// `acquire_slot` calls so a steady stream of `solve_board`/`analyse_play` traffic
+        /// cannot starve the batch call out (see `acquire_all_slots`).
+        batch_waiting: bool,
+    }
+
+    /// The thread-index slot pool, shared by every DDS entry point that touches DDS's
+    /// per-thread-index internal state (`track[]`/`ABsearch`'s `Evaluate`, etc.).
+    ///
+    /// DDS documents `SolveBoard`/`AnalysePlayBin` as reentrant given a distinct `thrId` each
+    /// (docs/design/10-dds.md §7.2 rule 2), and `SolveAllChunksBin`/`CalcAllTables`/
+    /// `CalcDDtable`/`AnalyseAllPlaysBin` as merely non-reentrant *with each other* (rule 3).
+    /// Both are true in isolation, but the two families are not independent: the bulk
+    /// functions also solve internally using DDS's own thread pool, indexed the same way as
+    /// the explicit `thrId` the reentrant functions pass in. Calling a bulk function
+    /// concurrently with a slot-holding `solve_board`/`analyse_play` call from a different Rust
+    /// thread lets both sides drive the *same* `track[i]`/`ABsearch` state for some `i` at
+    /// once, corrupting it (observed as `Moves::GetTrickData`'s `"Sum N is not four"` abort or
+    /// an `ABsearch.cpp` assertion under concurrent load). So a bulk call needs every slot
+    /// (i.e. the exclusive side of a one-writer/many-readers lock over the same index space),
+    /// not just its own separate mutex.
+    pub(super) struct SlotPool {
+        state: Mutex<SlotState>,
+        slot_available: Condvar,
+    }
+
+    impl SlotPool {
+        fn new(total: c_int) -> SlotPool {
+            SlotPool {
+                state: Mutex::new(SlotState {
+                    free: (0..total).collect(),
+                    total,
+                    batch_waiting: false,
+                }),
+                slot_available: Condvar::new(),
+            }
+        }
+
+        /// Blocks until a `SolveBoard`/`AnalysePlayBin` thread-index slot is free (and no batch
+        /// call is waiting for/holding every slot), then takes it.
+        pub(super) fn acquire_slot(&self) -> c_int {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            loop {
+                if !state.batch_waiting {
+                    if let Some(id) = state.free.pop() {
+                        return id;
+                    }
+                }
+                state = self
+                    .slot_available
+                    .wait(state)
+                    .unwrap_or_else(|e| e.into_inner());
+            }
+        }
+
+        pub(super) fn release_slot(&self, id: c_int) {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.free.push(id);
+            drop(state);
+            // Every waiter (other `acquire_slot` calls and a possible `acquire_all_slots`
+            // waiter) must recheck, since only one of them can actually be the one this slot
+            // unblocks.
+            self.slot_available.notify_all();
+        }
+
+        /// Blocks until every slot is free (marking a batch call as waiting/active first, so
+        /// `acquire_slot` stops handing new slots out and this cannot starve), then takes them
+        /// all, giving the calling bulk function exclusive use of DDS's per-thread-index state.
+        pub(super) fn acquire_all_slots(&self) -> Vec<c_int> {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            loop {
+                // Reasserted on every iteration: a *different* batch call already waiting here
+                // may have just released all slots back (clearing this on its way out) while
+                // this call still has not collected them, and `acquire_slot` must keep seeing
+                // it set or a steady stream of slot-sized traffic could starve this call
+                // forever.
+                state.batch_waiting = true;
+                if state.free.len() as c_int == state.total {
+                    return std::mem::take(&mut state.free);
+                }
+                state = self
+                    .slot_available
+                    .wait(state)
+                    .unwrap_or_else(|e| e.into_inner());
+            }
+        }
+
+        pub(super) fn release_all_slots(&self, mut ids: Vec<c_int>) {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.free.append(&mut ids);
+            state.batch_waiting = false;
+            drop(state);
+            self.slot_available.notify_all();
+        }
+    }
+
+    /// Per-process DDS state: the config that won the `init`/first-call race, and the
+    /// `SlotPool` every entry point (reentrant or bulk) goes through (see docs/design/10-dds.md
+    /// §7.2).
     pub(super) struct Runtime {
         cfg: DdsConfig,
-        free_slots: Mutex<Vec<c_int>>,
-        slot_available: Condvar,
-        pub(super) batch: Mutex<()>,
+        pub(super) slots: SlotPool,
     }
 
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
@@ -304,35 +407,12 @@ mod backend {
             let threads = dds_info().noOfThreads.max(1) as u32;
             Runtime {
                 cfg,
-                free_slots: Mutex::new((0..threads as c_int).collect()),
-                slot_available: Condvar::new(),
-                batch: Mutex::new(()),
+                slots: SlotPool::new(threads as c_int),
             }
         }
 
         pub(super) fn cfg(&self) -> DdsConfig {
             self.cfg
-        }
-
-        /// Blocks until a `SolveBoard`/`AnalysePlayBin` thread-index slot is free, then takes it.
-        pub(super) fn acquire_slot(&self) -> c_int {
-            let mut slots = self.free_slots.lock().unwrap_or_else(|e| e.into_inner());
-            loop {
-                if let Some(id) = slots.pop() {
-                    return id;
-                }
-                slots = self
-                    .slot_available
-                    .wait(slots)
-                    .unwrap_or_else(|e| e.into_inner());
-            }
-        }
-
-        pub(super) fn release_slot(&self, id: c_int) {
-            let mut slots = self.free_slots.lock().unwrap_or_else(|e| e.into_inner());
-            slots.push(id);
-            drop(slots);
-            self.slot_available.notify_one();
         }
     }
 
@@ -530,13 +610,14 @@ mod backend {
             cards: convert::remain_cards(deal),
         };
         let mut result = zeroed::<sys::ddTableResults>();
-        let rc = {
-            let _batch = rt.batch.lock().unwrap_or_else(|e| e.into_inner());
-            // SAFETY: `table_deal` is passed by value; `result` is a validly sized
-            // `ddTableResults` the callee only writes into. `CalcDDtable` is documented
-            // non-reentrant, so this call holds `batch` for its duration.
-            unsafe { sys::CalcDDtable(table_deal, &mut result) }
-        };
+        let held_slots = rt.slots.acquire_all_slots();
+        // SAFETY: `table_deal` is passed by value; `result` is a validly sized
+        // `ddTableResults` the callee only writes into. `CalcDDtable` is documented
+        // non-reentrant with the other bulk calls, and also drives DDS's own per-thread-index
+        // state internally, so this call holds every slot for its duration (`SlotPool`'s doc
+        // comment).
+        let rc = unsafe { sys::CalcDDtable(table_deal, &mut result) };
+        rt.slots.release_all_slots(held_slots);
         if rc != sys::RETURN_NO_FAULT {
             return Err(dds_error(rc));
         }
@@ -557,23 +638,23 @@ mod backend {
             let mut trump_filter = [0 as c_int; sys::DDS_STRAINS];
             let mut resp = boxed_zeroed::<sys::ddTablesRes>();
             let mut presp = boxed_zeroed::<sys::allParResults>();
-            let rc = {
-                let _batch = rt.batch.lock().unwrap_or_else(|e| e.into_inner());
-                // SAFETY: `dealsp`/`resp`/`presp` are heap-allocated, validly sized instances of
-                // their DDS struct types, kept alive for the whole call; `trump_filter` is a
-                // `[c_int; DDS_STRAINS]` matching the documented `trumpFilter[DDS_STRAINS]`
-                // (`0` everywhere: no strain excluded). `CalcAllTables` is documented
-                // non-reentrant, so this call holds `batch`.
-                unsafe {
-                    sys::CalcAllTables(
-                        dealsp.as_mut(),
-                        -1, // no par calculation (docs/design/10-dds.md §7.1)
-                        trump_filter.as_mut_ptr(),
-                        resp.as_mut(),
-                        presp.as_mut(),
-                    )
-                }
+            let held_slots = rt.slots.acquire_all_slots();
+            // SAFETY: `dealsp`/`resp`/`presp` are heap-allocated, validly sized instances of
+            // their DDS struct types, kept alive for the whole call; `trump_filter` is a
+            // `[c_int; DDS_STRAINS]` matching the documented `trumpFilter[DDS_STRAINS]` (`0`
+            // everywhere: no strain excluded). `CalcAllTables` is documented non-reentrant with
+            // the other bulk calls, and also drives DDS's own per-thread-index state
+            // internally, so this call holds every slot for its duration.
+            let rc = unsafe {
+                sys::CalcAllTables(
+                    dealsp.as_mut(),
+                    -1, // no par calculation (docs/design/10-dds.md §7.1)
+                    trump_filter.as_mut_ptr(),
+                    resp.as_mut(),
+                    presp.as_mut(),
+                )
             };
+            rt.slots.release_all_slots(held_slots);
             if rc != sys::RETURN_NO_FAULT {
                 return Err(dds_error(rc));
             }
@@ -590,12 +671,13 @@ mod backend {
     ) -> Result<FutureTricks, DdsError> {
         let rt = runtime();
         let dl = position_deal(pos)?;
-        let slot = rt.acquire_slot();
+        let slot = rt.slots.acquire_slot();
         let mut fut = zeroed::<sys::futureTricks>();
         // SAFETY: `dl` is passed by value; `fut` is a validly sized `futureTricks` the callee
         // only writes into; `slot` is a thread index this call exclusively holds until it is
         // released just below, matching `SolveBoard`'s per-`threadIndex` reentrancy contract
-        // (docs/design/10-dds.md §7.2 rule 2).
+        // (docs/design/10-dds.md §7.2 rule 2); `acquire_slot` also guarantees no bulk call
+        // holds (or is waiting to hold) every slot at the same time (`SlotPool`'s doc comment).
         let rc = unsafe {
             sys::SolveBoard(
                 dl,
@@ -606,7 +688,7 @@ mod backend {
                 slot,
             )
         };
-        rt.release_slot(slot);
+        rt.slots.release_slot(slot);
         if rc != sys::RETURN_NO_FAULT {
             return Err(dds_error(rc));
         }
@@ -628,13 +710,13 @@ mod backend {
                 bop.mode[i] = mode_code(*mode);
             }
             let mut solvedp = boxed_zeroed::<sys::solvedBoards>();
-            let rc = {
-                let _batch = rt.batch.lock().unwrap_or_else(|e| e.into_inner());
-                // SAFETY: `bop`/`solvedp` are heap-allocated, validly sized `boards`/
-                // `solvedBoards`, kept alive for the whole call. `SolveAllChunksBin` is
-                // documented non-reentrant, so this call holds `batch`.
-                unsafe { sys::SolveAllChunksBin(bop.as_mut(), solvedp.as_mut(), 1) }
-            };
+            let held_slots = rt.slots.acquire_all_slots();
+            // SAFETY: `bop`/`solvedp` are heap-allocated, validly sized `boards`/`solvedBoards`,
+            // kept alive for the whole call. `SolveAllChunksBin` is documented non-reentrant
+            // with the other bulk calls, and also drives DDS's own per-thread-index state
+            // internally, so this call holds every slot for its duration.
+            let rc = unsafe { sys::SolveAllChunksBin(bop.as_mut(), solvedp.as_mut(), 1) };
+            rt.slots.release_all_slots(held_slots);
             if rc != sys::RETURN_NO_FAULT {
                 return Err(dds_error(rc));
             }
@@ -674,13 +756,14 @@ mod backend {
             suit,
             rank,
         };
-        let slot = rt.acquire_slot();
+        let slot = rt.slots.acquire_slot();
         let mut solved = zeroed::<sys::solvedPlay>();
         // SAFETY: `dl`/`trace` are passed by value; `solved` is a validly sized `solvedPlay`
         // the callee only writes into; `slot` is exclusively held for this call, matching
-        // `AnalysePlayBin`'s per-`thrId` reentrancy contract.
+        // `AnalysePlayBin`'s per-`thrId` reentrancy contract; `acquire_slot` also guarantees no
+        // bulk call holds (or is waiting to hold) every slot at the same time.
         let rc = unsafe { sys::AnalysePlayBin(dl, trace, &mut solved, slot) };
-        rt.release_slot(slot);
+        rt.slots.release_slot(slot);
         if rc != sys::RETURN_NO_FAULT {
             return Err(dds_error(rc));
         }
