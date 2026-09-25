@@ -16,7 +16,11 @@ competitive tables. Used by the phase 3 forward-consistency harness, which only
 needs opener's first call to be well defined for every hand.
 
 #INCLUDE openings.bml
+
 #INCLUDE notrump.bml
+
 #INCLUDE strong-2c.bml
+
 #INCLUDE weak-twos.bml
+
 #INCLUDE preempts.bml

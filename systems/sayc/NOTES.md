@@ -160,3 +160,42 @@ comments in the `.bml` files.
     interference); those deeper sequences are left for a future revision and
     are exactly the kind of gaps `xtask coverage` (phase 3.10) is meant to
     surface as `Fallback`/`NoCandidate` nodes rather than wrong bids.
+
+17. **`#INCLUDE` needs a blank line on both sides (`sayc.bml`,
+    `openings-only.bml`).** `#INCLUDE` is a literal textual splice (no
+    inserted blank lines, matching `bss.py`'s own behaviour); with two
+    `#INCLUDE` lines back to back, the last physical line of one included
+    file and the first physical line of the next end up in the very same
+    paragraph, and the next file's own `* Heading` line is then parsed as if
+    it were one more row of the previous file's last bidding table (an
+    unparsable `*` call token, silently dropped along with its subtree, and
+    a phantom `Row` with no real content). Every `#INCLUDE` here is followed
+    by a blank line for exactly this reason; a future new include must keep
+    that blank line.
+
+18. **Responder's follow-up after a Jacoby-transfer acceptance is written
+    with plain numbers, not `INV` (`notrump.bml`).** After 1NT-2!d(transfer
+    to hearts)-2!h(accept) (and the mirrored spade sequence), responder's
+    `Pass`/`2N` choice is `0--7 hcp` / `8--9 hcp`, not `INV`: the `INV`
+    context word looks at *partner's own most recent node* (`partner_last`)
+    to find the opener's shown range, and opener's acceptance bid is written
+    as `unlimited` (correctly -- accepting a transfer restates nothing about
+    the 1NT opening's own 15--17), so `INV` would resolve against an
+    unconstrained partner range instead of the 1NT opening's, giving an
+    empty (`UnsatisfiableConstraint`) result. `3C = INV, 6+!c` and
+    `3D = INV, 6+!d` two rows down are fine as `INV` -- there responder is
+    replying directly to the `1N` opening itself, with no intervening
+    unlimited rebid in between. This file follows the task brief's own
+    "prefer explicit numbers over context words" guidance here rather than
+    trying to make `INV` context-aware of a whole chain of ancestors.
+
+19. **The hearts-transfer continuation table's `4S = 6+!s` was `4H = 6+!h`
+    misspelled, and the mirrored spades-transfer table was missing its own
+    equivalent line (`notrump.bml`).** After accepting a transfer, a
+    responder rebid of four of the *agreed* major with a good 6-card suit is
+    a natural, minimum-strength "I just want you to know I have six" call;
+    written as `4S` under the *hearts* transfer table it named the wrong
+    major entirely (and was unreachable in practice, since the file has no
+    other `4S` there to duplicate it against). Fixed to `4H` under hearts
+    and added as `4S` under the spades table, so both transfers now have the
+    same shape of continuation.

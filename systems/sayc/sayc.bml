@@ -18,11 +18,19 @@ See `systems/sayc/NOTES.md` for the places where the booklet leaves room for jud
 and the choices this file makes there.
 
 #INCLUDE openings.bml
+
 #INCLUDE notrump.bml
+
 #INCLUDE strong-2c.bml
+
 #INCLUDE weak-twos.bml
+
 #INCLUDE preempts.bml
+
 #INCLUDE responses-major.bml
+
 #INCLUDE responses-minor.bml
+
 #INCLUDE rebids.bml
+
 #INCLUDE competition.bml
