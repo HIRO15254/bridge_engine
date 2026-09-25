@@ -35,8 +35,7 @@ pub fn arb_ltc_method() -> impl Strategy<Value = LtcMethod> {
     prop_oneof![Just(LtcMethod::Classic), Just(LtcMethod::New)]
 }
 
-/// The distribution-point methods; usable only in tests marked `#[ignore]` (they call
-/// `bridge_eval::distribution_points`, which is `todo!()` until bridge-eval 2.1 lands).
+/// The distribution-point methods.
 pub fn arb_dist_method() -> impl Strategy<Value = DistMethod> {
     prop_oneof![
         Just(DistMethod::GOREN_321),
