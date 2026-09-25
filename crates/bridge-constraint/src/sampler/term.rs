@@ -62,13 +62,7 @@ fn plain_suit_table(p: Holding, f: Holding) -> Arc<SuitTable> {
     if p == Holding::FULL && f == Holding::EMPTY {
         full_suit()
     } else {
-        Arc::new(SuitTable::build(
-            p,
-            f,
-            |_| true,
-            |h| pack_key(holding_hcp(h), 0),
-            DENSE_NK_NO_X,
-        ))
+        Arc::new(SuitTable::build_plain(p, f))
     }
 }
 

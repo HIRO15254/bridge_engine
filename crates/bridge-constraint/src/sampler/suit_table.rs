@@ -122,7 +122,52 @@ impl SuitTable {
             let d = dense_index(key(h), nk);
             hist[len * nk + d] += 1;
         }
+        SuitTable::from_hist(pool, fixed, hist, filter, key, nk)
+    }
 
+    /// The table [`SuitTable::build`] returns for a trivial filter and the plain HCP key
+    /// (`pack_key(holding_hcp(h), 0)`, `nk = DENSE_NK_NO_X`), with the first enumeration pass
+    /// (the `(len, hcp)` histogram) replaced by a closed form: HCP depends only on which of the
+    /// pool's honours (A K Q J) are taken, so for each of the at most 16 honour subsets the
+    /// `C(spots, k)` ways to add `k` of the pool's spot cards all land in the same HCP column.
+    /// Only the placement pass still enumerates, in the same order as `build`, so the result is
+    /// identical to `build`'s (checked by a unit test).
+    pub(crate) fn build_plain(pool: Holding, fixed: Holding) -> SuitTable {
+        const HONOURS: u16 = 0b1_1110_0000_0000; // A K Q J (bits 12..=9).
+        let nk = DENSE_NK_NO_X;
+        let pool_honours = Holding::from_bits(pool.bits() & HONOURS).expect("subset of a holding");
+        let spots = u32::from(pool.len() - pool_honours.len());
+        let mut hist = vec![0u32; 14 * nk];
+        for honours in pool_honours.submasks() {
+            let base = honours.union(fixed);
+            let hcp = usize::from(bridge_eval::holding_hcp(base));
+            let base_len = usize::from(base.len());
+            let mut ways = 1u32; // C(spots, k), updated incrementally.
+            for k in 0..=spots {
+                hist[(base_len + k as usize) * nk + hcp] += ways;
+                ways = ways * (spots - k) / (k + 1);
+            }
+        }
+        SuitTable::from_hist(
+            pool,
+            fixed,
+            hist,
+            |_| true,
+            |h| pack_key(bridge_eval::holding_hcp(h), 0),
+            nk,
+        )
+    }
+
+    /// Everything [`SuitTable::build`] does after its histogram pass: offsets, the placement
+    /// pass (which must enumerate in `build`'s order), and the sparse per-length counts.
+    fn from_hist(
+        pool: Holding,
+        fixed: Holding,
+        mut hist: Vec<u32>,
+        filter: impl Fn(Holding) -> bool,
+        key: impl Fn(Holding) -> u16,
+        nk: usize,
+    ) -> SuitTable {
         // Prefix-sum each length's row into `start` (row width `nk + 1`, the trailing entry being
         // the row's total).
         let mut start = vec![0u32; 14 * (nk + 1)];
@@ -442,6 +487,66 @@ mod tests {
                 }
             }
             assert_eq!(reconstructed, optimized.holdings);
+        }
+    }
+
+    /// `build_plain`'s closed-form histogram must give exactly `build`'s table (holdings in the
+    /// same order, same offsets and counts) for the plain filter/key, over many pool/fixed splits
+    /// (including empty pools, pools without honours or without spots, and fixed honours).
+    #[test]
+    fn build_plain_matches_build() {
+        let mut state = 0x1234_5678_9ABC_DEF0u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state & 0x1FFF) as u16
+        };
+        let mut cases = vec![
+            (Holding::FULL, Holding::EMPTY),
+            (Holding::EMPTY, Holding::EMPTY),
+            (
+                Holding::EMPTY,
+                Holding::from_bits(0b1_0000_0000_0011).unwrap(),
+            ),
+            (
+                Holding::from_bits(0b0_0001_1111_1111).unwrap(),
+                Holding::EMPTY,
+            ),
+            (
+                Holding::from_bits(0b1_1110_0000_0000).unwrap(),
+                Holding::EMPTY,
+            ),
+        ];
+        for _ in 0..300 {
+            let a = next();
+            let b = next();
+            cases.push((
+                Holding::from_bits(a & !b).unwrap(),
+                Holding::from_bits(b & !a & next()).unwrap(),
+            ));
+        }
+        for (pool, fixed) in cases {
+            let plain = SuitTable::build_plain(pool, fixed);
+            let reference = SuitTable::build(
+                pool,
+                fixed,
+                |_| true,
+                |h| pack_key(bridge_eval::holding_hcp(h), 0),
+                DENSE_NK_NO_X,
+            );
+            assert_eq!(
+                plain.holdings, reference.holdings,
+                "pool={pool:?} fixed={fixed:?}"
+            );
+            assert_eq!(
+                plain.start, reference.start,
+                "pool={pool:?} fixed={fixed:?}"
+            );
+            assert_eq!(
+                plain.counts, reference.counts,
+                "pool={pool:?} fixed={fixed:?}"
+            );
         }
     }
 
