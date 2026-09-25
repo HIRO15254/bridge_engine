@@ -1304,12 +1304,69 @@ fn build_or_reuse_node(
     );
 
     match insert_result {
-        Ok(()) => Some(node_id),
+        Ok(()) => {
+            if !row.description.text.trim().is_empty() {
+                fill_covered_placeholders(node_id, we_opened_of(next_frame), next_frame, ex);
+            }
+            Some(node_id)
+        }
         Err(existing) => {
             let new_node = ex.nodes.pop().expect("just pushed");
             handle_duplicate(row_id, existing, new_node, ex);
             Some(existing)
         }
+    }
+}
+
+/// The mirror image of `build_or_reuse_node`'s `covering_entry` guard, for the opposite file
+/// order: a more specific, empty-description entry for the same call (typically a history token
+/// re-traced under a `#SEAT`/`#VUL` table that came *before* the general definition, e.g. through
+/// `#INCLUDE` order) was inserted first, so it would outrank the general `node_id` at lookup for
+/// its narrower condition with a blank description and `HandConstraint::ANY`. Every such
+/// placeholder that `node_id`'s condition covers is filled with `node_id`'s compiled content
+/// (keeping its own id, children and `#SEAT`/`#VUL` condition), exactly like
+/// [`handle_duplicate`]'s fill for an identical condition, so lookup gives the same meaning
+/// whichever order the two definitions appear in.
+///
+/// Known limit: rows below the placeholder that were already expanded were compiled with the
+/// placeholder's `ANY` constraint as their `own_prev`/`partner_last` context; only the node
+/// itself is repaired here.
+fn fill_covered_placeholders(
+    node_id: NodeId,
+    we_opened: bool,
+    next_frame: &Frame,
+    ex: &mut Expansion,
+) {
+    let (seat, vul) = {
+        let n = &ex.nodes[node_id.0 as usize];
+        (n.seat, n.vul)
+    };
+    for placeholder in ex
+        .trie
+        .covered_entries(we_opened, &next_frame.edges, seat, vul)
+    {
+        if placeholder == node_id || !ex.nodes[placeholder.0 as usize].description.is_empty() {
+            continue;
+        }
+        let template = ex.nodes[node_id.0 as usize].clone();
+        let target = &mut ex.nodes[placeholder.0 as usize];
+        let children = std::mem::take(&mut target.children);
+        *target = Node {
+            id: placeholder,
+            children,
+            seat: target.seat,
+            vul: target.vul,
+            ..template
+        };
+        ex.lints.push(
+            Lint::info(
+                LintCode::DuplicatePath,
+                "a later, less specific definition filled this more specific placeholder's \
+                 empty description",
+            )
+            .with_row(ex.nodes[node_id.0 as usize].row)
+            .with_node(placeholder),
+        );
     }
 }
 

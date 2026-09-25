@@ -121,7 +121,6 @@ fn pattern_catch_all_after_a_pattern_row_is_silently_skipped() {
 // Review #10: a seat-specific table whose history retraces `1H` with no description, placed
 // before the general `1H` definition, must not shadow it in 3rd/4th seat.
 #[test]
-#[ignore = "review #10: fixed in the next commit"]
 fn seat_specific_placeholder_before_the_general_row_does_not_shadow_it() {
     let (ir, lints) =
         compile_default("#SEAT 34\n\n1H-\n2C  drury\n\n#SEAT 0\n\n1H  5+!h, 12+ hcp\n");
