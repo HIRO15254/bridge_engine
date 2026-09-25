@@ -335,7 +335,7 @@ pub struct Position<'a> {
 
 pub enum Target { Max, ListLegal, Tricks(u8) }        // -1 / 0 / 1..=13
 pub enum Solutions { One, AllOptimal, AllRanked }     // 1 / 2 / 3 (AllRanked = every legal card scored; the lead advisor's query)
-pub enum Mode { Auto, Search, ReuseTable }            // 0 / 1 / 2
+pub enum Mode { Auto, Search, ReuseTable }            // DDS には常に 1 を渡す (§7.4)
 
 pub struct CardScore { pub card: Card, pub equals: Holding, pub score: u8 }   // `equals`: lower cards of the same suit with the same score
 pub struct FutureTricks { pub nodes: u32, pub cards: Vec<CardScore> }
@@ -358,7 +358,7 @@ pub enum DdsError {
 }
 ```
 
-（5.5–5.7 の見直しで `Deal(#[from] DealError)` と `TooManyBoards(usize)` は削除した: `calc_dd_tables`/`solve_all_boards` は内部でチャンク分割するので `TooManyBoards` を構築する経路が無く、`Deal` から不正な `Deal` を作る経路もこのクレートには無い — どちらも宣言されているだけで一度も構築されない死んだヴァリアントだった。実際に発生する不正は `Code`（DDS 自身の戻りコード、または `trick` の検証失敗をラッパーが `RETURN_SUIT_OR_RANK`/`RETURN_DUPLICATE_CARDS` として合成したもの）だけなので、`match` で網羅していても取りこぼしは無い。）
+（5.5–5.7 の見直しで `Deal(#[from] DealError)` と `TooManyBoards(usize)` は削除した: `calc_dd_tables`/`solve_all_boards` は内部でチャンク分割するので `TooManyBoards` を構築する経路が無く、`Deal` から不正な `Deal` を作る経路もこのクレートには無い — どちらも宣言されているだけで一度も構築されない死んだヴァリアントだった。実際に発生する不正は `Code`（DDS 自身の戻りコード、または `trick`/`target` の検証失敗をラッパーが `RETURN_SUIT_OR_RANK`/`RETURN_DUPLICATE_CARDS`/`RETURN_CARD_COUNT`/`RETURN_TARGET_WRONG_HI` として合成したもの。§7.4）だけなので、`match` で網羅していても取りこぼしは無い。）
 
 `Position` にコンストラクタは無い: オープニングリードは `Position { deal, trump, leader: contract.leader(), trick: &[] }`、プレイ途中は残りカードの `Deal` (13 枚ずつでない配牌は `Deal` にならないので、`solve_board` は `deal` から `trick` と既出カードを引いた残りを内部で `remainCards` に変換する) と `history.current_trick()` を渡す。`ParResult.contracts` は `parResultsMaster.contracts` を DDS の文字列形式 (`"NS 4S"` 等) に整形したもので、構造化した `ParContract` 型は持たない。
 
@@ -382,11 +382,25 @@ pub enum DdsError {
 2. `SolveBoard` と `AnalysePlayBin` は `thrId` (0..threads) ごとに独立した作業領域を使うので、空きスロットを 1 つ貸し出す間だけ並行して呼べる。空きが無ければ `Condvar` で待つ (非ブロッキング版は持たない)。
 3. `SolveAllChunksBin`、`CalcAllTables`、`CalcDDtable`、`AnalyseAllPlaysBin` は 2.9 のドキュメント通り非再入である「だけ」ではなく、バルク呼び出し自身も DDS 内部でこの同じ `thrId` 空間 (`track[]` などの per-thread-index 状態) を使って複数スレッドを回す。そのためバルク呼び出しは `slots` の全スロットを (空くまで `Condvar` で待って) 取ってから DDS を呼び、呼び終えたら全部返す。単に別の `Mutex` でバルク呼び出し同士だけを排他しても、バルク呼び出し中に外部から `solve_board`/`analyse_play` が同じ `thrId` に触れてしまい、DDS 内部状態が壊れる (`Moves::GetTrickData` の `"Sum N is not four"` や `ABsearch.cpp` のアサート落ち。`--include-ignored` で `masterdd_matches_upstream` と `list100_matches_upstream` が同一プロセス内で並行実行されたときに実際に踏んだ)。`tests/concurrency.rs` の `concurrent_bulk_and_slot_calls_do_not_corrupt_each_other` はこの組み合わせの恒久的な回帰テスト (元の再現手順はその場限りのリポプロで、コミットされたテストは無かった)。`acquire_slot` はバルク呼び出しが待機/保持中は新規スロットを渡さない (`batch_waiting` フラグ) ので、バルク呼び出し側が `solve_board`/`analyse_play` の絶え間ない要求で永久に待たされることもない。バルク呼び出しは DDS 内部で全スレッドを使うため、同時に `solve_board` を走らせても速くならない。
 4. `FreeMemory()` はプロセス寿命の間呼ばない (ドキュメントに明記)。
-5. `Runtime` は `Send + Sync`。`Position` の検証 (`trick.len() <= 3`、`trick` のカードが `deal` に含まれる、枚数の整合) はラッパーで行い、それ以外の不正は DDS の戻りコードを `DdsError::Code` に変換する (`ErrorMessage` の 80 バイト行)。
+5. `Runtime` は `Send + Sync`。`Position` の検証 (`trick.len() <= 3`、`trick` に重複が無い、`trick[i]` の持ち主が `leader` から数えて i 番目の席 = 枚数の整合) と `Target::Tricks(n)` の `n <= 13` はラッパーで行い (§7.4)、それ以外の不正は DDS の戻りコードを `DdsError::Code` に変換する (`ErrorMessage` の 80 バイト行。全メッセージは 80 バイト未満で、未知のコードには `"Not a DDS error code"` が入る)。
+6. スロットは `acquire_slot`/`acquire_all_slots` が返す RAII ガード (`SlotGuard`/`AllSlotsGuard`) の `Drop` で返却する。取得から返却までの間に Rust 側のパニックが起きてもスロットが漏れない (漏れると以後のバルク呼び出しが永久に待つ)。ロックは FFI 呼び出しの全区間で保持され、呼び出しが戻った直後に `drop` で明示的に返す。
 
 ### 7.3 `popen` メモリ探索の緩和 (R6)
 
 2.9 の `System.cpp` は搭載メモリを macOS で `popen("sysctl -n hw.memsize")`、Linux で `popen("free -k …")` により調べる。サンドボックスやコンテナではこれが失敗し、既定値が不適切になりうる。対策として `DdsConfig::default()` (`max_memory_mb = 0`) は 0 を DDS に渡さず、`threads × 95` MB を明示して `SetResources` に渡す。`info()` の `threads` と `system` で DDS が実際に何を設定したかを確認でき、`tests/concurrency.rs` はこれを検査する。
+
+### 7.4 5.5–5.7 の健全性レビューで直したもの
+
+`unsafe` の見直し (全 FFI 構造体が `#[repr(C)]` でレイアウトテスト済み、大きな構造体 (`boards`/`solvedBoards`/`ddTableDeals`/`ddTablesRes`/`allParResults`) はヒープ確保、1 スロットを 2 スレッドが同時に使わない、非再入呼び出しのロックを呼び出し全体で保持) は問題なし。Rust から C へコールバックを渡す箇所は無いので Rust のパニックが FFI を越えることは無い。一方、次の 5 点は実際の不具合で、いずれも修正前に失敗するテストを付けた。
+
+1. **`Mode::ReuseTable` (DDS mode 2) でセグフォルト**。mode 2 は前回の呼び出しと同じ配牌・切り札かを確かめずに置換表のリセットを省く (`SolverIF.cpp`)。これが正しいのは「同じ `thrId` の前回の呼び出し」が同じ配牌・切り札だったときだけで、スロットを呼び出しごとに貸し出すこのラッパーでは呼び出し側に保証する手段が無い。無関係な配牌の置換表が残ったスロットで mode 2 を呼ぶと DDS 内部で SIGSEGV (安全な Rust から到達可能な未定義動作)。`tests/reuse_table.rs` (DDS を 1 スレッドに固定して必ず同じスロットに当てる) が再現する。
+2. **`Mode::Auto` (DDS mode 0) の強制 1 枚で得点 0**。mode 0 は合法手が 1 枚だけの局面を探索せずに返し、得点に番兵 `-2` を入れる。ラッパーは負値を 0 に丸めていたので、たとえば途中局面でシングルトンをフォローする手番の得点が誤って 0 トリックになった (`tests/edge_cases.rs`)。
+   → 1 と 2 の対策として `Mode` の 3 値はすべて DDS に `1` (常に探索) として渡す。`Mode` 型は互換のため残し、rustdoc に理由を書いた。失うものは無い: mode 0/1 でも DDS は同じ `thrId` で配牌が同一か類似 (同じボードの後の局面など) かつ切り札が同じなら置換表を自動で引き継ぐ。mode 0 の近道が効くのは合法手 1 枚の局面だけで、その場合も探索量は同じボードの通常局面と変わらない。
+3. **DDS の入力エラーでカレントディレクトリに `dump.txt`**。`SolveBoard` の入力検査 (`BoardRangeChecks`/`BoardValueChecks`) は失敗のたびに `DumpInput` で `dump.txt` を書く。型付き API から到達できたのは `Target::Tricks(n > 13)` (`RETURN_TARGET_WRONG_HI`) と手番違いの `trick` カード (`RETURN_CARD_COUNT`) の 2 つで、どちらもラッパーが DDS を呼ぶ前に同じコードで弾くようにした (`check_target`、`position_deal`)。`Position` は常に完全な配牌から高々 3 枚を引いたものなので 13 トリックが残り、`RETURN_TARGET_TOO_HIGH` 等の他の検査には到達しない。`analyse_play` は合法性検査済みの `PlayHistory` しか受け取らない。
+4. **C++ 例外が `extern "C"` を越えて Rust へ巻き戻る**。DDS は例外を一切捕まえないので、コンテナの `std::bad_alloc` や STL スレッドの `std::system_error` がそのまま Rust のフレームへ巻き戻る (未定義動作)。`src/ffi_guard.cpp` に `noexcept` の薄いラッパー (`bdds_SolveBoard` 等、ラッパーが呼ぶ全エントリポイント + `SetResources`/`GetDDSInfo`) を置き、`catch (...)` を `RETURN_UNKNOWN_FAULT` に変える。`lib.rs` はこれらだけを呼ぶ (`ErrorMessage` は `strcpy` の `switch` なので投げない)。`SetResources` の失敗は `tracing::error!` で報告する。
+5. **ファサードの `lead_scores` が同等カードを落とす** (§9)。
+
+あわせて、DDS から読み戻す枚数 (`futureTricks.cards`、`solvedPlay.number`、`parResultsMaster.number`) は配列長で頭打ちにし、壊れた値でも範囲外添字にならないようにした。`DealerParBin` は書き込み可能な大域状態を持たない (`DealerPar.cpp` の大域は読み取り専用の表だけ) ことを確認したので、ロックなしのままとする。
 
 ## 8. テスト
 
@@ -398,7 +412,16 @@ pub enum DdsError {
 | 並行 `SolveBoard` | `tests/concurrency.rs` | 8 スレッド × 100 局面を `solve_board`、逐次実行の結果と比較。`info().threads` の確認 | エラー 0、結果一致 |
 | `analyse_play` | `tests/differential.rs` | `list100.txt` の `PLAY`/`TRACE` 行 | 一致 |
 | `dealer_par` | 同 | `PAR` 行 | 一致 |
-| ベンチ | `benches/dds.rs` | `calc_dd_table`、`solve_board(AllRanked)` | 目標なし。数値を記録 |
+| バッチ境界 | `tests/batching.rs` | `calc_dd_tables` を 39/40/41 件、`solve_all_boards` を 199/200/201 件で呼び、単発の結果と比較。空入力 | 全件一致 |
+| バルクとスロットの混在 | `tests/concurrency.rs` | `calc_dd_tables`/`solve_all_boards` と他スレッドの `solve_board` を同時に走らせる (§7.2 規則 3 の回帰テスト) | 異常終了なし、結果一致 |
+| `init` の冪等性 | `tests/init.rs` (専用バイナリ) | 2 回目の `init` が別設定でもエラーにならず最初の設定を保つ | 一致 |
+| エラー経路 | `tests/edge_cases.rs`、`tests/position_trick.rs` | `Target::Tricks(14)`、手番違い・重複・4 枚の `trick` が `DdsError::Code` になり `dump.txt` が作られない。強制 1 枚の局面が全 `Mode`/`Solutions` で正しい得点 | 期待コード、ファイルなし |
+| `ReuseTable` | `tests/reuse_table.rs` (専用バイナリ、DDS 1 スレッド) | 無関係な配牌の後の `Mode::ReuseTable` が新規探索と一致 (§7.4) | 一致、クラッシュなし |
+| 計時 | `tests/timing.rs` (`#[ignore]`、release) | 疑似乱数 100 配牌で `calc_dd_table`、`calc_dd_tables`、`solve_board(AllRanked)` の平均時間 | 目標なし。数値を記録 (下記) |
+
+`NoSlot` 相当のエラーは無い: スロットが空かなければ `Condvar` で待つ (§7.2 規則 2)。`TooManyBoards` も無い: 上限を超える入力は内部で分割する (§7 の注記)。
+
+計時 (2026-09-26、10 コアの macOS、release、`tests/timing.rs`、3 回の最良値。別ワークフローのビルドと同時実行のため `vm.loadavg` を併記): `calc_dd_table` 78.8 ms/配牌 (load 7.55)、`calc_dd_tables` 36.3 ms/配牌 (load 7.55)、`solve_board(Target::Max, AllRanked)` 40.0 ms/回 (load 10.00)。`calc_dd_table` と `calc_dd_tables` は DDS 内部で全スレッドを使う値、`solve_board` は 1 スロットでの逐次値。負荷の高い環境での値なので上限の目安として扱う。
 
 ## 9. ファサード `bridge::dd`
 
@@ -428,7 +451,8 @@ pub mod dd {
 
 - `DdTable` は DDS なしでも使える (PBN の `OptimumResultTable` の読み書き、`03-format.md` §2.2)。定義は `bridge-core` に置き、ここで再エクスポートする。
 - `DoubleDummy` の引数は `bridge-core` の型だけ (`Deal`, `Strain`, `Seat`, `Card`) なので、`dds` feature の有無でトレイトの形は変わらない。`Position` 等の `bridge-dds` の型はファサードから再エクスポートしない: 細かい制御が要るアプリは `bridge-dds` に直接依存する。
-- `dds()` は `cfg(all(feature = "dds", not(target_arch = "wasm32")))` かつ `bridge_dds::is_available()` のときだけ `Some` を返す。バックエンドは `calc_dd_table` と `solve_board(Target::Max, Solutions::AllRanked, Mode::Auto)` を呼び、`DdsError` は `DdError::Backend(e.to_string())` に写す。
+- `dds()` は `cfg(all(feature = "dds", not(target_arch = "wasm32")))` かつ `bridge_dds::is_available()` のときだけ `Some` を返す。バックエンドは `calc_dd_table` と `solve_board(Target::Max, Solutions::AllRanked, Mode::Auto)` を呼び、`DdsError` は `DdError::Backend(e.to_string())` に写す。DDS の `AllRanked` は同等カードの代表 1 枚だけを返し、残りを `equals` に入れるので、`lead_scores` は `equals` を展開して手札の全カードを (代表と同じ得点で) 返す (5.5–5.7 の見直しまでは代表だけを返しており、`AKQ2.T98.T98.T98` で 13 枚中 5 枚しか返らなかった。`tests/dds.rs` の `lead_scores_lists_every_card_including_equivalent_ones`)。
+- `tests/dd_from_pbn.rs`: DDS なしで PBN の `OptimumResultTable` から `DdTable` を読めることと、DDS があるときはその表が `dds()` での計算結果と一致することを確かめる。`tests/dd_without_feature.rs` は `dds` feature なしで `dds()` が `None` を返すこと、`tests/dds.rs` の `dds_none_iff_unavailable` は feature ありで `dds().is_some() == is_available()` を確かめる。
 - 上位アプリは `bridge::dd::dds()` が `None` なら `DdError::Unavailable` を扱う。wasm では常に `None`。
 
 ## 10. `xtask` コマンド

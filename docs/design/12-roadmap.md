@@ -108,6 +108,8 @@
 
 完了条件: オークションから配牌をサンプリングして ESS が要求数の 50% 以上、DDS FFI が動きサンプル配牌の解析結果が返る。
 
+5.5–5.7 の検証状況 (2026-09-26、`wip/p5dds`): `list100.txt` で `calc_dd_table`/`solve_board`/`analyse_play`/`dealer_par` がそれぞれ 100/100 一致、バッチ版は `calc_dd_tables` 45/45・`solve_all_boards` 201/201 (チャンク境界越え) 一致。8 スレッド × 100 局面の並行 `solve_board` が逐次と一致 (release)。チャンク境界 39/40/41・199/200/201、バルクとスロット呼び出しの混在、`init` の冪等性、エラー経路 (`Target::Tricks(14)`、手番違い・重複・4 枚の `trick`) のテストあり。`unsafe` の見直しで実際の不具合 5 件を修正 (`10-dds.md` §7.4: `Mode::ReuseTable` のセグフォルト、`Mode::Auto` の強制 1 枚で得点 0、DDS の `dump.txt` 書き出し、C++ 例外の Rust への巻き戻り、`lead_scores` が同等カードを落とす)。ファサードは `dds` feature の有無の両方で `dds()` が `None`/`Some` を返し、`DdTable` は DDS なしで PBN から読める。wasm check は緑。計時 (release、負荷下): `calc_dd_table` 78.8 ms/配牌、`calc_dd_tables` 36.3 ms/配牌、`solve_board(AllRanked)` 40.0 ms/回 (`10-dds.md` §8)。
+
 ## 7. フェーズ 6: オープニングリードアドバイザ (別クレート)
 
 | id | 内容 | 証明 / 完了基準 |
