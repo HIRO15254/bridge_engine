@@ -1,9 +1,13 @@
 //! SAYC (`systems/sayc/*.bml`, roadmap 3.5/4.2-4.4, `docs/design/12-roadmap.md`) compiles
 //! cleanly against the description-compiler vocabulary: zero `Error`-severity lints, no
-//! `HandConstraint::Custom` anywhere, a per-file mean description-recognition ratio of at least
-//! 0.9 (this file is written for this compiler, `systems/sayc/NOTES.md`), and every compiled
-//! node's constraint is satisfiable (`bridge_constraint::HandConstraint::is_satisfiable`, backed
-//! by the sampler, not skipped).
+//! `HandConstraint::Custom` anywhere, no `Warning`-severity `SiblingSubset` lint on any Us-side
+//! node with a non-empty description (a bid that "can never be reached" because an earlier,
+//! equal-priority sibling's constraint already covers it -- the exact shape of the blocker this
+//! lane's review found: an unconstrained unusual-2NT row swallowing every 1-level overcall,
+//! `systems/sayc/NOTES.md`), a per-file micro-averaged description-recognition ratio
+//! (`Σcovered / Σtotal`, grouped by `Row.span.file`, per §7.7) of at least 0.9 for every included
+//! file, and every compiled node's constraint is satisfiable
+//! (`bridge_constraint::HandConstraint::is_satisfiable`, backed by the sampler, not skipped).
 //!
 //! A separate sanity check (not the phase-3.10 `forward_consistency`/`coverage_report.json`
 //! harness, which lives in `bridge-bidding` and is out of this lane's scope) samples 10^5 random
@@ -14,11 +18,14 @@
 
 mod common;
 
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use bridge_constraint::HandConstraint;
 use bridge_core::{Auction, Call, Hand, Seat, Vulnerability};
-use bridge_system::{CompileOptions, LookupKey, NodeId, RelVul, Severity, SystemIR};
+use bridge_system::{
+    CompileOptions, LintCode, LookupKey, NodeId, RelVul, Severity, Side, SystemIR,
+};
 
 /// Compiles one `systems/sayc/<name>` file with `FsLoader`, panicking (not skipping) on any
 /// I/O error: unlike the vendored-corpus tests, this file is checked into the repo and must
@@ -96,19 +103,108 @@ fn sayc_compiles_with_zero_errors_and_no_custom() {
     }
 }
 
+/// R9 (review, blocker + major findings): a `Warning`-severity `SiblingSubset` lint on a Us-side
+/// node whose description is non-empty means that node's bid can never be chosen by `choose_bid`
+/// -- an earlier, equal-priority sibling's constraint already covers every hand that would
+/// satisfy it (`docs/design/06-system.md` §9.3 point 6). This is exactly the shape of the
+/// blocker this lane's review found (`(1X)- 2N = !UNT` with no shape, ranked ahead of every
+/// 1-level overcall) and of several of its major findings, so it is asserted here directly rather
+/// than left to a manual read of the lint list. A node with an *empty* description (a bare
+/// history retrace, or a row whose own description compiled to nothing) is excluded: it carries
+/// no authored intent to protect, unlike a real bid.
 #[test]
-fn sayc_recognition_ratio_is_at_least_0_9() {
+fn sayc_has_no_reachability_hiding_sibling_subset_warnings() {
     for name in ["sayc.bml", "openings-only.bml"] {
         let (ir, _) = compile_sayc(name);
-        let (sum, n) = ir.rows.iter().fold((0.0f64, 0usize), |(s, n), r| {
-            (s + r.recognition.ratio as f64, n + 1)
-        });
-        let mean = if n > 0 { sum / n as f64 } else { 1.0 };
-        eprintln!("sayc: {name} recognition ratio: mean {mean:.4} over {n} rows");
+        let hidden: Vec<String> = ir
+            .lints
+            .iter()
+            .filter(|l| l.code == LintCode::SiblingSubset && l.severity == Severity::Warning)
+            .filter_map(|l| {
+                let node_id = l.node?;
+                let node = ir.node(node_id);
+                (node.side == Side::Us && !node.description.is_empty()).then(|| {
+                    format!(
+                        "  {:?} ({:?}) at {:?}: {}",
+                        node.id, node.description, l.span, l.message
+                    )
+                })
+            })
+            .collect();
         assert!(
-            mean >= 0.9,
-            "{name}: mean description-recognition ratio {mean:.4} is below the 0.9 target"
+            hidden.is_empty(),
+            "{name}: {} Us-side node(s) with a non-empty description are unreachable behind an \
+             earlier, equal-priority sibling (Warning-severity SiblingSubset):\n{}",
+            hidden.len(),
+            hidden.join("\n")
         );
+    }
+}
+
+/// The `#INCLUDE` order `sayc.bml` and `openings-only.bml` both use (`systems/sayc/NOTES.md`
+/// #17), so a compiled `Span.file` (a bare `FileId`) can be reported back as a filename in test
+/// output. This is a test-only convenience, not a compiler API: it re-reads the root file's own
+/// `#INCLUDE` lines textually, the same order `bridge_system::lexer` resolves them in, and does
+/// not follow transitive includes (none of these files include a file that itself includes
+/// another).
+fn included_file_names(root_name: &str) -> Vec<String> {
+    let root_path = common::systems_dir().join("sayc").join(root_name);
+    let text = std::fs::read_to_string(&root_path)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", root_path.display()));
+    let mut names = vec![root_name.to_string()];
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("#INCLUDE ") {
+            names.push(rest.trim().to_string());
+        }
+    }
+    names
+}
+
+/// R9 (review, minor finding): §7.7's recognition ratio is a *micro*-average
+/// (`Σcovered / Σtotal`, not a mean of per-row ratios, which over- or under-weights short and
+/// long descriptions differently) and is reported *per included file* (`Row.span.file`), not
+/// pooled across the whole compiled system the way a single root-level mean would: `sayc.bml`
+/// pulls in nine files of very different sizes, and a mean over all of their rows together could
+/// hide one weak file behind several strong ones. Rows with an empty description
+/// (`recognition.total == 0`: a bare history retrace, not an authored bid) are excluded from both
+/// sums, matching `check_recognition`'s own skip (`crates/bridge-system/src/lint.rs`).
+#[test]
+fn sayc_recognition_ratio_is_at_least_0_9_per_file() {
+    for name in ["sayc.bml", "openings-only.bml"] {
+        let (ir, _) = compile_sayc(name);
+        let names = included_file_names(name);
+
+        let mut by_file: BTreeMap<u16, (u64, u64)> = BTreeMap::new();
+        for row in &ir.rows {
+            if row.recognition.total == 0 {
+                continue;
+            }
+            let entry = by_file.entry(row.span.file.0).or_insert((0, 0));
+            entry.0 += u64::from(row.recognition.covered);
+            entry.1 += u64::from(row.recognition.total);
+        }
+
+        assert!(
+            !by_file.is_empty(),
+            "{name}: no row had a non-empty description to measure recognition over"
+        );
+
+        for (file, (covered, total)) in &by_file {
+            let ratio = *covered as f64 / *total as f64;
+            let label = names
+                .get(*file as usize)
+                .map(String::as_str)
+                .unwrap_or("<unknown file>");
+            eprintln!(
+                "sayc: {name}: {label} (file {file}) recognition ratio {ratio:.4} \
+                 ({covered}/{total} words)"
+            );
+            assert!(
+                ratio >= 0.9,
+                "{name}: {label} (file {file}) recognition ratio {ratio:.4} \
+                 ({covered}/{total} words) is below the 0.9 target"
+            );
+        }
     }
 }
 
@@ -136,6 +232,44 @@ fn sayc_every_node_is_satisfiable() {
                 .map(|(id, desc)| format!("  {id:?}: {desc:?}"))
                 .collect::<Vec<_>>()
                 .join("\n")
+        );
+    }
+}
+
+/// R9 (review, minor finding): `competition.bml`'s balancing table is keyed on the literal
+/// history `(1X)-P-(P)-`, which (per `docs/design/06-system.md` §6, matching upstream `bss.py`
+/// convention: "describe every call including passes") spells out *our own* first pass as an
+/// explicit call in the row's path. That makes it a genuine, row-defined `Side::Us` node with no
+/// description of its own to compile -- unlike the *implicit* pass complement used everywhere
+/// else a hand simply doesn't fit any of its siblings (§4.1 step 5.1 in `07-bidding.md`) -- so it
+/// compiles to an unconstrained `Atom::ANY`. That is the only sound reading available (the BML
+/// vocabulary has no way to write "the complement of the direct-seat actions" by hand, and this
+/// row has no direct-seat siblings of its own to be a complement of), but it was previously
+/// unasserted, so a future change narrowing it (or a duplicate direct-seat/balancing node mixup)
+/// would have compiled silently. This pins the current, deliberate behavior down: the row exists
+/// and is satisfied by every hand, weak ones included.
+#[test]
+fn sayc_balancing_pass_history_token_is_unconstrained() {
+    let (ir, _) = compile_sayc("sayc.bml");
+    let balancing_pass_nodes: Vec<_> = ir
+        .nodes
+        .iter()
+        .filter(|n| n.side == bridge_system::Side::Us && n.call == Call::Pass && n.calls.len() == 2)
+        .collect();
+    assert!(
+        !balancing_pass_nodes.is_empty(),
+        "sayc.bml: expected at least one Us-side Pass node one call after a 1-level opening \
+         (the `(1X)-P-(P)-` balancing table's own history token)"
+    );
+    // A hand with nothing at all still has to be able to "make" this pass: it must not have
+    // picked up some accidental hcp/shape constraint from a neighboring row.
+    let hopeless = common::hand("7432", "432", "432", "432");
+    for node in &balancing_pass_nodes {
+        assert!(
+            node.constraint.satisfies(hopeless),
+            "sayc.bml: node {:?} (the balancing table's own history pass) rejected a 0-hcp hand; \
+             it should be unconstrained",
+            node.id
         );
     }
 }
