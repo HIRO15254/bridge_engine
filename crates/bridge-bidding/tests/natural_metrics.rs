@@ -37,7 +37,9 @@ mod common;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use bridge_bidding::{BidChoice, BidContext, ImplicitPass, PolicyParams, Scoring, choose_bid};
+use bridge_bidding::{
+    BidChoice, BidContext, ImplicitPass, PolicyParams, Scoring, Table, choose_bid,
+};
 use bridge_constraint::{HandConstraint, SampleOptions, Sampler};
 use bridge_core::{Auction, Call, Deal, Hand, Seat, Vulnerability};
 use bridge_format::pbn;
@@ -598,11 +600,11 @@ struct ReproductionReport {
 }
 
 fn run_reproduction(sources: &[CompiledSource]) -> ReproductionReport {
-    let natural = NaturalInference::default();
+    let natural = std::sync::Arc::new(NaturalInference::default());
     let opts = SampleOptions::default();
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x5265_7072_6f31_3233); // "Repro123"
 
-    let system = empty_system();
+    let table = Table::uniform(std::sync::Arc::new(empty_system()), natural.clone());
     let bid_ctx = BidContext {
         scoring: Scoring::Mp,
         natural: Some(&natural),
@@ -657,7 +659,7 @@ fn run_reproduction(sources: &[CompiledSource]) -> ReproductionReport {
             for _ in 0..REPRO_SAMPLES_PER_CANDIDATE {
                 let hand = sampler.sample(&mut rng).expect("count() > 0").hand;
                 let agrees = matches!(
-                    choose_bid(&system, hand, &prefix, &bid_ctx),
+                    choose_bid(&table, hand, &prefix, &bid_ctx),
                     BidChoice::Chosen(chosen) if chosen.call == call
                 );
                 if agrees {
