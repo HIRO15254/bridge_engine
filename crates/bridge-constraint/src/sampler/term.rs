@@ -629,6 +629,10 @@ impl PreparedTerm {
 
         if needs_full_check {
             prepared.alpha = Some(if total == 0 {
+                // The exact superset is already empty, so this term never contributes a sample
+                // (`Sampler::sample` only ever picks a term with `total > 0`, and
+                // `Sampler::log_prob` skips terms with `term.total == 0` before looking at
+                // `alpha`); the exact value is unobservable and unused.
                 0.0
             } else {
                 let seed = burn_in_seed(&prepared.term.atom, pool, fixed);
@@ -641,7 +645,14 @@ impl PreparedTerm {
                         hits += 1;
                     }
                 }
-                f64::from(hits) / f64::from(burn_in)
+                // Jeffreys estimate (never exactly zero, even when the burn-in probe finds no
+                // hit): the true acceptance rate of a narrow rejection literal can be well below
+                // `1/burn_in`, in which case a plain `hits/burn_in` estimate is `0.0`. `sample`
+                // does not skip such a term (it can still find an accepting hand within
+                // `max_tries`), so a stored `0.0` would make `log_prob` divide by an estimate of
+                // zero. `Sampler::any_definitely_satisfiable` deliberately does not read `alpha`
+                // at all, for the same reason (see its doc comment).
+                (f64::from(hits) + 0.5) / (f64::from(burn_in) + 1.0)
             });
         }
 

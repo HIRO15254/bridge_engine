@@ -135,14 +135,16 @@ impl HandConstraint {
 
     /// `true` when some hand satisfies the constraint (§5's decisive stage 5).
     ///
-    /// Prepares an exact sampler over the full deck and checks whether it has a non-empty
-    /// support: for an exact term (no `Custom`, no DNF residual, no `DistMethod::BergenStarting`,
-    /// no additive feature left unslotted) `count() > 0` is the definitive answer, including
-    /// literal interactions stages 1-4 of `Atom::is_trivially_unsat` cannot see (e.g. "top 3 of
-    /// ♠, 2 of them" ∧ "♠ <= 1"). A term that still needs rejection is treated as satisfiable
-    /// only when [`Sampler::prepare`]'s burn-in probe also found an accepting hand (this is
-    /// `Sampler::any_definitely_satisfiable`'s rule; see that private method's own doc comment
-    /// for the exact rule and its one-sided approximation).
+    /// Prepares a sampler over the full deck and checks whether it has a non-empty support
+    /// (`count() > 0`, i.e. some DNF term's exact superset is non-empty): for an exact term (no
+    /// `Custom`, no DNF residual, no `DistMethod::BergenStarting`, no additive feature left
+    /// unslotted) this is the definitive answer, including literal interactions stages 1-4 of
+    /// `Atom::is_trivially_unsat` cannot see (e.g. "top 3 of ♠, 2 of them" ∧ "♠ <= 1"). A term
+    /// that still needs rejection only has its exact superset checked, not the literals rejection
+    /// handles, so the answer can over-approximate for such a term (report "maybe satisfiable"
+    /// when the full check in fact accepts nothing in that superset) but never under-approximates
+    /// (never reports "not satisfiable" for a constraint that is in fact satisfiable); see
+    /// `Sampler::any_definitely_satisfiable`'s own doc comment for the exact rule.
     pub fn is_satisfiable(&self) -> bool {
         let sampler = Sampler::prepare(self, Hand::FULL, Hand::EMPTY, &SampleOptions::default())
             .expect(

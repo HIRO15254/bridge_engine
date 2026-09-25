@@ -141,6 +141,49 @@ fn custom_predicate_is_checked_by_rejection() {
     assert!(accepted > 0, "expected at least some accepted samples");
 }
 
+/// A rejection-only term's burn-in probe (256 draws, a seed fixed by the atom/pool/fixed alone)
+/// can find zero hits even when the true acceptance rate is far from zero, because the probe's
+/// draw sequence is the same for every `Custom` predicate sharing the same atom/pool/fixed (here,
+/// `Atom::ANY` on the full deck with nothing fixed): whichever suit's honour-quad the 256 fixed
+/// draws happen not to contain gives a zero-hit burn-in for that suit's predicate. Before the fix,
+/// storing `alpha = 0.0` in that case made `log_prob` divide by (a clamped) zero, so an accepted
+/// sample's reported probability was above 1 (`ln P > 0`). Regression: `log_prob` must never
+/// exceed `0.0` (`P(hand) <= 1`) for any sample this sampler actually returns.
+#[test]
+fn log_prob_never_exceeds_zero_even_when_the_burn_in_probe_finds_no_hit() {
+    for suit in Suit::ALL {
+        let pred = CustomPred {
+            name: format!("AKQJ of {suit:?}"),
+            f: Arc::new(move |h: Hand| {
+                let top4 = bridge_core::Holding::top_ranks(4);
+                h.holding(suit).intersect(top4) == top4
+            }),
+        };
+        let c = HandConstraint::Custom(pred);
+        let sampler =
+            Sampler::prepare(&c, Hand::FULL, Hand::EMPTY, &SampleOptions::default()).unwrap();
+        assert!(!sampler.is_exact());
+
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xABCD);
+        let mut accepted = 0;
+        for _ in 0..2_000 {
+            if let Some(sample) = sampler.sample(&mut rng) {
+                assert!(c.satisfies(sample.hand));
+                assert!(
+                    sample.log_prob <= 0.0,
+                    "log_prob must never exceed 0 (P(hand) <= 1); suit={suit:?} got {}",
+                    sample.log_prob
+                );
+                accepted += 1;
+            }
+        }
+        assert!(
+            accepted > 0,
+            "expected at least some accepted samples for {suit:?}"
+        );
+    }
+}
+
 #[test]
 fn disallowing_rejection_reports_not_samplable() {
     let pred = CustomPred {

@@ -207,7 +207,12 @@ impl Sampler {
                 continue;
             }
             if term.term.satisfies(hand) {
-                let alpha = term.alpha.unwrap_or(1.0).max(f64::MIN_POSITIVE);
+                let alpha = term.alpha.unwrap_or(1.0);
+                debug_assert!(
+                    alpha > 0.0,
+                    "a term with total > 0 must carry a strictly positive alpha estimate \
+                     (see PreparedTerm::prepare's Jeffreys estimate)"
+                );
                 sum += 1.0 / alpha;
             }
         }
@@ -228,18 +233,22 @@ impl Sampler {
         self.fixed
     }
 
-    /// Whether at least one term is definitely satisfiable: an exact term (`alpha.is_none()`)
-    /// with a non-empty superset always is; a term needing rejection also needs its burn-in probe
-    /// (`prepare`'s `opts.burn_in` draws) to have found at least one hand that passed the full
-    /// check.
+    /// Whether at least one term has a non-empty exact superset (design §5 stage 5: `count() >
+    /// 0`, equivalently `self.terms.iter().any(|t| t.total > 0)`).
     ///
     /// This is the rule [`HandConstraint::is_satisfiable`](crate::HandConstraint::is_satisfiable)
-    /// uses. It can under-report a genuinely satisfiable but extremely narrow rejection-only term
-    /// when every burn-in draw happens to miss, but it never reports an empty constraint as
-    /// satisfiable.
+    /// uses. It is exact for a term with no rejection literal (`alpha.is_none()`): its superset
+    /// *is* its satisfying set. For a term that needs rejection (`Custom`, a DNF residual,
+    /// `DistMethod::BergenStarting`, or more additive features than the slot allows), `total > 0`
+    /// only says the superset is non-empty, not that the full check accepts anything in it; this
+    /// deliberately does not consult the term's burn-in `alpha` estimate (a burn-in probe of
+    /// `opts.burn_in` draws can easily miss a real but narrow accepting set, and a false "not
+    /// satisfiable" is the unsafe direction here). So the answer over-approximates for non-exact
+    /// terms: it can report "maybe satisfiable" for a term whose full check in fact accepts
+    /// nothing (a false positive), but it never reports "not satisfiable" for a term that is in
+    /// fact satisfiable (no false negatives), and it never reports an empty constraint
+    /// (`count() == 0` for every term) as satisfiable.
     pub(crate) fn any_definitely_satisfiable(&self) -> bool {
-        self.terms
-            .iter()
-            .any(|t| t.total > 0 && t.alpha != Some(0.0))
+        self.terms.iter().any(|t| t.total > 0)
     }
 }
