@@ -161,17 +161,169 @@ pub struct Binding {
 impl Binding {
     /// The strain bound to `var`, if any (`oM`/`om` derive from `M`/`m`).
     pub fn get(&self, var: Var) -> Option<Strain> {
-        todo!("phase 3")
+        match var {
+            Var::Major => self.major,
+            Var::Minor => self.minor,
+            Var::OtherMajor => self.major.map(other_major),
+            Var::OtherMinor => self.minor.map(other_minor),
+            Var::X => self.x,
+            Var::Y => self.y,
+            Var::Z => self.z,
+        }
     }
 
     /// Candidate strains for an unbound `var` given the strains already bid by either side
     /// (`used`) and the ordering constraints `X < Y < Z`.
+    ///
+    /// `oM`/`om` have no fresh candidates (they derive from an already-bound `M`/`m`; the caller
+    /// must have checked that with [`Binding::get`] first and dropped the row otherwise, per
+    /// `Lint::UnboundOther`), so they yield an empty list here.
     pub fn candidates(&self, var: Var, used: StrainSet) -> Vec<Strain> {
-        todo!("phase 3")
+        let domain = match var {
+            Var::Major => StrainSet::MAJORS,
+            Var::Minor => StrainSet::MINORS,
+            Var::X | Var::Y | Var::Z => StrainSet(StrainSet::MINORS.0 | StrainSet::MAJORS.0),
+            Var::OtherMajor | Var::OtherMinor => return Vec::new(),
+        };
+        // X < Y < Z: a candidate for Y must be above the strain bound to X, and a candidate for
+        // Z must be above the strain bound to Y (which, if bound, is already above X).
+        let lower_bound = match var {
+            Var::Y => self.x,
+            Var::Z => self.y,
+            _ => None,
+        };
+        domain
+            .iter()
+            .filter(|&s| !used.contains(s))
+            .filter(|&s| lower_bound.is_none_or(|lb| s.index() > lb.index()))
+            .collect()
     }
 
-    /// A copy with `var` bound to `strain`.
+    /// A copy with `var` bound to `strain`. Binding `oM`/`om` is a no-op: they are never fresh
+    /// variables, only derived views of `M`/`m` (see [`Binding::get`]).
+    #[must_use]
     pub fn bind(self, var: Var, strain: Strain) -> Binding {
-        todo!("phase 3")
+        let mut b = self;
+        match var {
+            Var::Major => b.major = Some(strain),
+            Var::Minor => b.minor = Some(strain),
+            Var::X => b.x = Some(strain),
+            Var::Y => b.y = Some(strain),
+            Var::Z => b.z = Some(strain),
+            Var::OtherMajor | Var::OtherMinor => {}
+        }
+        b
+    }
+}
+
+/// The major other than `m` (`m` must itself be a major).
+fn other_major(m: Strain) -> Strain {
+    if m == Strain::Hearts {
+        Strain::Spades
+    } else {
+        Strain::Hearts
+    }
+}
+
+/// The minor other than `m` (`m` must itself be a minor).
+fn other_minor(m: Strain) -> Strain {
+    if m == Strain::Clubs {
+        Strain::Diamonds
+    } else {
+        Strain::Clubs
+    }
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+
+    #[test]
+    fn get_returns_bound_strain() {
+        let b = Binding::default().bind(Var::Major, Strain::Spades);
+        assert_eq!(b.get(Var::Major), Some(Strain::Spades));
+        assert_eq!(b.get(Var::Minor), None);
+    }
+
+    #[test]
+    fn other_major_and_minor_derive_from_the_base() {
+        let b = Binding::default()
+            .bind(Var::Major, Strain::Hearts)
+            .bind(Var::Minor, Strain::Diamonds);
+        assert_eq!(b.get(Var::OtherMajor), Some(Strain::Spades));
+        assert_eq!(b.get(Var::OtherMinor), Some(Strain::Clubs));
+    }
+
+    #[test]
+    fn other_major_is_none_when_major_unbound() {
+        let b = Binding::default();
+        assert_eq!(b.get(Var::OtherMajor), None);
+        assert_eq!(b.get(Var::OtherMinor), None);
+    }
+
+    #[test]
+    fn candidates_major_excludes_used_strains() {
+        let b = Binding::default();
+        let used = StrainSet::EMPTY.with(Strain::Hearts);
+        assert_eq!(b.candidates(Var::Major, used), vec![Strain::Spades]);
+    }
+
+    #[test]
+    fn candidates_minor_domain_is_clubs_and_diamonds() {
+        let b = Binding::default();
+        assert_eq!(
+            b.candidates(Var::Minor, StrainSet::EMPTY),
+            vec![Strain::Clubs, Strain::Diamonds]
+        );
+    }
+
+    #[test]
+    fn candidates_x_y_z_respect_ordering() {
+        let b = Binding::default();
+        // No binding yet: X ranges over all four suits.
+        assert_eq!(
+            b.candidates(Var::X, StrainSet::EMPTY),
+            vec![
+                Strain::Clubs,
+                Strain::Diamonds,
+                Strain::Hearts,
+                Strain::Spades
+            ]
+        );
+
+        let b = b.bind(Var::X, Strain::Diamonds);
+        // Y must be above X (Diamonds): Hearts, Spades only.
+        assert_eq!(
+            b.candidates(Var::Y, StrainSet::EMPTY),
+            vec![Strain::Hearts, Strain::Spades]
+        );
+
+        let b = b.bind(Var::Y, Strain::Hearts);
+        // Z must be above Y (Hearts): Spades only.
+        assert_eq!(b.candidates(Var::Z, StrainSet::EMPTY), vec![Strain::Spades]);
+    }
+
+    #[test]
+    fn candidates_exclude_strains_already_bid_by_either_side() {
+        let b = Binding::default();
+        let used = StrainSet::EMPTY.with(Strain::Clubs).with(Strain::Diamonds);
+        assert_eq!(
+            b.candidates(Var::X, used),
+            vec![Strain::Hearts, Strain::Spades]
+        );
+    }
+
+    #[test]
+    fn candidates_other_major_and_minor_are_empty() {
+        let b = Binding::default().bind(Var::Major, Strain::Hearts);
+        assert!(b.candidates(Var::OtherMajor, StrainSet::EMPTY).is_empty());
+    }
+
+    #[test]
+    fn bind_is_immutable_and_returns_a_copy() {
+        let b0 = Binding::default();
+        let b1 = b0.bind(Var::Minor, Strain::Clubs);
+        assert_eq!(b0.get(Var::Minor), None);
+        assert_eq!(b1.get(Var::Minor), Some(Strain::Clubs));
     }
 }
