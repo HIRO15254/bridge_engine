@@ -1,7 +1,22 @@
 //! `ShapeSet` projections and iteration, plus `Holding` sub-mask enumeration.
 
-use bridge_core::{CLASSES, Holding, SHAPES, Shape, ShapeClass, ShapeSet, Suit};
+use bridge_core::{CLASSES, Holding, MAX_HCP, MIN_HCP, SHAPES, Shape, ShapeClass, ShapeSet, Suit};
 use proptest::prelude::*;
+
+/// `min_hcp`/`max_hcp` computed by a plain walk over `set.iter()` (member-shape iteration, not
+/// the byte-table lookups `ShapeSet::{min,max}_hcp` use internally): the independent oracle for
+/// the differential tests below.
+fn naive_hcp_bounds(set: ShapeSet) -> (u8, u8) {
+    let bound =
+        |s: Shape, table: &[u8; 14]| -> u8 { s.lens().iter().map(|&l| table[l as usize]).sum() };
+    let mut min = u8::MAX;
+    let mut max = 0u8;
+    for s in set.iter() {
+        min = min.min(bound(s, &MIN_HCP));
+        max = max.max(bound(s, &MAX_HCP));
+    }
+    (if min == u8::MAX { 0 } else { min }, max)
+}
 
 #[test]
 fn balanced_projections() {
@@ -60,6 +75,19 @@ fn hcp_bounds_detect_contradictions() {
     assert_eq!(ShapeSet::ALL.max_hcp(), 37);
     assert_eq!(ShapeSet::EMPTY.max_hcp(), 0);
     assert_eq!(ShapeSet::EMPTY.min_hcp(), 0);
+}
+
+#[test]
+fn min_max_hcp_matches_naive_walk_for_every_single_shape() {
+    // Each of the 560 singleton sets exercises a distinct byte/bit of the internal lookup
+    // tables `ShapeSet::min_hcp`/`max_hcp` use, so this alone covers every table entry that a
+    // real `ShapeSet` can ever address.
+    for &shape in SHAPES.iter() {
+        let set = ShapeSet::EMPTY.insert(shape);
+        let (naive_min, naive_max) = naive_hcp_bounds(set);
+        assert_eq!(set.min_hcp(), naive_min, "{shape:?}");
+        assert_eq!(set.max_hcp(), naive_max, "{shape:?}");
+    }
 }
 
 #[test]
@@ -124,6 +152,9 @@ proptest! {
         }
         prop_assert!(set.min_hcp() <= set.max_hcp());
         prop_assert!(set.max_hcp() <= 37);
+        let (naive_min, naive_max) = naive_hcp_bounds(set);
+        prop_assert_eq!(set.min_hcp(), naive_min);
+        prop_assert_eq!(set.max_hcp(), naive_max);
         let classes = set.classes();
         prop_assert_eq!(classes >> 39, 0);
         prop_assert!(members.iter().all(|s| classes & (1 << s.class().index()) != 0));
