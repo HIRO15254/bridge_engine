@@ -17,6 +17,7 @@ openmp = []
 [dependencies]
 bridge-core = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
+tracing = { workspace = true, features = ["std"] }
 
 [build-dependencies]
 cc = { workspace = true }
