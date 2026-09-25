@@ -37,6 +37,20 @@ jobs:
       - run: cargo test --workspace --all-features
       - run: cargo bench --workspace --no-run
 
+  dds:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask dds vendor
+      - run: cargo test -p bridge-dds
+      - run: cargo test -p bridge --features dds
+
   wasm:
     runs-on: ubuntu-latest
     steps:
