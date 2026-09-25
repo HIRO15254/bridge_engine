@@ -226,6 +226,31 @@ pub struct SystemMeta {
     pub extra: BTreeMap<String, String>,
 }
 
+impl Default for SystemMeta {
+    /// Defaults for a system with no `#+KEY:` values at all: empty name, Goren 3-2-1
+    /// distribution points, and SAYC-like natural inference.
+    fn default() -> SystemMeta {
+        SystemMeta {
+            name: String::new(),
+            description: String::new(),
+            authors: Vec::new(),
+            version: "0".to_string(),
+            date: None,
+            source_hash: [0; 32],
+            compiler_version: crate::COMPILER_VERSION.to_string(),
+            ir_format: crate::IR_FORMAT,
+            dist_method: DistMethod::GOREN_321,
+            tie_break: TieBreak::default(),
+            strength: StrengthVocab::default(),
+            balanced: BalancedDef::default(),
+            natural: NaturalParams::default(),
+            conventions: ConventionDefaults::default(),
+            recognition_threshold: 0.5,
+            extra: BTreeMap::new(),
+        }
+    }
+}
+
 /// Point thresholds that give meaning to `GF`, `INV`, `weak`, … (`#+STRENGTH:`).
 #[derive(Clone, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

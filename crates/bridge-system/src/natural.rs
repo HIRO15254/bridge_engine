@@ -97,8 +97,61 @@ pub struct AdvanceParams {
 }
 
 impl Default for NaturalParams {
+    /// SAYC-like defaults (`docs/design/06-system.md` §8.1).
     fn default() -> NaturalParams {
-        todo!("phase 3")
+        NaturalParams {
+            opening_hcp: 12..=21,
+            open_1m_len: 3,
+            open_1major_len: 5,
+            nt: vec![(1, 15..=17), (2, 20..=21), (3, 25..=27)],
+            weak_two: (6, 5..=10),
+            preempt: vec![(3, 7, 5..=9), (4, 8, 5..=10), (5, 8, 5..=11)],
+            strong_two_c: 22,
+            overcall: [(5, 8..=16), (5, 10..=16), (6, 5..=10)],
+            nt_overcall: 15..=18,
+            takeout_double: (12, 2, 3),
+            response: ResponseParams::default(),
+            rebid: RebidParams::default(),
+            advance: AdvanceParams::default(),
+            balancing_shift: -3,
+            implicit_raise_support: true,
+        }
+    }
+}
+
+impl Default for ResponseParams {
+    fn default() -> ResponseParams {
+        ResponseParams {
+            new_suit_1: (4, 6),
+            new_suit_2: (5, 10),
+            raise: (3, 6..=9),
+            jump_raise: (4, 10..=12),
+            nt: vec![(1, 6..=10), (2, 11..=12), (3, 13..=15)],
+            jump_shift: 17,
+        }
+    }
+}
+
+impl Default for RebidParams {
+    fn default() -> RebidParams {
+        RebidParams {
+            reverse: 17,
+            jump_rebid: 16..=18,
+            nt_1: 12..=14,
+            nt_2: 18..=19,
+            raise: 12..=15,
+            jump_raise: 16..=18,
+        }
+    }
+}
+
+impl Default for AdvanceParams {
+    fn default() -> AdvanceParams {
+        AdvanceParams {
+            raise: (3, 6..=9),
+            new_suit: (5, 8),
+            cue: 10,
+        }
     }
 }
 
@@ -238,5 +291,31 @@ impl NaturalInference {
 impl Default for NaturalInference {
     fn default() -> NaturalInference {
         NaturalInference::new(NaturalParams::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `NaturalParams::default()` matches the SAYC-like values in `docs/design/06-system.md`
+    /// §8.1.
+    #[test]
+    fn natural_params_default_is_sayc() {
+        let params = NaturalParams::default();
+        assert_eq!(params.opening_hcp, 12..=21);
+        assert_eq!(params.open_1m_len, 3);
+        assert_eq!(params.open_1major_len, 5);
+        assert_eq!(params.nt, vec![(1, 15..=17), (2, 20..=21), (3, 25..=27)]);
+        assert_eq!(params.weak_two, (6, 5..=10));
+        assert_eq!(params.strong_two_c, 22);
+        assert_eq!(params.takeout_double, (12, 2, 3));
+        assert_eq!(params.balancing_shift, -3);
+        assert!(params.implicit_raise_support);
+
+        assert_eq!(params.response.new_suit_1, (4, 6));
+        assert_eq!(params.response.jump_shift, 17);
+        assert_eq!(params.rebid.reverse, 17);
+        assert_eq!(params.advance.cue, 10);
     }
 }
