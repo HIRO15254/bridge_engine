@@ -936,6 +936,8 @@ pub struct CallContext {
     pub agreed_suit: Option<Suit>,
     pub last_bid: Option<Bid>,
     pub forcing_situation: bool,          // false from classify; the bidding layer may fill it in
+    pub opener_first_suit: Option<(Suit, u8)>,  // owner's first suit Call::Bid; NT skipped
+    pub opener_first_bid: Option<Bid>,          // owner's first Call::Bid of any strain, NT included
 }
 
 /// System-independent classification of auction[index] as made by `owner`; unit-testable.
@@ -992,7 +994,7 @@ impl Default for NaturalInference { /* NaturalParams::default() */ }
 
 `Balancer` は対応する `Overcaller` 規則を使い、HCP 下限に `balancing_shift` を加える。`candidates(auction, owner)` は合法コールの各々に `classify` + `infer` を適用し、`priority = round(confidence × 100)` を付けて返す (`fallback` 行のコールは除く)。
 
-**測定 (§8.5) から見つかった訂正と既知の限界。** `rule_rebid_own` は元々ジャンプなしの自己スート・リビッドを常に `opening_hcp` (12–21) と比較していたが、オープニングがウィーク・ツーやプリエンプトの場合これは無関係などころか非交叉の範囲であり (`weak_two.1` は 5–10)、隠しノード比較の recall/precision が恒常的に 0 になっていた。`opener_first_suit` のレベルからウィーク・ツー (`weak_two.1`) やプリエンプト (`preempt` 表の該当レベル) の HCP を選ぶよう `crates/bridge-system/src/natural.rs` の `opening_level_hcp` ヘルパーで修正済み (回帰テスト `rebid_own_after_weak_two_uses_weak_two_hcp` / `rebid_own_after_preempt_uses_preempt_hcp`)。同じ測定で `rule_resp_nt` にも既知の限界が見つかった: パートナー自身の 1NT/2NT オープンへの定量的レイズ (例 `1NT-P-2NT` は sayc.bml で 8–9 hcp) と、スート・オープンへのジャンプ NT レスポンス (`response.nt` 表、レベル 2 は 11–12 hcp) を同じ規則・同じ HCP 表で扱っており、前者は後者の表と非交叉になる。`NaturalParams` の既存フィールドだけでは区別できず (新フィールドの追加は `ir.rs`/`compile/meta.rs` 側の変更を伴い、このレーンの担当範囲外)、フェーズ 4 で `ResponseParams` に「パートナーの NT オープンへのレイズ」用のフィールドを足すかどうか検討する。
+**測定 (§8.5) から見つかった訂正と既知の限界。** `rule_rebid_own` は元々ジャンプなしの自己スート・リビッドを常に `opening_hcp` (12–21) と比較していたが、オープニングがウィーク・ツーやプリエンプトの場合これは無関係などころか非交叉の範囲であり (`weak_two.1` は 5–10)、隠しノード比較の recall/precision が恒常的に 0 になっていた。`crates/bridge-system/src/natural.rs` の `opening_level_hcp` ヘルパーで、オープナー自身の最初の `Call::Bid` (`CallContext::opener_first_bid`。NT を除外する `opener_first_suit` とは違い NT オープンも含む) のストレイン・レベルからウィーク・ツー (`weak_two.1`)、プリエンプト (`preempt` 表の該当レベル)、ストロング 2C (`strong_two_c..=37`) の HCP を選ぶよう修正済み。当初 `opener_first_suit` のレベルだけを見る実装で直したところ、1NT/2NT のトランスファー完成 (例 `1NT-P-2D-P-2H`) が「レベル 2 のスート」として記録され、後続のリビッドがウィーク・ツーの範囲と誤判定される回帰が見つかったため、`opener_first_bid` (NT を含むオープナーの最初のビッドそのもの) に基づく判定に直した (回帰テスト `rebid_own_after_weak_two_uses_weak_two_hcp` / `rebid_own_after_preempt_uses_preempt_hcp` / `rebid_own_after_nt_transfer_completion_uses_opening_hcp` / `rebid_own_after_strong_2c_uses_strong_two_c_hcp`)。同じ測定で `rule_resp_nt` にも既知の限界が見つかった: パートナー自身の 1NT/2NT オープンへの定量的レイズ (例 `1NT-P-2NT` は sayc.bml で 8–9 hcp) と、スート・オープンへのジャンプ NT レスポンス (`response.nt` 表、レベル 2 は 11–12 hcp) を同じ規則・同じ HCP 表で扱っており、前者は後者の表と非交叉になる。`NaturalParams` の既存フィールドだけでは区別できず (新フィールドの追加は `ir.rs`/`compile/meta.rs` 側の変更を伴い、このレーンの担当範囲外)、フェーズ 4 で `ResponseParams` に「パートナーの NT オープンへのレイズ」用のフィールドを足すかどうか検討する。
 
 ### 8.4 位置づけ
 
