@@ -386,7 +386,7 @@ fn try_whole_cut_block(paragraph: &[RawLine], clipboard: &mut Clipboard) -> Opti
         return None;
     }
     let last = paragraph.last()?;
-    if last.text.trim_start() != "#ENDCUT" {
+    if last.text.trim() != "#ENDCUT" {
         return None;
     }
     let indent = leading_ws(&first.text);
@@ -398,7 +398,7 @@ fn try_whole_cut_block(paragraph: &[RawLine], clipboard: &mut Clipboard) -> Opti
             text: clipboard::dedent(&l.text, indent),
         })
         .collect();
-    clipboard.blocks.push((name.to_string(), dedented));
+    clipboard.insert(name, dedented);
     Some(Block::Clipboard {
         name: name.to_string(),
         lines: body.to_vec(),
@@ -459,11 +459,12 @@ fn parse_table_paragraph(
             continue;
         }
 
-        if trimmed == "#HIDE" {
+        // Trailing whitespace after a directive keyword does not matter (as for `#ENDCUT`).
+        if trimmed.trim_end() == "#HIDE" {
             hidden = true;
             continue;
         }
-        if trimmed == "#BIDTABLE" {
+        if trimmed.trim_end() == "#BIDTABLE" {
             continue;
         }
         if trimmed.starts_with('#') {
@@ -676,4 +677,128 @@ fn parse_table_paragraph(
         rows: roots,
         span: table_span,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::{MemLoader, load};
+
+    fn parse_str(text: &str) -> BmlFile {
+        parse(load("root.bml", text, &MemLoader::default()))
+    }
+
+    /// Every bidding table as `(history raw, [row tree rendered as "call desc" with indent])`.
+    fn tables(file: &BmlFile) -> Vec<(String, Vec<String>)> {
+        fn walk(node: &BmlNode, depth: usize, out: &mut Vec<String>) {
+            out.push(format!(
+                "{}{} {}",
+                "  ".repeat(depth),
+                node.calls[0].raw,
+                node.description.text
+            ));
+            for child in &node.children {
+                walk(child, depth + 1, out);
+            }
+        }
+        file.blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::BidTable(t) => {
+                    let history: Vec<&str> = t.history.iter().map(|c| c.raw.as_str()).collect();
+                    let mut rows = Vec::new();
+                    for row in &t.rows {
+                        walk(row, 0, &mut rows);
+                    }
+                    Some((history.join(" "), rows))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    // Regression (integration review #2): `bml.py` stores the clipboard in a dict, so a later
+    // `#CUT`/`#COPY` of the same name replaces the earlier body for every later `#PASTE`.
+    #[test]
+    fn redefined_clipboard_name_pastes_the_latest_body() {
+        let file = parse_str(
+            "#CUT resp\n2C Stayman\n#ENDCUT\n\n1N-\n#PASTE resp\n\n\
+             #CUT resp\n2C Puppet Stayman\n#ENDCUT\n\n2N-\n#PASTE resp\n",
+        );
+        assert!(file.lints.is_empty(), "{:?}", file.lints);
+        let t = tables(&file);
+        assert_eq!(t.len(), 2, "{t:?}");
+        assert_eq!(t[0].1, ["2C Stayman"]);
+        assert_eq!(t[1].1, ["2C Puppet Stayman"]);
+    }
+
+    #[test]
+    fn redefined_embedded_cut_replaces_the_earlier_body() {
+        let file = parse_str(
+            "1N-\n#CUT resp\n2C Stayman\n#ENDCUT\n#CUT resp\n2C Puppet\n#ENDCUT\n#PASTE resp\n",
+        );
+        assert!(file.lints.is_empty(), "{:?}", file.lints);
+        assert_eq!(tables(&file)[0].1, ["2C Puppet"]);
+    }
+
+    // Regression (integration review #3): `bml.py` rescans the paragraph after every paste, so
+    // a `#PASTE` inside a pasted body is expanded too (with the indentation accumulating).
+    #[test]
+    fn paste_inside_a_pasted_body_is_expanded() {
+        let file = parse_str(
+            "#CUT inner\n3C inner\n#ENDCUT\n\n\
+             #CUT outer\n2D outer\n  #PASTE inner\n#ENDCUT\n\n\
+             1N-\n#PASTE outer\n",
+        );
+        assert!(file.lints.is_empty(), "{:?}", file.lints);
+        let t = tables(&file);
+        assert_eq!(t.len(), 1, "{t:?}");
+        assert_eq!(t[0].1, ["2D outer", "  3C inner"]);
+    }
+
+    #[test]
+    fn self_referencing_paste_is_capped_with_a_warning() {
+        let file = parse_str("#CUT loop\n2C again\n  #PASTE loop\n#ENDCUT\n\n1N-\n#PASTE loop\n");
+        assert!(
+            file.lints
+                .iter()
+                .any(|l| l.code == LintCode::UnknownDirective && l.message.contains("nested")),
+            "{:?}",
+            file.lints
+        );
+        assert!(!tables(&file).is_empty());
+    }
+
+    // Regression (integration review #4): `bml.py` accepts `#ENDCUT[ ]*` / `#ENDCOPY[ ]*`, so
+    // trailing spaces after an end marker (or after `#HIDE`/`#BIDTABLE`) must not matter.
+    #[test]
+    fn end_markers_with_trailing_spaces_are_recognised() {
+        let file =
+            parse_str("#CUT resp\n2C  Stayman\n2D  Transfer\n#ENDCUT \n\n1N-\n#PASTE resp\n");
+        assert!(file.lints.is_empty(), "{:?}", file.lints);
+        let t = tables(&file);
+        assert_eq!(t.len(), 1, "{t:?}");
+        assert_eq!(t[0].0, "1N-");
+        assert_eq!(t[0].1, ["2C Stayman", "2D Transfer"]);
+
+        let file = parse_str(
+            "1N-\n#COPY resp  \n2C  Stayman\n#ENDCOPY  \n\n2N-\n#HIDE \n#BIDTABLE \n#PASTE resp\n",
+        );
+        assert!(file.lints.is_empty(), "{:?}", file.lints);
+        let t = tables(&file);
+        assert_eq!(t[0].1, ["2C Stayman"]);
+        assert_eq!(t[1].1, ["2C Stayman"]);
+        assert!(matches!(&file.blocks[1], Block::BidTable(b) if b.hidden));
+    }
+
+    #[test]
+    fn unterminated_cut_lint_has_a_location() {
+        let file = parse_str("1N-\n#CUT resp\n2C  Stayman\n");
+        let lint = file
+            .lints
+            .iter()
+            .find(|l| l.message.contains("unterminated"))
+            .expect("unterminated lint");
+        assert_eq!(lint.span.as_ref().map(|s| s.line), Some(2));
+    }
 }

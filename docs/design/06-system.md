@@ -259,7 +259,7 @@ impl VulCond { pub const fn matches(self, we: bool, they: bool) -> bool; pub con
 
 2. **段落分割** (`lexer::paragraphs`): 1 行以上の空白のみの行で区切る。
 3. **分類** (`parser::classify(&[RawLine]) -> ParagraphKind`): §1.2 の順序 (`get_content_type` と同じ)。`ParagraphKind { Heading, List, Enumeration, Seat, Vul, BidTable, Meta, Directive, Paragraph }`。不明な `#DIRECTIVE` は `Lint::UnknownDirective` (Warning) で行を除去し、段落の残りは処理する。
-4. **クリップボード展開** (`parser::clipboard::expand(paragraph, &mut Clipboard) -> (Vec<RawLine>, Vec<Lint>)`、表段落の内部、Python と同じ順): 全ての `#CUT` ブロックを取り出し、次に `#COPY` (本文は残す)、最後に `#PASTE` を展開する (テキスト置換、`Span.pasted_from` を保持)。`Clipboard { blocks: Vec<(String, Vec<RawLine>)> }` はファイル全体で大域的かつ順序依存 (include はテキスト包含なのでファイル横断でも動く)。`#PASTE` の置換は `tgt=rep` を指定順に単純置換し、貼り付け行には `#PASTE` 行のインデントを前置する。未定義名は `Lint::PasteUnknownName` (Warning)。
+4. **クリップボード展開** (`parser::clipboard::expand(paragraph, &mut Clipboard) -> (Vec<RawLine>, Vec<Lint>)`、表段落の内部、Python と同じ順): 全ての `#CUT` ブロックを取り出し、次に `#COPY` (本文は残す)、最後に `#PASTE` を展開する (テキスト置換、`Span.pasted_from` を保持)。`Clipboard { blocks: Vec<(String, Vec<RawLine>)> }` はファイル全体で大域的かつ順序依存 (include はテキスト包含なのでファイル横断でも動く)。`#PASTE` の置換は `tgt=rep` を指定順に単純置換し、貼り付け行には `#PASTE` 行のインデントを前置する。未定義名は `Lint::PasteUnknownName` (Warning)。同じ名前の再定義 (`#CUT`/`#COPY`) は Python の辞書代入と同じく **後の定義で上書き** し、以後の `#PASTE` は最新の本文を貼る。貼り付けた本文中の `#PASTE` も Python の `while True` 再走査と同じく展開する (インデントは累積)。自己参照に備えて入れ子は 16 段までとし、超えた `#PASTE` 行は `UnknownDirective` (Warning) で落とす。終端 `#ENDCUT`/`#ENDCOPY` と `#HIDE`/`#BIDTABLE` は Python の `#ENDCUT[ ]*` と同様に末尾空白を許す。終端の無い `#CUT`/`#COPY` の Lint には開始行の位置を付ける。
 5. **行パース** (winnow, `parser/call.rs`): 残った各行の `indent` を計算し、`indent > 0 && indent == prev_row.description.col` なら継続行。それ以外は `calltok` をパースし、`WS [= WS] description` を読む。
 
    ```rust

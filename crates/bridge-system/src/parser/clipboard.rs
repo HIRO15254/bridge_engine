@@ -12,6 +12,16 @@ pub struct Clipboard {
 }
 
 impl Clipboard {
+    /// Stores `body` under `name`. Like `bml.py`'s `content.clipboard[name] = value` (a dict), a
+    /// redefinition replaces the earlier body in place, so every later `#PASTE` gets the latest
+    /// one.
+    pub fn insert(&mut self, name: &str, body: Vec<RawLine>) {
+        match self.blocks.iter_mut().find(|(n, _)| n == name) {
+            Some((_, lines)) => *lines = body,
+            None => self.blocks.push((name.to_string(), body)),
+        }
+    }
+
     fn find(&self, name: &str) -> Option<&Vec<RawLine>> {
         self.blocks
             .iter()
@@ -65,7 +75,7 @@ fn extract_blocks(
     while i < lines.len() {
         let line = &lines[i];
         let trimmed = line.text.trim_start();
-        if trimmed == start_kw || trimmed.starts_with(&format!("{start_kw} ")) {
+        if trimmed.trim_end() == start_kw || trimmed.starts_with(&format!("{start_kw} ")) {
             let (_, name) = first_word(trimmed);
             let name = name.trim();
             if name.is_empty() {
@@ -77,7 +87,8 @@ fn extract_blocks(
             // Find the matching #END line.
             let mut end = None;
             for (j, candidate) in lines.iter().enumerate().skip(i + 1) {
-                if candidate.text.trim_start() == end_kw {
+                // `bml.py` accepts `#ENDCUT[ ]*`: trailing whitespace does not matter.
+                if candidate.text.trim() == end_kw {
                     end = Some(j);
                     break;
                 }
@@ -94,14 +105,17 @@ fn extract_blocks(
                     if keep_body {
                         out.extend(lines[i + 1..end_idx].iter().cloned());
                     }
-                    clipboard.blocks.push((name.to_string(), body));
+                    clipboard.insert(name, body);
                     i = end_idx + 1;
                 }
                 None => {
-                    lints.push(Lint::warning(
-                        LintCode::UnknownDirective,
-                        format!("unterminated {start_kw} {name} (no matching {end_kw})"),
-                    ));
+                    lints.push(
+                        Lint::warning(
+                            LintCode::UnknownDirective,
+                            format!("unterminated {start_kw} {name} (no matching {end_kw})"),
+                        )
+                        .with_span(line.span.clone()),
+                    );
                     i += 1;
                 }
             }
@@ -134,7 +148,54 @@ fn parse_paste_args(rest: &str) -> (String, Vec<(String, String)>) {
     (name, replacements)
 }
 
+/// Nested `#PASTE` (a pasted body that itself pastes another block) is expanded at most this
+/// many levels deep; a deeper chain can only come from a block that (indirectly) pastes itself.
+const MAX_PASTE_DEPTH: usize = 16;
+
+fn is_paste_line(line: &RawLine) -> bool {
+    let trimmed = line.text.trim_start();
+    trimmed.trim_end() == "#PASTE" || trimmed.starts_with("#PASTE ")
+}
+
+/// Expands every `#PASTE`, then rescans the result, the way `bml.py`'s `while True:
+/// re.search('#PASTE ...')` loop over the whole paragraph does: a `#PASTE` inside a pasted body
+/// is expanded too, its indentation accumulating on top of the outer paste's. Capped at
+/// [`MAX_PASTE_DEPTH`] rounds (a self-referencing block would otherwise never end); any
+/// `#PASTE` still left then is dropped with a Warning.
 fn expand_pastes(
+    mut lines: Vec<RawLine>,
+    clipboard: &Clipboard,
+    lints: &mut Vec<Lint>,
+) -> Vec<RawLine> {
+    for _ in 0..MAX_PASTE_DEPTH {
+        if !lines.iter().any(is_paste_line) {
+            return lines;
+        }
+        lines = expand_pastes_once(lines, clipboard, lints);
+    }
+    lines
+        .into_iter()
+        .filter(|line| {
+            if !is_paste_line(line) {
+                return true;
+            }
+            lints.push(
+                Lint::warning(
+                    LintCode::UnknownDirective,
+                    format!(
+                        "{}: nested #PASTE deeper than {MAX_PASTE_DEPTH} levels (a block that \
+                         pastes itself?); dropped",
+                        line.text.trim()
+                    ),
+                )
+                .with_span(line.span.clone()),
+            );
+            false
+        })
+        .collect()
+}
+
+fn expand_pastes_once(
     lines: Vec<RawLine>,
     clipboard: &Clipboard,
     lints: &mut Vec<Lint>,
@@ -142,7 +203,7 @@ fn expand_pastes(
     let mut out = Vec::with_capacity(lines.len());
     for line in lines {
         let trimmed = line.text.trim_start();
-        if trimmed == "#PASTE" || trimmed.starts_with("#PASTE ") {
+        if is_paste_line(&line) {
             let (_, rest) = first_word(trimmed);
             let (name, replacements) = parse_paste_args(rest);
             let indent = " ".repeat(indent_of(&line));
