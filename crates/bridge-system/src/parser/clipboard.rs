@@ -148,7 +148,7 @@ fn expand_pastes(
             let indent = " ".repeat(indent_of(&line));
             match clipboard.find(&name) {
                 Some(body) => {
-                    for (idx, src) in body.iter().enumerate() {
+                    for src in body.iter() {
                         let text =
                             format!("{indent}{}", apply_replacements(&src.text, &replacements));
                         out.push(RawLine {
@@ -156,7 +156,7 @@ fn expand_pastes(
                                 file: line.span.file,
                                 line: line.span.line,
                                 col: 0,
-                                pasted_from: Some((Arc::from(name.as_str()), idx as u32)),
+                                pasted_from: Some((Arc::from(name.as_str()), src.span.line)),
                             },
                             text,
                         });

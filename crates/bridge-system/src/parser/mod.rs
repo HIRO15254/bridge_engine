@@ -647,7 +647,7 @@ fn parse_table_paragraph(
     }
 
     if history_no_trailing {
-        if let Some(root) = roots.iter().find(|r| r.indent == 0) {
+        for root in roots.iter().filter(|r| r.indent == 0) {
             lints.push(
                 Lint::info(
                     LintCode::ColumnZeroContinuation,
