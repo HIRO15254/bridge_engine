@@ -63,7 +63,9 @@ impl SystemIR {
     /// The candidate continuations for `owner`'s next call: `(call, node)` pairs whose
     /// conditions hold, or `None` when the prefix is off-system.
     pub fn continuations(&self, auction: &Auction, owner: Seat) -> Option<Vec<(Call, NodeId)>> {
-        todo!("phase 3")
+        let key = LookupKey::for_auction(auction, owner)?;
+        let lookup = self.index.resolve(&key);
+        Some(self.index.children(lookup.end, key.opener_pos, key.vul))
     }
 }
 
