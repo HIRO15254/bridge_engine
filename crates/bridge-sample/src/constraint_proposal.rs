@@ -37,7 +37,7 @@
 
 use std::cell::RefCell;
 
-use bridge_constraint::{Atom, HandConstraint, Sampler};
+use bridge_constraint::{Atom, Dnf, DnfOptions, HandConstraint, Sampler};
 use bridge_core::{Deal, Hand, Seat};
 
 use crate::uniform::{draw_subset, ln_choose};
@@ -142,6 +142,9 @@ enum SeatPlan {
     Sampled {
         candidates: Vec<Candidate>,
         coarse: Vec<Candidate>,
+        /// `coarse[i].constraint.to_dnf(..)`, converted once here instead of inside every
+        /// per-draw `Sampler::prepare` (see `Sampler::prepare_many_dnf`).
+        coarse_dnfs: Vec<Dnf>,
         coarse_direct: bool,
     },
 }
@@ -256,12 +259,21 @@ impl ConstraintProposal {
             let candidates: Vec<Candidate> = alts.into_iter().map(|(c, _)| c).collect();
             let coarse = coarsen_candidates(&candidates);
             let coarse_direct = coarse.len() == 1 && is_unconstrained(&coarse[0].constraint);
+            let coarse_dnfs = coarse
+                .iter()
+                .map(|c| {
+                    c.constraint
+                        .to_dnf(&DnfOptions::default())
+                        .expect("DnfOptions::default uses Overflow::Residual, which never errors")
+                })
+                .collect();
             order.push((
                 SeatEntry {
                     seat,
                     plan: SeatPlan::Sampled {
                         candidates,
                         coarse,
+                        coarse_dnfs,
                         coarse_direct,
                     },
                 },
@@ -284,7 +296,7 @@ impl ConstraintProposal {
             }) => {
                 let fixed = ctx.known.known[seat.index() as usize];
                 Some(CachedFirst {
-                    components: prepare_components(candidates, pool, fixed, &sampler_opts)
+                    components: prepare_components(candidates, None, pool, fixed, &sampler_opts)
                         .ok_or_else(|| {
                             SampleError::Prepare(
                                 "the first seat's alternatives lost all support against the \
@@ -451,8 +463,13 @@ fn same_atom(a: &HandConstraint, b: &HandConstraint) -> bool {
 /// `ANY` only in proportion to its raw `ε`, far less often than the mass it actually accounts for;
 /// the few hands it then does produce would carry disproportionately large importance weights and
 /// ESS would collapse.
+///
+/// `dnfs`, when given, is each candidate's constraint already in DNF (same order), and is
+/// prepared through `Sampler::prepare_many_dnf` — identical samplers without the per-call
+/// conversion.
 fn prepare_components(
     candidates: &[Candidate],
+    dnfs: Option<&[Dnf]>,
     pool: Hand,
     fixed: Hand,
     opts: &bridge_constraint::SampleOptions,
@@ -461,8 +478,11 @@ fn prepare_components(
     // is prepared against the same `(pool, fixed)`, so terms with plain per-suit tables (all of
     // a re-prepared seat's coarse shape + HCP summaries) share one table build and their pair
     // convolutions (`Sampler::prepare_many`'s doc comment); the samplers are identical either way.
-    let samplers =
-        Sampler::prepare_many(candidates.iter().map(|c| &c.constraint), pool, fixed, opts).ok()?;
+    let samplers = match dnfs {
+        Some(dnfs) => Sampler::prepare_many_dnf(dnfs, pool, fixed, opts),
+        None => Sampler::prepare_many(candidates.iter().map(|c| &c.constraint), pool, fixed, opts),
+    }
+    .ok()?;
     let mut survivors: Vec<(Sampler, f64)> = Vec::with_capacity(candidates.len());
     for (candidate, sampler) in candidates.iter().zip(samplers) {
         let count = sampler.count();
@@ -572,7 +592,11 @@ impl PreparedProposal for PreparedConstraint<'_> {
                     fixed.union(draw_subset(pool, needed, rng))
                 }
                 SeatPlan::Direct => unreachable!("draws_direct is true for every Direct seat"),
-                SeatPlan::Sampled { coarse, .. } if k != 0 => {
+                SeatPlan::Sampled {
+                    coarse,
+                    coarse_dnfs,
+                    ..
+                } if k != 0 => {
                     // §6.4 (c): re-prepared every draw, so use the coarse candidates. The
                     // resulting components are stashed in `REPREPARE_CACHE[k]` for the
                     // `log_prob` call `sample_deals` makes on this same deal right after (see
@@ -583,8 +607,13 @@ impl PreparedProposal for PreparedConstraint<'_> {
                             cache.clear();
                             cache.resize_with(m, || None);
                         }
-                        let components =
-                            prepare_components(coarse, pool, fixed, &self.sampler_opts)?;
+                        let components = prepare_components(
+                            coarse,
+                            Some(coarse_dnfs),
+                            pool,
+                            fixed,
+                            &self.sampler_opts,
+                        )?;
                         let i = choose_component(&components, rng);
                         let hand = components[i].0.sample(rng)?.hand;
                         cache[k] = Some((pool, fixed, components));
@@ -654,7 +683,11 @@ impl PreparedProposal for PreparedConstraint<'_> {
                     ln_pi += -ln_choose(pool.len(), needed);
                 }
                 SeatPlan::Direct => unreachable!("draws_direct is true for every Direct seat"),
-                SeatPlan::Sampled { coarse, .. } if k != 0 => {
+                SeatPlan::Sampled {
+                    coarse,
+                    coarse_dnfs,
+                    ..
+                } if k != 0 => {
                     // Sum over every component that could have produced `hand` (they overlap):
                     // the mixture density is only correct when every one is counted (§6.3).
                     // §6.4 (c): replay the same coarse candidates `propose` drew this seat from —
@@ -669,7 +702,13 @@ impl PreparedProposal for PreparedConstraint<'_> {
                             }
                         }
                         drop(cache);
-                        match prepare_components(coarse, pool, fixed, &self.sampler_opts) {
+                        match prepare_components(
+                            coarse,
+                            Some(coarse_dnfs),
+                            pool,
+                            fixed,
+                            &self.sampler_opts,
+                        ) {
                             Some(components) => mixture_log_prob(&components, hand),
                             None => f64::NEG_INFINITY,
                         }
@@ -756,7 +795,7 @@ mod tests {
                             })
                             .collect()
                     };
-                    match prepare_components(&used, pool, fixed, &prepared.sampler_opts) {
+                    match prepare_components(&used, None, pool, fixed, &prepared.sampler_opts) {
                         Some(components) => mixture_log_prob(&components, hand),
                         None => f64::NEG_INFINITY,
                     }
@@ -891,6 +930,7 @@ mod tests {
                 candidates,
                 coarse,
                 coarse_direct,
+                ..
             } = &entry.plan
             {
                 if k != 0 && k + 1 != prepared.order.len() {

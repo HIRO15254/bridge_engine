@@ -31,7 +31,7 @@ mod term;
 
 use bridge_core::Hand;
 
-use crate::{DnfOptions, HandConstraint, PrepareError};
+use crate::{Dnf, DnfOptions, DnfTerm, HandConstraint, PrepareError};
 use rand_util::random_below;
 
 /// The argument checks shared by [`Sampler::prepare`] and [`Sampler::prepare_many`].
@@ -144,6 +144,39 @@ impl Sampler {
             .collect()
     }
 
+    /// [`Sampler::prepare_many`] for constraints already in disjunctive normal form: each `dnf`
+    /// must be `constraint.to_dnf(&DnfOptions::default())` of the constraint it stands for, and
+    /// the result is then identical to `prepare_many` on those constraints.
+    ///
+    /// A caller that re-prepares the same constraints against a different pool on every draw
+    /// converts them once and calls this, skipping the per-call DNF conversion (whose atom
+    /// normalisation and trivial-unsatisfiability checks walk every shape in the atom's set).
+    /// A `Custom` literal is detected from the terms' `custom` lists instead of the original
+    /// tree, so a `Custom` that only occurred inside a term the conversion dropped as trivially
+    /// unsatisfiable no longer triggers the rejection warning or `PrepareError::NotSamplable`.
+    pub fn prepare_many_dnf<'a>(
+        dnfs: impl IntoIterator<Item = &'a Dnf>,
+        pool: Hand,
+        fixed: Hand,
+        opts: &SampleOptions,
+    ) -> Result<Vec<Sampler>, PrepareError> {
+        check_pool_and_fixed(pool, fixed)?;
+        let mut shared = term::SharedPlain::new(pool, fixed);
+        dnfs.into_iter()
+            .map(|dnf| {
+                let samplable = dnf.terms.iter().all(|t| t.custom.is_empty());
+                Sampler::prepare_terms(
+                    dnf.terms.iter().cloned(),
+                    samplable,
+                    pool,
+                    fixed,
+                    opts,
+                    &mut shared,
+                )
+            })
+            .collect()
+    }
+
     fn prepare_shared(
         constraint: &HandConstraint,
         pool: Hand,
@@ -151,7 +184,27 @@ impl Sampler {
         opts: &SampleOptions,
         shared: &mut term::SharedPlain,
     ) -> Result<Sampler, PrepareError> {
-        let samplable = constraint.is_samplable();
+        let dnf = constraint
+            .to_dnf(&DnfOptions::default())
+            .expect("DnfOptions::default uses Overflow::Residual, which never errors");
+        Sampler::prepare_terms(
+            dnf.terms,
+            constraint.is_samplable(),
+            pool,
+            fixed,
+            opts,
+            shared,
+        )
+    }
+
+    fn prepare_terms(
+        dnf_terms: impl IntoIterator<Item = DnfTerm>,
+        samplable: bool,
+        pool: Hand,
+        fixed: Hand,
+        opts: &SampleOptions,
+        shared: &mut term::SharedPlain,
+    ) -> Result<Sampler, PrepareError> {
         if !opts.allow_rejection && !samplable {
             return Err(PrepareError::NotSamplable);
         }
@@ -166,12 +219,9 @@ impl Sampler {
             );
         }
 
-        let dnf = constraint
-            .to_dnf(&DnfOptions::default())
-            .expect("DnfOptions::default uses Overflow::Residual, which never errors");
-
-        let mut terms = Vec::with_capacity(dnf.terms.len());
-        for dnf_term in dnf.terms {
+        let dnf_terms = dnf_terms.into_iter();
+        let mut terms = Vec::with_capacity(dnf_terms.size_hint().0);
+        for dnf_term in dnf_terms {
             let prepared = term::PreparedTerm::prepare(dnf_term, pool, fixed, opts, shared);
             if !opts.allow_rejection && prepared.alpha.is_some() {
                 return Err(PrepareError::NotSamplable);
@@ -392,11 +442,33 @@ mod tests {
             let many = Sampler::prepare_many(&constraints, pool, fixed, &opts)
                 .expect("pool and fixed are disjoint");
             assert_eq!(many.len(), constraints.len());
+            let dnfs: Vec<Dnf> = constraints
+                .iter()
+                .map(|c| c.to_dnf(&DnfOptions::default()).expect("never errors"))
+                .collect();
+            let many_dnf = Sampler::prepare_many_dnf(&dnfs, pool, fixed, &opts)
+                .expect("pool and fixed are disjoint");
             let alone: Vec<Sampler> = constraints
                 .iter()
                 .map(|c| Sampler::prepare(c, pool, fixed, &opts).expect("disjoint"))
                 .collect();
             for (i, (shared, solo)) in many.iter().zip(&alone).enumerate() {
+                let via_dnf = &many_dnf[i];
+                assert_eq!(via_dnf.count(), solo.count(), "dnf count, constraint {i}");
+                assert_eq!(
+                    via_dnf.is_exact(),
+                    solo.is_exact(),
+                    "dnf exactness, constraint {i}"
+                );
+                let mut rng_c = Xoshiro256PlusPlus::seed_from_u64(1000 + i as u64);
+                for _ in 0..50 {
+                    let mut rng_d = rng_c.clone();
+                    assert_eq!(
+                        via_dnf.sample(&mut rng_c),
+                        solo.sample(&mut rng_d),
+                        "dnf sample, constraint {i}"
+                    );
+                }
                 assert_eq!(shared.count(), solo.count(), "count, constraint {i}");
                 assert_eq!(
                     shared.is_exact(),
