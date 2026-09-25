@@ -311,10 +311,30 @@ pub fn rng_for(master: u64, index: u64) -> SampleRng {
 
 | # | 項目 | 現在の仮置き |
 | --- | --- | --- |
-| 1 | §6.4 の (a)(b)(c) のどれを採るか | フェーズ 5.4 のベンチで決定 |
+| 1 | §6.4 の (a)(b)(c) のどれを採るか | 決定（フェーズ 5.4 のベンチ、下記） |
 | 2 | `play_soft` を L5 側で `interpretation.seats` に事前結合するか | L4 で `⊗` する（L5 は L3 に依存しないため） |
 | 3 | `Threads::Auto` で専用プールを作るか | rayon のグローバルプール |
-| 4 | `PreparedProposal` に `propose_with_log_prob` を足すか（§2.1、§6.3） | 足さない。ベンチで決める |
+| 4 | `PreparedProposal` に `propose_with_log_prob` を足すか（§2.1、§6.3） | 足さない（下記、実測を踏まえて確定） |
 | 5 | `bidding` が `Some` のとき `interpretation.per_call.len()` と `auction.len()` の不一致を `SampleError::Prepare` にするか | 検査する（最小限） |
 
 `LowEss` の閾値は `ess < 0.5 × requested` で確定（フェーズ 5 の完了条件と同じ）。
+
+### 10.1 フェーズ 5.4 のベンチ結果と (a)(b)(c) の採否
+
+`benches/deals.rs`（release、単一コア、ローカル環境）:
+
+| ケース | single_thread | auto (rayon 既定プール) |
+| --- | --- | --- |
+| `deals/uniform`（無制約） | ≈ 3.5–4.6 M 配牌/秒 | ≈ 7.5–9.0 M 配牌/秒 |
+| `deals/constraint/1nt_opener`（1 席、15-17 balanced、ε = 0.02） | ≈ 1.4–1.6 M 配牌/秒 | ≈ 2.5–3.9 M 配牌/秒 |
+| `deals/constraint/four_call_three_seats`（3 席制約、ε 混合込み） | ≈ 1.39–1.51 K 配牌/秒 | ≈ 3.9–6.5 K 配牌/秒 |
+
+参考: `bridge-constraint` の `sampler` ベンチ（同環境）— `prepare`: フルデッキ balanced 15-17 で ≈ 17.7 μs、中盤（26 枚プール・6 枚固定）で ≈ 99.4 μs（§6.4 の見積り 20-60 μs より、プールが縮んだ中盤は重い）。`sample`: ≈ 0.18-0.21 μs。
+
+採用:
+
+- **(a) 無制約席の直接配り**: 採用（実装済み）。`uniform`・`1nt_opener` の 1 席のみ制約されるケースが目標 10^4/秒/コアを 2〜3 桁上回るのは、他の全席がこの経路に落ちるため。
+- **(c) 粗い提案**: 採用（実装済み、`ConstraintProposal` の再 prepare される席 = キャッシュされる先頭と残差の最終席を除く全席）。`tests/log_prob.rs` の `middle_seat_coarse_log_prob_consistency` で `log_prob` の厳密性（enumerated 支持集合の和 = 1、10^5 回の提案との χ²）を確認済み。ただし `four_call_three_seats` ベンチの候補は `suit_len` / `balanced` ヘルパーが作る `shapes` + `hcp` のみの `Atom`（`cards` / `eval` が最初から空）なので、(c) が捨てるものが何もなく速度は変化しない（実測: 導入前後で `single_thread` は誤差範囲、`p > 0.05`）。(c) が効くのは `cards` / `eval` を持つ候補（プレイ中の `play_soft` など）に対してのみ。
+- **(b) 対畳み込みの到達可能シェイプ限定**: 未実装（このレーンでは実装しない）。`bridge-constraint` 内部の最適化であり、`crates/bridge-bidding` と同様このレーンから変更できない範囲（`crates/bridge-constraint` はタスクの制約で変更禁止）。`four_call_three_seats` が目標未達（single_thread で目標の約 14%）なのは、`Sampler::prepare` 自体のコスト（中盤プールで ≈ 100 μs/回、上記ベンチ）× 中間席（今回は 2 席）× 代替数（ε 混合で最大 2）の積が支配的で、(a)(c) だけでは解消できないため。この残りのギャップを埋めるには (b) が必要というのが今回の実測からの結論。
+
+`propose_with_log_prob`（不決事項 4）: `four_call_three_seats` では `propose` → `log_prob` の 2 回呼びで中間席の `Sampler::prepare` が 2 倍かかっている（§6.3 で述べた通り）。ただし (b) なしでは、この二重化を除いても中間席 1 回あたり ≈ 100 μs のコストは変わらないため、目標の 10^4/秒/コアには届かない見込み（半減しても 1 桁以上不足）。トレイトの公開シグネチャを変える（`propose`/`log_prob` の 1 段 API を崩す）コストに見合わないため、仕様通り「足さない」を確定する。
