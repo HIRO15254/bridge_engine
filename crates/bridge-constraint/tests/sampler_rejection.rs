@@ -141,6 +141,57 @@ fn custom_predicate_is_checked_by_rejection() {
     assert!(accepted > 0, "expected at least some accepted samples");
 }
 
+/// A minimal `tracing::Subscriber` that only records whether *some* `WARN`-level event fired
+/// while it was the default subscriber - just enough to check `Sampler::prepare` emits one for a
+/// `Custom` literal (05-constraint.md §8.2 step 3), without depending on the `tracing-subscriber`
+/// crate (not a workspace dependency).
+struct WarnRecorder(Arc<std::sync::atomic::AtomicBool>);
+
+impl tracing::Subscriber for WarnRecorder {
+    fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+    fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        if *event.metadata().level() == tracing::Level::WARN {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    fn enter(&self, _span: &tracing::span::Id) {}
+    fn exit(&self, _span: &tracing::span::Id) {}
+}
+
+fn prepare_and_check_warn(c: &HandConstraint) -> bool {
+    let fired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let subscriber = WarnRecorder(fired.clone());
+    let _ = tracing::subscriber::with_default(subscriber, || {
+        Sampler::prepare(c, Hand::FULL, Hand::EMPTY, &SampleOptions::default())
+    });
+    fired.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// `is_samplable() == false` (a `Custom` literal is present) makes `Sampler::prepare` emit a
+/// `tracing::warn!`, as `HandConstraint::is_samplable`'s doc comment says (05-constraint.md §8.2
+/// step 3): before this fix, the doc comment made this same claim but `prepare` never actually
+/// emitted anything, so nothing observing `tracing` output could tell rejection-degraded sampling
+/// had occurred. A plain, `Custom`-free atom must not warn.
+#[test]
+fn custom_predicate_makes_prepare_warn() {
+    let pred = CustomPred {
+        name: "5+ spades".to_string(),
+        f: Arc::new(|h: Hand| h.holding(Suit::Spades).len() >= 5),
+    };
+    let with_custom = HandConstraint::Custom(pred);
+    assert!(prepare_and_check_warn(&with_custom));
+
+    let plain = HandConstraint::Atom(Atom::ANY.with_hcp(10..=17));
+    assert!(!prepare_and_check_warn(&plain));
+}
+
 /// A rejection-only term's burn-in probe (256 draws, a seed fixed by the atom/pool/fixed alone)
 /// can find zero hits even when the true acceptance rate is far from zero, because the probe's
 /// draw sequence is the same for every `Custom` predicate sharing the same atom/pool/fixed (here,

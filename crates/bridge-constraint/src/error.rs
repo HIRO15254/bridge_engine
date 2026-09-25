@@ -23,7 +23,11 @@ pub enum PrepareError {
     /// `fixed` has more than 13 cards.
     #[error("fixed part has {0} cards, more than 13")]
     TooManyFixed(u8),
-    /// The constraint contains a custom predicate and the options forbid rejection sampling.
+    /// Some literal needs rejection sampling and `SampleOptions::allow_rejection` forbids it:
+    /// not only a `Custom` predicate, but also a DNF `residual` (from the `max_terms` cap), a
+    /// second additive feature past the one-slot budget, or a non-shape-only
+    /// `DistMethod`/`TotalPoints` (`BergenStarting`) - anything `sampler::term::classify` marks
+    /// `needs_full_check` for.
     #[error("constraint is not samplable and rejection sampling is disabled")]
     NotSamplable,
 }

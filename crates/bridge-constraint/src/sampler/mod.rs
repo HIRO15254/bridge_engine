@@ -44,7 +44,10 @@ pub struct SampleOptions {
     /// Number of burn-in draws used to estimate the acceptance rate of rejected literals
     /// (default 256).
     pub burn_in: u32,
-    /// Whether custom predicates and residuals may be rejection-sampled (default `true`).
+    /// Whether a literal the exact path cannot express (a custom predicate, a DNF residual, a
+    /// second additive feature, or a non-shape-only `DistMethod`/`TotalPoints`, i.e.
+    /// `BergenStarting`) may be rejection-sampled (default `true`); `false` makes any of them a
+    /// `PrepareError::NotSamplable`.
     pub allow_rejection: bool,
 }
 
@@ -106,8 +109,19 @@ impl Sampler {
         if fixed_len > 13 {
             return Err(PrepareError::TooManyFixed(fixed_len));
         }
-        if !opts.allow_rejection && !constraint.is_samplable() {
+        let samplable = constraint.is_samplable();
+        if !opts.allow_rejection && !samplable {
             return Err(PrepareError::NotSamplable);
+        }
+        if !samplable {
+            // `is_samplable() == false` means a `Custom` literal occurs somewhere in `constraint`
+            // (`HandConstraint::is_samplable`'s doc comment); `allow_rejection` being `true` here
+            // (the `NotSamplable` case above already returned otherwise) means every such literal
+            // is about to be checked by bounded rejection instead of the exact path, with an
+            // estimated acceptance rate (05-constraint.md §8.2 step 3).
+            tracing::warn!(
+                "constraint contains a Custom predicate; sampling degrades to rejection with an estimated acceptance rate"
+            );
         }
 
         let dnf = constraint

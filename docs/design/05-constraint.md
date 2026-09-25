@@ -162,7 +162,7 @@ pub struct SampleOptions {
     pub max_tries: u32,        // 256。residual/custom の棄却上限
     pub extra_features: u8,    // 1。DP 鍵に載せる追加の加法的特徴の数 (0 = K=1 高速パス、1 = K=2)
     pub burn_in: u32,          // 256。α 推定の試行数
-    pub allow_rejection: bool, // true。false なら Custom/residual を含む制約は PrepareError::NotSamplable
+    pub allow_rejection: bool, // true。false なら棄却リテラル (Custom/residual/スロット超過の加法的特徴/BergenStarting) を含む制約は PrepareError::NotSamplable
 }
 
 pub struct Sampler { terms: Vec<PreparedTerm>, cum: Vec<u64>, total: u64, pool: Hand, fixed: Hand, exact: bool }

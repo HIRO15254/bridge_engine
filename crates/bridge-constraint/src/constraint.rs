@@ -55,8 +55,12 @@ impl HandConstraint {
         }
     }
 
-    /// `false` when a [`HandConstraint::Custom`] occurs anywhere; sampling then degrades to
-    /// rejection and the sampler emits a warning.
+    /// `false` when a [`HandConstraint::Custom`] occurs anywhere; [`crate::Sampler::prepare`]
+    /// then degrades that literal to rejection sampling (with an estimated acceptance rate) when
+    /// `opts.allow_rejection` allows it, and emits a `tracing::warn!` once per `prepare` call to
+    /// say so (05-constraint.md §8.2). With `allow_rejection == false` it returns
+    /// `PrepareError::NotSamplable` instead, and no warning is emitted (there is nothing to warn
+    /// about: sampling did not proceed).
     pub fn is_samplable(&self) -> bool {
         match self {
             HandConstraint::Atom(_) => true,
