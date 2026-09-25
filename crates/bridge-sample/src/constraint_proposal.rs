@@ -35,11 +35,40 @@
 //! play constraints at every re-prepared seat, whether or not that seat's own bench case happens
 //! to exercise them.
 
+use std::cell::RefCell;
+
 use bridge_constraint::{Atom, HandConstraint, Sampler};
 use bridge_core::{Deal, Hand, Seat};
 
 use crate::uniform::{draw_subset, ln_choose};
 use crate::{PreparedProposal, Proposal, SampleContext, SampleError};
+
+// `sample_deals`'s own `process_slot` (in `lib.rs`) always calls `propose` and then immediately
+// `log_prob` for the *same* accepted deal, on the same thread, before touching any other
+// `PreparedProposal` — so for every re-prepared seat (every position but the cached first and the
+// residual last, §6.4 (c)), `log_prob`'s walk hits exactly the `(pool, fixed)` `propose` just built
+// a `Sampler` for. Without this cache, `log_prob` re-runs `prepare_components` (re-preparing a
+// `Sampler` per surviving candidate) from scratch, duplicating work `propose` already did a moment
+// earlier — measured on `four_call_three_seats` (09-sample.md §10.1), `propose` and `log_prob` cost
+// almost exactly the same, so this removes close to half the per-deal cost at those seats.
+//
+// A thread-local, not a field on `PreparedConstraint`, because `PreparedProposal` must stay
+// `Send + Sync` (it is shared as `&(dyn PreparedProposal + Send + Sync)` across rayon's pool in
+// `Threads::Auto`, per `lib.rs`'s `run_parallel`); a `RefCell` field would break `Sync`. Keying by
+// thread instead of by `(proposal, seat)` is safe because within one thread, `propose` always
+// *writes* every re-prepared seat's cache slot before `log_prob` for the same deal *reads* it: a
+// slot describes at most one `(pool, fixed)` at a time, and `log_prob` checks that pair matches
+// before trusting the cached components, so a mismatch (a different deal, a different proposal
+// reusing the thread, or `log_prob` called with no preceding `propose` on this thread — e.g. every
+// direct unit test) just falls back to rebuilding, never returns a wrong density.
+/// One re-prepared seat's cached `(pool, fixed, components)`, keyed by seat position in
+/// `REPREPARE_CACHE`.
+type CachedSeatComponents = Option<(Hand, Hand, Vec<(Sampler, f64)>)>;
+
+thread_local! {
+    static REPREPARE_CACHE: RefCell<Vec<CachedSeatComponents>> =
+        const { RefCell::new(Vec::new()) };
+}
 
 /// Alternatives are truncated to the `K` highest-weighted before sampling (D11, §6.1 point 1).
 const MAX_ALTERNATIVES: usize = 8;
@@ -475,10 +504,24 @@ impl PreparedProposal for PreparedConstraint<'_> {
                     fixed.union(draw_subset(pool, needed, rng))
                 }
                 SeatPlan::Sampled { coarse, .. } if k != 0 => {
-                    // §6.4 (c): re-prepared every draw, so use the coarse candidates.
-                    let components = prepare_components(coarse, pool, fixed, &self.sampler_opts)?;
-                    let i = choose_component(&components, rng);
-                    components[i].0.sample(rng)?.hand
+                    // §6.4 (c): re-prepared every draw, so use the coarse candidates. The
+                    // resulting components are stashed in `REPREPARE_CACHE[k]` for the
+                    // `log_prob` call `sample_deals` makes on this same deal right after (see
+                    // the thread-local's doc comment above).
+                    let hand = REPREPARE_CACHE.with(|cache| -> Option<Hand> {
+                        let mut cache = cache.borrow_mut();
+                        if cache.len() != m {
+                            cache.clear();
+                            cache.resize_with(m, || None);
+                        }
+                        let components =
+                            prepare_components(coarse, pool, fixed, &self.sampler_opts)?;
+                        let i = choose_component(&components, rng);
+                        let hand = components[i].0.sample(rng)?.hand;
+                        cache[k] = Some((pool, fixed, components));
+                        Some(hand)
+                    });
+                    hand?
                 }
                 SeatPlan::Sampled { .. } => {
                     let components = self
@@ -544,12 +587,23 @@ impl PreparedProposal for PreparedConstraint<'_> {
                 SeatPlan::Sampled { coarse, .. } if k != 0 => {
                     // Sum over every component that could have produced `hand` (they overlap):
                     // the mixture density is only correct when every one is counted (§6.3).
-                    // §6.4 (c): replay the same coarse candidates `propose` drew this seat from.
-                    let ln_component =
+                    // §6.4 (c): replay the same coarse candidates `propose` drew this seat from —
+                    // reusing `REPREPARE_CACHE[k]` when it was left by a matching `propose` call
+                    // on this thread for this exact `(pool, fixed)` (see the thread-local's doc
+                    // comment above), rebuilding otherwise.
+                    let ln_component = REPREPARE_CACHE.with(|cache| -> f64 {
+                        let cache = cache.borrow();
+                        if let Some(Some((cached_pool, cached_fixed, components))) = cache.get(k) {
+                            if *cached_pool == pool && *cached_fixed == fixed {
+                                return mixture_log_prob(components, hand);
+                            }
+                        }
+                        drop(cache);
                         match prepare_components(coarse, pool, fixed, &self.sampler_opts) {
                             Some(components) => mixture_log_prob(&components, hand),
                             None => f64::NEG_INFINITY,
-                        };
+                        }
+                    });
                     if !ln_component.is_finite() {
                         return f64::NEG_INFINITY;
                     }
