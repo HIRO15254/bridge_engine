@@ -568,10 +568,31 @@ mod tests {
         let binding = Binding::default();
         let c = ctx(&binding, Call::Pass, Role::Opener);
         let meta = SystemMeta::default();
-        let compiled = compile_description("SPL", &c, &meta);
+        let compiled = compile_description("STAY", &c, &meta);
         assert!(matches!(compiled.constraint, HandConstraint::Atom(a) if a == Atom::ANY));
         assert!(compiled.flags.artificial);
         assert!(!compiled.recognition.constraint_bearing);
+    }
+
+    #[test]
+    fn splinter_convention_builds_a_compound_constraint() {
+        // Unlike a bare named convention (above), `SPL` is a special case (§7.4/§7.5): it
+        // compiles to shortness in the row's own suit AND support in the agreed suit AND a
+        // game-forcing HCP range, not `Atom::ANY`. See `crates/bridge-system/tests/desc_
+        // vocabulary.rs::splinter_row_builds_shortness_support_and_strength` for the full
+        // satisfies()-based coverage; this unit test only checks that a constraint is produced
+        // at all, from this module's own minimal fixtures.
+        let binding = Binding::default();
+        let call = Call::Bid(Bid::new(4, Strain::Clubs).unwrap());
+        let mut c = ctx(&binding, call, Role::Opener);
+        c.agreed_suit = Some(bridge_core::Suit::Hearts);
+        let meta = SystemMeta::default();
+        let compiled = compile_description("SPL", &c, &meta);
+        assert!(
+            !matches!(compiled.constraint, HandConstraint::Atom(a) if a == Atom::ANY),
+            "SPL must not compile to the unconstrained atom"
+        );
+        assert!(compiled.flags.artificial);
     }
 
     #[test]

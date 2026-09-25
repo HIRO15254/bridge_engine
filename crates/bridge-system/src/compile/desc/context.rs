@@ -3,7 +3,7 @@
 //! | Word | Resolution |
 //! | --- | --- |
 //! | `GF` | `own_min = gf_total − partner_min` |
-//! | `INV` | `[inv.start − partner_min, inv.end − partner_min]`; `INV+` lower bound only |
+//! | `INV` | `[inv.start − partner_min, inv.end − partner_min]`; `INV+` lower bound only; mildly/strongly shift both bounds by ∓1; "at most" upper bound only |
 //! | `MIN` / `MAX` | lower / upper half of the same player's previous range |
 //! | `weak` | responder `[0, weak_max]`; opener at level 2 `weak_two`; level 3/4 `preempt`; overcaller `weak_jump` |
 //! | `S/T` | `own_min = slam_total − partner_max` |
@@ -275,6 +275,43 @@ fn strength_hcp(
             sv.inv_total.start().saturating_sub(partner_min)..=max,
             partner_assumed,
         ),
+        StrengthWord::InvitationalMild => {
+            // Both bounds, shifted down by 1 (`docs/design/06-system.md` §7.4/§7.5's "mild は
+            // −1 ... のシフト").
+            let lo = sv
+                .inv_total
+                .start()
+                .saturating_sub(1)
+                .saturating_sub(partner_min);
+            let hi = sv
+                .inv_total
+                .end()
+                .saturating_sub(1)
+                .saturating_sub(partner_min)
+                .min(max);
+            (lo..=hi.max(lo), partner_assumed)
+        }
+        StrengthWord::InvitationalStrong => {
+            // Both bounds, shifted up by 1 ("strong は +1 のシフト"), still a narrow range (not
+            // the open-ended `InvitationalPlus` reading).
+            let lo = sv
+                .inv_total
+                .start()
+                .saturating_add(1)
+                .saturating_sub(partner_min);
+            let hi = sv
+                .inv_total
+                .end()
+                .saturating_add(1)
+                .saturating_sub(partner_min)
+                .min(max);
+            (lo..=hi.max(lo), partner_assumed)
+        }
+        StrengthWord::InvitationalAtMost => {
+            // `end` bound only ("at most は end のみ"): the floor is unconstrained (0).
+            let hi = sv.inv_total.end().saturating_sub(partner_min).min(max);
+            (0..=hi, partner_assumed)
+        }
         StrengthWord::Min | StrengthWord::Max => {
             let (prev, assumed) = own_prev_hcp_range(ctx, meta);
             let lo = *prev.start();
@@ -364,6 +401,49 @@ fn natural_suit_length(suit: Suit, ctx: &RowContext<'_>, meta: &SystemMeta) -> u
     }
 }
 
+/// `SPL`/`splinter` (and its mini-splinter variant): a compound atom of shortness in the own
+/// call's suit, support in the agreed suit, and a game-forcing (or, for the mini variant,
+/// invitational) strength range (`docs/design/06-system.md` §7.4/§7.5's `SPL` row: `suit_len[short]
+/// = 0..=1` ∧ `suit_len[agreed] ≥ conventions.splinter_support` ∧ the `GF`/`INV` formula).
+///
+/// This does not yet parse an explicit named suit after `SPL` (`SPL m`, `SPL in the other
+/// major`): `Token::Convention` carries no suit reference, only the bare word, so the short suit
+/// is always the row's own call; see `open_issues` in the compiler's final report.
+fn resolve_splinter(mini: bool, ctx: &RowContext<'_>, meta: &SystemMeta) -> (Atom, Provenance) {
+    let mut atom = Atom::ANY;
+    let mut assumed = false;
+
+    match own_suit(ctx) {
+        Some(short) => {
+            atom = atom.intersect(&Atom {
+                shapes: ShapeSet::from_suit_len(short, 0, 1),
+                ..Atom::ANY
+            });
+        }
+        None => assumed = true,
+    }
+
+    match ctx.agreed_suit {
+        Some(agreed) => {
+            atom = atom.intersect(&Atom {
+                shapes: ShapeSet::from_suit_len(agreed, meta.conventions.splinter_support, 13),
+                ..Atom::ANY
+            });
+        }
+        None => assumed = true,
+    }
+
+    let word = if mini {
+        StrengthWord::Invitational
+    } else {
+        StrengthWord::GameForcing
+    };
+    let (hcp, strength_assumed) = strength_hcp(word, ctx, meta);
+    atom = atom.intersect(&Atom { hcp, ..Atom::ANY });
+
+    (atom, context_prov(assumed || strength_assumed))
+}
+
 /// Resolves one token, per `docs/design/06-system.md` §7.4/§7.5. Named conventions
 /// ([`Token::Convention`]) and bare forcing/no-bound markers carry no atom by default (the
 /// design's "既定では Atom なし" rule): they only ever contribute [`crate::NodeFlags`], which
@@ -446,7 +526,12 @@ fn resolve_one(token: &Token, ctx: &RowContext<'_>, meta: &SystemMeta) -> (Atom,
                 context_prov(assumed),
             )
         }
-        Token::Forcing(_) | Token::Convention(_) | Token::NoBound => (Atom::ANY, explicit()),
+        Token::Forcing(_) | Token::NoBound => (Atom::ANY, explicit()),
+        Token::Convention(name) => match name.as_str() {
+            "SPL" | "SPLINTER" => resolve_splinter(false, ctx, meta),
+            "MINI-SPLINTER" => resolve_splinter(true, ctx, meta),
+            _ => (Atom::ANY, explicit()),
+        },
         Token::Quality(suitref, word) => match resolve_single_suit(*suitref, ctx) {
             Some(suit) => (
                 Atom::ANY.with_cards(quality_requirement(suit, *word)),
@@ -729,14 +814,54 @@ mod tests {
 
     #[test]
     fn convention_and_forcing_are_atom_any() {
+        // `SPL` is deliberately excluded: unlike a plain named convention, it resolves to a
+        // compound shortness/support/strength atom (see `splinter_*` tests below).
         let binding = Binding::default();
         let ctx = base_ctx(&binding, Call::Pass, Role::Opener);
         let meta = SystemMeta::default();
-        for text in ["SPL", "F1", "unlimited"] {
+        for text in ["STAY", "F1", "unlimited"] {
             let token = recognize_one(text);
             let (atoms, _) = resolve(&[token], &ctx, &meta);
             assert_eq!(atoms[0], Atom::ANY, "{text} should carry no atom");
         }
+    }
+
+    #[test]
+    fn splinter_builds_shortness_support_and_strength() {
+        let binding = Binding::default();
+        let call = Call::Bid(Bid::new(4, Strain::Clubs).unwrap());
+        let mut ctx = base_ctx(&binding, call, Role::Opener);
+        ctx.agreed_suit = Some(Suit::Hearts);
+        let meta = SystemMeta::default();
+        let token = recognize_one("SPL");
+        let (atoms, provs) = resolve(&[token], &ctx, &meta);
+        assert_eq!(
+            atoms[0].shapes,
+            ShapeSet::from_suit_len(Suit::Clubs, 0, 1).intersect(ShapeSet::from_suit_len(
+                Suit::Hearts,
+                meta.conventions.splinter_support,
+                13
+            ))
+        );
+        // gf_total (25) - assumed opening partner_min (12) = 13.
+        assert_eq!(atoms[0].hcp, 13..=37);
+        assert_eq!(provs[0].source, Source::Context);
+    }
+
+    #[test]
+    fn mini_splinter_uses_invitational_strength() {
+        let binding = Binding::default();
+        let call = Call::Bid(Bid::new(3, Strain::Clubs).unwrap());
+        let mut ctx = base_ctx(&binding, call, Role::Opener);
+        ctx.agreed_suit = Some(Suit::Hearts);
+        let mut partner = node_with_hcp(12..=14);
+        partner.id = NodeId(1);
+        ctx.partner_last = Some(&partner);
+        let meta = SystemMeta::default();
+        let token = recognize_one("mini-splinter");
+        let (atoms, _) = resolve(&[token], &ctx, &meta);
+        // inv_total 22..=24, partner_min 12: [10, 12] (same formula as bare `INV`).
+        assert_eq!(atoms[0].hcp, 10..=12);
     }
 
     #[test]

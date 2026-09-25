@@ -259,6 +259,21 @@ fn support_row() {
 }
 
 #[test]
+fn support_row_with_explicit_length() {
+    // The design table's own examples (§7.4 row 20, `3+ SUPP`/`4+ trumps`): the written minimum
+    // must be used, not silently replaced by the bare form's default of 3.
+    let binding = Binding::default();
+    let mut c = base_ctx(&binding, Call::Pass, Role::Responder);
+    c.agreed_suit = Some(Suit::Hearts);
+    let meta = SystemMeta::default();
+    let compiled = compile_description("4+ trumps", &c, &meta);
+    let four_hearts = hand("432", "432", "AK32", "432");
+    assert!(compiled.constraint.satisfies(four_hearts));
+    let three_hearts = hand("432", "432", "AK3", "6432");
+    assert!(!compiled.constraint.satisfies(three_hearts));
+}
+
+#[test]
 fn controls_row() {
     let binding = Binding::default();
     let c = base_ctx(&binding, Call::Pass, Role::Opener);
@@ -340,6 +355,40 @@ fn convention_row_carries_no_constraint_but_is_artificial() {
 }
 
 #[test]
+fn splinter_row_builds_shortness_support_and_strength() {
+    // "SPL" over an agreed heart fit, bid as 4!c: shortness in the bid suit (clubs, 0-1),
+    // support in the agreed suit (hearts, 4+ per `ConventionDefaults::splinter_support`), and a
+    // game-forcing HCP range (§7.4/§7.5's SPL row), all three ANDed together.
+    let binding = Binding::default();
+    let mut c = base_ctx(
+        &binding,
+        bid(4, Strain::from_suit(Suit::Clubs)),
+        Role::Opener,
+    );
+    c.agreed_suit = Some(Suit::Hearts);
+    let meta = SystemMeta::default();
+    let compiled = compile_description("SPL", &c, &meta);
+
+    // Void in clubs, 4 hearts, 13 hcp (>= gf_total(25) - assumed opening partner(12) = 13).
+    let good = hand("", "AK432", "AK32", "K432");
+    assert!(compiled.constraint.satisfies(good));
+
+    // 2 clubs (not short): fails the shortness leg even though support and hcp are fine.
+    let not_short = hand("32", "AK43", "AK32", "K43");
+    assert!(!compiled.constraint.satisfies(not_short));
+
+    // Singleton club, only 3 hearts (not enough support): fails the support leg.
+    let not_enough_support = hand("3", "AK432", "AK3", "K432");
+    assert!(!compiled.constraint.satisfies(not_enough_support));
+
+    // Void in clubs, 4 hearts, but 0 hcp: fails the strength leg.
+    let too_weak = hand("", "8432", "8432", "98432");
+    assert!(!compiled.constraint.satisfies(too_weak));
+
+    assert!(compiled.flags.artificial);
+}
+
+#[test]
 fn natural_row_resolves_suit_length_from_the_call() {
     // Opener's natural 1!s: no explicit length, so the minimal natural rule (own role's
     // 1-major opening length, per `NaturalParams::default()`) applies: 5+ spades.
@@ -394,6 +443,32 @@ fn strength_invitational_and_invitational_plus() {
 
     let inv_plus = compile_description("INV+", &c, &meta);
     assert_eq!(*inv_plus.constraint.hcp_range().start(), 10);
+}
+
+#[test]
+fn strength_invitational_mild_strong_and_at_most_variants() {
+    // The named INV variants (`systems/vendor/data/bml-test/data/example3.bml` uses these exact
+    // phrases verbatim: "at most invitational", "Mildly invitational with 5!h", "Strongly
+    // invitational with 5!h"), each a distinct shift/bound-mode from bare `INV`, not an alias of
+    // it or of the open-ended `INV+`.
+    let binding = Binding::default();
+    let mut c = base_ctx(&binding, Call::Pass, Role::Responder);
+    let partner = node_with_hcp(12..=14);
+    c.partner_last = Some(&partner);
+    let meta = SystemMeta::default();
+
+    // inv_total 22..=24, partner_min 12: bare INV is [10, 12] (see the test above).
+    let mild = compile_description("Mildly invitational", &c, &meta);
+    // Both bounds shifted down by 1: [9, 11].
+    assert_eq!(mild.constraint.hcp_range(), 9..=11);
+
+    let strong = compile_description("Strongly invitational", &c, &meta);
+    // Both bounds shifted up by 1: [11, 13] -- narrow, not open-ended like INV+.
+    assert_eq!(strong.constraint.hcp_range(), 11..=13);
+
+    let at_most = compile_description("at most invitational", &c, &meta);
+    // End bound only: floor is 0, not 10.
+    assert_eq!(at_most.constraint.hcp_range(), 0..=12);
 }
 
 #[test]

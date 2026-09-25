@@ -74,12 +74,23 @@ pub enum Token {
 }
 
 /// Context-dependent strength words.
+///
+/// The `INV` family (`docs/design/06-system.md` §7.4/§7.5) is not one shape: `INV` gives both
+/// bounds with no shift; `InvitationalPlus` (`INV+`) is open-ended (`start` only); `Mildly
+/// invitational` shifts both bounds down by 1; `Strongly invitational` shifts both bounds up by
+/// 1; `at most invitational` gives only the `end` bound (floor 0).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[allow(missing_docs)]
 pub enum StrengthWord {
     GameForcing,
     Invitational,
     InvitationalPlus,
+    /// `Mildly invitational`: both bounds, shifted down by 1.
+    InvitationalMild,
+    /// `Strongly invitational`: both bounds, shifted up by 1.
+    InvitationalStrong,
+    /// `at most invitational`: `end` bound only (floor 0).
+    InvitationalAtMost,
     Min,
     Max,
     Weak,
@@ -264,6 +275,26 @@ fn match_metric_suffix(s: &str) -> (MetricKind, usize) {
     (MetricKind::Hcp, 0)
 }
 
+/// Words that mark a support/fit count (§7.4 row 20: `fit`, `3+ SUPP`, `support`, `raise`,
+/// `trumps`). Shared by [`match_support_suffix`] (an explicit leading number, e.g. `3+ SUPP`) and
+/// [`match_support`] (the bare form, defaulting to 3).
+const SUPPORT_WORDS: &[&str] = &["support", "supp", "fit", "raise", "trumps"];
+
+/// An optional ` supp` / ` support` / ` fit` / ` raise` / ` trumps` suffix (with the leading
+/// space), used by [`match_length_or_metric`] to route an explicit leading number (`3+ SUPP`,
+/// `4+ trumps`) into a `Token::Support` with that number, instead of letting it fall through to a
+/// bare HCP/length reading and losing the written minimum.
+fn match_support_suffix(s: &str) -> Option<usize> {
+    let s2 = s.strip_prefix(' ').unwrap_or(s);
+    let ws = s.len() - s2.len();
+    for phrase in SUPPORT_WORDS {
+        if let Some(l) = match_word(s2, phrase) {
+            return Some(ws + l);
+        }
+    }
+    None
+}
+
 fn strip_approx_prefix(s: &str) -> (&str, usize) {
     for word in ["ca", "about"] {
         if let Some(l) = match_word(s, word) {
@@ -302,8 +333,8 @@ fn tag_of(kind: &MetricKind) -> MetricKindTag {
     }
 }
 
-/// `N controls` / `N losers` / `N+ hcp` / `N-M hcp` / `N=!s` / `N!s` / `N+!s` / bare `LTC` /
-/// `controls`, and everything else in the numeric family (§7.4 rows 1-3, 12-13).
+/// `N controls` / `N losers` / `N+ hcp` / `N-M hcp` / `N=!s` / `N!s` / `N+!s` / `N+ SUPP` / bare
+/// `LTC` / `controls`, and everything else in the numeric family (§7.4 rows 1-3, 12-13, 20).
 fn match_length_or_metric(s: &str) -> Option<(Token, usize)> {
     // `LTC` / `LTC 7`: reversed word-then-number order, handled first.
     if let Some(l) = match_word(s, "ltc") {
@@ -321,10 +352,15 @@ fn match_length_or_metric(s: &str) -> Option<(Token, usize)> {
     let mut consumed = prefix_len + l1;
     let rest = &s1[l1..];
 
-    // `N=SUIT`: exact length.
+    // `N=SUIT` / `N=SUPP`: exact length, or an explicit support count.
     if let Some(rest2) = rest.strip_prefix('=') {
-        let (suitref, l) = parse_suit_ref_ws(rest2)?;
-        return Some((Token::SuitLen(suitref, n1..=n1), consumed + 1 + l));
+        if let Some((suitref, l)) = parse_suit_ref_ws(rest2) {
+            return Some((Token::SuitLen(suitref, n1..=n1), consumed + 1 + l));
+        }
+        if let Some(l) = match_support_suffix(rest2) {
+            return Some((Token::Support(n1), consumed + 1 + l));
+        }
+        return None;
     }
 
     // `N-M ...`: a range.
@@ -335,15 +371,21 @@ fn match_length_or_metric(s: &str) -> Option<(Token, usize)> {
         if let Some((suitref, l3)) = parse_suit_ref_ws(after) {
             return Some((Token::SuitLen(suitref, n1..=n2), consumed + l3));
         }
+        if let Some(l3) = match_support_suffix(after) {
+            return Some((Token::Support(n1), consumed + l3));
+        }
         let (kind, l3) = match_metric_suffix(after);
         return Some((build_token(tag_of(&kind), n1..=n2), consumed + l3));
     }
 
-    // `N+ ...`: open-ended.
+    // `N+ ...`: open-ended (a suit length, a support count, or a metric).
     if let Some(rest2) = rest.strip_prefix('+') {
         consumed += 1;
         if let Some((suitref, l3)) = parse_suit_ref_ws(rest2) {
             return Some((Token::SuitLen(suitref, n1..=13), consumed + l3));
+        }
+        if let Some(l3) = match_support_suffix(rest2) {
+            return Some((Token::Support(n1), consumed + l3));
         }
         let (kind, l3) = match_metric_suffix(rest2);
         let hi = match kind {
@@ -358,6 +400,11 @@ fn match_length_or_metric(s: &str) -> Option<(Token, usize)> {
     // Bare `N` directly followed by a suit reference: exact length.
     if let Some((suitref, l3)) = parse_suit_ref_ws(rest) {
         return Some((Token::SuitLen(suitref, n1..=n1), consumed + l3));
+    }
+
+    // Bare `N` directly followed by a support word (`4 trumps`): an explicit support count.
+    if let Some(l3) = match_support_suffix(rest) {
+        return Some((Token::Support(n1), consumed + l3));
     }
 
     // Bare `N` followed by a metric word (`hcp`, `points`, `controls`, `losers`): a single value.
@@ -648,9 +695,9 @@ fn match_strength(s: &str) -> Option<(Token, usize)> {
         ("gf", StrengthWord::GameForcing),
         ("fg", StrengthWord::GameForcing),
         ("invitational plus", StrengthWord::InvitationalPlus),
-        ("at most invitational", StrengthWord::Invitational),
-        ("strongly invitational", StrengthWord::InvitationalPlus),
-        ("mildly invitational", StrengthWord::Invitational),
+        ("at most invitational", StrengthWord::InvitationalAtMost),
+        ("strongly invitational", StrengthWord::InvitationalStrong),
+        ("mildly invitational", StrengthWord::InvitationalMild),
         ("inv+", StrengthWord::InvitationalPlus),
         ("invitational", StrengthWord::Invitational),
         ("inv", StrengthWord::Invitational),
@@ -749,6 +796,7 @@ fn match_convention(s: &str) -> Option<(Token, usize)> {
         "multi-coloured",
         "multi-colored",
         "multi",
+        "mini-splinter",
         "splinter",
         "spl",
         "sign off",
@@ -832,8 +880,7 @@ fn match_shortness(s: &str) -> Option<(Token, usize)> {
 }
 
 fn match_support(s: &str) -> Option<(Token, usize)> {
-    const WORDS: &[&str] = &["support", "supp", "fit", "raise", "trumps"];
-    for phrase in WORDS {
+    for phrase in SUPPORT_WORDS {
         if let Some(l) = match_word(s, phrase) {
             return Some((Token::Support(3), l));
         }
@@ -1053,6 +1100,18 @@ mod tests {
         assert_eq!(rec("GF"), Token::Strength(StrengthWord::GameForcing));
         assert_eq!(rec("INV"), Token::Strength(StrengthWord::Invitational));
         assert_eq!(rec("INV+"), Token::Strength(StrengthWord::InvitationalPlus));
+        assert_eq!(
+            rec("Mildly invitational"),
+            Token::Strength(StrengthWord::InvitationalMild)
+        );
+        assert_eq!(
+            rec("Strongly invitational"),
+            Token::Strength(StrengthWord::InvitationalStrong)
+        );
+        assert_eq!(
+            rec("at most invitational"),
+            Token::Strength(StrengthWord::InvitationalAtMost)
+        );
         assert_eq!(rec("MIN"), Token::Strength(StrengthWord::Min));
         assert_eq!(rec("MAX"), Token::Strength(StrengthWord::Max));
         assert_eq!(rec("weak"), Token::Strength(StrengthWord::Weak));
@@ -1120,6 +1179,22 @@ mod tests {
     fn support_words() {
         assert_eq!(rec("fit"), Token::Support(3));
         assert_eq!(rec("support"), Token::Support(3));
+    }
+
+    #[test]
+    fn support_words_with_explicit_length() {
+        // The design table's own examples (§7.4 row 20): the written minimum must survive, not
+        // get discarded in favour of the bare-form default of 3.
+        let (tok, len) = recognize("3+ SUPP").unwrap();
+        assert_eq!(tok, Token::Support(3));
+        assert_eq!(len, "3+ SUPP".len());
+
+        let (tok, len) = recognize("4+ trumps").unwrap();
+        assert_eq!(tok, Token::Support(4));
+        assert_eq!(len, "4+ trumps".len());
+
+        assert_eq!(rec("5+ fit"), Token::Support(5));
+        assert_eq!(rec("4=support"), Token::Support(4));
     }
 
     #[test]
