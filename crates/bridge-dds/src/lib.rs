@@ -447,8 +447,18 @@ mod backend {
             // SAFETY: `SetResources` takes two plain integers and has no other precondition;
             // the surrounding `OnceLock` guarantees exactly one call for the process, before
             // any other DDS entry point runs.
-            unsafe {
-                sys::SetResources(memory_mb as c_int, cfg.max_threads as c_int);
+            let rc =
+                unsafe { sys::bdds_SetResources(memory_mb as c_int, cfg.max_threads as c_int) };
+            if rc != sys::RETURN_NO_FAULT {
+                // Only a C++ exception (an allocation failure while sizing DDS's per-thread
+                // memory) gets here. Nothing better to do than report it: DDS keeps whatever
+                // its library constructor (`dds.cpp` `libInit`) set up, and any later call
+                // that cannot run reports its own error code.
+                tracing::error!(
+                    memory_mb,
+                    max_threads = cfg.max_threads,
+                    "DDS SetResources failed; keeping DDS's built-in defaults"
+                );
             }
             let threads = dds_info().noOfThreads.max(1) as u32;
             Runtime {
@@ -478,9 +488,9 @@ mod backend {
         let mut info = zeroed::<sys::DDSInfo>();
         // SAFETY: `info` is a validly sized, zero-initialised `DDSInfo` that `GetDDSInfo` only
         // writes into.
-        unsafe {
-            sys::GetDDSInfo(&mut info);
-        }
+        // A failure (C++ exception) leaves `info` all-zero, which every caller tolerates
+        // (`noOfThreads` is clamped to at least 1).
+        let _ = unsafe { sys::bdds_GetDDSInfo(&mut info) };
         info
     }
 
@@ -690,7 +700,7 @@ mod backend {
         // non-reentrant with the other bulk calls, and also drives DDS's own per-thread-index
         // state internally, so this call holds every slot for its duration (`SlotPool`'s doc
         // comment).
-        let rc = unsafe { sys::CalcDDtable(table_deal, &mut result) };
+        let rc = unsafe { sys::bdds_CalcDDtable(table_deal, &mut result) };
         drop(held_slots);
         if rc != sys::RETURN_NO_FAULT {
             return Err(dds_error(rc));
@@ -720,7 +730,7 @@ mod backend {
             // the other bulk calls, and also drives DDS's own per-thread-index state
             // internally, so this call holds every slot for its duration.
             let rc = unsafe {
-                sys::CalcAllTables(
+                sys::bdds_CalcAllTables(
                     dealsp.as_mut(),
                     -1, // no par calculation (docs/design/10-dds.md §7.1)
                     trump_filter.as_mut_ptr(),
@@ -754,7 +764,7 @@ mod backend {
         // (docs/design/10-dds.md §7.2 rule 2); `acquire_slot` also guarantees no bulk call
         // holds (or is waiting to hold) every slot at the same time (`SlotPool`'s doc comment).
         let rc = unsafe {
-            sys::SolveBoard(
+            sys::bdds_SolveBoard(
                 dl,
                 target_code(target),
                 solutions_code(solutions),
@@ -791,7 +801,7 @@ mod backend {
             // kept alive for the whole call. `SolveAllChunksBin` is documented non-reentrant
             // with the other bulk calls, and also drives DDS's own per-thread-index state
             // internally, so this call holds every slot for its duration.
-            let rc = unsafe { sys::SolveAllChunksBin(bop.as_mut(), solvedp.as_mut(), 1) };
+            let rc = unsafe { sys::bdds_SolveAllChunksBin(bop.as_mut(), solvedp.as_mut(), 1) };
             drop(held_slots);
             if rc != sys::RETURN_NO_FAULT {
                 return Err(dds_error(rc));
@@ -838,7 +848,7 @@ mod backend {
         // the callee only writes into; `slot` is exclusively held for this call, matching
         // `AnalysePlayBin`'s per-`thrId` reentrancy contract; `acquire_slot` also guarantees no
         // bulk call holds (or is waiting to hold) every slot at the same time.
-        let rc = unsafe { sys::AnalysePlayBin(dl, trace, &mut solved, slot.id()) };
+        let rc = unsafe { sys::bdds_AnalysePlayBin(dl, trace, &mut solved, slot.id()) };
         drop(slot);
         if rc != sys::RETURN_NO_FAULT {
             return Err(dds_error(rc));
@@ -866,7 +876,7 @@ mod backend {
         // `DealerParBin` is a pure function of its inputs (docs/design/10-dds.md §7.2 rule 3:
         // "no lock").
         let rc = unsafe {
-            sys::DealerParBin(
+            sys::bdds_DealerParBin(
                 &mut table_res,
                 &mut pres,
                 convert::seat(dealer),
