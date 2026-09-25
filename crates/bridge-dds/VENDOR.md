@@ -11,7 +11,7 @@ cargo xtask dds vendor
 | Upstream | https://github.com/dds-bridge/dds |
 | Tag | `v2.9.0` (2018) |
 | License | Apache-2.0 (Bo Haglund, Soren Hein) |
-| Layout expected by `build.rs` | `vendor/dds-2.9.0/src/*.cpp`, `vendor/dds-2.9.0/src/*.h`, `vendor/dds-2.9.0/include/dll.h`, `vendor/dds-2.9.0/LICENSE` |
+| Layout expected by `build.rs` | `vendor/dds-2.9.0/src/*.cpp`, `vendor/dds-2.9.0/src/*.h`, `vendor/dds-2.9.0/include/dll.h`, `vendor/dds-2.9.0/include/portab.h`, `vendor/dds-2.9.0/LICENSE` |
 | Local patches | none |
 | Archive SHA-256 | recorded by `cargo xtask dds vendor` in `vendor/SHA256SUMS` |
 
