@@ -239,6 +239,11 @@ pub struct CallContext {
     pub last_bid: Option<Bid>,
     /// Partner's last call was forcing.
     pub forcing_situation: bool,
+    /// The suit and level of `owner`'s own first [`Call::Bid`] so far, if any. Unlike
+    /// `our_suits` (side-level: opener's and responder's suits combined), this identifies
+    /// specifically the suit `owner` opened, needed to check a reverse's first-suit length
+    /// exactly rather than against the whole side's suits.
+    pub opener_first_suit: Option<(Suit, u8)>,
 }
 
 /// Classifies call `index` of `auction` from the point of view of its caller.
@@ -257,6 +262,7 @@ pub fn classify(auction: &Auction, index: usize, owner: Seat) -> CallContext {
     let partner_suits = suits_bid_by(auction, history, |s| s == owner.partner());
 
     let role = classify_role(auction, history, index, owner);
+    let opener_first_suit = owner_first_suit(auction, history, owner);
     let kind = classify_kind(
         auction,
         history,
@@ -267,6 +273,7 @@ pub fn classify(auction: &Auction, index: usize, owner: Seat) -> CallContext {
         their_suits,
         owner_suits,
         partner_suits,
+        opener_first_suit,
     );
 
     let level = match call {
@@ -313,6 +320,7 @@ pub fn classify(auction: &Auction, index: usize, owner: Seat) -> CallContext {
         agreed_suit,
         last_bid,
         forcing_situation: false,
+        opener_first_suit,
     }
 }
 
@@ -404,6 +412,7 @@ fn classify_kind(
     their_suits: StrainSet,
     owner_suits: StrainSet,
     partner_suits: StrainSet,
+    opener_first_suit: Option<(Suit, u8)>,
 ) -> CallKind {
     match call {
         Call::Pass => CallKind::Pass,
@@ -432,11 +441,9 @@ fn classify_kind(
             let reverse = role == Role::Opener
                 && b.level() == 2
                 && new_suit
-                && owner_first_suit(auction, history, owner).is_some_and(
-                    |(first_suit, first_level)| {
-                        first_level == 1 && strain.index() > Strain::from_suit(first_suit).index()
-                    },
-                );
+                && opener_first_suit.is_some_and(|(first_suit, first_level)| {
+                    first_level == 1 && strain.index() > Strain::from_suit(first_suit).index()
+                });
 
             CallKind::Bid {
                 new_suit,
@@ -1155,16 +1162,10 @@ fn rule_reverse(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     let bid = ctx.call.bid()?;
     let second_suit = bid.strain().suit()?;
     let second = HandConstraint::Atom(Atom::ANY.with_suit_len(second_suit, 4..=13));
-    // The first (opened) suit is not exposed on `CallContext` directly; approximate it as "some
-    // suit already bid by our side has length >= 5", which is exact when (as in the ordinary
-    // case this rule targets) only opener's own suit is in `our_suits` so far.
-    let first = ctx
-        .our_suits
-        .iter()
-        .filter_map(|s| s.suit())
-        .map(|s| HandConstraint::Atom(Atom::ANY.with_suit_len(s, 5..=13)))
-        .reduce(HandConstraint::or)
-        .unwrap_or(HandConstraint::ANY);
+    // The suit opener actually opened (not the side-level `our_suits`, which by now also
+    // contains responder's suit(s)): a reverse requires 5+ of *that* suit specifically.
+    let (first_suit, _) = ctx.opener_first_suit?;
+    let first = HandConstraint::Atom(Atom::ANY.with_suit_len(first_suit, 5..=13));
     let constraint = HandConstraint::Atom(Atom::ANY.with_hcp(p.rebid.reverse..=37))
         .and(first)
         .and(second);

@@ -215,6 +215,11 @@ fn rule_reverse() {
     let too_weak = hand("KQ432", LOW, "KJ432", "");
     assert!(inf.constraint.satisfies(good));
     assert!(!inf.constraint.satisfies(too_weak));
+    // Only 2 clubs (opener's real first suit) but 5 spades (responder's suit, already in
+    // `our_suits`) and 4 hearts, 17 hcp: must NOT satisfy, even though a naive check that ORs
+    // over every suit our side has bid so far would let responder's 5-card spade suit qualify.
+    let short_in_first_suit = hand("32", "32", "AK32", "AKQJT");
+    assert!(!inf.constraint.satisfies(short_in_first_suit));
 }
 
 #[test]
