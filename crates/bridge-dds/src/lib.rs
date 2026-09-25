@@ -21,7 +21,7 @@ pub mod convert;
 pub mod sys;
 
 pub use bridge_core::DdTable;
-use bridge_core::{Card, Deal, DealError, Holding, PlayHistory, Seat, Strain, Vulnerability};
+use bridge_core::{Card, Deal, Holding, PlayHistory, Seat, Strain, Vulnerability};
 
 /// Resource limits given to DDS once.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -244,12 +244,6 @@ pub enum DdsError {
         /// `ErrorMessage` text.
         message: String,
     },
-    /// The deal is invalid.
-    #[error(transparent)]
-    Deal(#[from] DealError),
-    /// More than 200 boards in one call.
-    #[error("too many boards: {0} > 200")]
-    TooManyBoards(usize),
     /// The DDS sources were not vendored at build time.
     #[error("DDS is not available in this build (run `cargo xtask dds vendor` and rebuild)")]
     Unavailable,

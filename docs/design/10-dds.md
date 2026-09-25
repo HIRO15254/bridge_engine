@@ -353,12 +353,12 @@ pub fn info() -> Result<DdsInfo, DdsError>;
 
 #[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
 pub enum DdsError {
-    #[error("DDS error {code}: {message}")] Code { code: i32, message: String },   // via ErrorMessage()
-    #[error(transparent)] Deal(#[from] DealError),
-    #[error("too many boards: {0} > 200")] TooManyBoards(usize),
+    #[error("DDS error {code}: {message}")] Code { code: i32, message: String },   // via ErrorMessage() or synthesized (bad `trick`)
     #[error("DDS is not available in this build (run `cargo xtask dds vendor` and rebuild)")] Unavailable,
 }
 ```
+
+（5.5–5.7 の見直しで `Deal(#[from] DealError)` と `TooManyBoards(usize)` は削除した: `calc_dd_tables`/`solve_all_boards` は内部でチャンク分割するので `TooManyBoards` を構築する経路が無く、`Deal` から不正な `Deal` を作る経路もこのクレートには無い — どちらも宣言されているだけで一度も構築されない死んだヴァリアントだった。実際に発生する不正は `Code`（DDS 自身の戻りコード、または `trick` の検証失敗をラッパーが `RETURN_SUIT_OR_RANK`/`RETURN_DUPLICATE_CARDS` として合成したもの）だけなので、`match` で網羅していても取りこぼしは無い。）
 
 `Position` にコンストラクタは無い: オープニングリードは `Position { deal, trump, leader: contract.leader(), trick: &[] }`、プレイ途中は残りカードの `Deal` (13 枚ずつでない配牌は `Deal` にならないので、`solve_board` は `deal` から `trick` と既出カードを引いた残りを内部で `remainCards` に変換する) と `history.current_trick()` を渡す。`ParResult.contracts` は `parResultsMaster.contracts` を DDS の文字列形式 (`"NS 4S"` 等) に整形したもので、構造化した `ParContract` 型は持たない。
 
@@ -367,9 +367,9 @@ pub enum DdsError {
 | 関数 | DDS 呼び出し | ロック | 備考 |
 | --- | --- | --- | --- |
 | `calc_dd_table` | `CalcDDtable` (内部でスレッド並列) | `slots` を全部 | 単発。`resTable` を `DdTable::new` に変換 (ストレイン軸反転) |
-| `calc_dd_tables` | `CalcAllTables` を 40 件ずつ (`MAXNOOFTABLES` = 200 boards / 5 strains)、`mode = -1` (パー計算なし)、`trumpFilter = [0; 5]` (全ストレイン) | `slots` を全部 (チャンクごと) | |
+| `calc_dd_tables` | `CalcAllTables` を 40 件ずつ (`MAXNOOFTABLES` = 200 boards / 5 strains)、`mode = -1` (パー計算なし)、`trumpFilter = [0; 5]` (全ストレイン) | `slots` を全部 (チャンクごと) | `tests/batching.rs` が 39/40/41 の境界を検査 |
 | `solve_board` | `SolveBoard(dl, target, solutions, mode, &mut fut, thrId)` | `slots` から 1 スロット (ブロッキング取得) | Rust スレッド間で並行可 |
-| `solve_all_boards` | `SolveAllChunksBin(bop, solvedp, chunkSize = 1)` を 200 件ずつ | `slots` を全部 | 200 超は `TooManyBoards` ではなく分割。`boards` はヒープ |
+| `solve_all_boards` | `SolveAllChunksBin(bop, solvedp, chunkSize = 1)` を 200 件ずつ | `slots` を全部 | 200 超はエラーにせず分割 (`tests/batching.rs` が 199/200/201 の境界を検査)。`boards` はヒープ |
 | `analyse_play` | `AnalysePlayBin(dl, play, &mut solved, thrId)` | `slots` から 1 スロット | 戻り値 `tricks[0..=n]` (`tricks[0]` = プレイ前の DD 結果)。`trump`/`leader` は `PlayHistory::trump()`/`leader()` |
 | `dealer_par` | `DealerParBin(&mut table, &mut pres, dealer, vul)` | なし (純関数) | |
 | `info` | `GetDDSInfo` | なし | `versionString`, `noOfThreads`, `threading`, `systemString` を写す |
@@ -380,7 +380,7 @@ pub enum DdsError {
 
 1. `init` は `OnceLock<Runtime>` (非公開) で 1 回だけ `SetResources(max_memory_mb, max_threads)` を呼び、続けて `GetDDSInfo` で `noOfThreads` を読んでスロット数とする。`SetMaxThreads` は使わない (DDS3 では no-op)。`init` を呼ばずにラッパー関数を呼んだ場合は `DdsConfig::default()` で暗黙に初期化する。
 2. `SolveBoard` と `AnalysePlayBin` は `thrId` (0..threads) ごとに独立した作業領域を使うので、空きスロットを 1 つ貸し出す間だけ並行して呼べる。空きが無ければ `Condvar` で待つ (非ブロッキング版は持たない)。
-3. `SolveAllChunksBin`、`CalcAllTables`、`CalcDDtable`、`AnalyseAllPlaysBin` は 2.9 のドキュメント通り非再入である「だけ」ではなく、バルク呼び出し自身も DDS 内部でこの同じ `thrId` 空間 (`track[]` などの per-thread-index 状態) を使って複数スレッドを回す。そのためバルク呼び出しは `slots` の全スロットを (空くまで `Condvar` で待って) 取ってから DDS を呼び、呼び終えたら全部返す。単に別の `Mutex` でバルク呼び出し同士だけを排他しても、バルク呼び出し中に外部から `solve_board`/`analyse_play` が同じ `thrId` に触れてしまい、DDS 内部状態が壊れる (`Moves::GetTrickData` の `"Sum N is not four"` や `ABsearch.cpp` のアサート落ち。`--include-ignored` で `masterdd_matches_upstream` と `list100_matches_upstream` が同一プロセス内で並行実行されたときに実際に踏んだ)。`acquire_slot` はバルク呼び出しが待機/保持中は新規スロットを渡さない (`batch_waiting` フラグ) ので、バルク呼び出し側が `solve_board`/`analyse_play` の絶え間ない要求で永久に待たされることもない。バルク呼び出しは DDS 内部で全スレッドを使うため、同時に `solve_board` を走らせても速くならない。
+3. `SolveAllChunksBin`、`CalcAllTables`、`CalcDDtable`、`AnalyseAllPlaysBin` は 2.9 のドキュメント通り非再入である「だけ」ではなく、バルク呼び出し自身も DDS 内部でこの同じ `thrId` 空間 (`track[]` などの per-thread-index 状態) を使って複数スレッドを回す。そのためバルク呼び出しは `slots` の全スロットを (空くまで `Condvar` で待って) 取ってから DDS を呼び、呼び終えたら全部返す。単に別の `Mutex` でバルク呼び出し同士だけを排他しても、バルク呼び出し中に外部から `solve_board`/`analyse_play` が同じ `thrId` に触れてしまい、DDS 内部状態が壊れる (`Moves::GetTrickData` の `"Sum N is not four"` や `ABsearch.cpp` のアサート落ち。`--include-ignored` で `masterdd_matches_upstream` と `list100_matches_upstream` が同一プロセス内で並行実行されたときに実際に踏んだ)。`tests/concurrency.rs` の `concurrent_bulk_and_slot_calls_do_not_corrupt_each_other` はこの組み合わせの恒久的な回帰テスト (元の再現手順はその場限りのリポプロで、コミットされたテストは無かった)。`acquire_slot` はバルク呼び出しが待機/保持中は新規スロットを渡さない (`batch_waiting` フラグ) ので、バルク呼び出し側が `solve_board`/`analyse_play` の絶え間ない要求で永久に待たされることもない。バルク呼び出しは DDS 内部で全スレッドを使うため、同時に `solve_board` を走らせても速くならない。
 4. `FreeMemory()` はプロセス寿命の間呼ばない (ドキュメントに明記)。
 5. `Runtime` は `Send + Sync`。`Position` の検証 (`trick.len() <= 3`、`trick` のカードが `deal` に含まれる、枚数の整合) はラッパーで行い、それ以外の不正は DDS の戻りコードを `DdsError::Code` に変換する (`ErrorMessage` の 80 バイト行)。
 
