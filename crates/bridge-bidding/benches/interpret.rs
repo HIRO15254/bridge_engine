@@ -4,8 +4,9 @@
 //! Two hand-built systems: `bench_system` (bare HCP atoms only, so every node's `shapes()` is
 //! exactly `ShapeSet::ALL`) and `bench_system_realistic` (each node also names its own suit's
 //! length). `summary_satisfiable`'s `shapes == ShapeSet::ALL` shortcut means the bare-HCP system
-//! alone cannot exercise the `ShapeSet::min_hcp`/`max_hcp` walk in Step B's cross-product pre-check
-//! — nearly every real system node restricts at least one suit's length, so both are benched.
+//! alone cannot exercise the `ShapeSet::hcp_bounds` per-byte table lookups in Step B's
+//! cross-product pre-check — nearly every real system node restricts at least one suit's length,
+//! so both are benched.
 //!
 //! Two more benches (`bench_interpret_sayc_1nt`/`_competitive`) interpret real auctions against
 //! the actual compiled SAYC system (`systems/sayc/sayc.bml`), rather than a hand-built stand-in:
@@ -39,7 +40,8 @@ fn atom_hcp(lo: u8, hi: u8) -> HandConstraint {
 /// `suit` has length `>=lo`, HCP in `hcp_lo..=hcp_hi`: a *realistic* node constraint (an opening
 /// bid or raise always says something about its own suit), unlike `atom_hcp`'s bare-HCP atom
 /// whose `shapes()` is exactly `ShapeSet::ALL` — the one case `summary_satisfiable`/`Summary::of`
-/// can skip the `ShapeSet::min_hcp`/`max_hcp` walk on for free. See `bench_system_realistic`.
+/// can skip the `ShapeSet::hcp_bounds` per-byte table lookups on for free. See
+/// `bench_system_realistic`.
 fn atom_suit_hcp(suit: Suit, lo: u8, hcp_lo: u8, hcp_hi: u8) -> HandConstraint {
     HandConstraint::Atom(
         Atom::ANY
@@ -431,6 +433,45 @@ fn bench_interpret_sayc_competitive(c: &mut Criterion) {
     });
 }
 
+/// `1C-P-1H-P-1S-P-2NT-P-3NT-P-P-P`: a full 12-call, non-competitive auction against the real
+/// compiled SAYC system (opening 1C, two one-over-one responses, an opener's rebid, and a close
+/// to game) -- unlike `bench_interpret_sayc_1nt`/`_competitive` (10 and 8 calls respectively),
+/// this is the actual auction length 11-testing.md §9 and 07-bidding.md §4.6 budget
+/// (`interpret < 10 µs`) is written against.
+fn bench_auction_sayc_12_call() -> Auction {
+    Auction::from_calls(
+        Seat::North,
+        Vulnerability::None,
+        vec![
+            bid(1, Strain::Clubs),
+            Call::Pass,
+            bid(1, Strain::Hearts),
+            Call::Pass,
+            bid(1, Strain::Spades),
+            Call::Pass,
+            bid(2, Strain::NoTrump),
+            Call::Pass,
+            bid(3, Strain::NoTrump),
+            Call::Pass,
+            Call::Pass,
+            Call::Pass,
+        ],
+    )
+    .unwrap()
+}
+
+fn bench_interpret_sayc_12_call(c: &mut Criterion) {
+    let system = Arc::new(compile_sayc());
+    let natural = Arc::new(bridge_system::NaturalInference::default());
+    let table = Table::uniform(system, natural);
+    let auction = bench_auction_sayc_12_call();
+    let opts = InterpretOptions::default();
+
+    c.bench_function("interpret/sayc-12-call-auction", |b| {
+        b.iter(|| std::hint::black_box(interpret(&table, &auction, &opts)))
+    });
+}
+
 criterion_group!(
     benches,
     bench_interpret,
@@ -438,6 +479,7 @@ criterion_group!(
     bench_interpret_realistic,
     bench_sequence_log_likelihood_realistic,
     bench_interpret_sayc_1nt,
-    bench_interpret_sayc_competitive
+    bench_interpret_sayc_competitive,
+    bench_interpret_sayc_12_call
 );
 criterion_main!(benches);

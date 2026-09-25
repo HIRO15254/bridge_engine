@@ -19,6 +19,7 @@ use bridge_core::{Auction, Call, Hand, Seat};
 use bridge_system::natural::classify;
 use bridge_system::trie::{LookupKey, RelVul, TrieId};
 use bridge_system::{CallContext, Forcing, SystemIR};
+use smallvec::SmallVec;
 
 use crate::{NodeId, Table};
 
@@ -694,9 +695,9 @@ fn clamp_hcp(
     (*a.start().max(b.start()))..=(*a.end().min(b.end()))
 }
 
-/// A combo's running shape/HCP summary and the (expensive) `ShapeSet::min_hcp`/`max_hcp` bounds
-/// derived from it, kept incrementally instead of being recomputed from the whole constraint tree
-/// at every step of the cross product (see [`Combo`]'s doc comment for why this matters).
+/// A combo's running shape/HCP summary and the `ShapeSet::min_hcp`/`max_hcp` bounds derived from
+/// it, kept incrementally instead of being recomputed from the whole constraint tree at every
+/// step of the cross product (see [`Combo`]'s doc comment for why this matters).
 #[derive(Clone)]
 struct Summary {
     shapes: bridge_core::ShapeSet,
@@ -729,8 +730,8 @@ impl Summary {
     /// `self ∧ addition`'s summary, or `None` when the cheap check finds it unsatisfiable (an
     /// empty shape set, an inverted HCP range, or an HCP range no shape in the set can reach —
     /// the same three checks as `summary_satisfiable`, just computed incrementally). The
-    /// `min_hcp`/`max_hcp` walk (`ShapeSet::{min,max}_hcp`, up to ~560 member shapes) only runs
-    /// when the shape set actually narrows from `self`'s, not on every combination; when it does
+    /// `min_hcp`/`max_hcp` bounds (`ShapeSet::hcp_bounds`, at most 72 per-byte table lookups)
+    /// only run when the shape set actually narrows from `self`'s, not on every combination; when it does
     /// not narrow, `self.bounds` is still valid for the new (possibly HCP-narrower) range and is
     /// reused as-is (07-bidding.md §4.4.2's `interpret < 10 µs` budget).
     fn and(&self, addition: &Summary) -> Option<Summary> {
@@ -782,14 +783,22 @@ impl Summary {
 /// `summary` is the running `Summary` of the combo's (not-yet-materialised) constraint (see
 /// [`Summary::and`]): keeping it incrementally, instead of recomputing
 /// `constraint.shapes()`/`hcp_range()` (a walk of the whole `And` tree) and then
-/// `ShapeSet::hcp_bounds` (a walk of up to ~560 member shapes) from scratch at every combination,
+/// `ShapeSet::hcp_bounds` (at most 72 per-byte table lookups) from scratch at every combination,
 /// is what keeps the cross-product's per-combination pre-check cheap once a node's constraint
 /// carries a real suit-length or shape atom (`summary_satisfiable`'s `shapes == ShapeSet::ALL`
 /// shortcut alone only covers bare-HCP atoms).
+///
+/// `key`'s element is `(Option<NodeId>, ResolutionKind, usize)`, and a seat's own call count in a
+/// 12-call, 4-seat auction is 3 in the common (strictly-alternating-seats) case, so `key` is a
+/// [`ComboKey`]: inline storage for up to 4 levels, spilling to the heap only for a seat with more
+/// calls than that. This removes the per-surviving-candidate heap allocation `Vec` needed for
+/// every combo in the cross product (recheck 3.12: `interpret < 10 µs`).
+type ComboKey = SmallVec<[(Option<NodeId>, ResolutionKind, usize); 4]>;
+
 struct Combo {
     summary: Summary,
     weight: f32,
-    key: Vec<(Option<NodeId>, ResolutionKind, usize)>,
+    key: ComboKey,
 }
 
 /// Rebuilds a surviving combo's `Vec<CallExplanation>` from its `key` and the seat's own calls in
@@ -833,7 +842,7 @@ fn step_b(
         let mut combos: Vec<Combo> = vec![Combo {
             summary: Summary::ANY,
             weight: 1.0,
-            key: Vec::new(),
+            key: ComboKey::new(),
         }];
         let had_calls = !seat_calls.is_empty();
 
@@ -856,11 +865,12 @@ fn step_b(
                     // `with_capacity` + `extend_from_slice` (one allocation, sized exactly right)
                     // instead of `combo.key.clone()` then `push` (which can reallocate a second
                     // time): `key` is rebuilt on every surviving candidate in this loop, so the
-                    // saving compounds across the cross product. No `HandConstraint` is built
-                    // here at all (see `Combo`'s doc comment): the alternative's own constraint is
-                    // only needed through `alt_summaries[i]` (already folded into `summary` above)
-                    // until a combo survives to the end.
-                    let mut key = Vec::with_capacity(combo.key.len() + 1);
+                    // saving compounds across the cross product. `ComboKey`'s inline capacity
+                    // (4) keeps this allocation-free entirely for a seat with <= 4 calls. No
+                    // `HandConstraint` is built here at all (see `Combo`'s doc comment): the
+                    // alternative's own constraint is only needed through `alt_summaries[i]`
+                    // (already folded into `summary` above) until a combo survives to the end.
+                    let mut key = ComboKey::with_capacity(combo.key.len() + 1);
                     key.extend_from_slice(&combo.key);
                     key.push((ex.node, ex.kind, i));
                     next.push(Combo {
@@ -870,12 +880,17 @@ fn step_b(
                     });
                 }
             }
-            // Dedup by (node, kind, branch) parts, summing weights.
+            // Dedup by (node, kind, branch) parts, summing weights: sort by `key` so equal keys
+            // become adjacent (an O(n log n) full order on `Ord` tuples), then merge each run in
+            // one linear pass, instead of the O(n²) `deduped.iter_mut().find(|d| d.key ==
+            // combo.key)` this replaced (a linear scan of the deduped list so far for every
+            // candidate in `next`; recheck 3.12: `interpret < 10 µs`).
+            next.sort_by(|a, b| a.key.cmp(&b.key));
             let mut deduped: Vec<Combo> = Vec::with_capacity(next.len());
             for combo in next {
-                match deduped.iter_mut().find(|d| d.key == combo.key) {
-                    Some(existing) => existing.weight += combo.weight,
-                    None => deduped.push(combo),
+                match deduped.last_mut() {
+                    Some(last) if last.key == combo.key => last.weight += combo.weight,
+                    _ => deduped.push(combo),
                 }
             }
             deduped.sort_by(|a, b| b.weight.total_cmp(&a.weight));
@@ -888,7 +903,7 @@ fn step_b(
             combos = vec![Combo {
                 summary: Summary::ANY,
                 weight: 1.0,
-                key: Vec::new(),
+                key: ComboKey::new(),
             }];
         }
 
