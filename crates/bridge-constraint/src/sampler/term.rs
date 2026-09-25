@@ -13,7 +13,6 @@
 //!   estimated by a burn-in probe.
 
 use core::ops::RangeInclusive;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use bridge_core::{Card, Hand, Holding, Shape, Suit};
@@ -21,7 +20,8 @@ use bridge_eval::{DistMethod, LtcMethod, SUIT, holding_hcp, shape_points};
 
 use super::rand_util::{SplitMix64, random_below};
 use super::suit_table::{
-    PAIR_HCP_MAX, PAIR_X_MAX, PairConv, SparseVec, SuitTable, full_suit, pack_key, unpack_key,
+    DENSE_NK_NO_X, DENSE_NK_WITH_X, PAIR_HCP_MAX, PAIR_X_MAX, PairConv, PairMap, SparseVec,
+    SuitTable, full_suit, pack_key, unpack_key,
 };
 use crate::{Atom, CardRequirement, DnfTerm, Metric};
 
@@ -34,6 +34,13 @@ pub(crate) struct PreparedTerm {
     /// Estimated acceptance rate of the literals the exact scheme could not capture (`None` when
     /// every literal was captured exactly, i.e. every draw is guaranteed to satisfy the term).
     pub(crate) alpha: Option<f64>,
+    /// Probability that drawing from this term with up to `opts.max_tries` retries produces
+    /// *some* accepted hand: `1 − (1 − alpha)^max_tries` when `alpha.is_some()`, `1.0` for an
+    /// exact term (every draw is accepted, so retries never matter). Used as the weight
+    /// `Sampler` gives this term in `log_prob`'s normalising constant, since a term whose
+    /// `alpha·max_tries` is small enough to often exhaust its retries contributes less to the
+    /// distribution `sample` actually returns than its raw `1/alpha` would suggest.
+    pub(crate) s: f64,
     /// The source term (for the full `atom ∧ custom ∧ residual` check).
     pub(crate) term: DnfTerm,
     /// `Some` for the unconstrained fast path; `None` for the general path.
@@ -72,9 +79,9 @@ impl AnyTerm {
 struct GeneralTerm {
     suits: [Arc<SuitTable>; 4],
     /// Pair convolutions for `(len_clubs, len_diamonds)` pairs used by some feasible shape.
-    pair01: HashMap<(u8, u8), PairConv>,
+    pair01: PairMap,
     /// Pair convolutions for `(len_hearts, len_spades)` pairs used by some feasible shape.
-    pair23: HashMap<(u8, u8), PairConv>,
+    pair23: PairMap,
     /// Feasible shapes with their weights and HCP windows.
     shapes: Vec<(Shape, u64, (u8, u8))>,
     cum: Vec<u64>,
@@ -92,11 +99,11 @@ impl GeneralTerm {
         let (l0, l1, l2, l3) = (lens[0], lens[1], lens[2], lens[3]);
         let pair01 = self
             .pair01
-            .get(&(l0, l1))
+            .get(l0, l1)
             .expect("built for every feasible shape in `prepare`");
         let pair23 = self
             .pair23
-            .get(&(l2, l3))
+            .get(l2, l3)
             .expect("built for every feasible shape in `prepare`");
         let (xlo, xhi) = self.x_window;
 
@@ -238,8 +245,15 @@ impl PairConv {
     /// Convolves two suits' `(len_a, len_b)` count vectors: for every pair of entries, the
     /// combined `(hcp, x)` accumulates `n_a * n_b`. Also builds the 2-D prefix sums used by
     /// [`PairConv::box_sum`].
-    fn build(a: &SuitTable, b: &SuitTable, len_a: u8, len_b: u8) -> PairConv {
-        let width = PAIR_X_MAX as usize + 1;
+    ///
+    /// `with_x` is whether the term carries an additive feature at all (K=2); when it does not
+    /// (K=1), every entry's `x` is 0 (`SuitTable`'s key was packed with `x = 0` throughout), so
+    /// the `x` axis needs only 1 slot instead of the generous `PAIR_X_MAX + 1` upper bound - a
+    /// term.rs caller with no additive feature builds `height * 1` arrays here instead of
+    /// `height * (PAIR_X_MAX + 1)`, and the nested loops below are `O(height)` instead of
+    /// `O(height * (PAIR_X_MAX + 1))`.
+    fn build(a: &SuitTable, b: &SuitTable, len_a: u8, len_b: u8, with_x: bool) -> PairConv {
+        let width = if with_x { PAIR_X_MAX as usize + 1 } else { 1 };
         let height = PAIR_HCP_MAX as usize + 1;
         let mut acc = vec![0u64; height * width];
         for &(key_a, n_a) in &a.counts[len_a as usize].0 {
@@ -267,23 +281,23 @@ impl PairConv {
             }
         }
 
-        let mut prefix = vec![0u64; height * width];
+        // Turn `acc` into its own 2-D prefix sum in place (one allocation instead of two, per
+        // §10). Within row `h`, `acc[h*width+x]` still holds the raw count when it is read into
+        // `row` (only lower-`x` slots of this same row have been overwritten so far), and
+        // `acc[(h-1)*width+x]` was already turned into a prefix sum on the previous `h` iteration.
         for h in 0..height {
             let mut row = 0u64;
             for x in 0..width {
                 row += acc[h * width + x];
-                let up = if h == 0 {
-                    0
-                } else {
-                    prefix[(h - 1) * width + x]
-                };
-                prefix[h * width + x] = up + row;
+                let up = if h == 0 { 0 } else { acc[(h - 1) * width + x] };
+                acc[h * width + x] = up + row;
             }
         }
 
         PairConv {
             p: SparseVec(p),
-            prefix: prefix.into_boxed_slice(),
+            prefix: acc.into_boxed_slice(),
+            width,
         }
     }
 
@@ -292,10 +306,9 @@ impl PairConv {
         if hcp_hi < 0 || x_hi < 0 {
             return 0;
         }
-        let width = i64::from(PAIR_X_MAX) + 1;
         let hcp_hi = hcp_hi.min(i64::from(PAIR_HCP_MAX)) as usize;
-        let x_hi = x_hi.min(i64::from(PAIR_X_MAX)) as usize;
-        self.prefix[hcp_hi * width as usize + x_hi]
+        let x_hi = x_hi.min(self.width as i64 - 1) as usize;
+        self.prefix[hcp_hi * self.width + x_hi]
     }
 
     /// The count of entries with `hcp` in `[hcp_lo, hcp_hi]` and `x` in `[x_lo, x_hi]` (both
@@ -478,15 +491,80 @@ fn binomial(n: u64, k: u64) -> u64 {
     result as u64
 }
 
+/// Folds one more fixed-width value into a running accumulator (`SplitMix64`'s own mixing step,
+/// same constants as [`super::rand_util::SplitMix64`]).
+///
+/// [`burn_in_seed`] uses this instead of `core::hash::Hash` + `DefaultHasher`: the derived `Hash`
+/// impl of a `Vec`/slice writes its length via `Hasher::write_usize`, whose byte width is the
+/// *host's* pointer width, so on wasm32 (32-bit `usize`) it feeds a different byte stream into
+/// the hasher than on a 64-bit host for the exact same logical `atom.cards`/`atom.eval`, and
+/// `DefaultHasher::finish` (SipHash) is sensitive to that. That silently broke D12 (a result must
+/// not depend on the build target) for any atom with a `cards` or `eval` literal, since
+/// `burn_in_seed`'s result feeds `PreparedTerm::prepare` (via the burn-in probe's own RNG seed),
+/// which in turn feeds `Sampler::prepare`'s output. `mix` only ever combines values already
+/// widened to `u64` by the caller, so no host-word-size ever enters the computation.
+fn mix(acc: u64, v: u64) -> u64 {
+    let mut z = acc ^ v;
+    z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+fn mix_range(acc: u64, r: &RangeInclusive<u8>) -> u64 {
+    mix(mix(acc, u64::from(*r.start())), u64::from(*r.end()))
+}
+
+fn mix_dist_method(acc: u64, m: DistMethod) -> u64 {
+    match m {
+        DistMethod::ShortSuit {
+            void,
+            singleton,
+            doubleton,
+        } => {
+            let acc = mix(acc, 0);
+            let acc = mix(acc, u64::from(void));
+            let acc = mix(acc, u64::from(singleton));
+            mix(acc, u64::from(doubleton))
+        }
+        DistMethod::LongSuit => mix(acc, 1),
+        DistMethod::BergenStarting => mix(acc, 2),
+    }
+}
+
+fn mix_metric(acc: u64, m: Metric) -> u64 {
+    match m {
+        Metric::Controls => mix(acc, 0),
+        Metric::Losers(method) => mix(mix(acc, 1), method as u64),
+        Metric::QuickTricks => mix(acc, 2),
+        Metric::DistPoints(method) => mix_dist_method(mix(acc, 3), method),
+        Metric::TotalPoints(method) => mix_dist_method(mix(acc, 4), method),
+        Metric::SuitQuality(suit) => mix(mix(acc, 5), suit as u64),
+    }
+}
+
 /// A deterministic seed for the burn-in probe, derived from the atom and the pool/fixed split so
-/// that [`PreparedTerm::prepare`] stays a pure function of its arguments.
+/// that [`PreparedTerm::prepare`] stays a pure function of its arguments (and, per D12, the same
+/// function regardless of target: see [`mix`]'s doc comment for why `Hash` + `DefaultHasher`
+/// cannot be used here).
 fn burn_in_seed(atom: &Atom, pool: Hand, fixed: Hand) -> u64 {
-    use core::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    atom.hash(&mut hasher);
-    pool.hash(&mut hasher);
-    fixed.hash(&mut hasher);
-    hasher.finish()
+    let mut acc = 0u64;
+    for word in atom.shapes.words() {
+        acc = mix(acc, word);
+    }
+    acc = mix_range(acc, &atom.hcp);
+    acc = mix(acc, atom.cards.len() as u64);
+    for req in &atom.cards {
+        acc = mix(acc, req.mask.bits());
+        acc = mix_range(acc, &req.count);
+    }
+    acc = mix(acc, atom.eval.len() as u64);
+    for req in &atom.eval {
+        acc = mix_metric(acc, req.metric);
+        acc = mix_range(acc, &req.range);
+    }
+    acc = mix(acc, pool.bits());
+    mix(acc, fixed.bits())
 }
 
 impl PreparedTerm {
@@ -505,6 +583,7 @@ impl PreparedTerm {
             return PreparedTerm {
                 total,
                 alpha: None,
+                s: 1.0,
                 term,
                 any: Some(AnyTerm { cards, fixed, m }),
                 general: None,
@@ -535,7 +614,12 @@ impl PreparedTerm {
                         None => pack_key(hcp, 0),
                     }
                 };
-                Arc::new(SuitTable::build(p, f, &filter_fn, &key_fn))
+                let nk = if additive.is_some() {
+                    DENSE_NK_WITH_X
+                } else {
+                    DENSE_NK_NO_X
+                };
+                Arc::new(SuitTable::build(p, f, &filter_fn, &key_fn, nk))
             };
             suits[i] = Some(table);
         }
@@ -549,8 +633,8 @@ impl PreparedTerm {
         let fixed_lens = suit_lens(fixed);
         let pool_lens = suit_lens(pool);
 
-        let mut pair01: HashMap<(u8, u8), PairConv> = HashMap::new();
-        let mut pair23: HashMap<(u8, u8), PairConv> = HashMap::new();
+        let mut pair01 = PairMap::new();
+        let mut pair23 = PairMap::new();
         let mut shapes: Vec<(Shape, u64, (u8, u8))> = Vec::new();
 
         for shape in term.atom.shapes.iter() {
@@ -591,12 +675,13 @@ impl PreparedTerm {
             }
 
             let (l0, l1, l2, l3) = (lens[0], lens[1], lens[2], lens[3]);
-            let p01 = pair01
-                .entry((l0, l1))
-                .or_insert_with(|| PairConv::build(&suits[0], &suits[1], l0, l1));
-            let p23 = pair23
-                .entry((l2, l3))
-                .or_insert_with(|| PairConv::build(&suits[2], &suits[3], l2, l3));
+            let with_x = classified.additive.is_some();
+            let p01 = pair01.get_or_build(l0, l1, || {
+                PairConv::build(&suits[0], &suits[1], l0, l1, with_x)
+            });
+            let p23 = pair23.get_or_build(l2, l3, || {
+                PairConv::build(&suits[2], &suits[3], l2, l3, with_x)
+            });
 
             let weight = shape_weight(p01, p23, lo, hi, x_window.0, x_window.1);
             if weight > 0 {
@@ -615,6 +700,7 @@ impl PreparedTerm {
         let mut prepared = PreparedTerm {
             total,
             alpha: None,
+            s: 1.0,
             term,
             any: None,
             general: Some(GeneralTerm {
@@ -628,7 +714,11 @@ impl PreparedTerm {
         };
 
         if needs_full_check {
-            prepared.alpha = Some(if total == 0 {
+            let alpha = if total == 0 {
+                // The exact superset is already empty, so this term never contributes a sample
+                // (`Sampler::sample` only ever picks a term with `total > 0`, and
+                // `Sampler::log_prob` skips terms with `term.total == 0` before looking at
+                // `alpha`); the exact value is unobservable and unused.
                 0.0
             } else {
                 let seed = burn_in_seed(&prepared.term.atom, pool, fixed);
@@ -641,8 +731,23 @@ impl PreparedTerm {
                         hits += 1;
                     }
                 }
-                f64::from(hits) / f64::from(burn_in)
-            });
+                // Jeffreys estimate (never exactly zero, even when the burn-in probe finds no
+                // hit): the true acceptance rate of a narrow rejection literal can be well below
+                // `1/burn_in`, in which case a plain `hits/burn_in` estimate is `0.0`. `sample`
+                // does not skip such a term (it can still find an accepting hand within
+                // `max_tries`), so a stored `0.0` would make `log_prob` divide by an estimate of
+                // zero. `Sampler::any_definitely_satisfiable` deliberately does not read `alpha`
+                // at all, for the same reason (see its doc comment).
+                (f64::from(hits) + 0.5) / (f64::from(burn_in) + 1.0)
+            };
+            // `s`: the probability that up to `opts.max_tries` retries within this term produce
+            // *some* accepted hand. `sample_deals`-style callers redraw on `None`, so the
+            // distribution `Sampler::sample` actually returns is conditioned on success; `log_prob`
+            // must weight each term by `s`, not treat every term as if `max_tries` were infinite
+            // (see `PreparedTerm::s`'s doc comment).
+            let max_tries = f64::from(opts.max_tries.max(1));
+            prepared.s = 1.0 - (1.0 - alpha).powf(max_tries);
+            prepared.alpha = Some(alpha);
         }
 
         prepared
@@ -657,5 +762,190 @@ impl PreparedTerm {
             .as_ref()
             .expect("prepare always sets exactly one of `any`/`general`")
             .draw(rng, self.total)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn suit_table_hcp_only(pool: Holding) -> SuitTable {
+        SuitTable::build(
+            pool,
+            Holding::EMPTY,
+            &|_| true,
+            &|h| u16::from(holding_hcp(h)),
+            DENSE_NK_NO_X,
+        )
+    }
+
+    /// `PairConv::build`'s `with_x: false` path (`width == 1`, used whenever a term carries no
+    /// additive feature) must give exactly the same `box_sum` results a real K=1 caller can ever
+    /// observe as the always-full-width (`with_x: true`) path would - every such caller only ever
+    /// queries with `x_lo == x_hi == 0` (`GeneralTerm`'s `x_window` is `(0, 0)` with no additive
+    /// feature), matching the fact that a K=1 `SuitTable`'s key packs `x = 0` throughout, so the
+    /// reduced-width table drops no reachable entry.
+    #[test]
+    fn narrow_width_matches_the_full_width_reference_at_x_0() {
+        let a = suit_table_hcp_only(Holding::from_bits(0b0111_1110_0000).unwrap());
+        let b = suit_table_hcp_only(Holding::from_bits(0b0000_0001_1111).unwrap());
+
+        for len_a in 0..=7u8 {
+            for len_b in 0..=5u8 {
+                let narrow = PairConv::build(&a, &b, len_a, len_b, false);
+                let full = PairConv::build(&a, &b, len_a, len_b, true);
+                assert_eq!(narrow.width, 1);
+                assert_eq!(full.width, PAIR_X_MAX as usize + 1);
+                // The sparse (key, count) list itself must match exactly: every real entry has
+                // x = 0 in both tables, so nothing the full-width build finds is dropped.
+                assert_eq!(narrow.p, full.p);
+                for hlo in 0..=PAIR_HCP_MAX {
+                    for hhi in hlo..=PAIR_HCP_MAX {
+                        assert_eq!(
+                            narrow.box_sum(i64::from(hlo), i64::from(hhi), 0, 0),
+                            full.box_sum(i64::from(hlo), i64::from(hhi), 0, 0),
+                            "len_a={len_a} len_b={len_b} hlo={hlo} hhi={hhi}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A term with an additive feature (K=2, `with_x: true`) must still convolve and query
+    /// correctly across the full `x` axis, not just at `x = 0`: build one suit table with a
+    /// synthetic per-holding `x` feature (card count, like `Additive::Cards`) and check `box_sum`
+    /// against a brute-force count over every pair of holdings.
+    #[test]
+    fn with_x_true_matches_brute_force_over_the_full_x_axis() {
+        let key_with_len_feature =
+            |h: Holding| pack_key(holding_hcp(h), h.len().min(PAIR_X_MAX / 2));
+        let a = SuitTable::build(
+            Holding::from_bits(0b0111_1110_0000).unwrap(),
+            Holding::EMPTY,
+            &|_| true,
+            &key_with_len_feature,
+            DENSE_NK_WITH_X,
+        );
+        let b = SuitTable::build(
+            Holding::from_bits(0b0000_0001_1111).unwrap(),
+            Holding::EMPTY,
+            &|_| true,
+            &key_with_len_feature,
+            DENSE_NK_WITH_X,
+        );
+
+        for len_a in 0..=7u8 {
+            for len_b in 0..=5u8 {
+                let pair = PairConv::build(&a, &b, len_a, len_b, true);
+                assert_eq!(pair.width, PAIR_X_MAX as usize + 1);
+
+                for hlo in [0u8, 3, 10] {
+                    for hhi in [hlo, hlo + 2, PAIR_HCP_MAX] {
+                        for xlo in [0u8, 2] {
+                            for xhi in [xlo, xlo + 3, PAIR_X_MAX] {
+                                let mut expected = 0u64;
+                                for &(key_a, n_a) in &a.counts[len_a as usize].0 {
+                                    let (ha, xa) = unpack_key(key_a);
+                                    for &(key_b, n_b) in &b.counts[len_b as usize].0 {
+                                        let (hb, xb) = unpack_key(key_b);
+                                        let h = ha + hb;
+                                        let x = xa + xb;
+                                        if (hlo..=hhi).contains(&h) && (xlo..=xhi).contains(&x) {
+                                            expected += n_a * n_b;
+                                        }
+                                    }
+                                }
+                                assert_eq!(
+                                    pair.box_sum(
+                                        i64::from(hlo),
+                                        i64::from(hhi),
+                                        i64::from(xlo),
+                                        i64::from(xhi)
+                                    ),
+                                    expected,
+                                    "len_a={len_a} len_b={len_b} hlo={hlo} hhi={hhi} xlo={xlo} xhi={xhi}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// `burn_in_seed` must be a pure, fixed-width function of its arguments (D12): pinning its
+    /// output for a specific atom/pool/fixed catches any accidental reintroduction of
+    /// `core::hash::Hash` + `DefaultHasher` (whose `Vec`/slice impl hashes each length through
+    /// `Hasher::write_usize`, i.e. through the host's own pointer width, and so would give this
+    /// exact atom a different seed on a 32-bit target like wasm32 than on a 64-bit host, even
+    /// though `atom`/`pool`/`fixed` are logically identical there).
+    #[test]
+    fn burn_in_seed_is_pinned_for_a_fixed_atom() {
+        let atom = Atom {
+            cards: vec![
+                CardRequirement {
+                    mask: Hand::from_bits(0b11).unwrap(), // ♣A, ♣K: single-suit, not additive.
+                    count: 1..=2,
+                },
+                CardRequirement {
+                    // ♣A + ♦A: spans two suits, so this one competes for the additive-feature
+                    // slot (see `classify`).
+                    mask: Hand::from_bits(0b1 | (0b1 << 13)).unwrap(),
+                    count: 1..=2,
+                },
+            ],
+            ..Atom::ANY
+        };
+        let seed = burn_in_seed(&atom, Hand::FULL, Hand::EMPTY);
+        assert_eq!(seed, 0x53c8_d139_227b_d64e);
+
+        // Changing any single fixed-width input changes the seed (the mix isn't accidentally
+        // discarding a field, e.g. by mixing in a `Vec::len()` that std would coalesce to the
+        // same value some other way).
+        let mut other = atom.clone();
+        other.cards[0].count = 1..=1;
+        assert_ne!(burn_in_seed(&other, Hand::FULL, Hand::EMPTY), seed);
+        assert_ne!(
+            burn_in_seed(&atom, Hand::FULL, Hand::from_bits(0b100).unwrap()),
+            seed
+        );
+    }
+
+    /// End-to-end pin: for an atom whose two multi-suit `cards` literals force `needs_full_check`
+    /// (only one fits the additive-feature budget), `PreparedTerm::prepare`'s burn-in-derived
+    /// `alpha` is a deterministic function of `burn_in_seed`'s output. Pinning it here means any
+    /// future change to `burn_in_seed` (including reverting to a `Hash`-based one) that alters
+    /// the seed for this atom would change this literal, not just some internal, untested detail.
+    #[test]
+    fn rejection_term_alpha_is_pinned_for_a_fixed_atom() {
+        let atom = Atom {
+            cards: vec![
+                CardRequirement {
+                    mask: Hand::from_bits(0b1 | (0b1 << 13)).unwrap(), // ♣A + ♦A
+                    count: 1..=2,
+                },
+                CardRequirement {
+                    mask: Hand::from_bits((0b1 << 26) | (0b1 << 39)).unwrap(), // ♥A + ♠A
+                    count: 1..=2,
+                },
+            ],
+            ..Atom::ANY
+        };
+        let term = DnfTerm {
+            atom,
+            custom: Vec::new(),
+            residual: None,
+        };
+        let opts = super::super::SampleOptions::default();
+        let prepared = PreparedTerm::prepare(term, Hand::FULL, Hand::EMPTY, &opts);
+        let alpha = prepared
+            .alpha
+            .expect("two multi-suit card literals force needs_full_check");
+        assert!((0.0..=1.0).contains(&alpha));
+        assert!(
+            (alpha - 0.429_961_089_494_163_45).abs() < 1e-12,
+            "alpha = {alpha}, expected a value pinned to burn_in_seed's current output"
+        );
     }
 }

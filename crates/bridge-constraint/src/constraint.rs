@@ -55,8 +55,12 @@ impl HandConstraint {
         }
     }
 
-    /// `false` when a [`HandConstraint::Custom`] occurs anywhere; sampling then degrades to
-    /// rejection and the sampler emits a warning.
+    /// `false` when a [`HandConstraint::Custom`] occurs anywhere; [`crate::Sampler::prepare`]
+    /// then degrades that literal to rejection sampling (with an estimated acceptance rate) when
+    /// `opts.allow_rejection` allows it, and emits a `tracing::warn!` once per `prepare` call to
+    /// say so (05-constraint.md §8.2). With `allow_rejection == false` it returns
+    /// `PrepareError::NotSamplable` instead, and no warning is emitted (there is nothing to warn
+    /// about: sampling did not proceed).
     pub fn is_samplable(&self) -> bool {
         match self {
             HandConstraint::Atom(_) => true,
@@ -135,14 +139,16 @@ impl HandConstraint {
 
     /// `true` when some hand satisfies the constraint (§5's decisive stage 5).
     ///
-    /// Prepares an exact sampler over the full deck and checks whether it has a non-empty
-    /// support: for an exact term (no `Custom`, no DNF residual, no `DistMethod::BergenStarting`,
-    /// no additive feature left unslotted) `count() > 0` is the definitive answer, including
-    /// literal interactions stages 1-4 of `Atom::is_trivially_unsat` cannot see (e.g. "top 3 of
-    /// ♠, 2 of them" ∧ "♠ <= 1"). A term that still needs rejection is treated as satisfiable
-    /// only when [`Sampler::prepare`]'s burn-in probe also found an accepting hand (this is
-    /// `Sampler::any_definitely_satisfiable`'s rule; see that private method's own doc comment
-    /// for the exact rule and its one-sided approximation).
+    /// Prepares a sampler over the full deck and checks whether it has a non-empty support
+    /// (`count() > 0`, i.e. some DNF term's exact superset is non-empty): for an exact term (no
+    /// `Custom`, no DNF residual, no `DistMethod::BergenStarting`, no additive feature left
+    /// unslotted) this is the definitive answer, including literal interactions stages 1-4 of
+    /// `Atom::is_trivially_unsat` cannot see (e.g. "top 3 of ♠, 2 of them" ∧ "♠ <= 1"). A term
+    /// that still needs rejection only has its exact superset checked, not the literals rejection
+    /// handles, so the answer can over-approximate for such a term (report "maybe satisfiable"
+    /// when the full check in fact accepts nothing in that superset) but never under-approximates
+    /// (never reports "not satisfiable" for a constraint that is in fact satisfiable); see
+    /// `Sampler::any_definitely_satisfiable`'s own doc comment for the exact rule.
     pub fn is_satisfiable(&self) -> bool {
         let sampler = Sampler::prepare(self, Hand::FULL, Hand::EMPTY, &SampleOptions::default())
             .expect(
@@ -275,6 +281,7 @@ impl<'de> serde::Deserialize<'de> for HandConstraint {
 /// tree has no `Not` nodes, atoms are always positive (an atom's own negation was already expanded
 /// into an `Or` of positive atoms by [`Atom::negate`]), and a negated [`CustomPred`] carries a
 /// `true` flag instead.
+#[derive(Clone)]
 enum Nnf {
     Atom(Atom),
     Or(Vec<Nnf>),
@@ -306,13 +313,28 @@ impl Nnf {
                 }
             }
             HandConstraint::And(children) => {
-                let children = children
-                    .iter()
-                    .map(|c| Nnf::from_constraint(c, negated))
-                    .collect();
                 if negated {
-                    Nnf::Or(children)
+                    // ¬(C1∧…∧Cn) = ⋁_j(C1∧…∧C_{j-1}∧¬Cj): plain De Morgan would give
+                    // ⋁_j(¬Cj) instead, whose disjuncts are not pairwise disjoint (¬C1 and ¬C2
+                    // can both hold at once), so `count()` on the resulting DNF terms would
+                    // double-count hands that violate more than one child. Prefixing each
+                    // negated child with all of the earlier children in their *positive* form
+                    // keeps the disjuncts mutually exclusive, matching the pattern
+                    // `Atom::negate` already uses for a single atom's literals.
+                    let mut out = Vec::with_capacity(children.len());
+                    let mut prefix = Vec::with_capacity(children.len());
+                    for child in children {
+                        let mut conjuncts = prefix.clone();
+                        conjuncts.push(Nnf::from_constraint(child, true));
+                        out.push(Nnf::And(conjuncts));
+                        prefix.push(Nnf::from_constraint(child, false));
+                    }
+                    Nnf::Or(out)
                 } else {
+                    let children = children
+                        .iter()
+                        .map(|c| Nnf::from_constraint(c, false))
+                        .collect();
                     Nnf::And(children)
                 }
             }

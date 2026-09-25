@@ -26,6 +26,11 @@ criterion = { workspace = true }
 proptest = { workspace = true }
 rand_xoshiro = { workspace = true }
 serde_json = { workspace = true }
+# `std` unlocks `tracing::subscriber::with_default`, used only by
+# `tests/sampler_rejection.rs` to check that `Sampler::prepare` warns for a `Custom` literal;
+# tests always run under std regardless, so this does not change what `cargo check --target
+# wasm32-unknown-unknown` builds (dev-dependencies are not part of that build).
+tracing = { workspace = true, features = ["std"] }
 
 [[bench]]
 name = "sampler"

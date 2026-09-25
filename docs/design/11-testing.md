@@ -19,6 +19,7 @@
 | DNF 否定の素性 (ランダム手で `A` と `¬A` の項のちょうど 1 つが真) | `bridge-constraint` `tests/dnf.rs` | proptest | 全通過 |
 | DNF 交差・爆発対策 (`max_terms = 256` 超過で `residual` 退避) | `bridge-constraint` `tests/dnf.rs` | unit | 全通過、`truncated` フラグ |
 | サンプラー厳密性 (§4) | `bridge-constraint` `tests/sampler.rs` | unit / `#[ignore]` χ² | 全通過。`count() == 30 897 212 184` |
+| サンプラー一般経路の draw χ² (単一スート `cards` 制約、`Controls` 加法特徴、`fixed` 併用。§4) | `bridge-constraint` `tests/sampler_chi_square.rs` | unit χ² (10^5 サンプル、全列挙との比較) | p ≥ 0.001、抽出手が全て厳密な上位集合に属する |
 | サンプラーベンチ (`Sampler::sample`、`prepare`) | `bridge-constraint` `benches/sampler.rs` | criterion | ≥ 10^5 手/秒/コア、`prepare` 20〜60 μs |
 | BML 実ファイル約 40 本のパース | `bridge-system` `tests/parse_real.rs` | 統合 (`systems/vendor/data/` 取得時) | Error lint 0、AST スナップショット一致 |
 | BML 展開 == `.bss` 期待出力 (§5) | `bridge-system` `tests/bss_oracle.rs` | 統合 (取得時) | 一致 |
@@ -139,6 +140,7 @@ fn reproduction_rate() {
 | --- | --- | --- |
 | 全サンプルが項を満たす | 各テストの制約で 10^5 サンプル → `satisfies` | 100% |
 | 周辺分布 χ² | 10^6 サンプルの (シェイプ, HCP) 周辺分布 vs `Sampler` 自身の重み表 (期待値は厳密) | p ≥ 0.001 (`#[ignore]`) |
+| 一般経路 draw の χ² (小プール) | 単一スート `cards` 制約単体、および `Controls` 加法特徴 + `fixed` を併せた 2 通りで `count()`/`log_prob` だけでなく実際の `sample()` を 10^5 回引き、全列挙した充足手への一様性を検証 (`sample` が確認する「厳密な項の抽出手は必ず atom を満たす」というデバッグアサートも併走)。`count()`/`log_prob` の全列挙検証 (本節の他の行、および `tests/sampler_small_pool.rs`) は `prepare` 時の重み表だけを見るので、`draw` 固有のバグ (ペア分割の重み付け誤りなど) を素通りさせ得る — この行がその隙間を埋める | p ≥ 0.001 |
 | 小プール全列挙 | 未知 20 枚・6 枚を配る等の小プールで全部分集合を列挙し、`count()` と一致、`Σ_h exp(log_prob(h)) = 1` (誤差 1e-9) | 一致 |
 | フルデッキの厳密カウント | `15..=17 ∧ BALANCED` で `count() == 30 897 212 184` | 一致 |
 | 確定カード合成 (D3) | `fixed` を含む手を列挙して `count()` と比較、制約は元の 13 枚に対して評価 | 一致 |

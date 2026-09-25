@@ -44,7 +44,10 @@ pub struct SampleOptions {
     /// Number of burn-in draws used to estimate the acceptance rate of rejected literals
     /// (default 256).
     pub burn_in: u32,
-    /// Whether custom predicates and residuals may be rejection-sampled (default `true`).
+    /// Whether a literal the exact path cannot express (a custom predicate, a DNF residual, a
+    /// second additive feature, or a non-shape-only `DistMethod`/`TotalPoints`, i.e.
+    /// `BergenStarting`) may be rejection-sampled (default `true`); `false` makes any of them a
+    /// `PrepareError::NotSamplable`.
     pub allow_rejection: bool,
 }
 
@@ -78,6 +81,9 @@ pub struct Sampler {
     terms: Vec<term::PreparedTerm>,
     cum: Vec<u64>,
     total: u64,
+    /// `Σ_i c_i · s_i`, the normalising constant [`Sampler::log_prob`] actually uses (`s_i = 1`
+    /// for an exact term, so `z == total as f64` when [`Sampler::is_exact`]).
+    z: f64,
     pool: Hand,
     fixed: Hand,
     exact: bool,
@@ -103,8 +109,19 @@ impl Sampler {
         if fixed_len > 13 {
             return Err(PrepareError::TooManyFixed(fixed_len));
         }
-        if !opts.allow_rejection && !constraint.is_samplable() {
+        let samplable = constraint.is_samplable();
+        if !opts.allow_rejection && !samplable {
             return Err(PrepareError::NotSamplable);
+        }
+        if !samplable {
+            // `is_samplable() == false` means a `Custom` literal occurs somewhere in `constraint`
+            // (`HandConstraint::is_samplable`'s doc comment); `allow_rejection` being `true` here
+            // (the `NotSamplable` case above already returned otherwise) means every such literal
+            // is about to be checked by bounded rejection instead of the exact path, with an
+            // estimated acceptance rate (05-constraint.md §8.2 step 3).
+            tracing::warn!(
+                "constraint contains a Custom predicate; sampling degrades to rejection with an estimated acceptance rate"
+            );
         }
 
         let dnf = constraint
@@ -122,9 +139,11 @@ impl Sampler {
 
         let mut cum = Vec::with_capacity(terms.len());
         let mut running = 0u64;
+        let mut z = 0.0f64;
         for t in &terms {
             running += t.total;
             cum.push(running);
+            z += t.total as f64 * t.s;
         }
         let total = running;
         let exact = terms.iter().all(|t| t.alpha.is_none());
@@ -133,6 +152,7 @@ impl Sampler {
             terms,
             cum,
             total,
+            z,
             pool,
             fixed,
             exact,
@@ -191,8 +211,15 @@ impl Sampler {
         None
     }
 
-    /// `ln P(hand)`: `ln(Σ_{terms ∋ hand} 1/α_i) − ln Σ_i c_i` (α = 1 for exact terms), or
-    /// `-∞` when no term contains `hand`.
+    /// `ln P(hand)` under the distribution [`Sampler::sample`] actually returns, i.e. conditioned
+    /// on it returning `Some` (a caller redrawing on `None`, as `bridge-sample` does, samples
+    /// exactly that conditional distribution): `ln(Σ_{terms ∋ hand} s_i/α_i) − ln Σ_i c_i·s_i`,
+    /// where `α_i = 1` and `s_i = 1` for an exact term. `s_i < 1` accounts for `sample` sometimes
+    /// exhausting `max_tries` inside a rejection term without ever accepting; ignoring it (using
+    /// `1/α_i` and `Σ c_i` as design §8.3 originally did) systematically over-weights a rejection
+    /// term whose `α_i · max_tries` is small, since such a term returns `None` disproportionately
+    /// often instead of contributing a sample at its raw `1/α_i` share. Returns `-∞` when no term
+    /// contains `hand`.
     pub fn log_prob(&self, hand: Hand) -> f64 {
         if hand.len() != 13
             || self.total == 0
@@ -207,14 +234,19 @@ impl Sampler {
                 continue;
             }
             if term.term.satisfies(hand) {
-                let alpha = term.alpha.unwrap_or(1.0).max(f64::MIN_POSITIVE);
-                sum += 1.0 / alpha;
+                let alpha = term.alpha.unwrap_or(1.0);
+                debug_assert!(
+                    alpha > 0.0,
+                    "a term with total > 0 must carry a strictly positive alpha estimate \
+                     (see PreparedTerm::prepare's Jeffreys estimate)"
+                );
+                sum += term.s / alpha;
             }
         }
         if sum <= 0.0 {
             f64::NEG_INFINITY
         } else {
-            sum.ln() - (self.total as f64).ln()
+            sum.ln() - self.z.ln()
         }
     }
 
@@ -228,18 +260,22 @@ impl Sampler {
         self.fixed
     }
 
-    /// Whether at least one term is definitely satisfiable: an exact term (`alpha.is_none()`)
-    /// with a non-empty superset always is; a term needing rejection also needs its burn-in probe
-    /// (`prepare`'s `opts.burn_in` draws) to have found at least one hand that passed the full
-    /// check.
+    /// Whether at least one term has a non-empty exact superset (design §5 stage 5: `count() >
+    /// 0`, equivalently `self.terms.iter().any(|t| t.total > 0)`).
     ///
     /// This is the rule [`HandConstraint::is_satisfiable`](crate::HandConstraint::is_satisfiable)
-    /// uses. It can under-report a genuinely satisfiable but extremely narrow rejection-only term
-    /// when every burn-in draw happens to miss, but it never reports an empty constraint as
-    /// satisfiable.
+    /// uses. It is exact for a term with no rejection literal (`alpha.is_none()`): its superset
+    /// *is* its satisfying set. For a term that needs rejection (`Custom`, a DNF residual,
+    /// `DistMethod::BergenStarting`, or more additive features than the slot allows), `total > 0`
+    /// only says the superset is non-empty, not that the full check accepts anything in it; this
+    /// deliberately does not consult the term's burn-in `alpha` estimate (a burn-in probe of
+    /// `opts.burn_in` draws can easily miss a real but narrow accepting set, and a false "not
+    /// satisfiable" is the unsafe direction here). So the answer over-approximates for non-exact
+    /// terms: it can report "maybe satisfiable" for a term whose full check in fact accepts
+    /// nothing (a false positive), but it never reports "not satisfiable" for a term that is in
+    /// fact satisfiable (no false negatives), and it never reports an empty constraint
+    /// (`count() == 0` for every term) as satisfiable.
     pub(crate) fn any_definitely_satisfiable(&self) -> bool {
-        self.terms
-            .iter()
-            .any(|t| t.total > 0 && t.alpha != Some(0.0))
+        self.terms.iter().any(|t| t.total > 0)
     }
 }

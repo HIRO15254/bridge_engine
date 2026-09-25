@@ -4,6 +4,12 @@ use bridge_core::{Hand, Shape, Suit};
 
 use crate::{SUIT, aces, jacks, queens, tens};
 
+/// Upper bound every [`DistMethod`] is assumed to stay within (`bridge_constraint::Metric::max`
+/// hard-codes this same value for `DistPoints`, and `37 + MAX_DIST_POINTS` for `TotalPoints`).
+/// `distribution_points` saturates a [`DistMethod::ShortSuit`] hand's score at this value, so an
+/// unusually large custom weight cannot violate it.
+pub const MAX_DIST_POINTS: u8 = 40;
+
 /// Which losing-trick count to use.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -84,21 +90,31 @@ const fn long_suit_points(shape: Shape) -> i8 {
     total
 }
 
-/// Short-suit points of a [`Shape`].
+/// Short-suit points of a [`Shape`], saturating at [`MAX_DIST_POINTS`].
+///
+/// `void`/`singleton`/`doubleton` are caller-supplied (a bidding system can declare any custom
+/// `DistMethod::ShortSuit`), so nothing bounds them individually; accumulating in `u16` and
+/// saturating the sum (rather than adding each term straight into an `i8`) keeps the result
+/// within the range every other part of the crate (and `bridge_constraint::Metric::max`) assumes
+/// for a `DistPoints`/`TotalPoints` value, instead of overflowing or wrapping negative.
 const fn short_suit_points(shape: Shape, void: u8, singleton: u8, doubleton: u8) -> i8 {
     let lens = shape.lens();
     let mut i = 0;
-    let mut total: i8 = 0;
+    let mut total: u16 = 0;
     while i < 4 {
         total += match lens[i] {
-            0 => void as i8,
-            1 => singleton as i8,
-            2 => doubleton as i8,
+            0 => void as u16,
+            1 => singleton as u16,
+            2 => doubleton as u16,
             _ => 0,
         };
         i += 1;
     }
-    total
+    if total > MAX_DIST_POINTS as u16 {
+        MAX_DIST_POINTS as i8
+    } else {
+        total as i8
+    }
 }
 
 /// Distribution points of `hand`. Signed because the Bergen adjust-3 correction can be negative.

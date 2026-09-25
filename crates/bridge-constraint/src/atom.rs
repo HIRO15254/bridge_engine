@@ -4,8 +4,8 @@ use core::ops::RangeInclusive;
 
 use bridge_core::{Hand, Holding, ShapeSet, Suit};
 use bridge_eval::{
-    DistMethod, LtcMethod, controls, distribution_points, hcp, losers_with, quick_tricks,
-    suit_quality, total_points,
+    DistMethod, LtcMethod, MAX_DIST_POINTS, controls, distribution_points, hcp, losers_with,
+    quick_tricks, suit_quality, total_points,
 };
 
 /// `popcount(hand ∩ mask) ∈ count`.
@@ -81,8 +81,8 @@ impl Metric {
             Metric::Controls => 12,
             Metric::Losers(_) => 24,
             Metric::QuickTricks => 16,
-            Metric::DistPoints(_) => 40,
-            Metric::TotalPoints(_) => 77,
+            Metric::DistPoints(_) => MAX_DIST_POINTS,
+            Metric::TotalPoints(_) => 37 + MAX_DIST_POINTS,
             Metric::SuitQuality(_) => 5,
         }
     }
@@ -333,7 +333,14 @@ impl Atom {
         false
     }
 
-    /// Sorts and merges the literal lists and clamps every range to its bounds.
+    /// Sorts and merges the literal lists, clamps every range to its bounds, and drops any literal
+    /// that clamping revealed to be always true (`count`/`range` covers every value the
+    /// requirement's cards/metric can take). An always-true literal is a no-op for `satisfies`,
+    /// but the sampler's `classify` cannot tell that apart from a genuine constraint: it would
+    /// otherwise still count as an extra additive feature (or force `needs_full_check`), turning
+    /// what should be an exact term into a rejection term (or a rejection term with a needlessly
+    /// large exact superset). Dropping it here, once, keeps every downstream consumer of `Atom`
+    /// (the sampler, `is_trivially_unsat`, `negate`) working from the same minimal representation.
     pub fn normalize(&mut self) {
         let hi = (*self.hcp.end()).min(37);
         self.hcp = *self.hcp.start()..=hi;
@@ -354,6 +361,7 @@ impl Atom {
                 }),
             }
         }
+        cards.retain(|req| !(*req.count.start() == 0 && *req.count.end() >= req.mask.len()));
         self.cards = cards;
 
         self.eval.sort_by_key(|req| metric_key(req.metric));
@@ -372,6 +380,7 @@ impl Atom {
                 }),
             }
         }
+        eval.retain(|req| !(*req.range.start() == 0 && *req.range.end() >= req.metric.max()));
         self.eval = eval;
     }
 

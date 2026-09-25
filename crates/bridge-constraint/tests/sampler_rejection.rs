@@ -141,6 +141,100 @@ fn custom_predicate_is_checked_by_rejection() {
     assert!(accepted > 0, "expected at least some accepted samples");
 }
 
+/// A minimal `tracing::Subscriber` that only records whether *some* `WARN`-level event fired
+/// while it was the default subscriber - just enough to check `Sampler::prepare` emits one for a
+/// `Custom` literal (05-constraint.md §8.2 step 3), without depending on the `tracing-subscriber`
+/// crate (not a workspace dependency).
+struct WarnRecorder(Arc<std::sync::atomic::AtomicBool>);
+
+impl tracing::Subscriber for WarnRecorder {
+    fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+    fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        if *event.metadata().level() == tracing::Level::WARN {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    fn enter(&self, _span: &tracing::span::Id) {}
+    fn exit(&self, _span: &tracing::span::Id) {}
+}
+
+fn prepare_and_check_warn(c: &HandConstraint) -> bool {
+    let fired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let subscriber = WarnRecorder(fired.clone());
+    let _ = tracing::subscriber::with_default(subscriber, || {
+        Sampler::prepare(c, Hand::FULL, Hand::EMPTY, &SampleOptions::default())
+    });
+    fired.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// `is_samplable() == false` (a `Custom` literal is present) makes `Sampler::prepare` emit a
+/// `tracing::warn!`, as `HandConstraint::is_samplable`'s doc comment says (05-constraint.md §8.2
+/// step 3): before this fix, the doc comment made this same claim but `prepare` never actually
+/// emitted anything, so nothing observing `tracing` output could tell rejection-degraded sampling
+/// had occurred. A plain, `Custom`-free atom must not warn.
+#[test]
+fn custom_predicate_makes_prepare_warn() {
+    let pred = CustomPred {
+        name: "5+ spades".to_string(),
+        f: Arc::new(|h: Hand| h.holding(Suit::Spades).len() >= 5),
+    };
+    let with_custom = HandConstraint::Custom(pred);
+    assert!(prepare_and_check_warn(&with_custom));
+
+    let plain = HandConstraint::Atom(Atom::ANY.with_hcp(10..=17));
+    assert!(!prepare_and_check_warn(&plain));
+}
+
+/// A rejection-only term's burn-in probe (256 draws, a seed fixed by the atom/pool/fixed alone)
+/// can find zero hits even when the true acceptance rate is far from zero, because the probe's
+/// draw sequence is the same for every `Custom` predicate sharing the same atom/pool/fixed (here,
+/// `Atom::ANY` on the full deck with nothing fixed): whichever suit's honour-quad the 256 fixed
+/// draws happen not to contain gives a zero-hit burn-in for that suit's predicate. Before the fix,
+/// storing `alpha = 0.0` in that case made `log_prob` divide by (a clamped) zero, so an accepted
+/// sample's reported probability was above 1 (`ln P > 0`). Regression: `log_prob` must never
+/// exceed `0.0` (`P(hand) <= 1`) for any sample this sampler actually returns.
+#[test]
+fn log_prob_never_exceeds_zero_even_when_the_burn_in_probe_finds_no_hit() {
+    for suit in Suit::ALL {
+        let pred = CustomPred {
+            name: format!("AKQJ of {suit:?}"),
+            f: Arc::new(move |h: Hand| {
+                let top4 = bridge_core::Holding::top_ranks(4);
+                h.holding(suit).intersect(top4) == top4
+            }),
+        };
+        let c = HandConstraint::Custom(pred);
+        let sampler =
+            Sampler::prepare(&c, Hand::FULL, Hand::EMPTY, &SampleOptions::default()).unwrap();
+        assert!(!sampler.is_exact());
+
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xABCD);
+        let mut accepted = 0;
+        for _ in 0..2_000 {
+            if let Some(sample) = sampler.sample(&mut rng) {
+                assert!(c.satisfies(sample.hand));
+                assert!(
+                    sample.log_prob <= 0.0,
+                    "log_prob must never exceed 0 (P(hand) <= 1); suit={suit:?} got {}",
+                    sample.log_prob
+                );
+                accepted += 1;
+            }
+        }
+        assert!(
+            accepted > 0,
+            "expected at least some accepted samples for {suit:?}"
+        );
+    }
+}
+
 #[test]
 fn disallowing_rejection_reports_not_samplable() {
     let pred = CustomPred {

@@ -49,15 +49,22 @@ pub enum SampleError {
 /// i)` and retries up to `opts.max_attempts_per_sample` times, so the result does not depend on
 /// how many chunks were needed or on the thread count (§2.3, §7 of `09-sample.md`). A rejected
 /// attempt (`propose` returning `None`, or a non-finite log weight) is retried within the same
-/// slot; a slot that never succeeds contributes nothing. Sampling stops at a chunk boundary once
-/// `n` deals have been produced or `n × max_attempt_factor` attempts have been made in total,
-/// and the first `n` produced deals (in slot order) are returned.
+/// slot; a slot that never succeeds contributes nothing. Each chunk's slots are folded into
+/// `deals`/`attempts` in slot order, stopping as soon as `deals.len()` reaches `n`: a chunk's
+/// surplus slots (past the `n`-th accepted deal) are counted in neither, so a discarded surplus
+/// deal never inflates `attempts` (and so understates `acceptance_rate`) without a matching
+/// contribution to `produced`. Whether to run another chunk is still decided at a chunk boundary,
+/// once `n` deals have been produced or `n × max_attempt_factor` attempts have been made in
+/// total; either way, only slot order (never the thread count) decides which slots count, so the
+/// result does not depend on how many chunks were needed or on the thread count (§2.3, §7 of
+/// `09-sample.md`).
 ///
 /// Not yet checked here (tracked as an open issue): whether a seat's hard play constraint, or
-/// its interpretation alternatives, admit any hand at all given the known cards. That check
-/// needs `bridge_constraint::Sampler`, which is still `todo!()`; until then, an unsatisfiable
-/// seat simply never contributes a finite-weight deal, which surfaces as `Truncated`/`LowEss`
-/// rather than as `SampleError::EmptySupport` or `SampleWarning::EmptySupport`.
+/// its interpretation alternatives, admit any hand at all given the known cards.
+/// `bridge_constraint::Sampler` now supports exactly this check (`Sampler::prepare(...).
+/// count() == 0`), but `sample_deals` does not yet call it; until it does, an unsatisfiable seat
+/// simply never contributes a finite-weight deal, which surfaces as `Truncated`/`LowEss` rather
+/// than as `SampleError::EmptySupport` or `SampleWarning::EmptySupport`.
 pub fn sample_deals(
     ctx: &SampleContext<'_>,
     proposal: &dyn Proposal,
@@ -104,8 +111,19 @@ pub fn sample_deals(
             let chunk_end = chunk_start + n;
             let results = run_chunk(ctx, prepared.as_ref(), opts, chunk_start..chunk_end);
 
+            // A chunk always has exactly `n` slots, so it can push `deals.len()` from below `n`
+            // to above it; once that happens, the remaining slots in this same chunk are surplus
+            // and `deals.truncate(n)` below discards their deals regardless. Stop folding those
+            // surplus slots' attempts into `attempts` (and stop pushing their deals) as soon as
+            // the quota is reached, in slot order, so a thrown-away deal never inflates `attempts`
+            // without a matching contribution to `produced` (which would otherwise understate
+            // `acceptance_rate`). Slot order (not thread count) decides which slots are "surplus",
+            // so this stays independent of `opts.threads` per §2.3/§7.
             let mut chunk_attempts = 0u64;
             for (slot_attempts, result) in results {
+                if deals.len() >= n {
+                    break;
+                }
                 chunk_attempts += slot_attempts;
                 if let Some(weighted) = result {
                     deals.push(weighted);
@@ -385,6 +403,116 @@ mod tests {
         for i in (1..cards.len()).rev() {
             let j = (rng.next_u64() % (i as u64 + 1)) as usize;
             cards.swap(i, j);
+        }
+    }
+
+    /// North must hold a balanced hand (any HCP, roughly 40% of deals - moderate, neither
+    /// vanishingly rare nor a near-certainty); every other seat is unconstrained.
+    fn north_balanced_interpretation() -> (Interpretation, HandConstraint) {
+        let balanced = HandConstraint::Atom(Atom {
+            shapes: ShapeSet::BALANCED,
+            hcp: 0..=37,
+            cards: Vec::new(),
+            eval: Vec::new(),
+        });
+        let one_notrump = Bid::new(1, Strain::NoTrump).expect("1NT is a valid bid");
+        let explanation = CallExplanation {
+            call_index: 0,
+            call: Call::Bid(one_notrump),
+            node: None,
+            kind: ResolutionKind::Exact,
+            text: "1NT: balanced".to_string(),
+        };
+        let call = CallInterpretation {
+            call_index: 0,
+            seat: Seat::North,
+            call: explanation.call,
+            kind: ResolutionKind::Exact,
+            alternatives: vec![(balanced.clone(), 1.0, explanation)],
+        };
+        let interpretation = Interpretation {
+            seats: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            per_call: vec![call],
+            divergence: None,
+        };
+        (interpretation, balanced)
+    }
+
+    /// `attempts`/`acceptance_rate` must count exactly the slots (in slot order, from 0) needed to
+    /// produce the first `n` accepted deals, never the whole final chunk of `n` slots when the
+    /// n-th acceptance falls before that chunk's last slot. With `max_attempts_per_sample == 1`,
+    /// slot `i` always costs exactly one attempt (`process_slot` returns after its single try
+    /// regardless of outcome), so the correct total is `1 + (the 0-based slot index of the n-th
+    /// accepted deal)` - computed here independently of `sample_deals`, by re-running the same
+    /// `process_slot` slot by slot. Before the fix, `sample_deals` summed every slot in the whole
+    /// final chunk (rounding the correct total up to the next multiple of `n`) whenever that
+    /// chunk's surplus successes (beyond the n-th) got discarded by the trailing `truncate(n)`.
+    #[test]
+    fn attempts_counts_only_slots_used_toward_the_produced_deals_not_a_discarded_surplus() {
+        let (interpretation, constraint) = north_balanced_interpretation();
+        let play_constraints = [
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+        ];
+        let ctx = SampleContext {
+            known: KnownCards::EMPTY,
+            interpretation: &interpretation,
+            play_constraints: &play_constraints,
+            play_soft: None,
+            bidding: None,
+        };
+        let opts = SampleOptions {
+            seed: 7,
+            max_attempts_per_sample: 1,
+            max_attempt_factor: 500,
+            threads: Threads::Single,
+        };
+        let n = 5usize;
+
+        // Independently recompute, slot by slot, how many slots (from 0) it takes to accept `n`
+        // deals whose North hand satisfies `constraint` - the same acceptance test `sample_deals`
+        // applies via `ln_likelihood`'s -infinity branch, just walked by hand here.
+        let prepared = UniformProposal.prepare(&ctx).expect("prepares");
+        let mut accepted = 0usize;
+        let mut expected_attempts = 0u64;
+        for slot in 0.. {
+            let (slot_attempts, result) = process_slot(&ctx, prepared.as_ref(), &opts, slot);
+            expected_attempts += slot_attempts;
+            if result.is_some() {
+                accepted += 1;
+                if accepted == n {
+                    break;
+                }
+            }
+            assert!(
+                slot < 10_000,
+                "sanity: north_balanced_interpretation should accept far more often than this"
+            );
+        }
+        // Sanity: the chosen seed/n must actually exercise the bug, i.e. the n-th acceptance must
+        // not fall exactly on a chunk boundary (a multiple of `n` slots) - otherwise the buggy and
+        // fixed code would coincide by chance and this test would not be a regression test at all.
+        assert_ne!(
+            expected_attempts % n as u64,
+            0,
+            "test setup does not exercise a discarded surplus; pick a different seed"
+        );
+
+        let (deals, report) =
+            sample_deals(&ctx, &UniformProposal, n, &opts).expect("sampling succeeds");
+
+        assert_eq!(report.produced, n);
+        assert_eq!(deals.len(), n);
+        assert_eq!(
+            report.attempts, expected_attempts,
+            "attempts must equal the slots actually needed to reach n accepted deals, not the \
+             whole final chunk rounded up to a multiple of n"
+        );
+        assert_eq!(report.acceptance_rate, n as f64 / expected_attempts as f64);
+        for weighted in &deals {
+            assert!(constraint.satisfies(weighted.deal.hand(Seat::North)));
         }
     }
 
