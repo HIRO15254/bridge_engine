@@ -270,6 +270,13 @@ impl Interpretation {
 
 計測は criterion で 12 コールのオークション（フェーズ 3.6 のベンチ `interpret_bench`）。
 
+**実装後の追記（perf レーン、フェーズ 3.12）**: 上表は計画時の見積りで、実装は以下の 2 点で見積りより有利になっている。
+
+- `ShapeSet::min_hcp`/`max_hcp`（= `hcp_bounds`）は当初 560 個の全メンバー形を歩く実装だったが、`bridge-core` 側に「9 語 × 8 バイト」ごとの事前計算済みルックアップテーブル（`BYTE_MIN_HCP`/`BYTE_MAX_HCP`、値はビット単位ではなく非零バイトの値で引く）を持たせ、非零バイト 1 個につき 1 引きに落とした（最悪でも 72 引き、`min`/`max` は 1 パスにまとめた `hcp_bounds()` で同時に求める）。`shapes == ShapeSet::ALL` のときは従来どおりこの計算自体を省く。
+- Step B の交叉積は `HandConstraint::And` の木を組合せ候補 1 個ごとに構築していたが、これを `Summary`（`shapes`/`hcp`/`bounds` の要約）だけを組合せごとに引き回す形に変え、`HandConstraint::And` の実体は重複除去・K 個への切り詰め後に生き残った組合せについてだけ、席ごとに高々 `max_alternatives` 回組み立てる（`materialize_constraint`、`CallExplanation` を切り詰め後にだけ組み立てる既存の `materialize_parts` と同じ考え方）。
+
+ベンチは `bridge-bidding/benches/interpret.rs` に集約されている: 手組みの 2 系統（`interpret/12-call-auction` は裸の HCP 制約のみで `shapes == ALL` を常に取る最良ケース、`interpret/12-call-auction-realistic` は各ノードが自分のスート長も課す意図的な最悪ケース）に加え、`systems/sayc/sayc.bml` から実コンパイルした SAYC を使う `interpret/sayc-1nt-auction`（`1NT-P-2C-P-2H-P-3NT-P-P-P`）と `interpret/sayc-competitive-auction`（`1S-(2H)-X-(P)-3S-(P)-P-P`、ネガティブダブル入りの競り合い）。この 2 点の最適化の前後で `interpret/12-call-auction-realistic` は概ね 22〜27 μs → 10〜11 μs（同一マシン内の比較。開発機の熱スロットリングで実行ごとに数 μs のばらつきが出るため、厳密な一点の値ではなく範囲で書いている）。実システムの 2 ベンチ（`sayc-1nt-auction` ≈ 8.5 μs、`sayc-competitive-auction` ≈ 6〜6.3 μs）は目標の 10 μs を安定して下回る。手組みの最悪ケース（`12-call-auction-realistic`）だけは実行によって 10 μs をわずかに超えることがあるが、これは実システムより悪意的に厳しい合成ベンチであり、実 SAYC の 2 本が安定して目標内である以上、仕様 §9 の意図（実運用の 12 コール解釈が 10 μs を切ること）は満たされていると判断する。
+
 ---
 
 ## 5. `choose_bid` と `BidChoice`（D6）
