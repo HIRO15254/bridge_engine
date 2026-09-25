@@ -92,7 +92,16 @@ fn normalize_path(path: &str) -> String {
         match seg {
             "" | "." => {}
             ".." => {
-                out.pop();
+                // Pop only a real segment: a leading `..` (nothing left to pop, or only other
+                // `..`s so far) must survive, or `../x.bml` would silently become `x.bml`. Above
+                // the root of an absolute path there is nothing to go to, so it is dropped there.
+                match out.last() {
+                    Some(&last) if last != ".." => {
+                        out.pop();
+                    }
+                    _ if absolute => {}
+                    _ => out.push(".."),
+                }
             }
             seg => out.push(seg),
         }
@@ -111,8 +120,11 @@ pub fn load(root_path: &str, root_text: &str, loader: &dyn SourceLoader) -> Load
     let mut lints = Vec::new();
     let mut lines = Vec::new();
     let mut stack = Vec::new();
+    // Normalised like every `#INCLUDE` target, so a cycle back to the root is recognised
+    // whatever spelling (`./root.bml`, `a/../root.bml`) the caller used for it.
+    let root_path = normalize_path(root_path);
     load_file(
-        root_path, root_text, loader, &mut files, &mut lints, &mut lines, &mut stack, 0,
+        &root_path, root_text, loader, &mut files, &mut lints, &mut lines, &mut stack, 0,
     );
     Loaded {
         files,
@@ -142,54 +154,51 @@ fn load_file(
             // Column-0 comment: dropped entirely.
             continue;
         }
-        if let Some(rest) = raw_line.strip_prefix("#INCLUDE") {
-            let arg = rest.trim();
-            let starts_with_ws = rest.starts_with(' ') || rest.starts_with('\t');
-            if !arg.is_empty() && starts_with_ws {
-                let span = Span {
-                    file: file_id,
-                    line: line_no,
-                    col: 0,
-                    pasted_from: None,
-                };
-                let target = join_path(resolved_path, arg);
-                if depth + 1 > MAX_INCLUDE_DEPTH || stack.contains(&target) {
-                    lints.push(
-                        Lint::error(
-                            LintCode::IncludeCycle,
-                            format!(
-                                "#INCLUDE {arg}: cycle or depth > {MAX_INCLUDE_DEPTH} ({target})"
-                            ),
-                        )
-                        .with_span(span),
-                    );
-                    continue;
-                }
-                match loader.load(resolved_path, arg) {
-                    Ok(included_text) => {
-                        load_file(
-                            &target,
-                            &included_text,
-                            loader,
-                            files,
-                            lints,
-                            out,
-                            stack,
-                            depth + 1,
-                        );
-                    }
-                    Err(e) => {
-                        lints.push(
-                            Lint::warning(
-                                LintCode::IncludeNotFound,
-                                format!("#INCLUDE {arg}: {e}"),
-                            )
-                            .with_span(span),
-                        );
-                    }
-                }
+        if let Some(arg) = include_target(raw_line) {
+            let span = Span {
+                file: file_id,
+                line: line_no,
+                col: 0,
+                pasted_from: None,
+            };
+            let target = join_path(resolved_path, arg);
+            if depth + 1 > MAX_INCLUDE_DEPTH || stack.contains(&target) {
+                lints.push(
+                    Lint::error(
+                        LintCode::IncludeCycle,
+                        format!("#INCLUDE {arg}: cycle or depth > {MAX_INCLUDE_DEPTH} ({target})"),
+                    )
+                    .with_span(span),
+                );
                 continue;
             }
+            match loader.load(resolved_path, arg) {
+                Ok(included_text) => {
+                    // `bml.py` substitutes `'\n' + text + '\n'` for the directive, so an
+                    // included file always starts and ends its own paragraph: without these
+                    // blank lines two back-to-back `#INCLUDE`s would merge the last table of
+                    // one file with the first paragraph of the next.
+                    out.push(blank_line(span.clone()));
+                    load_file(
+                        &target,
+                        &included_text,
+                        loader,
+                        files,
+                        lints,
+                        out,
+                        stack,
+                        depth + 1,
+                    );
+                    out.push(blank_line(span));
+                }
+                Err(e) => {
+                    lints.push(
+                        Lint::warning(LintCode::IncludeNotFound, format!("#INCLUDE {arg}: {e}"))
+                            .with_span(span),
+                    );
+                }
+            }
+            continue;
         }
         out.push(RawLine {
             span: Span {
@@ -202,6 +211,23 @@ fn load_file(
         });
     }
     stack.pop();
+}
+
+/// The path argument of an `#INCLUDE` line, following `bml.py`'s `^\s*#\s*INCLUDE\s*(\S+)`:
+/// leading whitespace and whitespace after `#` are allowed, and only the first word after the
+/// keyword is the path (anything after it is ignored).
+fn include_target(line: &str) -> Option<&str> {
+    let rest = line.trim_start().strip_prefix('#')?;
+    let rest = rest.trim_start().strip_prefix("INCLUDE")?;
+    rest.split_whitespace().next()
+}
+
+/// A synthetic blank line (a paragraph break) attributed to the `#INCLUDE` line at `span`.
+fn blank_line(span: Span) -> RawLine {
+    RawLine {
+        span,
+        text: String::new(),
+    }
 }
 
 /// Groups lines into paragraphs separated by one or more blank (whitespace-only) lines.
@@ -248,7 +274,8 @@ mod tests {
         let loaded = load("root.bml", root, &mem);
         assert!(loaded.lints.is_empty(), "{:?}", loaded.lints);
         let texts: Vec<_> = loaded.lines.iter().map(|l| l.text.as_str()).collect();
-        assert_eq!(texts, ["1C  Any hand", "1D  Included", "1H  After"]);
+        // The include is framed by two synthetic blank lines, as `bml.py` frames it with `\n`.
+        assert_eq!(texts, ["1C  Any hand", "", "1D  Included", "", "1H  After"]);
         assert_eq!(loaded.files.len(), 2);
     }
 
@@ -294,6 +321,134 @@ mod tests {
         assert_eq!(loaded.files.len(), 2);
         assert_eq!(loaded.files[0].0.as_ref(), "/vendor/data/jdh8/blue.bml");
         assert_eq!(loaded.files[1].0.as_ref(), "/vendor/data/jdh8/blue/1C.bml");
+    }
+
+    // Regression (integration review #0): `bml.py` splices every include as
+    // `'\n' + text + '\n'`, so an included file always starts and ends a paragraph. Two
+    // back-to-back `#INCLUDE`s must therefore yield two separate tables, never one merged one.
+    #[test]
+    fn back_to_back_includes_are_separate_paragraphs() {
+        let mem = MemLoader {
+            files: vec![
+                (
+                    "a.bml".to_string(),
+                    "1C  clubs
+1D  diamonds
+"
+                    .to_string(),
+                ),
+                (
+                    "b.bml".to_string(),
+                    "1H  hearts
+1S  spades
+"
+                    .to_string(),
+                ),
+            ],
+        };
+        let loaded = load("root.bml", "#INCLUDE a.bml\n#INCLUDE b.bml\n", &mem);
+        assert!(loaded.lints.is_empty(), "{:?}", loaded.lints);
+        let paras = paragraphs(&loaded.lines);
+        let texts: Vec<Vec<&str>> = paras
+            .iter()
+            .map(|p| p.iter().map(|l| l.text.as_str()).collect())
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                vec!["1C  clubs", "1D  diamonds"],
+                vec!["1H  hearts", "1S  spades"]
+            ]
+        );
+    }
+
+    // Regression (integration review #0): `bml.py`'s `^\s*#\s*INCLUDE\s*(\S+)` also accepts an
+    // indented `#INCLUDE` and `# INCLUDE`, and only the first word after it is the path.
+    #[test]
+    fn include_directive_accepts_bml_py_spellings() {
+        let mem = MemLoader {
+            files: vec![(
+                "a.bml".to_string(),
+                "1C  clubs
+"
+                .to_string(),
+            )],
+        };
+        for root in [
+            "  #INCLUDE a.bml
+",
+            "# INCLUDE a.bml
+",
+            "#\tINCLUDE\ta.bml   trailing words
+",
+        ] {
+            let loaded = load("root.bml", root, &mem);
+            assert!(loaded.lints.is_empty(), "{root:?}: {:?}", loaded.lints);
+            let texts: Vec<_> = loaded
+                .lines
+                .iter()
+                .map(|l| l.text.as_str())
+                .filter(|t| !t.is_empty())
+                .collect();
+            assert_eq!(texts, ["1C  clubs"], "{root:?}");
+        }
+    }
+
+    // Regression (integration review #1): a `..` that has nothing to pop must be kept, and the
+    // root path is normalised before it is used as the cycle-guard/`from` key.
+    #[test]
+    fn normalize_keeps_unpoppable_parent_segments() {
+        assert_eq!(normalize_path("../x.bml"), "../x.bml");
+        assert_eq!(normalize_path("../../a/../x.bml"), "../../x.bml");
+        assert_eq!(normalize_path("./a/./b/../x.bml"), "a/x.bml");
+        assert_eq!(normalize_path("/../x.bml"), "/x.bml");
+        assert_eq!(join_path("../root.bml", "sub/a.bml"), "../sub/a.bml");
+        assert_eq!(join_path("../sub/a.bml", "b.bml"), "../sub/b.bml");
+    }
+
+    #[test]
+    fn cycle_back_to_an_unnormalised_root_is_detected() {
+        let mem = MemLoader {
+            files: vec![("a.bml".to_string(), "#INCLUDE root.bml\n".to_string())],
+        };
+        let loaded = load("./root.bml", "#INCLUDE a.bml\n", &mem);
+        assert_eq!(loaded.lints.len(), 1, "{:?}", loaded.lints);
+        assert_eq!(loaded.lints[0].code, LintCode::IncludeCycle);
+    }
+
+    // Regression (integration review #1): a two-level include below an absolute root path, and
+    // below a root given as `../root.bml`, must resolve through the real file system.
+    #[test]
+    fn fs_loader_resolves_two_level_includes() {
+        let dir = std::env::temp_dir().join(format!(
+            "bridge-system-lexer-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let sub = dir.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(dir.join("root.bml"), "#INCLUDE sub/a.bml\n").unwrap();
+        std::fs::write(sub.join("a.bml"), "#INCLUDE b.bml\n").unwrap();
+        std::fs::write(sub.join("b.bml"), "1C  clubs\n").unwrap();
+        let root_text = "#INCLUDE sub/a.bml\n";
+
+        let abs_root = dir.join("root.bml");
+        let loaded = load(abs_root.to_str().unwrap(), root_text, &FsLoader);
+        assert!(loaded.lints.is_empty(), "{:?}", loaded.lints);
+        assert!(loaded.lines.iter().any(|l| l.text == "1C  clubs"));
+        assert!(
+            loaded.files[2].0.starts_with('/'),
+            "{:?}",
+            loaded.files[2].0
+        );
+
+        // `../<dir>/root.bml`, seen from `<dir>/sub`: expressed relative to `sub` by hand so
+        // the test does not depend on (or change) the process's working directory.
+        let rel_root = format!("{}/../root.bml", sub.to_str().unwrap());
+        let loaded = load(&rel_root, root_text, &FsLoader);
+        assert!(loaded.lints.is_empty(), "{:?}", loaded.lints);
+        assert!(loaded.lines.iter().any(|l| l.text == "1C  clubs"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

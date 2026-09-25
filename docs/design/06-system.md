@@ -124,7 +124,7 @@ block           = blank | comment | include | meta | seat | vul | heading
 
 blank           = { " " } , NL ;
 comment         = "//" , { CHAR } , NL ;                         (* column 0 only *)
-include         = "#INCLUDE" , WS , PATH , NL ;
+include         = { WS } , "#" , { WS } , "INCLUDE" , { WS } , PATH , { CHAR } , NL ;   (* bml.py: ^\s*#\s*INCLUDE\s*(\S+) *)
 meta            = "#+" , KEY , ":" , [ WS ] , { CHAR } , NL ;      (* KEY = [A-Za-z_]+ ; unknown keys kept *)
 seat            = "#SEAT" , WS , ( "0"|"1"|"2"|"3"|"4"|"12"|"34" ) , NL ;
 vul             = "#VUL"  , WS , TRI , TRI , NL ;   TRI = "Y" | "N" | "0" ;
@@ -236,7 +236,7 @@ impl VulCond { pub const fn matches(self, we: bool, they: bool) -> bool; pub con
 
 各段階は全体として失敗せず、失敗を `Lint` にして続行する。全体は `compile(root_path, source, loader, opts)` (§9.4) が駆動する。
 
-1. **読込と `#INCLUDE` 解決** (`lexer::load`): ルートのテキストを受け取り、`#INCLUDE` 行を再帰的に解決 (循環ガード、深さ ≤ 16) して 1 本の `Vec<RawLine>` を作る。列 0 の `//` 行はここで落とす。存在しない include は `Lint::IncludeNotFound` (Warning) で行を落とす。循環は `Lint::IncludeCycle` (Error) で当該 include を無視する。読込は `SourceLoader` トレイト経由にし、`wasm32` でも `std::fs` 無しで include が動くようにする。
+1. **読込と `#INCLUDE` 解決** (`lexer::load`): ルートのテキストを受け取り、`#INCLUDE` 行を再帰的に解決 (循環ガード、深さ ≤ 16) して 1 本の `Vec<RawLine>` を作る。列 0 の `//` 行はここで落とす。`#INCLUDE` の認識は `bml.py` の `^\s*#\s*INCLUDE\s*(\S+)` に合わせる (行頭の空白・`#` の後の空白を許し、パスはキーワード直後の最初の語のみ)。`bml.py` は指令を `'\n' + text + '\n'` で置換するので、包含したファイルの前後には合成の空行 (段落区切り) を 1 行ずつ挿入し、連続した `#INCLUDE` でもファイル同士の段落が融合しないようにする。パスは `/` 区切りで正規化し、先頭の `/` と、取り除く実セグメントの無い先頭の `..` は保持する。ルートのパスも同じく正規化してから循環ガードに積む。存在しない include は `Lint::IncludeNotFound` (Warning) で行を落とす。循環は `Lint::IncludeCycle` (Error) で当該 include を無視する。読込は `SourceLoader` トレイト経由にし、`wasm32` でも `std::fs` 無しで include が動くようにする。
 
    ```rust
    // lexer.rs
