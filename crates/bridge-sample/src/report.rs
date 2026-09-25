@@ -53,7 +53,11 @@ pub struct SampleReport {
     pub requested: usize,
     /// Produced deals.
     pub produced: usize,
-    /// Proposal attempts.
+    /// Proposal attempts of the slots folded into `produced`, in slot order, up to and including
+    /// the slot that produced the last returned deal. A chunk's surplus slots (run after `n`
+    /// deals were already in hand, so their own deals are discarded) are not counted, and neither
+    /// are their attempts: otherwise `acceptance_rate` would be biased low by the wasted work of a
+    /// chunk that overshot `n` (see [`sample_deals`](crate::sample_deals)'s rustdoc).
     pub attempts: u64,
     /// `produced / attempts`.
     pub acceptance_rate: f64,
