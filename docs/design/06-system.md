@@ -992,6 +992,8 @@ impl Default for NaturalInference { /* NaturalParams::default() */ }
 
 `Balancer` は対応する `Overcaller` 規則を使い、HCP 下限に `balancing_shift` を加える。`candidates(auction, owner)` は合法コールの各々に `classify` + `infer` を適用し、`priority = round(confidence × 100)` を付けて返す (`fallback` 行のコールは除く)。
 
+**測定 (§8.5) から見つかった訂正と既知の限界。** `rule_rebid_own` は元々ジャンプなしの自己スート・リビッドを常に `opening_hcp` (12–21) と比較していたが、オープニングがウィーク・ツーやプリエンプトの場合これは無関係などころか非交叉の範囲であり (`weak_two.1` は 5–10)、隠しノード比較の recall/precision が恒常的に 0 になっていた。`opener_first_suit` のレベルからウィーク・ツー (`weak_two.1`) やプリエンプト (`preempt` 表の該当レベル) の HCP を選ぶよう `crates/bridge-system/src/natural.rs` の `opening_level_hcp` ヘルパーで修正済み (回帰テスト `rebid_own_after_weak_two_uses_weak_two_hcp` / `rebid_own_after_preempt_uses_preempt_hcp`)。同じ測定で `rule_resp_nt` にも既知の限界が見つかった: パートナー自身の 1NT/2NT オープンへの定量的レイズ (例 `1NT-P-2NT` は sayc.bml で 8–9 hcp) と、スート・オープンへのジャンプ NT レスポンス (`response.nt` 表、レベル 2 は 11–12 hcp) を同じ規則・同じ HCP 表で扱っており、前者は後者の表と非交叉になる。`NaturalParams` の既存フィールドだけでは区別できず (新フィールドの追加は `ir.rs`/`compile/meta.rs` 側の変更を伴い、このレーンの担当範囲外)、フェーズ 4 で `ResponseParams` に「パートナーの NT オープンへのレイズ」用のフィールドを足すかどうか検討する。
+
 ### 8.4 位置づけ
 
 L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps_natural = 0.30` の ε 混合)。`NaturalParams` は `SystemMeta.natural` に埋め込まれるので、席ごとに異なるナチュラル既定を持てる。モジュールはシステム定義から独立しており、`classify` と `infer` は `bridge-core` の `Auction` だけで単体テストできる。
