@@ -65,8 +65,8 @@ fn seat_role(auction: &Auction, seat: Seat) -> String {
 /// Checks one call's worth of forward-consistency and returns the extended auction: whatever
 /// `choose_bid` picked for `hand` must, once appended, be accepted by `interpret`'s own reading of
 /// that same call (a non-`Fallback` alternative on its `per_call` entry that `hand` satisfies).
-/// Checked via `per_call` directly, never `Interpretation::satisfied_by` (owned by a parallel lane
-/// and still `todo!()` on this branch).
+/// Checked via `per_call` directly rather than `Interpretation::satisfied_by`, since only the
+/// just-appended call's own entry is of interest here, not the whole auction.
 fn check_one_call(
     table: &Table,
     auction: &Auction,
@@ -103,24 +103,28 @@ fn check_one_call(
 /// Same property as [`forward_consistency_opening_only`], but walked several calls deep into a
 /// full, randomly-dealt auction instead of stopping after the opening.
 ///
-/// `#[ignore]`d because, past the first round or two, a hand-built system as small as
-/// `sayc_system()` inevitably runs off its own covered sequences (07-bidding.md §11's phase-3
-/// scope only requires the rows listed in `tests/common`), and both `choose_bid` (via
-/// `NaturalInference::candidates`) and `interpret` (via `classify`+`infer`) then fall through to
-/// natural inference, which is still `todo!()` on this branch (owned by a parallel lane). Once
-/// phase 4 supplies a real `NaturalInference`, this can be un-ignored as-is; the shallow
-/// `forward_consistency_opening_only` test below covers the same property unconditionally for the
-/// one round that never needs it.
+/// `#[ignore]`d: `classify`/`infer`/`candidates` (natural inference) are implemented now, but past
+/// the first round or two a hand-built system as small as `sayc_system()` inevitably runs off its
+/// own covered sequences (07-bidding.md §11's phase-3 scope only requires the rows listed in
+/// `tests/common`), and both `choose_bid` and `interpret` then fall through to natural inference --
+/// whose `candidates()` is not guaranteed to cover *every* random hand at *every* off-system
+/// position, so `ImplicitPass::Complement`'s "a `Chosen` candidate whenever `Pass` is legal"
+/// guarantee (which only fires on an exact trie resolve, see `choose::gather`) can legitimately
+/// fail here. That is exactly the "gap-induced" case the real per-node harness
+/// (`sayc_forward_consistency_1e3`/`_1e6`, over the actual compiled `sayc.bml`) sets aside by root
+/// cause instead of panicking on; this older, hand-built-system test predates that bookkeeping and
+/// was never updated to use it. The shallow `forward_consistency_opening_only` test below covers
+/// the same property unconditionally for the one round that never needs a natural fallback, and
+/// `sayc_forward_consistency_1e3`/`_1e6` are the up-to-date replacement for the deeper property
+/// this test was trying to reach.
 #[test]
-#[ignore = "relies on bridge_system::natural::classify/infer past the first round or two, still todo!() on this branch"]
+#[ignore = "hand-built sayc_system() has no gap-induced-violation bookkeeping; see sayc_forward_consistency_1e3/_1e6 for the real property over the compiled system"]
 fn forward_consistency() {
     let sys = sayc_system();
     let table = table_of(&sys);
     // `Some(&table.natural)`, not `None`: with `None`, a seat that runs off the hand-built
     // system's covered sequences simply yields `NoCandidate` (no natural fallback to try), which
-    // would make this test pass vacuously without ever reaching the very `todo!()`s it exists to
-    // document. Wiring in the real (still-`todo!()`) `NaturalInference` is what actually reaches
-    // them, which is the whole reason this test stays `#[ignore]`d until phase 4.
+    // would make this test pass vacuously without ever exercising natural inference at all.
     let ctx = BidContext {
         scoring: Scoring::Imp,
         natural: Some(table.natural.as_ref()),

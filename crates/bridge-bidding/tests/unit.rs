@@ -357,11 +357,10 @@ fn implicit_pass_through_deeper_row() {
     assert_eq!(chosen.source, ChoiceSource::ImplicitPass);
 }
 
-/// `classify`/`infer` (natural inference) are still `todo!()` on this branch (owned by a parallel
-/// lane; see `docs/design/07-bidding.md` §4.1 step 6), so a scenario that would exercise
-/// `ResolutionKind::Natural` is gated behind `#[ignore]` instead of asserted directly.
+/// `classify`/`infer` (natural inference, `docs/design/07-bidding.md` §4.1 step 6) are now
+/// implemented, so a scenario that falls all the way through to `ResolutionKind::Natural` can be
+/// asserted directly (this test used to be `#[ignore]`d while that lane was still `todo!()`).
 #[test]
-#[ignore = "exercises bridge_system::natural::classify/infer, still todo!() on this branch"]
 fn partial_and_natural_epsilon_natural_gated() {
     let mut b = SystemBuilder::new();
     b.insert(
