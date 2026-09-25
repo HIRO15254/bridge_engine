@@ -31,6 +31,9 @@ criterion = { workspace = true }
 # Always available to tests (independent of the library's own optional `parallel` feature);
 # the determinism test itself is gated on `cfg(feature = "parallel")`.
 rayon = { workspace = true }
+# Compiles `systems/sayc/sayc.bml` for `benches/deals.rs`'s real-SAYC-interpretation cases only
+# (phase 5.4); not a library dependency.
+bridge-system = { workspace = true, features = ["std"] }
 
 [[bench]]
 name = "deals"

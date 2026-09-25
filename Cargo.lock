@@ -216,6 +216,7 @@ dependencies = [
  "bridge-constraint",
  "bridge-core",
  "bridge-play",
+ "bridge-system",
  "criterion",
  "rand_core 0.10.1",
  "rand_xoshiro",
