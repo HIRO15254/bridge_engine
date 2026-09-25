@@ -22,7 +22,7 @@ response is chosen first when both apply.
 1N = NF, 6--9 hcp
 2C = 6--10 hcp, 5+!c
 3C = 10--12 hcp, 5+!c
-3N = 16--18 hcp
+3N = 16--18 hcp, not 4+!h, not 4+!s
 
 ** After 1!d
 
@@ -34,4 +34,4 @@ response is chosen first when both apply.
 1N = NF, 6--9 hcp
 2D = 6--10 hcp, 4+!d
 3D = 10--12 hcp, 4+!d
-3N = 16--18 hcp
+3N = 16--18 hcp, not 4+!h, not 4+!s

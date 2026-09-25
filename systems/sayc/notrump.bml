@@ -30,7 +30,7 @@ responder passes with clubs or corrects to 3D with diamonds (see NOTES.md #13).
     2N = INV, 6--9 hcp
     3C = F, 5+!c
     3D = F, 5+!d
-    3H = F, 5+!s
+    3S = F, 5+!s
     3N = CoG
     4S = 6+!s
   3H = {prio:1} MAX, 17 hcp, 4+!h
@@ -68,8 +68,8 @@ normal meaning ("I have a real fit").
 2H = !TRF, 5+!s
 
 1N-(1X)-
-2X = NAT
-2N = !cue, FG
+2Y = NAT
+2X = !cue, FG
 
 ** Responses to 2NT and 3NT
 
