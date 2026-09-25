@@ -28,7 +28,7 @@ use bridge_core::{Auction, Bid, Call, Seat, Side as TableSide, Strain, Suit, Vul
 use crate::{
     Alertability, CompileOptions, Lint, LintCode, Node, NodeId, Recognition, Row, RowId,
     SystemMeta,
-    ast::{BidTable, BmlNode, CallToken, Description, SeatCond, VulCond},
+    ast::{BidTable, BmlNode, CallToken, Description, SeatCond, Span, VulCond},
     compile::desc::{compile_description, context::RowContext},
     natural::Role,
     pattern::{Binding, CallPattern, Level, Side, SidedPattern, StrainSet, Var},
@@ -41,6 +41,19 @@ pub(crate) struct Expansion {
     pub nodes: Vec<Node>,
     pub trie: crate::trie::AuctionTrie,
     pub lints: Vec<Lint>,
+    /// Whether [`LintCode::TooManyNodes`] has already been reported once for this file: the
+    /// `max_nodes` guard is hit repeatedly across many rows/candidates once the limit is
+    /// reached, but should be reported only once.
+    too_many_nodes_reported: bool,
+    /// One physical BML row (keyed by its call token's source [`Span`], unique per occurrence
+    /// even across `#INCLUDE`/`#PASTE`, see `expand_row`'s doc comment) can be reached by more
+    /// than one candidate/history-retrace branch of the same table (e.g. a `Var` history token
+    /// with several candidates re-enters every one of its children once per candidate). Those
+    /// branches must accumulate into *one* [`Row`] (one entry in `rows`, with every branch's
+    /// [`NodeId`]s in `Row::expansions`), not a fresh `Row` per branch -- otherwise `rows.len()`
+    /// no longer counts physical BML rows, and per-row roll-ups (`LintCode::LowRecognition`, the
+    /// recognition report's average) silently double- or quadruple-count the same source line.
+    row_by_span: std::collections::HashMap<Span, RowId>,
 }
 
 /// Expands every [`BidTable`] block of a file, in order, into a shared [`Expansion`].
@@ -54,6 +67,8 @@ pub(crate) fn expand_file(
         nodes: Vec::new(),
         trie: crate::trie::AuctionTrie::new(),
         lints: Vec::new(),
+        too_many_nodes_reported: false,
+        row_by_span: std::collections::HashMap::new(),
     };
     for table in tables {
         if ex.nodes.len() >= opts.max_nodes {
@@ -152,7 +167,7 @@ fn generate_candidates(
                 .collect(),
             Level::Any => strains
                 .iter()
-                .filter_map(|s| minimum_sufficient_bid(s, last_bid))
+                .flat_map(|s| bids_at_level(Level::Any, s, last_bid))
                 .map(|b| Candidate {
                     edge: Edge::Call(Call::Bid(b)),
                     binding: *env,
@@ -174,11 +189,15 @@ fn generate_candidates(
                 // binding with no anchor below a wildcard step.
                 Vec::new()
             } else {
+                // A fresh variable only offers *sufficient* bids as candidates (bss.py's
+                // `check_vars` silently drops `bid <= last_bid`); an insufficient one is simply
+                // not a real choice here, not an authored call to flag as `IllegalCall`.
                 env.candidates(*var, used)
                     .into_iter()
                     .flat_map(|strain| {
                         bids_at_level(*level, strain, last_bid)
                             .into_iter()
+                            .filter(|b| last_bid.is_none_or(|last| *b > last))
                             .map(move |b| Candidate {
                                 edge: Edge::Call(Call::Bid(b)),
                                 binding: env.bind(*var, strain),
@@ -210,13 +229,16 @@ fn generate_candidates(
     }
 }
 
-/// The bid(s) at `level` in `strain`: one for `Level::At`, or the single minimum sufficient one
-/// for `Level::Any`.
+/// The bid(s) at `level` in `strain`: one for `Level::At`, or every sufficient level `1..=7` for
+/// `Level::Any` (`docs/design/06-system.md` §4.2: `n` means "whatever level is needed", which is
+/// every level above the last bid, not only the lowest one -- real files write `(nX)-3N` meaning
+/// "over an opening at any level").
 fn bids_at_level(level: Level, strain: Strain, last_bid: Option<Bid>) -> Vec<Bid> {
     match level {
         Level::At(n) => Bid::new(n, strain).into_iter().collect(),
-        Level::Any => minimum_sufficient_bid(strain, last_bid)
-            .into_iter()
+        Level::Any => (1..=7)
+            .filter_map(|n| Bid::new(n, strain))
+            .filter(|b| last_bid.is_none_or(|last| *b > last))
             .collect(),
     }
 }
@@ -238,15 +260,14 @@ fn needs_implicit_pass(prev: Option<Side>, next: Side) -> bool {
     prev == Some(next)
 }
 
-/// A call skipped at least one level below the minimum sufficient bid.
+/// A call skipped at least one level below the minimum sufficient bid *in its own strain*: the
+/// lowest legal level for `b`'s strain given `last_bid`, not simply the next call in bidding
+/// order (`docs/design/06-system.md` §4.2's `is_jump`; a change of strain to a lower or equal
+/// level, such as `1H-2C` or `1S-2H`, is not itself a jump).
 fn is_jump(call: Call, last_bid: Option<Bid>) -> bool {
     match call {
         Call::Bid(b) => {
-            let min_sufficient = match last_bid {
-                None => Bid::new(1, b.strain()),
-                Some(last) => Bid::from_index(last.index() + 1),
-            };
-            min_sufficient.is_some_and(|min| b.level() > min.level())
+            minimum_sufficient_bid(b.strain(), last_bid).is_some_and(|min| b.level() > min.level())
         }
         _ => false,
     }
@@ -274,10 +295,18 @@ fn estimate_volume_log2(constraint: &HandConstraint) -> i16 {
     }
 }
 
-/// Substitutes bound variables in a description: `M`, `oM`, `m`, `om`, `X`/`Y`/`Z` and `#` become
-/// their suit sentinel (`!h` etc.); an unresolved reference is left as-is. Matching is on word
+/// Substitutes bound variables in a description: `M`, `oM`, `m`, `om`, `X`/`Y`/`Z` become their
+/// suit sentinel (`!h` etc.); an unresolved reference is left as-is. Matching is on word
 /// boundaries only (`docs/design/06-system.md` risk R4).
-fn substitute_description(text: &str, env: &Binding, hash_suit: Option<Suit>) -> String {
+///
+/// `#` is deliberately NOT substituted here, unlike `RowContext.hash_suit`'s own resolution for
+/// the *constraint* compiler (`SuitLen(Hash, …)`, `desc/context.rs`): the reference `bss.py` only
+/// ever rewrites `M`/`m`/`oM`/`om`/`X`/`Y`/`Z` in description *text* (confirmed by reading
+/// `src/bml/bss.py`'s substitution loop, which iterates exactly those seven variable names and
+/// nothing else) and leaves a literal `#` untouched wherever it appears in prose -- e.g.
+/// `bml-test`'s `example8.bml`, whose description deliberately contains the literal LaTeX-special
+/// characters `& % $ # _ { } ~ ^ \` verbatim.
+fn substitute_description(text: &str, env: &Binding) -> String {
     const VARS: [(&str, Var); 7] = [
         ("oM", Var::OtherMajor),
         ("om", Var::OtherMinor),
@@ -292,16 +321,13 @@ fn substitute_description(text: &str, env: &Binding, hash_suit: Option<Suit>) ->
     let mut i = 0;
     'outer: while i < text.len() {
         let rest = &text[i..];
-        if let Some(suit) = hash_suit {
-            if rest.starts_with('#') {
-                out.push_str(suit_sentinel(suit));
-                i += 1;
-                continue;
-            }
-        }
         for (word, var) in VARS {
             if let Some(after) = rest.strip_prefix(word) {
-                let before_ok = i == 0 || !is_word_byte(bytes[i - 1]);
+                // A digit before the variable is allowed (`5M`, `3oM`): bss.py matches
+                // `([0-9]+)VAR\b`, treating a leading run of digits as part of the same token
+                // rather than a word character that would block the match.
+                let before_ok =
+                    i == 0 || !is_word_byte(bytes[i - 1]) || bytes[i - 1].is_ascii_digit();
                 let after_ok = after.as_bytes().first().is_none_or(|&b| !is_word_byte(b));
                 if before_ok && after_ok {
                     if let Some(strain) = env.get(var) {
@@ -352,6 +378,18 @@ fn hash_suit(path: &[SidedPattern], resolved: &[Call]) -> Option<Suit> {
         }
     }
     None
+}
+
+/// Whether `seat_now` is (or is about to become) this side's *founding* player for role
+/// purposes -- the one whose calls are Opener/Overcaller/Balancer, as opposed to
+/// Responder/Advancer (`docs/design/06-system.md` §7.2). A player who has already made a real
+/// (non-`Pass`) call keeps that role on every later call of theirs (a rebid); otherwise, once
+/// the *other* player of the side has made a real call, this one is the responder/advancer. A
+/// side's own `Pass` does not by itself establish a role, so it is not "a real call" here: it
+/// lets a later, genuine first bid by either player still count as founding (the balancing-seat
+/// case, `1H-P-P-?`).
+fn is_founding_call(self_bid_before: bool, mate_bid_before: bool) -> bool {
+    self_bid_before || !mate_bid_before
 }
 
 /// Determines the auction role from the path shape (`docs/design/06-system.md` §7.2): the
@@ -499,6 +537,13 @@ fn expand_history(
 /// Expands one sibling list: exact rows first (row order), then pattern rows (row order), each
 /// recursing into its own children and, when `parent` is given, linking each row's node as one of
 /// `parent`'s [`Node::children`].
+///
+/// `bids_processed` (bss.py's own name for this) tracks every concrete call already produced by
+/// an *earlier row of this same list*, exact or pattern alike: a later row whose candidate
+/// collides with one is a genuine redefinition of the same position (`first definition wins`,
+/// already reported by [`build_or_reuse_node`]/[`handle_duplicate`]), so its subtree is not
+/// merged into the earlier row's node -- unlike a history token's collision with a *different*
+/// table's prefix, which is exactly what re-tracing means to merge.
 #[allow(clippy::too_many_arguments)]
 fn expand_children(
     rows: &[BmlNode],
@@ -512,6 +557,7 @@ fn expand_children(
     ex: &mut Expansion,
 ) {
     let mut claimed: Vec<Call> = Vec::new();
+    let mut bids_processed: std::collections::HashSet<Call> = std::collections::HashSet::new();
 
     for row in rows.iter().filter(|r| is_exact_row(r)) {
         for (node_id, next) in expand_row(
@@ -526,6 +572,13 @@ fn expand_children(
             frame,
             ex,
         ) {
+            let call = *next
+                .resolved
+                .last()
+                .expect("expand_row pushed this row's call");
+            if !bids_processed.insert(call) {
+                continue; // this sibling list already produced `call`; skip the subtree.
+            }
             if let Some(p) = parent {
                 if !ex.nodes[p.0 as usize].children.contains(&node_id) {
                     ex.nodes[p.0 as usize].children.push(node_id);
@@ -557,6 +610,13 @@ fn expand_children(
             frame,
             ex,
         ) {
+            let call = *next
+                .resolved
+                .last()
+                .expect("expand_row pushed this row's call");
+            if !bids_processed.insert(call) {
+                continue; // this sibling list already produced `call`; skip the subtree.
+            }
             if let Some(p) = parent {
                 if !ex.nodes[p.0 as usize].children.contains(&node_id) {
                     ex.nodes[p.0 as usize].children.push(node_id);
@@ -583,6 +643,14 @@ fn is_exact_row(row: &BmlNode) -> bool {
 
 /// Expands one row's call token into its concrete candidates, creating (or reusing) a [`Node`]
 /// per candidate.
+///
+/// One physical row (`tok.span`) can be reached by more than one caller within the same table:
+/// an ancestor `Var`/`Strains`/`AnyOf` pattern with several candidates re-enters every child once
+/// per candidate, and a multi-candidate history token re-enters the whole rest of the table once
+/// per candidate the same way. Every such branch reaching this row shares *one* [`Row`] (looked
+/// up by `tok.span` in `ex.row_by_span`, see [`Expansion::row_by_span`]'s doc comment), so a
+/// row's `expansions` accumulate across every branch instead of the row being recreated per
+/// branch.
 #[allow(clippy::too_many_arguments)]
 fn expand_row(
     row: &BmlNode,
@@ -606,15 +674,22 @@ fn expand_row(
     });
     let row_path: Arc<[SidedPattern]> = row_path.into();
 
-    let row_id = RowId(ex.rows.len() as u32);
-    ex.rows.push(Row {
-        id: row_id,
-        span: tok.span.clone(),
-        path: Arc::clone(&row_path),
-        description_raw: row.description.text.clone(),
-        recognition: Recognition::default(),
-        expansions: Vec::new(),
-    });
+    let row_id = match ex.row_by_span.get(&tok.span) {
+        Some(&id) => id,
+        None => {
+            let id = RowId(ex.rows.len() as u32);
+            ex.rows.push(Row {
+                id,
+                span: tok.span.clone(),
+                path: Arc::clone(&row_path),
+                description_raw: row.description.text.clone(),
+                recognition: Recognition::default(),
+                expansions: Vec::new(),
+            });
+            ex.row_by_span.insert(tok.span.clone(), id);
+            id
+        }
+    };
 
     let last_bid = frame.auction.last_bid().map(|(_, b)| b);
     let candidates = generate_candidates(
@@ -630,13 +705,45 @@ fn expand_row(
         return Vec::new();
     }
 
+    // `Level::Any` ("`n`") widened to every sufficient level can produce many candidates; flag
+    // it rather than silently branching into a wide fan-out (`docs/design/06-system.md` §9.2).
+    const WIDE_WILDCARD_THRESHOLD: usize = 8;
+    if candidates.len() > WIDE_WILDCARD_THRESHOLD
+        && matches!(
+            tok.pattern,
+            CallPattern::Var {
+                level: Level::Any,
+                ..
+            } | CallPattern::Strains {
+                level: Level::Any,
+                ..
+            }
+        )
+    {
+        ex.lints.push(
+            Lint::info(
+                LintCode::WideWildcard,
+                format!(
+                    "{}: {} candidate calls for level `n`",
+                    tok.raw,
+                    candidates.len()
+                ),
+            )
+            .with_span(tok.span.clone())
+            .with_row(row_id),
+        );
+    }
+
     let mut out = Vec::new();
     for cand in candidates {
         if ex.nodes.len() >= opts.max_nodes {
-            ex.lints.push(Lint::error(
-                LintCode::TooManyNodes,
-                format!("expansion aborted: reached max_nodes = {}", opts.max_nodes),
-            ));
+            if !ex.too_many_nodes_reported {
+                ex.lints.push(Lint::error(
+                    LintCode::TooManyNodes,
+                    format!("expansion aborted: reached max_nodes = {}", opts.max_nodes),
+                ));
+                ex.too_many_nodes_reported = true;
+            }
             break;
         }
 
@@ -708,10 +815,12 @@ fn expand_row(
         });
         next.resolved.push(concrete_call);
 
-        let is_first_of_side = match side {
-            Side::Us => frame.last_by_seat[seat_now.index() as usize].is_none(),
-            Side::Them => frame.last_by_seat[seat_now.index() as usize].is_none(),
+        let mate = seat_now.partner();
+        let bid_before = |s: Seat| {
+            frame.last_by_seat[s.index() as usize]
+                .is_some_and(|id| ex.nodes[id.0 as usize].call != Call::Pass)
         };
+        let is_first_of_side = is_founding_call(bid_before(seat_now), bid_before(mate));
         let competitive_before = frame.last_by_seat.iter().flatten().count() >= 1
             && frame.path.iter().any(|p| p.side == Side::Us)
             && frame.path.iter().any(|p| p.side == Side::Them);
@@ -784,6 +893,25 @@ fn report_empty_candidates(
     }
 }
 
+/// The last bid made by a seat of the partnership other than `seat_now`'s, scanning `auction`
+/// backwards. Unlike "the last bid by anyone" (which can be our own or our partner's bid, e.g.
+/// `1N-(P)-2C` has no bid from *them* yet even though `1N` is the auction's last bid), this is
+/// always genuinely the opponents' bid, for a row on either [`Side`].
+fn opponents_last_bid(auction: &Auction, seat_now: Seat) -> Option<Bid> {
+    let their_side = seat_now.side().other();
+    auction
+        .calls()
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(i, call)| {
+            their_side
+                .contains(auction.seat_at(i))
+                .then(|| call.bid())
+                .flatten()
+        })
+}
+
 /// Builds the [`Node`] for one candidate and inserts it into the trie; on a collision with an
 /// existing entry (first definition wins), discards it and returns the existing node instead.
 #[allow(clippy::too_many_arguments)]
@@ -802,6 +930,20 @@ fn build_or_reuse_node(
     next_frame: &Frame,
     ex: &mut Expansion,
 ) -> Option<NodeId> {
+    // An empty-description entry (typically a history token re-traced under this table's own
+    // `#SEAT`/`#VUL`) never outranks an already-defined, non-empty entry that covers it: reuse
+    // that node instead of inserting a new, more specific entry whose `HandConstraint::ANY` and
+    // blank description would otherwise win at lookup for the narrower condition and shadow the
+    // real definition (`docs/design/06-system.md` §4.2/§9.3).
+    if row.description.text.trim().is_empty() {
+        if let Some(existing) =
+            ex.trie
+                .covering_entry(we_opened_of(next_frame), &next_frame.edges, seat, vul)
+        {
+            return Some(existing);
+        }
+    }
+
     let calls = next_frame.auction.calls().to_vec();
     let level = call.bid().map_or(0, |b| b.level());
     let hash = hash_suit(&next_frame.path, &next_frame.resolved);
@@ -815,14 +957,17 @@ fn build_or_reuse_node(
         next_frame.last_by_seat[seat_now.index() as usize].map(|id| &ex.nodes[id.0 as usize]);
     let partner_last = next_frame.last_by_seat[seat_now.partner().index() as usize]
         .map(|id| &ex.nodes[id.0 as usize]);
-    let their_last_bid = if side == Side::Us {
-        prior_last_bid
+    let their_last_bid = opponents_last_bid(&next_frame.auction, seat_now);
+    let bid_suit = call.bid().and_then(|b| b.strain().suit());
+    let partner_bid_this_suit = bid_suit.is_some()
+        && partner_last.is_some_and(|n| n.call.bid().and_then(|b| b.strain().suit()) == bid_suit);
+    let agreed_suit = if partner_bid_this_suit {
+        bid_suit
     } else {
-        None
+        own_prev
+            .and_then(|n| n.flags.agreed_suit)
+            .or_else(|| partner_last.and_then(|n| n.flags.agreed_suit))
     };
-    let agreed_suit = own_prev
-        .and_then(|n| n.flags.agreed_suit)
-        .or_else(|| partner_last.and_then(|n| n.flags.agreed_suit));
 
     let ctx = RowContext {
         call,
@@ -838,13 +983,22 @@ fn build_or_reuse_node(
         role,
     };
 
-    let substituted = substitute_description(&row.description.text, &next_frame.env, hash);
+    let substituted = substitute_description(&row.description.text, &next_frame.env);
     let compiled = compile_description(&substituted, &ctx, meta);
     debug_assert!(
         compiled.constraint.is_samplable(),
         "the description compiler must never produce HandConstraint::Custom"
     );
-    ex.lints.extend(compiled.lints);
+    // `LintCode::LowRecognition` is dropped here: it is a per-*row* roll-up over that row's best
+    // expansion (`check_recognition`, run once the whole file is expanded), and the description
+    // compiler's own per-node copy would otherwise report the same threshold breach twice for a
+    // row with a single expansion (the common case).
+    ex.lints.extend(
+        compiled
+            .lints
+            .into_iter()
+            .filter(|l| l.code != LintCode::LowRecognition),
+    );
     let recognition = compiled.recognition.clone();
 
     let node_id = NodeId(ex.nodes.len() as u32);
@@ -878,6 +1032,27 @@ fn build_or_reuse_node(
         *row_recognition = recognition;
     }
 
+    // A genuine specificity tie (two *different*, overlapping conditions that would both match
+    // the same real auction with equal specificity) is reported once, before insertion, since
+    // `insert_path`'s own `Err` path is reserved for an *identical* condition (`DuplicatePath`,
+    // first wins outright, no ambiguity to report) -- see `AuctionTrie::tied_entry`.
+    if let Some(existing) =
+        ex.trie
+            .tied_entry(we_opened_of(next_frame), &next_frame.edges, seat, vul)
+    {
+        ex.lints.push(
+            Lint::info(
+                LintCode::ConditionTie,
+                format!(
+                    "{}: this seat/vul condition has the same specificity as node {} and \
+                     overlaps it; insertion order decides which one lookup prefers",
+                    row.calls[0].raw, existing.0
+                ),
+            )
+            .with_row(row_id),
+        );
+    }
+
     let has_wildcard = next_frame.edges.iter().any(|e| matches!(e, Edge::Class(_)));
     let insert_result = if has_wildcard {
         ex.trie.insert_path(
@@ -900,8 +1075,8 @@ fn build_or_reuse_node(
     match insert_result {
         Ok(()) => Some(node_id),
         Err(existing) => {
-            let new_description = ex.nodes.pop().expect("just pushed").description;
-            handle_duplicate(row_id, existing, &new_description, ex);
+            let new_node = ex.nodes.pop().expect("just pushed");
+            handle_duplicate(row_id, existing, new_node, ex);
             Some(existing)
         }
     }
@@ -917,13 +1092,26 @@ fn we_opened_of(frame: &Frame) -> bool {
         .unwrap_or(true)
 }
 
-fn handle_duplicate(row_id: RowId, existing: NodeId, new_description: &str, ex: &mut Expansion) {
+/// A row's candidate collided with an already-inserted entry (`docs/design/06-system.md` §4.2:
+/// "duplicate paths -> first wins"). `new_node` is the freshly built, not-yet-shared node that
+/// lost; it is discarded except when it *fills* the existing node's empty description, in which
+/// case every one of its compiled fields -- not just the description -- replaces the existing
+/// node's, since that existing node was only ever a placeholder (constraint `ANY`, default
+/// flags/priority/weights) created by an earlier, incomplete re-trace of the same call.
+fn handle_duplicate(row_id: RowId, existing: NodeId, new_node: Node, ex: &mut Expansion) {
     let existing_description = ex.nodes[existing.0 as usize].description.clone();
-    if new_description.is_empty() || new_description == existing_description {
+    if new_node.description.is_empty() || new_node.description == existing_description {
         return; // the ordinary "another table retraces this prefix" case: nothing to report.
     }
     if existing_description.is_empty() {
-        ex.nodes[existing.0 as usize].description = new_description.to_string();
+        let existing_node = &mut ex.nodes[existing.0 as usize];
+        let id = existing_node.id;
+        let children = std::mem::take(&mut existing_node.children);
+        *existing_node = Node {
+            id,
+            children,
+            ..new_node
+        };
         ex.lints.push(
             Lint::info(
                 LintCode::DuplicatePath,
@@ -937,7 +1125,8 @@ fn handle_duplicate(row_id: RowId, existing: NodeId, new_description: &str, ex: 
             Lint::warning(
                 LintCode::DuplicatePath,
                 format!(
-                    "redefinition with a different, non-empty description ({new_description:?} vs {existing_description:?})"
+                    "redefinition with a different, non-empty description ({:?} vs {existing_description:?})",
+                    new_node.description
                 ),
             )
             .with_row(row_id)
@@ -1114,21 +1303,38 @@ mod tests {
     #[test]
     fn substitute_description_replaces_word_bound_variables_only() {
         let env = Binding::default().bind(Var::Major, Strain::Hearts);
-        let out = substitute_description("4+M shows a Major and Moon", &env, None);
+        let out = substitute_description("4+M shows a Major and Moon", &env);
         // Only the standalone `M` is substituted; `Major`/`Moon` are untouched.
         assert_eq!(out, "4+!h shows a Major and Moon");
     }
 
     #[test]
     fn substitute_description_leaves_unbound_variables_as_is() {
-        let out = substitute_description("5+M", &Binding::default(), None);
+        let out = substitute_description("5+M", &Binding::default());
         assert_eq!(out, "5+M");
     }
 
     #[test]
-    fn substitute_description_maps_hash_to_the_given_suit() {
-        let out = substitute_description("good 4+#", &Binding::default(), Some(Suit::Diamonds));
-        assert_eq!(out, "good 4+!d");
+    fn substitute_description_replaces_a_digit_prefixed_variable() {
+        let env = Binding::default().bind(Var::Major, Strain::Hearts);
+        assert_eq!(substitute_description("5M or 4M", &env), "5!h or 4!h");
+
+        let env = env.bind(Var::Major, Strain::Hearts);
+        assert_eq!(substitute_description("3oM", &env), "3!s");
+
+        let env = Binding::default().bind(Var::Minor, Strain::Clubs);
+        assert_eq!(substitute_description("2m", &env), "2!c");
+    }
+
+    #[test]
+    fn substitute_description_leaves_a_literal_hash_untouched() {
+        // Unlike `M`/`m`/`oM`/`om`/`X`/`Y`/`Z`, `#` is never substituted in description *text*
+        // (only `RowContext.hash_suit` resolves it, for the constraint compiler) -- confirmed
+        // against the reference `bss.py`, and against `bml-test`'s `example8.bml`, whose
+        // description text uses a literal `#` as a LaTeX-special-character example, not a
+        // variable.
+        let out = substitute_description("good 4+#", &Binding::default());
+        assert_eq!(out, "good 4+#");
     }
 
     #[test]
@@ -1182,6 +1388,13 @@ mod tests {
             Call::Bid(Bid::new(2, Strain::Clubs).unwrap()),
             None
         ));
+        // A change of strain to a lower level is not a jump, even though 2H comes after 1S in
+        // bidding order: 2H is the minimum sufficient bid in hearts over 1S.
+        let last = Bid::new(1, Strain::Spades).unwrap();
+        assert!(!is_jump(
+            Call::Bid(Bid::new(2, Strain::Hearts).unwrap()),
+            Some(last)
+        ));
     }
 
     #[test]
@@ -1201,5 +1414,453 @@ mod tests {
         let atom = Atom::ANY.with_hcp(38..=40); // above the achievable max (37): unsatisfiable
         let c = HandConstraint::Atom(atom);
         assert_eq!(estimate_volume_log2(&c), i16::MIN);
+    }
+
+    #[test]
+    fn opponents_last_bid_ignores_our_own_and_partners_bids() {
+        // `1N-(P)-2C`: dealer North bids 1N, East (Them) passes, South (Us) bids 2C. `Them`'s
+        // only call is a pass, so there is no bid from them yet, not the auction's last bid
+        // (1N, which is ours).
+        let auction = Auction::from_calls(
+            Seat::North,
+            Vulnerability::None,
+            [Call::Bid(Bid::new(1, Strain::NoTrump).unwrap()), Call::Pass],
+        )
+        .unwrap();
+        assert_eq!(opponents_last_bid(&auction, Seat::South), None);
+    }
+
+    #[test]
+    fn opponents_last_bid_finds_the_opponents_own_bid() {
+        // 1C-(1H)-1S: South's row context should see East's 1H as their_last_bid.
+        let auction = Auction::from_calls(
+            Seat::North,
+            Vulnerability::None,
+            [
+                Call::Bid(Bid::new(1, Strain::Clubs).unwrap()),
+                Call::Bid(Bid::new(1, Strain::Hearts).unwrap()),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            opponents_last_bid(&auction, Seat::South),
+            Some(Bid::new(1, Strain::Hearts).unwrap())
+        );
+    }
+
+    // -- Full-table expansion scenarios (built as AST literals, bypassing the parser, so each
+    // scenario is exact) --------------------------------------------------------------------
+
+    /// A fresh, never-repeated span: real parsed rows always have distinct spans (each `#INCLUDE`
+    /// occurrence gets its own `FileId`, see `lexer::load_file`; two rows on the same file always
+    /// differ in `line`), and `expand_row` now keys its row-deduplication cache on exactly this
+    /// span (`Expansion::row_by_span`), so a fixed dummy span across every test-built token would
+    /// wrongly collapse genuinely distinct rows into one.
+    fn test_span() -> crate::ast::Span {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static NEXT_LINE: AtomicU32 = AtomicU32::new(1);
+        crate::ast::Span {
+            file: crate::ast::FileId(0),
+            line: NEXT_LINE.fetch_add(1, Ordering::Relaxed),
+            col: 0,
+            pasted_from: None,
+        }
+    }
+
+    fn tok(side: Side, pattern: CallPattern, raw: &str) -> CallToken {
+        CallToken {
+            side,
+            pattern,
+            raw: raw.to_string(),
+            span: test_span(),
+        }
+    }
+
+    fn exact_tok(side: Side, call: Call, raw: &str) -> CallToken {
+        tok(side, CallPattern::Exact(call), raw)
+    }
+
+    fn some_desc(text: &str) -> Description {
+        Description {
+            text: text.to_string(),
+            alert: false,
+            col: 0,
+        }
+    }
+
+    fn test_row(calls: Vec<CallToken>, text: &str, children: Vec<BmlNode>) -> BmlNode {
+        BmlNode {
+            calls,
+            description: some_desc(text),
+            children,
+            indent: 0,
+            span: test_span(),
+        }
+    }
+
+    fn test_table(seat: SeatCond, history: Vec<CallToken>, rows: Vec<BmlNode>) -> BidTable {
+        BidTable {
+            hidden: false,
+            seat,
+            vul: VulCond::default(),
+            history,
+            history_desc: None,
+            rows,
+            span: test_span(),
+        }
+    }
+
+    fn expand(tables: &[&BidTable]) -> Expansion {
+        expand_file(tables, &SystemMeta::default(), &CompileOptions::default())
+    }
+
+    #[test]
+    fn seat_retrace_reuses_the_general_definition_instead_of_shadowing_it() {
+        // Table 1: the general opening definition, no #SEAT restriction.
+        let opening = test_table(
+            SeatCond::Any,
+            Vec::new(),
+            vec![test_row(
+                vec![exact_tok(
+                    Side::Us,
+                    Call::Bid(Bid::new(1, Strain::Hearts).unwrap()),
+                    "1H",
+                )],
+                "11-15 hcp, 5+!h",
+                Vec::new(),
+            )],
+        );
+        // Table 2: `#SEAT 34` retraces `1H-` (empty description: a pure history token) and adds
+        // its own response.
+        let seat34 = test_table(
+            SeatCond::ThirdOrFourth,
+            vec![exact_tok(
+                Side::Us,
+                Call::Bid(Bid::new(1, Strain::Hearts).unwrap()),
+                "1H",
+            )],
+            vec![test_row(
+                vec![exact_tok(
+                    Side::Us,
+                    Call::Bid(Bid::new(2, Strain::Clubs).unwrap()),
+                    "2C",
+                )],
+                "MAX, 5+!c",
+                Vec::new(),
+            )],
+        );
+
+        let ex = expand(&[&opening, &seat34]);
+
+        // Only two real nodes: the opening and its 2C child. No shadowing placeholder for the
+        // seat-34 retrace of 1H.
+        assert_eq!(ex.nodes.len(), 2);
+        assert_eq!(ex.nodes[0].description, "11-15 hcp, 5+!h");
+        assert_eq!(ex.nodes[0].children, vec![NodeId(1)]);
+
+        // Resolving 1H for a 3rd/4th-seat opener returns the *general* node, not a shadowing
+        // empty one.
+        let key = crate::trie::LookupKey {
+            we_opened: true,
+            calls: &[Call::Bid(Bid::new(1, Strain::Hearts).unwrap())],
+            opener_pos: 3,
+            vul: crate::trie::RelVul {
+                we: false,
+                they: false,
+            },
+        };
+        let lookup = ex.trie.resolve(&key);
+        assert_eq!(lookup.by_depth[0], Some(NodeId(0)));
+    }
+
+    #[test]
+    fn fill_replaces_every_field_of_the_placeholder_not_just_the_description() {
+        // Table 1: a history retrace of `1N` (empty description) with its own child, written
+        // before `1N` is ever really defined.
+        let retrace_first = test_table(
+            SeatCond::Any,
+            vec![exact_tok(
+                Side::Us,
+                Call::Bid(Bid::new(1, Strain::NoTrump).unwrap()),
+                "1N",
+            )],
+            vec![test_row(
+                vec![exact_tok(
+                    Side::Us,
+                    Call::Bid(Bid::new(2, Strain::Clubs).unwrap()),
+                    "2C",
+                )],
+                "no major",
+                Vec::new(),
+            )],
+        );
+        // Table 2: the real definition of the opening `1N`, coming later in the file.
+        let real_definition = test_table(
+            SeatCond::Any,
+            Vec::new(),
+            vec![test_row(
+                vec![exact_tok(
+                    Side::Us,
+                    Call::Bid(Bid::new(1, Strain::NoTrump).unwrap()),
+                    "1N",
+                )],
+                "15-17 hcp, bal",
+                Vec::new(),
+            )],
+        );
+
+        let ex = expand(&[&retrace_first, &real_definition]);
+
+        assert_eq!(ex.nodes.len(), 2);
+        let n1 = &ex.nodes[0];
+        assert_eq!(n1.description, "15-17 hcp, bal");
+        // The child linked while the node was still a placeholder is kept.
+        assert_eq!(n1.children, vec![NodeId(1)]);
+        // The row now points at the real definition's row, not the history retrace's.
+        assert_eq!(ex.rows[n1.row.0 as usize].description_raw, "15-17 hcp, bal");
+        // The constraint is no longer the wide-open placeholder: narrower than a bare `Atom::ANY`.
+        use bridge_constraint::Atom;
+        let any_volume = estimate_volume_log2(&HandConstraint::Atom(Atom::ANY));
+        assert!(n1.volume_log2 < any_volume);
+    }
+
+    #[test]
+    fn a_multi_candidate_ancestor_makes_its_child_row_accumulate_not_duplicate() {
+        // `1M` (unbound `Var::Major`) has two candidates (1H, 1S); each candidate's own
+        // recursion into the child row `2C` must land in the *same* `Row` (one physical BML
+        // line), with both nodes in that one row's `expansions` -- not a fresh `Row` created per
+        // candidate (which would silently double `rows.len()` and any per-row roll-up over it).
+        let child = test_row(
+            vec![exact_tok(
+                Side::Us,
+                Call::Bid(Bid::new(2, Strain::Clubs).unwrap()),
+                "2C",
+            )],
+            "some desc",
+            Vec::new(),
+        );
+        let table = test_table(
+            SeatCond::Any,
+            Vec::new(),
+            vec![test_row(
+                vec![tok(
+                    Side::Us,
+                    CallPattern::Var {
+                        level: Level::At(1),
+                        var: Var::Major,
+                    },
+                    "1M",
+                )],
+                "a major",
+                vec![child],
+            )],
+        );
+
+        let ex = expand(&[&table]);
+
+        // 1H + 1S, each with its own 2C child: 4 nodes.
+        assert_eq!(ex.nodes.len(), 4);
+        // But only 2 physical rows: "1M" and "2C" (not 1 + 2).
+        assert_eq!(ex.rows.len(), 2);
+        let child_row = ex
+            .rows
+            .iter()
+            .find(|r| r.description_raw == "some desc")
+            .expect("the 2C row");
+        assert_eq!(
+            child_row.expansions.len(),
+            2,
+            "one 2C expansion per 1M candidate, same row"
+        );
+    }
+
+    #[test]
+    fn overlapping_equal_specificity_vul_conditions_across_tables_report_condition_tie() {
+        // Two tables both define the opening `1C`, under different but overlapping, equally
+        // specific `#VUL` conditions (`we=Yes,they=Any` vs `we=Any,they=Yes`: each has
+        // specificity 1). A real "both vulnerable" auction satisfies both, so which entry
+        // `best_entry` returns depends only on insertion order -- a genuine tie, not a duplicate
+        // (the two conditions are not identical, so `insert_path` does not `Err`).
+        let mut table_a = test_table(
+            SeatCond::Any,
+            Vec::new(),
+            vec![test_row(
+                vec![exact_tok(
+                    Side::Us,
+                    Call::Bid(Bid::new(1, Strain::Clubs).unwrap()),
+                    "1C",
+                )],
+                "we vul",
+                Vec::new(),
+            )],
+        );
+        table_a.vul = crate::ast::VulCond {
+            we: crate::ast::Tri::Yes,
+            they: crate::ast::Tri::Any,
+        };
+
+        let mut table_b = test_table(
+            SeatCond::Any,
+            Vec::new(),
+            vec![test_row(
+                vec![exact_tok(
+                    Side::Us,
+                    Call::Bid(Bid::new(1, Strain::Clubs).unwrap()),
+                    "1C",
+                )],
+                "they vul",
+                Vec::new(),
+            )],
+        );
+        table_b.vul = crate::ast::VulCond {
+            we: crate::ast::Tri::Any,
+            they: crate::ast::Tri::Yes,
+        };
+
+        let ex = expand(&[&table_a, &table_b]);
+        assert!(
+            ex.lints.iter().any(|l| l.code == LintCode::ConditionTie),
+            "expected a ConditionTie lint, got: {:?}",
+            ex.lints.iter().map(|l| l.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_later_pattern_row_duplicating_an_earlier_ones_call_does_not_merge_its_subtree() {
+        // `1C-(1D)` history, then two sibling *pattern* rows that both produce 2H/2S:
+        // `2M first` (a `Var::Major`) and `2HS second` (a literal `Strains` of the same two
+        // suits). bss.py's `bids_processed` makes the second row's subtree not attach.
+        let history = vec![
+            exact_tok(
+                Side::Us,
+                Call::Bid(Bid::new(1, Strain::Clubs).unwrap()),
+                "1C",
+            ),
+            exact_tok(
+                Side::Them,
+                Call::Bid(Bid::new(1, Strain::Diamonds).unwrap()),
+                "(1D)",
+            ),
+        ];
+        let row_2m = test_row(
+            vec![tok(
+                Side::Us,
+                CallPattern::Var {
+                    level: Level::At(2),
+                    var: Var::Major,
+                },
+                "2M",
+            )],
+            "first",
+            vec![test_row(
+                vec![exact_tok(
+                    Side::Us,
+                    Call::Bid(Bid::new(2, Strain::NoTrump).unwrap()),
+                    "2N",
+                )],
+                "a",
+                Vec::new(),
+            )],
+        );
+        let row_2hs = test_row(
+            vec![tok(
+                Side::Us,
+                CallPattern::Strains {
+                    level: Level::At(2),
+                    strains: StrainSet::EMPTY.with(Strain::Hearts).with(Strain::Spades),
+                },
+                "2HS",
+            )],
+            "second",
+            vec![test_row(
+                vec![exact_tok(
+                    Side::Us,
+                    Call::Bid(Bid::new(3, Strain::Clubs).unwrap()),
+                    "3C",
+                )],
+                "b",
+                Vec::new(),
+            )],
+        );
+        let table = test_table(SeatCond::Any, history, vec![row_2m, row_2hs]);
+
+        let ex = expand(&[&table]);
+
+        // The 2H node (row "first") has exactly one child (2N), never 3C from "second".
+        let two_hearts = Call::Bid(Bid::new(2, Strain::Hearts).unwrap());
+        let node_2h = ex
+            .nodes
+            .iter()
+            .find(|n| n.call == two_hearts)
+            .expect("2H node exists");
+        assert_eq!(node_2h.children.len(), 1);
+        let child = &ex.nodes[node_2h.children[0].0 as usize];
+        assert_eq!(child.description, "a");
+
+        // The conflicting redefinition is still reported.
+        assert!(
+            ex.lints.iter().any(|l| l.code == LintCode::DuplicatePath
+                && l.severity == crate::lint::Severity::Warning)
+        );
+    }
+
+    #[test]
+    fn agreed_suit_is_set_when_a_call_supports_partners_suit() {
+        let opening = exact_tok(
+            Side::Us,
+            Call::Bid(Bid::new(1, Strain::Hearts).unwrap()),
+            "1H",
+        );
+        let support = exact_tok(
+            Side::Us,
+            Call::Bid(Bid::new(2, Strain::Hearts).unwrap()),
+            "2H",
+        );
+        let table = test_table(
+            SeatCond::Any,
+            Vec::new(),
+            vec![test_row(
+                vec![opening],
+                "12+ hcp, 5+!h",
+                vec![test_row(vec![support], "6-9 hcp, 3+ support", Vec::new())],
+            )],
+        );
+
+        let ex = expand(&[&table]);
+
+        let two_hearts = Call::Bid(Bid::new(2, Strain::Hearts).unwrap());
+        let node = ex
+            .nodes
+            .iter()
+            .find(|n| n.call == two_hearts)
+            .expect("2H node exists");
+        assert_eq!(node.flags.agreed_suit, Some(Suit::Hearts));
+    }
+
+    #[test]
+    fn is_founding_call_and_infer_role_cover_every_role() {
+        // Opener: side just opened, neither seat of the side has acted.
+        assert!(is_founding_call(false, false));
+        assert_eq!(infer_role(Side::Us, true, true, false), Role::Opener);
+
+        // Responder: partner (mate) already made a real bid.
+        assert!(!is_founding_call(false, true));
+        assert_eq!(infer_role(Side::Us, true, false, false), Role::Responder);
+
+        // Opener rebid: the same seat bid before, regardless of the mate.
+        assert!(is_founding_call(true, false));
+        assert!(is_founding_call(true, true));
+        assert_eq!(infer_role(Side::Us, true, true, true), Role::Opener);
+
+        // Overcaller: the non-opening side's founding call, no prior competitive action.
+        assert_eq!(infer_role(Side::Them, true, true, false), Role::Overcaller);
+
+        // Advancer: partner (the overcaller) already bid.
+        assert_eq!(infer_role(Side::Them, true, false, false), Role::Advancer);
+
+        // Balancer: the non-opening side's founding call, but only after both sides have
+        // already acted (a pass does not, by itself, establish a role -- see
+        // `is_founding_call`).
+        assert_eq!(infer_role(Side::Them, true, true, true), Role::Balancer);
     }
 }

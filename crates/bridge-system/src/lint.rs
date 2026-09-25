@@ -209,33 +209,45 @@ fn check_satisfiability(ir: &mut SystemIR) {
                     "no hand satisfies this constraint",
                 )
                 .with_row(node.row)
-                .with_node(node.id),
+                .with_node(node.id)
+                .with_span(ir.row(node.row).span.clone()),
             );
         }
     }
     ir.lints.extend(new_lints);
 }
 
-/// §9.3 check 2: a node's constraint, conjoined with the nearest same-side ancestor's, must stay
-/// satisfiable (an opener's rebid promising more than the opening did, say).
+/// §9.3 check 2: a node's constraint, conjoined with the *same player's own* previous call's,
+/// must stay satisfiable (an opener's rebid promising more than the opening did, say).
+///
+/// The nearest ancestor on the same `side` is usually *partner's* node, not this player's own
+/// (within one partnership the two players' real calls alternate up the tree), so ANDing against
+/// it would compare, say, the opener's hand against the responder's -- always meant to be
+/// unsatisfiable and not what this check is for. Node doesn't need a new field to find the right
+/// ancestor: `calls` is the concrete path from this synthetic table's own start (dealer fixed at
+/// North, `docs/design/06-system.md` §4.2), so its length mod 4 is the synthetic seat that made
+/// each call, and it agrees across tables for the same shared node (re-tracing always replays
+/// the identical prefix).
 fn check_own_history(ir: &mut SystemIR) {
     let parent_of = parent_map(ir);
     let mut new_lints = Vec::new();
     for node in &ir.nodes {
+        let seat_index = node.calls.len() % 4;
         let mut cur = parent_of.get(&node.id).copied();
         while let Some(id) = cur {
             let ancestor = ir.node(id);
-            if ancestor.side == node.side {
+            if ancestor.side == node.side && ancestor.calls.len() % 4 == seat_index {
                 let combined = node.constraint.clone().and(ancestor.constraint.clone());
                 if !combined.is_satisfiable() {
                     new_lints.push(
                         Lint::warning(
                             LintCode::ContradictsOwnHistory,
-                            "conjoined with the nearest same-side ancestor's constraint, no hand \
-                             satisfies both",
+                            "conjoined with this player's own previous call's constraint, no \
+                             hand satisfies both",
                         )
                         .with_row(node.row)
-                        .with_node(node.id),
+                        .with_node(node.id)
+                        .with_span(ir.row(node.row).span.clone()),
                     );
                 }
                 break;
@@ -280,75 +292,106 @@ fn check_recognition(ir: &mut SystemIR) {
 
 /// §9.3 check 6: among nodes with the same parent, side, seat and vulnerability condition, a
 /// later sibling's DNF contained in an earlier one's is unreachable (`SiblingSubset`); any
-/// overlap short of that is merely worth knowing about (`SiblingOverlap`).
+/// overlap short of that is merely worth knowing about (`SiblingOverlap`). The table's *openings*
+/// (the trie roots -- nodes with no parent at all) are one such sibling group too, grouped the
+/// same way, since an opening bid can shadow another opening bid exactly as a later child can
+/// shadow an earlier one.
 fn check_sibling_ambiguity(ir: &mut SystemIR) {
     let opts = DnfOptions::default();
     let mut new_lints = Vec::new();
 
-    for parent in &ir.nodes {
-        let mut groups: HashMap<
-            (
-                crate::pattern::Side,
-                crate::ast::SeatCond,
-                crate::ast::VulCond,
-            ),
-            Vec<NodeId>,
-        > = HashMap::new();
-        for &child in &parent.children {
-            let n = ir.node(child);
-            groups
-                .entry((n.side, n.seat, n.vul))
-                .or_default()
-                .push(child);
-        }
+    let mut has_parent: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+    for node in &ir.nodes {
+        has_parent.extend(node.children.iter().copied());
+    }
 
-        for siblings in groups.into_values() {
-            if siblings.len() < 2 {
-                continue;
-            }
-            let dnfs: Vec<Option<Dnf>> = siblings
-                .iter()
-                .map(|&id| ir.node(id).constraint.to_dnf(&opts).ok())
-                .collect();
-            for i in 0..siblings.len() {
-                for j in (i + 1)..siblings.len() {
-                    let (Some(earlier), Some(later)) = (&dnfs[i], &dnfs[j]) else {
-                        continue; // truncated beyond `max_terms`; skip, per §9.3 point 6.
+    for parent in &ir.nodes {
+        check_sibling_group(ir, &parent.children, &opts, &mut new_lints);
+    }
+
+    let roots: Vec<NodeId> = ir
+        .nodes
+        .iter()
+        .map(|n| n.id)
+        .filter(|id| !has_parent.contains(id))
+        .collect();
+    check_sibling_group(ir, &roots, &opts, &mut new_lints);
+
+    ir.lints.extend(new_lints);
+}
+
+/// One group of nodes that share a parent (or, for the table's openings, share none): grouped
+/// further by `(side, seat, vul)`, then checked pairwise for [`LintCode::SiblingSubset`] /
+/// [`LintCode::SiblingOverlap`] in row order.
+fn check_sibling_group(
+    ir: &SystemIR,
+    children: &[NodeId],
+    opts: &DnfOptions,
+    new_lints: &mut Vec<Lint>,
+) {
+    let mut groups: HashMap<
+        (
+            crate::pattern::Side,
+            crate::ast::SeatCond,
+            crate::ast::VulCond,
+        ),
+        Vec<NodeId>,
+    > = HashMap::new();
+    for &child in children {
+        let n = ir.node(child);
+        groups
+            .entry((n.side, n.seat, n.vul))
+            .or_default()
+            .push(child);
+    }
+
+    for siblings in groups.into_values() {
+        if siblings.len() < 2 {
+            continue;
+        }
+        let dnfs: Vec<Option<Dnf>> = siblings
+            .iter()
+            .map(|&id| ir.node(id).constraint.to_dnf(opts).ok())
+            .collect();
+        for i in 0..siblings.len() {
+            for j in (i + 1)..siblings.len() {
+                let (Some(earlier), Some(later)) = (&dnfs[i], &dnfs[j]) else {
+                    continue; // truncated beyond `max_terms`; skip, per §9.3 point 6.
+                };
+                if dnf_subset(later, earlier) {
+                    let earlier_node = ir.node(siblings[i]);
+                    let later_node = ir.node(siblings[j]);
+                    let severity = if earlier_node.priority == later_node.priority {
+                        Severity::Warning
+                    } else {
+                        Severity::Info
                     };
-                    if dnf_subset(later, earlier) {
-                        let earlier_node = ir.node(siblings[i]);
-                        let later_node = ir.node(siblings[j]);
-                        let severity = if earlier_node.priority == later_node.priority {
-                            Severity::Warning
-                        } else {
-                            Severity::Info
-                        };
-                        new_lints.push(
-                            Lint::new(
-                                severity,
-                                LintCode::SiblingSubset,
-                                "this sibling's constraint is a subset of an earlier sibling's; \
-                                 it can never be reached",
-                            )
-                            .with_row(later_node.row)
-                            .with_node(later_node.id),
-                        );
-                    } else if dnf_overlap(earlier, later) {
-                        let later_node = ir.node(siblings[j]);
-                        new_lints.push(
-                            Lint::info(
-                                LintCode::SiblingOverlap,
-                                "this sibling's constraint overlaps an earlier sibling's",
-                            )
-                            .with_row(later_node.row)
-                            .with_node(later_node.id),
-                        );
-                    }
+                    new_lints.push(
+                        Lint::new(
+                            severity,
+                            LintCode::SiblingSubset,
+                            "this sibling's constraint is a subset of an earlier sibling's; \
+                             it can never be reached",
+                        )
+                        .with_row(later_node.row)
+                        .with_node(later_node.id)
+                        .with_span(ir.row(later_node.row).span.clone()),
+                    );
+                } else if dnf_overlap(earlier, later) {
+                    let later_node = ir.node(siblings[j]);
+                    new_lints.push(
+                        Lint::info(
+                            LintCode::SiblingOverlap,
+                            "this sibling's constraint overlaps an earlier sibling's",
+                        )
+                        .with_row(later_node.row)
+                        .with_node(later_node.id)
+                        .with_span(ir.row(later_node.row).span.clone()),
+                    );
                 }
             }
         }
     }
-    ir.lints.extend(new_lints);
 }
 
 /// §9.3 check 7 (coverage): disabled until `bridge_constraint::Sampler` (phase 2) lands on this
@@ -696,6 +739,95 @@ mod post_compile_tests {
     }
 
     #[test]
+    fn own_history_compares_the_same_players_calls_not_partners() {
+        // opener 1C (12-14) - (P) - responder 1H (6-9, contradicts nothing of opener's own
+        // range, but WOULD contradict it if wrongly compared) - (P) - opener rebid 2C (18-20):
+        // the rebid must be checked against the opener's own *opening* (1C), not against the
+        // responder's 1H in between.
+        let mut b = Builder::new();
+        let opener_open = b.push(
+            Side::Us,
+            bid(1, Strain::Clubs),
+            HandConstraint::Atom(Atom::ANY.with_hcp(12..=14)),
+            0,
+            1.0,
+        );
+        b.nodes[opener_open.0 as usize].calls = vec![bid(1, Strain::Clubs)]; // depth 1 (seat N)
+
+        let responder_resp = b.push(
+            Side::Us,
+            bid(1, Strain::Hearts),
+            HandConstraint::Atom(Atom::ANY.with_hcp(6..=9)),
+            0,
+            1.0,
+        );
+        b.nodes[responder_resp.0 as usize].calls =
+            vec![bid(1, Strain::Clubs), Call::Pass, bid(1, Strain::Hearts)]; // depth 3 (seat S) -- a different physical player from the opener.
+        b.link(opener_open, responder_resp);
+
+        let opener_rebid = b.push(
+            Side::Us,
+            bid(2, Strain::Clubs),
+            HandConstraint::Atom(Atom::ANY.with_hcp(18..=20)),
+            0,
+            1.0,
+        );
+        b.nodes[opener_rebid.0 as usize].calls = vec![
+            bid(1, Strain::Clubs),
+            Call::Pass,
+            bid(1, Strain::Hearts),
+            Call::Pass,
+            bid(2, Strain::Clubs),
+        ]; // depth 5 (seat N again): the same physical player as the opening.
+        b.link(responder_resp, opener_rebid);
+
+        let mut ir = b.finish();
+        check_own_history(&mut ir);
+
+        // The rebid (18-20) contradicts the *opening* (12-14), not the responder's 1H (6-9) it
+        // is nested under in the tree.
+        assert!(
+            ir.lints
+                .iter()
+                .any(|l| l.code == LintCode::ContradictsOwnHistory && l.node == Some(opener_rebid))
+        );
+        // And responder's own 1H, which contradicts nothing of the opener's, is not flagged.
+        assert!(!ir.lints.iter().any(|l| l.node == Some(responder_resp)));
+    }
+
+    #[test]
+    fn own_history_does_not_compare_against_partners_contradictory_range() {
+        // opener 1C (16+, an artificially strong-club-like range) - (P) - responder 2H (weak,
+        // 0-10): with the old "nearest same-side ancestor" logic this compares responder's hand
+        // against opener's and (being genuinely disjoint) would always warn; it must not, since
+        // it is comparing two different players' hands.
+        let mut b = Builder::new();
+        let opener_open = b.push(
+            Side::Us,
+            bid(1, Strain::Clubs),
+            HandConstraint::Atom(Atom::ANY.with_hcp(16..=37)),
+            0,
+            1.0,
+        );
+        b.nodes[opener_open.0 as usize].calls = vec![bid(1, Strain::Clubs)];
+
+        let responder_resp = b.push(
+            Side::Us,
+            bid(2, Strain::Hearts),
+            HandConstraint::Atom(Atom::ANY.with_hcp(0..=10)),
+            0,
+            1.0,
+        );
+        b.nodes[responder_resp.0 as usize].calls =
+            vec![bid(1, Strain::Clubs), Call::Pass, bid(2, Strain::Hearts)];
+        b.link(opener_open, responder_resp);
+
+        let mut ir = b.finish();
+        check_own_history(&mut ir);
+        assert!(ir.lints.is_empty());
+    }
+
+    #[test]
     fn low_recognition_below_threshold_is_reported() {
         let mut b = Builder::new();
         b.push(Side::Us, bid(1, Strain::Clubs), HandConstraint::ANY, 0, 0.2);
@@ -803,6 +935,37 @@ mod post_compile_tests {
                 .any(|l| l.code == LintCode::SiblingOverlap && l.node == Some(later))
         );
         assert!(!ir.lints.iter().any(|l| l.code == LintCode::SiblingSubset));
+    }
+
+    #[test]
+    fn sibling_subset_is_flagged_among_root_level_openings_too() {
+        // Two top-level openings (no parent at all -- the trie roots) where the second's
+        // constraint is a subset of the first's.
+        let mut b = Builder::new();
+        let earlier = b.push(
+            Side::Us,
+            bid(1, Strain::Diamonds),
+            HandConstraint::Atom(Atom::ANY.with_hcp(0..=21)),
+            0,
+            1.0,
+        );
+        let later = b.push(
+            Side::Us,
+            bid(1, Strain::Hearts),
+            HandConstraint::Atom(Atom::ANY.with_hcp(12..=14)),
+            0,
+            1.0,
+        );
+        // No `b.link(...)`: both are roots, exactly like two opening bids.
+        let mut ir = b.finish();
+
+        check_sibling_ambiguity(&mut ir);
+        assert!(
+            ir.lints
+                .iter()
+                .any(|l| l.code == LintCode::SiblingSubset && l.node == Some(later))
+        );
+        let _ = earlier;
     }
 
     #[test]

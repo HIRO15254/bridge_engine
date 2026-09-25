@@ -185,17 +185,22 @@ impl Binding {
             Var::X | Var::Y | Var::Z => StrainSet(StrainSet::MINORS.0 | StrainSet::MAJORS.0),
             Var::OtherMajor | Var::OtherMinor => return Vec::new(),
         };
-        // X < Y < Z: a candidate for Y must be above the strain bound to X, and a candidate for
-        // Z must be above the strain bound to Y (which, if bound, is already above X).
-        let lower_bound = match var {
-            Var::Y => self.x,
-            Var::Z => self.y,
-            _ => None,
+        // X < Y < Z, checked in both directions: a bound variable constrains every other
+        // variable's candidates, not just the one immediately below or above it in the X, Y, Z
+        // order. For each of X, Y, Z the lower bound is the highest already-bound variable that
+        // must be below it, and the upper bound is the lowest already-bound variable that must
+        // be above it.
+        let (lower_bound, upper_bound) = match var {
+            Var::X => (None, min_strain(self.y, self.z)),
+            Var::Y => (self.x, self.z),
+            Var::Z => (max_strain(self.x, self.y), None),
+            _ => (None, None),
         };
         domain
             .iter()
             .filter(|&s| !used.contains(s))
             .filter(|&s| lower_bound.is_none_or(|lb| s.index() > lb.index()))
+            .filter(|&s| upper_bound.is_none_or(|ub| s.index() < ub.index()))
             .collect()
     }
 
@@ -213,6 +218,28 @@ impl Binding {
             Var::OtherMajor | Var::OtherMinor => {}
         }
         b
+    }
+}
+
+/// The lower of two optional strains (by bidding-order index), or the one that is `Some`, or
+/// `None` if both are unbound.
+fn min_strain(a: Option<Strain>, b: Option<Strain>) -> Option<Strain> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(if a.index() <= b.index() { a } else { b }),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+/// The higher of two optional strains (by bidding-order index), or the one that is `Some`, or
+/// `None` if both are unbound.
+fn max_strain(a: Option<Strain>, b: Option<Strain>) -> Option<Strain> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(if a.index() >= b.index() { a } else { b }),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
     }
 }
 
@@ -301,6 +328,36 @@ mod binding_tests {
         let b = b.bind(Var::Y, Strain::Hearts);
         // Z must be above Y (Hearts): Spades only.
         assert_eq!(b.candidates(Var::Z, StrainSet::EMPTY), vec![Strain::Spades]);
+    }
+
+    #[test]
+    fn candidates_x_is_bounded_above_by_bound_y() {
+        // Y bound to Hearts: X must be below Y, i.e. Clubs or Diamonds only.
+        let b = Binding::default().bind(Var::Y, Strain::Hearts);
+        assert_eq!(
+            b.candidates(Var::X, StrainSet::EMPTY),
+            vec![Strain::Clubs, Strain::Diamonds]
+        );
+    }
+
+    #[test]
+    fn candidates_x_is_bounded_above_by_bound_z_when_y_unbound() {
+        // Z bound to Hearts, Y unbound: X must still be below Z (X < Y < Z transitively).
+        let b = Binding::default().bind(Var::Z, Strain::Hearts);
+        assert_eq!(
+            b.candidates(Var::X, StrainSet::EMPTY),
+            vec![Strain::Clubs, Strain::Diamonds]
+        );
+    }
+
+    #[test]
+    fn candidates_z_is_bounded_below_by_bound_x_when_y_unbound() {
+        // X bound to Diamonds, Y unbound: Z must be above X, i.e. Hearts or Spades.
+        let b = Binding::default().bind(Var::X, Strain::Diamonds);
+        assert_eq!(
+            b.candidates(Var::Z, StrainSet::EMPTY),
+            vec![Strain::Hearts, Strain::Spades]
+        );
     }
 
     #[test]

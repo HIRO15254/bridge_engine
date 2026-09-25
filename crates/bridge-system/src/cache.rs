@@ -15,18 +15,30 @@ pub struct SystemCache {
     dir: PathBuf,
 }
 
-/// The resolved source of `path` (its own text plus every `#INCLUDE`d file's, in the order
-/// [`crate::lexer::load`] visits them): the same bytes [`SystemCache::key`] hashes and
-/// [`crate::compile::compile`] parses, so a cache hit and a fresh compile agree by construction.
-fn resolved_source(path: &Path, loader: &dyn SourceLoader) -> io::Result<(String, String)> {
+/// Reads `path` once and resolves every `#INCLUDE` it pulls in, returning `(root_path, root_text,
+/// keyed_source)`: `root_text` is reused by the caller for [`crate::compile::compile`] itself (no
+/// second read of `path`), and `keyed_source` is what [`SystemCache::key`] hashes -- `root_path`
+/// followed by each resolved file's *own path* and length before its text, so that two files with
+/// identical content at different paths (which would otherwise concatenate to the same bytes, and
+/// so collide on one cache entry and report the wrong file's name) hash differently.
+fn resolved_source(
+    path: &Path,
+    loader: &dyn SourceLoader,
+) -> io::Result<(String, String, Vec<u8>)> {
     let root_text = std::fs::read_to_string(path)?;
     let root_path = path.to_string_lossy().into_owned();
     let loaded = lexer::load(&root_path, &root_text, loader);
-    let mut resolved = String::new();
-    for (_, text) in &loaded.files {
-        resolved.push_str(text);
+
+    let mut keyed = Vec::new();
+    keyed.extend_from_slice(root_path.as_bytes());
+    keyed.push(0);
+    for (file_path, text) in &loaded.files {
+        keyed.extend_from_slice(file_path.as_bytes());
+        keyed.push(0);
+        keyed.extend_from_slice(&(text.len() as u64).to_le_bytes());
+        keyed.extend_from_slice(text.as_bytes());
     }
-    Ok((root_path, resolved))
+    Ok((root_path, root_text, keyed))
 }
 
 impl SystemCache {
@@ -43,8 +55,8 @@ impl SystemCache {
         loader: &dyn SourceLoader,
         opts: &CompileOptions,
     ) -> io::Result<(SystemIR, Vec<Lint>)> {
-        let (root_path, resolved) = resolved_source(path, loader)?;
-        let key = Self::key(resolved.as_bytes(), opts);
+        let (root_path, root_text, keyed_source) = resolved_source(path, loader)?;
+        let key = Self::key(&keyed_source, opts);
         let entry_path = self.entry_path(&key);
 
         if let Ok(bytes) = std::fs::read(&entry_path) {
@@ -60,7 +72,10 @@ impl SystemCache {
             // just a miss. Fall through and recompile.
         }
 
-        let root_text = std::fs::read_to_string(path)?;
+        // `root_text` was already read above (for `resolved_source`'s own include resolution);
+        // reusing it here means `path` is read from disk exactly once per call, so a concurrent
+        // edit between the key computation and the compile can never store an IR under a key
+        // computed from different bytes than the ones actually compiled.
         let (ir, lints) = crate::compile(&root_path, &root_text, loader, opts);
         self.store(&key, &ir)?;
         Ok((ir, lints))
@@ -107,6 +122,7 @@ impl SystemCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SystemMeta;
     use crate::lexer::MemLoader;
 
     #[test]
@@ -125,20 +141,23 @@ mod tests {
         assert_ne!(k1, k4);
     }
 
-    #[test]
-    fn load_or_compile_round_trips_through_disk() {
-        // A meta-only source (no bidding table) so compilation never reaches the still-`todo!()`
-        // description compiler (owned by another lane); this still exercises the whole cache
-        // path: resolving includes, hashing, encoding, decoding and the `ir_format`/
-        // `compiler_version` header check.
-        let dir = std::env::temp_dir().join(format!(
-            "bridge_system_cache_test_{}_{}",
+    fn temp_cache_dir(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "bridge_system_cache_test_{label}_{}_{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
-        ));
+        ))
+    }
+
+    #[test]
+    fn load_or_compile_round_trips_through_disk() {
+        // A meta-only source (no bidding table): this exercises the whole cache path --
+        // resolving includes, hashing, encoding, decoding and the `ir_format`/`compiler_version`
+        // header check -- without depending on the description compiler at all.
+        let dir = temp_cache_dir("roundtrip");
         let cache = SystemCache::new(&dir);
         let loader = MemLoader::default();
         let opts = CompileOptions::default();
@@ -151,19 +170,72 @@ mod tests {
         assert_eq!(ir1.meta.name, "Test System");
         assert!(lints1.is_empty());
 
-        // Second call must hit the cache and return an equivalent IR without recompiling by
-        // reading a different (now-wrong) file at the same path: if it were recompiling, the
-        // name would change.
-        std::fs::write(&src_path, "#+TITLE: Changed But Uncached\n").unwrap();
-        // The resolved source differs now, so this *is* a fresh compile under a new key; to
-        // actually test the cache hit, restore the original text and compile again.
-        std::fs::write(&src_path, "#+TITLE: Test System\n").unwrap();
         let (ir2, _) = cache.load_or_compile(&src_path, &loader, &opts).unwrap();
         assert_eq!(ir2.meta.name, "Test System");
 
         let entries: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
         // Exactly one root file plus one cache entry.
         assert_eq!(entries.len(), 2);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn load_or_compile_returns_the_cached_ir_on_a_hit_not_a_recompile() {
+        // Plants a *sentinel* IR directly under the key `load_or_compile` would compute --
+        // bypassing `compile()` entirely -- so the only way the next call can return it is a
+        // genuine cache hit; a fresh compile of the source on disk would instead produce an IR
+        // named "Test System", never the sentinel's name.
+        let dir = temp_cache_dir("hit_proof");
+        let cache = SystemCache::new(&dir);
+        let loader = MemLoader::default();
+        let opts = CompileOptions::default();
+
+        let src_path = dir.join("root.bml");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&src_path, "#+TITLE: Test System\n").unwrap();
+
+        let (_, _, keyed_source) = resolved_source(&src_path, &loader).unwrap();
+        let key = SystemCache::key(&keyed_source, &opts);
+
+        let mut sentinel = SystemIR {
+            meta: SystemMeta::default(),
+            rows: Vec::new(),
+            nodes: Vec::new(),
+            index: crate::trie::AuctionTrie::new(),
+            lints: Vec::new(),
+        };
+        sentinel.meta.name = "SENTINEL: planted directly, never compiled".to_string();
+        sentinel.meta.ir_format = IR_FORMAT;
+        sentinel.meta.compiler_version = crate::COMPILER_VERSION.to_string();
+        cache.store(&key, &sentinel).unwrap();
+
+        let (ir, _) = cache.load_or_compile(&src_path, &loader, &opts).unwrap();
+        assert_eq!(ir.meta.name, sentinel.meta.name);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn key_differs_for_same_content_at_a_different_root_path() {
+        // Two roots with byte-for-byte identical resolved content must still key differently:
+        // otherwise they would share one cache entry and the second's IR would report the
+        // first's file name.
+        let dir = temp_cache_dir("path_sensitive");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path_a = dir.join("a.bml");
+        let path_b = dir.join("b.bml");
+        std::fs::write(&path_a, "#+TITLE: Same Text\n").unwrap();
+        std::fs::write(&path_b, "#+TITLE: Same Text\n").unwrap();
+        let loader = MemLoader::default();
+        let opts = CompileOptions::default();
+
+        let (_, _, keyed_a) = resolved_source(&path_a, &loader).unwrap();
+        let (_, _, keyed_b) = resolved_source(&path_b, &loader).unwrap();
+        assert_ne!(
+            SystemCache::key(&keyed_a, &opts),
+            SystemCache::key(&keyed_b, &opts)
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }

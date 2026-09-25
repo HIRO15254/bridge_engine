@@ -50,7 +50,13 @@ pub fn compile(
     loader: &dyn SourceLoader,
     opts: &CompileOptions,
 ) -> (SystemIR, Vec<Lint>) {
-    let started = std::time::Instant::now();
+    // `Instant::now()` panics at runtime on `wasm32-unknown-unknown` ("time not implemented on
+    // this platform"); this timing is only ever used for the tracing `elapsed_ms` field below, so
+    // it is simply skipped there instead of pulling in a wasm-clock dependency.
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    let started = Some(std::time::Instant::now());
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    let started: Option<std::time::Instant> = None;
 
     let loaded = crate::lexer::load(root_path, source, loader);
     let resolved_source: String = loaded.files.iter().map(|(_, t)| t.as_ref()).collect();
@@ -94,7 +100,7 @@ pub fn compile(
         lints_error = summary.errors,
         lints_warn = summary.warnings,
         lints_info = summary.infos,
-        elapsed_ms = started.elapsed().as_millis() as u64,
+        elapsed_ms = started.map_or(0, |s| s.elapsed().as_millis() as u64),
         "compiled a BML system"
     );
 
