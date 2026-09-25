@@ -50,6 +50,14 @@ jobs:
       - run: cargo xtask dds vendor
       - run: cargo test -p bridge-dds
       - run: cargo test -p bridge --features dds
+      # OpenMP variant: only ubuntu-latest is guaranteed to have a system OpenMP runtime
+      # (libgomp, via gcc); macOS's Apple clang has none without Homebrew's libomp, and the
+      # build.rs probe degrades to the std::thread backend there instead of failing (R6/R14,
+      # docs/design/12-roadmap.md; VENDOR.md). This is the only job that ever compiles the
+      # `openmp` feature against the real vendored sources (`test`'s `--all-features` run
+      # never vendors DDS first, so its build.rs returns before reaching this code at all).
+      - if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p bridge-dds --features openmp
 
   wasm:
     runs-on: ubuntu-latest
