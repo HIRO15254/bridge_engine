@@ -6,7 +6,7 @@ mod common;
 
 use bridge_constraint::{Atom, HandConstraint, Metric, SampleOptions, Sampler};
 use bridge_core::{Card, Hand};
-use common::arb_atom_safe;
+use common::{arb_atom_dist_shape_only, arb_atom_safe};
 use proptest::prelude::*;
 use proptest::sample::Index;
 
@@ -91,9 +91,12 @@ fn brute_force_count(pool: Hand, fixed: Hand, pred: impl Fn(Hand) -> bool) -> u6
 }
 
 /// Number of literals `PreparedTerm::prepare` can offer at most one additive-feature slot to: a
-/// multi-suit `CardRequirement`, or an eval requirement on `Controls`/`Losers`/`QuickTricks`.
-/// `arb_atom_safe` never produces `DistMethod::BergenStarting` or a `Custom`, so an atom with at
-/// most one such literal is guaranteed to sample exactly (mirrors `sampler::term::classify`).
+/// multi-suit `CardRequirement`, or an eval requirement on `Controls`/`Losers`/`QuickTricks`. A
+/// shape-only `DistPoints`/`TotalPoints` requirement (`GOREN_321`, `DUMMY_531`, `LongSuit`) is
+/// routed through `dist_shape_filters`/`total_shape_shifts` instead and so does not count here.
+/// Neither `arb_atom_safe` nor `arb_atom_dist_shape_only` ever produces `DistMethod::
+/// BergenStarting` or a `Custom`, so an atom with at most one additive-feature candidate is
+/// guaranteed to sample exactly (mirrors `sampler::term::classify`).
 fn additive_candidate_count(atom: &Atom) -> usize {
     let cards = atom
         .cards
@@ -131,6 +134,46 @@ proptest! {
     fn single_atom_matches_brute_force(
         (pool, fixed) in arb_pool_fixed(),
         atom in arb_atom_safe(),
+    ) {
+        let c = HandConstraint::Atom(atom.clone());
+        let sampler = Sampler::prepare(&c, pool, fixed, &SampleOptions::default())
+            .expect("pool/fixed are disjoint by construction");
+
+        let expected_exact = is_effectively_exact(&atom);
+        prop_assert_eq!(sampler.is_exact(), expected_exact);
+
+        let all = every_completion(pool, fixed);
+        let brute = all.iter().filter(|&&h| atom.satisfies(h)).count() as u64;
+        if expected_exact {
+            prop_assert_eq!(sampler.count(), brute);
+        }
+
+        let mut sum = 0.0f64;
+        for &h in &all {
+            let lp = sampler.log_prob(h);
+            if atom.satisfies(h) {
+                if expected_exact {
+                    prop_assert!(lp.is_finite(), "expected finite log_prob for a satisfying hand");
+                    sum += lp.exp();
+                }
+            } else {
+                prop_assert_eq!(lp, f64::NEG_INFINITY, "expected -inf off the support");
+            }
+        }
+        if expected_exact && brute > 0 {
+            prop_assert!((sum - 1.0).abs() < 1e-9, "sum of exp(log_prob) = {sum}");
+        }
+    }
+
+    /// Same as `single_atom_matches_brute_force`, but the atom's eval requirements may also draw a
+    /// shape-only `DistPoints`/`TotalPoints` metric (`GOREN_321`, `DUMMY_531`, `LongSuit`): the
+    /// sampler routes these through `dist_shape_filters`/`total_shape_shifts` (shape filtering and
+    /// HCP-window shifting) rather than rejection, so they should sample exactly whenever the
+    /// atom's other literals do.
+    #[test]
+    fn single_atom_dist_shape_only_matches_brute_force(
+        (pool, fixed) in arb_pool_fixed(),
+        atom in arb_atom_dist_shape_only(),
     ) {
         let c = HandConstraint::Atom(atom.clone());
         let sampler = Sampler::prepare(&c, pool, fixed, &SampleOptions::default())

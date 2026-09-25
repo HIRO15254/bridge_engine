@@ -6,7 +6,7 @@ use core::ops::RangeInclusive;
 use std::sync::Arc;
 
 use bridge_constraint::{
-    Atom, CustomPred, DnfOptions, EvalRequirement, HandConstraint, LtcMethod, Metric,
+    Atom, CustomPred, DistMethod, DnfOptions, EvalRequirement, HandConstraint, LtcMethod, Metric,
     SampleOptions, Sampler,
 };
 use bridge_core::{Hand, Suit};
@@ -71,6 +71,45 @@ fn truncated_dnf_residual_is_checked_by_rejection() {
                 sample.log_prob.is_finite(),
                 "log_prob should be finite for an accepted (hence satisfying) hand"
             );
+            accepted += 1;
+        }
+    }
+    assert!(accepted > 0, "expected at least some accepted samples");
+}
+
+/// `DistMethod::BergenStarting` is the one `DistMethod` that is not shape-only
+/// (`DistMethod::is_shape_only`): unlike `GOREN_321`/`DUMMY_531`/`LongSuit`, its "quality suit" and
+/// adjust-3 terms also look at the cards, not just the shape, so `sampler::term::classify` cannot
+/// route it through `dist_shape_filters`/`total_shape_shifts` and always falls back to rejection.
+#[test]
+fn bergen_starting_total_points_is_checked_by_rejection() {
+    let atom = Atom::ANY.with_eval(EvalRequirement {
+        metric: Metric::TotalPoints(DistMethod::BergenStarting),
+        range: 10..=20,
+    });
+    let c = HandConstraint::Atom(atom);
+    assert!(
+        c.is_samplable(),
+        "no Custom node, only a plain atom literal"
+    );
+
+    let sampler = Sampler::prepare(&c, Hand::FULL, Hand::EMPTY, &SampleOptions::default()).unwrap();
+    assert!(
+        !sampler.is_exact(),
+        "BergenStarting is not shape-only, so it always needs rejection"
+    );
+
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x0B00B1E5);
+    let mut accepted = 0;
+    for _ in 0..2_000 {
+        if let Some(sample) = sampler.sample(&mut rng) {
+            assert!(
+                c.satisfies(sample.hand),
+                "accepted hand {:?} violates the constraint",
+                sample.hand
+            );
+            assert!(sample.tries >= 1);
+            assert!(sample.log_prob.is_finite());
             accepted += 1;
         }
     }
