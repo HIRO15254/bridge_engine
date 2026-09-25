@@ -20,40 +20,42 @@ not fully exploit, per the booklet's own annotation) -- opener must rebid 3C, an
 responder passes with clubs or corrects to 3D with diamonds (see NOTES.md #13).
 
 1N-
-2C = !STAY NF, 8+ hcp
+2C = !STAY NF, 8+ hcp, 4+!h or 4+!s
   2D = 0--3!s, 0--3!h
-  2H = {prio:1} 4+M
-  2S = {prio:0} 4+M
-2D = !TRF, 5+!h
+  2H = {prio:1} 4+!h
+  2S = {prio:0} 4+!s, not 4+!h
+2D = {prio:1} !TRF, 5+!h
   2H = {prio:0} unlimited
     P = 0--7 hcp
     2N = 8--9 hcp
     3C = F, 5+!c
     3D = F, 5+!d
     3S = F, 5+!s
-    3N = CoG
-    4H = 6+!h
+    3N = CoG, 10--15 hcp, 5=!h
+    4H = 10--15 hcp, 6+!h
   3H = {prio:1} MAX, 17 hcp, 4+!h
-2H = !TRF, 5+!s
+2H = {prio:1} !TRF, 5+!s
   2S = {prio:0} unlimited
     P = 0--7 hcp
     2N = 8--9 hcp
     3C = F, 5+!c
     3D = F, 5+!d
     3H = F, 5+!h
-    3N = CoG
-    4S = 6+!s
+    3N = CoG, 10--15 hcp, 5=!s
+    4S = 10--15 hcp, 6+!s
   3S = {prio:1} MAX, 17 hcp, 4+!s
-2S = !TRF, 5+5+ minors
+2S = !TRF, 0--7 hcp, 6+!c or 6+!d
   3C = unlimited
-    P = 5+!c
-    3D = 5+!d
+    P = 6+!c
+    3D = {prio:1} 6+!d
+2N = 8--9 hcp, not 4+!h, not 4+!s
 3C = INV, 6+!c
 3D = INV, 6+!d
-3H = S/T, 6+!h
-3S = S/T, 6+!s
+3H = {prio:2} S/T, 6+!h
+3S = {prio:2} S/T, 6+!s
+3N = 10--15 hcp, not 4+!h, not 4+!s
 4C = !BW
-4N = 16--17 hcp
+4N = {prio:1} 16--17 hcp
 
 *** Interference over 1NT
 
@@ -78,13 +80,13 @@ The same Stayman and Jacoby-transfer machinery is used one level higher for 2NT,
 and two levels higher for 3NT.
 
 2N-
-3C = !STAY, 5+M or INV+ 4M
-3D = !TRF, 5+!h
-3H = !TRF, 5+!s
+3C = !STAY, 4+!h or 4+!s
+3D = {prio:1} !TRF, 5+!h
+3H = {prio:1} !TRF, 5+!s
 4C = !BW
-4N = 20--21 hcp
+4N = {prio:1} 11--12 hcp
 
 3N-
-4C = !STAY, 5+M or INV+ 4M
-4D = !TRF, 5+!h
-4H = !TRF, 5+!s
+4C = !STAY, 4+!h or 4+!s
+4D = {prio:1} !TRF, 5+!h
+4H = {prio:1} !TRF, 5+!s

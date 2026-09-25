@@ -109,18 +109,23 @@ comments in the `.bml` files.
     summaries); this file does not use the `SPL` token anywhere, even though
     `#+CONVENTION: splinter=4` still has a compiler-side default value.
 
-13. **The 2S minor-suit relay's exact shape (`notrump.bml`).** The booklet states
-    only that opener must rebid 3C after a 2S response, which is passed with "a
-    club bust" or corrected to 3D with "a diamond bust" -- it never gives 2S's
-    own length/HCP requirement, unlike the other 5-5 two-suited conventions it
-    documents explicitly (a jump to 2NT shows "at least 5-5 in the lowest two
-    unbid suits"; a Michaels cuebid shows "a 5-5 two-suiter (or more
-    distributional)"). This file adopts the same "5-5" reading by analogy
-    (`5+5+ minors`) rather than leaving 2S unconstrained. The pass/correct step
-    itself is written as plain suit-length facts (`5+!c` / `5+!d`) instead of the
-    booklet's prose ("club bust" / "diamond bust"), which have no vocabulary
-    tokens and would otherwise compile to unrecognized freetext with no
-    constraint at all.
+13. **The 2S minor-suit relay's exact shape (`notrump.bml`).** The booklet's own
+    text for 2S is a weak, one-suited sign-off ("a weak hand with long clubs or
+    long diamonds"): responder passes 3C with clubs (a "club bust") or corrects
+    to 3D with diamonds (a "diamond bust"), not a strong two-suited hand. This
+    file originally read 2S by analogy with the booklet's other 5-5 two-suited
+    conventions (a jump to 2NT's "at least 5-5 in the lowest two unbid suits", a
+    Michaels cuebid's "5-5 two-suiter"), requiring `5+5+ minors`; that reading is
+    wrong for 2S specifically, since with both minors required the earlier `P =
+    5+!c` row was satisfied by every hand that could bid 2S at all (any 5+5+
+    minor hand has 5+ clubs), making the `3D = 5+!d` sign-off unreachable and
+    leaving diamond-only weak hands with no call. This file now writes 2S as
+    `0--7 hcp, 6+!c or 6+!d` (weak, one long minor, either suit) with `P = 6+!c`
+    and `3D = {prio:1} 6+!d` so a diamond-only hand corrects. The pass/correct
+    step itself is written as plain suit-length facts (`6+!c` / `6+!d`) instead
+    of the booklet's prose ("club bust" / "diamond bust"), which have no
+    vocabulary tokens and would otherwise compile to unrecognized freetext with
+    no constraint at all.
 
 14. **Cuebidding one of the opponents' suits after they use Michaels or the
     unusual notrump against our own opening (`competition.bml`).** The
@@ -193,9 +198,15 @@ comments in the `.bml` files.
     misspelled, and the mirrored spades-transfer table was missing its own
     equivalent line (`notrump.bml`).** After accepting a transfer, a
     responder rebid of four of the *agreed* major with a good 6-card suit is
-    a natural, minimum-strength "I just want you to know I have six" call;
-    written as `4S` under the *hearts* transfer table it named the wrong
-    major entirely (and was unreachable in practice, since the file has no
-    other `4S` there to duplicate it against). Fixed to `4H` under hearts
-    and added as `4S` under the spades table, so both transfers now have the
-    same shape of continuation.
+    a natural game sign-off ("I have six and enough values for game, no need
+    to explore further") -- not a minimum-strength call, since responder
+    could equally hold a hand strong enough to have driven to slam and chose
+    the simple route; `3N = CoG` is the companion call for the same range
+    (10--15 hcp) with only a 5-card suit, where opener's choice of game
+    still matters. Written as `4S` under the *hearts* transfer table it
+    named the wrong major entirely (and was unreachable in practice, since
+    the file has no other `4S` there to duplicate it against). Fixed to
+    `4H` under hearts and added as `4S` under the spades table, both now
+    `10--15 hcp, 6+!x`, so both transfers have the same shape of
+    continuation and `3N`/`4M` are cleanly split by suit length (5 vs 6+)
+    rather than overlapping.
