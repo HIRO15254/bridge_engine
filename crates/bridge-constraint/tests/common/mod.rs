@@ -35,8 +35,7 @@ pub fn arb_ltc_method() -> impl Strategy<Value = LtcMethod> {
     prop_oneof![Just(LtcMethod::Classic), Just(LtcMethod::New)]
 }
 
-/// The distribution-point methods; usable only in tests marked `#[ignore]` (they call
-/// `bridge_eval::distribution_points`, which is `todo!()` until bridge-eval 2.1 lands).
+/// The distribution-point methods.
 pub fn arb_dist_method() -> impl Strategy<Value = DistMethod> {
     prop_oneof![
         Just(DistMethod::GOREN_321),
@@ -46,13 +45,38 @@ pub fn arb_dist_method() -> impl Strategy<Value = DistMethod> {
     ]
 }
 
-/// Metrics that do not depend on `bridge_eval::distribution_points`.
+/// Metrics that never route through `DistPoints`/`TotalPoints` (so every literal they produce is
+/// an additive-feature candidate, matching `sampler::term::classify`'s `Controls`/`Losers`/
+/// `QuickTricks`/`SuitQuality` arms).
 pub fn arb_metric_safe() -> impl Strategy<Value = Metric> {
     prop_oneof![
         Just(Metric::Controls),
         arb_ltc_method().prop_map(Metric::Losers),
         Just(Metric::QuickTricks),
         arb_suit().prop_map(Metric::SuitQuality),
+    ]
+}
+
+/// The shape-only [`DistMethod`]s (`DistMethod::is_shape_only`): the exact sampler filters shapes
+/// (`DistPoints`) or shifts the HCP window (`TotalPoints`) for these instead of falling back to
+/// rejection. Excludes `BergenStarting`, which always needs rejection (see
+/// `sampler_rejection.rs`).
+pub fn arb_dist_method_shape_only() -> impl Strategy<Value = DistMethod> {
+    prop_oneof![
+        Just(DistMethod::GOREN_321),
+        Just(DistMethod::DUMMY_531),
+        Just(DistMethod::LongSuit),
+    ]
+}
+
+/// [`arb_metric_safe`] plus `DistPoints`/`TotalPoints` with a shape-only [`DistMethod`]: every
+/// metric this produces is still handled exactly by the sampler (via its `dist_shape_filters`/
+/// `total_shape_shifts` routing, not the additive-feature slot).
+pub fn arb_metric_dist_shape_only() -> impl Strategy<Value = Metric> {
+    prop_oneof![
+        arb_metric_safe(),
+        arb_dist_method_shape_only().prop_map(Metric::DistPoints),
+        arb_dist_method_shape_only().prop_map(Metric::TotalPoints),
     ]
 }
 
@@ -63,6 +87,13 @@ pub fn arb_range(max: u8) -> impl Strategy<Value = RangeInclusive<u8>> {
 
 pub fn arb_eval_requirement_safe() -> impl Strategy<Value = EvalRequirement> {
     arb_metric_safe()
+        .prop_flat_map(|metric| arb_range(metric.max()).prop_map(move |range| (metric, range)))
+        .prop_map(|(metric, range)| EvalRequirement { metric, range })
+}
+
+/// Same as [`arb_eval_requirement_safe`], but drawn from [`arb_metric_dist_shape_only`].
+pub fn arb_eval_requirement_dist_shape_only() -> impl Strategy<Value = EvalRequirement> {
+    arb_metric_dist_shape_only()
         .prop_flat_map(|metric| arb_range(metric.max()).prop_map(move |range| (metric, range)))
         .prop_map(|(metric, range)| EvalRequirement { metric, range })
 }
@@ -98,6 +129,27 @@ pub fn arb_atom_safe() -> impl Strategy<Value = Atom> {
         arb_range(37),
         prop::collection::vec(arb_card_requirement(), 0..3),
         prop::collection::vec(arb_eval_requirement_safe(), 0..3),
+    )
+        .prop_map(|(shapes, hcp, cards, eval)| {
+            let mut atom = Atom {
+                shapes,
+                hcp,
+                cards,
+                eval,
+            };
+            atom.normalize();
+            atom
+        })
+}
+
+/// Same as [`arb_atom_safe`], but its eval requirements may also draw a shape-only
+/// `DistPoints`/`TotalPoints` metric (see [`arb_metric_dist_shape_only`]).
+pub fn arb_atom_dist_shape_only() -> impl Strategy<Value = Atom> {
+    (
+        arb_shapeset(),
+        arb_range(37),
+        prop::collection::vec(arb_card_requirement(), 0..3),
+        prop::collection::vec(arb_eval_requirement_dist_shape_only(), 0..3),
     )
         .prop_map(|(shapes, hcp, cards, eval)| {
             let mut atom = Atom {
