@@ -245,8 +245,15 @@ impl PairConv {
     /// Convolves two suits' `(len_a, len_b)` count vectors: for every pair of entries, the
     /// combined `(hcp, x)` accumulates `n_a * n_b`. Also builds the 2-D prefix sums used by
     /// [`PairConv::box_sum`].
-    fn build(a: &SuitTable, b: &SuitTable, len_a: u8, len_b: u8) -> PairConv {
-        let width = PAIR_X_MAX as usize + 1;
+    ///
+    /// `with_x` is whether the term carries an additive feature at all (K=2); when it does not
+    /// (K=1), every entry's `x` is 0 (`SuitTable`'s key was packed with `x = 0` throughout), so
+    /// the `x` axis needs only 1 slot instead of the generous `PAIR_X_MAX + 1` upper bound - a
+    /// term.rs caller with no additive feature builds `height * 1` arrays here instead of
+    /// `height * (PAIR_X_MAX + 1)`, and the nested loops below are `O(height)` instead of
+    /// `O(height * (PAIR_X_MAX + 1))`.
+    fn build(a: &SuitTable, b: &SuitTable, len_a: u8, len_b: u8, with_x: bool) -> PairConv {
+        let width = if with_x { PAIR_X_MAX as usize + 1 } else { 1 };
         let height = PAIR_HCP_MAX as usize + 1;
         let mut acc = vec![0u64; height * width];
         for &(key_a, n_a) in &a.counts[len_a as usize].0 {
@@ -291,6 +298,7 @@ impl PairConv {
         PairConv {
             p: SparseVec(p),
             prefix: prefix.into_boxed_slice(),
+            width,
         }
     }
 
@@ -299,10 +307,9 @@ impl PairConv {
         if hcp_hi < 0 || x_hi < 0 {
             return 0;
         }
-        let width = i64::from(PAIR_X_MAX) + 1;
         let hcp_hi = hcp_hi.min(i64::from(PAIR_HCP_MAX)) as usize;
-        let x_hi = x_hi.min(i64::from(PAIR_X_MAX)) as usize;
-        self.prefix[hcp_hi * width as usize + x_hi]
+        let x_hi = x_hi.min(self.width as i64 - 1) as usize;
+        self.prefix[hcp_hi * self.width + x_hi]
     }
 
     /// The count of entries with `hcp` in `[hcp_lo, hcp_hi]` and `x` in `[x_lo, x_hi]` (both
@@ -599,12 +606,13 @@ impl PreparedTerm {
             }
 
             let (l0, l1, l2, l3) = (lens[0], lens[1], lens[2], lens[3]);
+            let with_x = classified.additive.is_some();
             let p01 = pair01
                 .entry((l0, l1))
-                .or_insert_with(|| PairConv::build(&suits[0], &suits[1], l0, l1));
+                .or_insert_with(|| PairConv::build(&suits[0], &suits[1], l0, l1, with_x));
             let p23 = pair23
                 .entry((l2, l3))
-                .or_insert_with(|| PairConv::build(&suits[2], &suits[3], l2, l3));
+                .or_insert_with(|| PairConv::build(&suits[2], &suits[3], l2, l3, with_x));
 
             let weight = shape_weight(p01, p23, lo, hi, x_window.0, x_window.1);
             if weight > 0 {
@@ -685,5 +693,109 @@ impl PreparedTerm {
             .as_ref()
             .expect("prepare always sets exactly one of `any`/`general`")
             .draw(rng, self.total)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn suit_table_hcp_only(pool: Holding) -> SuitTable {
+        SuitTable::build(pool, Holding::EMPTY, &|_| true, &|h| {
+            u16::from(holding_hcp(h))
+        })
+    }
+
+    /// `PairConv::build`'s `with_x: false` path (`width == 1`, used whenever a term carries no
+    /// additive feature) must give exactly the same `box_sum` results a real K=1 caller can ever
+    /// observe as the always-full-width (`with_x: true`) path would - every such caller only ever
+    /// queries with `x_lo == x_hi == 0` (`GeneralTerm`'s `x_window` is `(0, 0)` with no additive
+    /// feature), matching the fact that a K=1 `SuitTable`'s key packs `x = 0` throughout, so the
+    /// reduced-width table drops no reachable entry.
+    #[test]
+    fn narrow_width_matches_the_full_width_reference_at_x_0() {
+        let a = suit_table_hcp_only(Holding::from_bits(0b0111_1110_0000).unwrap());
+        let b = suit_table_hcp_only(Holding::from_bits(0b0000_0001_1111).unwrap());
+
+        for len_a in 0..=7u8 {
+            for len_b in 0..=5u8 {
+                let narrow = PairConv::build(&a, &b, len_a, len_b, false);
+                let full = PairConv::build(&a, &b, len_a, len_b, true);
+                assert_eq!(narrow.width, 1);
+                assert_eq!(full.width, PAIR_X_MAX as usize + 1);
+                // The sparse (key, count) list itself must match exactly: every real entry has
+                // x = 0 in both tables, so nothing the full-width build finds is dropped.
+                assert_eq!(narrow.p, full.p);
+                for hlo in 0..=PAIR_HCP_MAX {
+                    for hhi in hlo..=PAIR_HCP_MAX {
+                        assert_eq!(
+                            narrow.box_sum(i64::from(hlo), i64::from(hhi), 0, 0),
+                            full.box_sum(i64::from(hlo), i64::from(hhi), 0, 0),
+                            "len_a={len_a} len_b={len_b} hlo={hlo} hhi={hhi}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A term with an additive feature (K=2, `with_x: true`) must still convolve and query
+    /// correctly across the full `x` axis, not just at `x = 0`: build one suit table with a
+    /// synthetic per-holding `x` feature (card count, like `Additive::Cards`) and check `box_sum`
+    /// against a brute-force count over every pair of holdings.
+    #[test]
+    fn with_x_true_matches_brute_force_over_the_full_x_axis() {
+        let key_with_len_feature =
+            |h: Holding| pack_key(holding_hcp(h), h.len().min(PAIR_X_MAX / 2));
+        let a = SuitTable::build(
+            Holding::from_bits(0b0111_1110_0000).unwrap(),
+            Holding::EMPTY,
+            &|_| true,
+            &key_with_len_feature,
+        );
+        let b = SuitTable::build(
+            Holding::from_bits(0b0000_0001_1111).unwrap(),
+            Holding::EMPTY,
+            &|_| true,
+            &key_with_len_feature,
+        );
+
+        for len_a in 0..=7u8 {
+            for len_b in 0..=5u8 {
+                let pair = PairConv::build(&a, &b, len_a, len_b, true);
+                assert_eq!(pair.width, PAIR_X_MAX as usize + 1);
+
+                for hlo in [0u8, 3, 10] {
+                    for hhi in [hlo, hlo + 2, PAIR_HCP_MAX] {
+                        for xlo in [0u8, 2] {
+                            for xhi in [xlo, xlo + 3, PAIR_X_MAX] {
+                                let mut expected = 0u64;
+                                for &(key_a, n_a) in &a.counts[len_a as usize].0 {
+                                    let (ha, xa) = unpack_key(key_a);
+                                    for &(key_b, n_b) in &b.counts[len_b as usize].0 {
+                                        let (hb, xb) = unpack_key(key_b);
+                                        let h = ha + hb;
+                                        let x = xa + xb;
+                                        if (hlo..=hhi).contains(&h) && (xlo..=xhi).contains(&x) {
+                                            expected += n_a * n_b;
+                                        }
+                                    }
+                                }
+                                assert_eq!(
+                                    pair.box_sum(
+                                        i64::from(hlo),
+                                        i64::from(hhi),
+                                        i64::from(xlo),
+                                        i64::from(xhi)
+                                    ),
+                                    expected,
+                                    "len_a={len_a} len_b={len_b} hlo={hlo} hhi={hhi} xlo={xlo} xhi={xhi}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
