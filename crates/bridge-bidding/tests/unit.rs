@@ -148,7 +148,8 @@ fn illegal_call_is_lint() {
         "illegal by construction",
         0,
     );
-    let sys = b.build();
+    let sys = Arc::new(b.build());
+    let table = Table::uniform(sys, Arc::new(bridge_system::NaturalInference::default()));
 
     // Next to call is South (partner): North opens, East passes.
     let a = auction(
@@ -158,7 +159,7 @@ fn illegal_call_is_lint() {
     );
     let ctx = default_ctx();
     let hand = weak_hand();
-    let choice = choose_bid(&sys, hand, &a, &ctx);
+    let choice = choose_bid(&table, hand, &a, &ctx);
 
     match choice {
         BidChoice::NoCandidate(nc) => {
@@ -348,12 +349,7 @@ fn implicit_pass_through_deeper_row() {
         implicit_pass: ImplicitPass::Complement,
         ..default_ctx()
     };
-    let choice = choose_bid(
-        &table.systems[Seat::South.index() as usize],
-        weak,
-        &two_calls,
-        &ctx,
-    );
+    let choice = choose_bid(&table, weak, &two_calls, &ctx);
     let BidChoice::Chosen(chosen) = choice else {
         panic!("weak_hand should satisfy the implicit-pass complement")
     };
@@ -410,12 +406,7 @@ fn implicit_pass_bidirectional() {
         implicit_pass: ImplicitPass::Complement,
         ..default_ctx()
     };
-    let choice = choose_bid(
-        &table.systems[Seat::South.index() as usize],
-        hand,
-        &before,
-        &ctx,
-    );
+    let choice = choose_bid(&table, hand, &before, &ctx);
     let chosen = match choice {
         BidChoice::Chosen(c) => c,
         BidChoice::NoCandidate(_) => {

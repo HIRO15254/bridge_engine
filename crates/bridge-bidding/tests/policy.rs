@@ -4,13 +4,22 @@
 mod common;
 
 use bridge_bidding::{
-    BidChoice, BidContext, ImplicitPass, PolicyParams, Scoring, call_distribution, choose_bid,
+    BidChoice, BidContext, ImplicitPass, PolicyParams, Scoring, Table, call_distribution,
+    choose_bid,
 };
 use bridge_core::{Auction, Seat, Strain, Vulnerability};
 use bridge_system::ast::{SeatCond, VulCond};
 use common::*;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use rand_xoshiro::rand_core::SeedableRng;
+use std::sync::Arc;
+
+fn table_of(sys: &Sayc) -> Table {
+    Table::uniform(
+        sys.sys.clone(),
+        Arc::new(bridge_system::NaturalInference::default()),
+    )
+}
 
 // ================================================================================================
 // Phase 3.10: the same `policy_argmax_matches_choose_bid` property (07-bidding.md §6.1, §8), but
@@ -33,30 +42,41 @@ fn sayc_ctx(table: &bridge_bidding::Table) -> BidContext<'_> {
     }
 }
 
-/// Runs the property over `n` positions on the real, compiled SAYC system and returns how many
-/// were actually checked (a `NoCandidate` position has nothing to compare, exactly as
-/// `check_position` above already treats it).
+/// Runs the property until `n` positions have actually been *checked* (a `NoCandidate` draw is
+/// skipped and does not count towards `n`, since there is nothing to compare there -- but it must
+/// not silently shrink the reported sample size either, per the review finding that the old
+/// "10^5 positions" test actually checked only ~61% of that). Draws are capped at
+/// `n * MAX_DRAW_FACTOR` so a system with too few `Chosen` positions fails loudly instead of
+/// looping forever.
 fn run_sayc_policy_check(n: u64, seed: u64) -> u64 {
+    const MAX_DRAW_FACTOR: u64 = 20;
     let table = common::compile_sayc("sayc.bml");
     let ctx = sayc_ctx(&table);
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
     let mut checked = 0u64;
+    let mut drawn = 0u64;
+    let max_draws = n * MAX_DRAW_FACTOR;
 
-    for _ in 0..n {
+    while checked < n {
+        drawn += 1;
+        assert!(
+            drawn <= max_draws,
+            "only {checked}/{n} positions had a Chosen candidate after {drawn} draws; the system \
+             may have too many NoCandidate gaps to reach the requested sample size"
+        );
         let (deal, auction) =
             std::iter::repeat_with(|| common::random_sayc_position(&mut rng, &table, &ctx))
                 .find(|(_, auction)| !auction.is_complete())
                 .expect("random_sayc_position eventually yields an incomplete auction");
         let seat = auction.next_seat();
         let hand = deal.hand(seat);
-        let system = &table.systems[seat.index() as usize];
 
-        let choice = choose_bid(system, hand, &auction, &ctx);
+        let choice = choose_bid(&table, hand, &auction, &ctx);
         let Some(expected) = choice.call() else {
-            continue; // NoCandidate: nothing to compare, as above.
+            continue; // NoCandidate: nothing to compare, redraw without counting it.
         };
 
-        let dist = call_distribution(system, hand, &auction, &ctx);
+        let dist = call_distribution(&table, hand, &auction, &ctx);
         let p_max = dist
             .iter()
             .map(|(_, p)| *p)
@@ -82,7 +102,7 @@ fn run_sayc_policy_check(n: u64, seed: u64) -> u64 {
 #[test]
 fn sayc_policy_argmax_matches_choose_bid_1e3() {
     let checked = run_sayc_policy_check(1_000, 0x5A1C_1001);
-    assert!(checked > 0, "no position had a Chosen candidate to compare");
+    assert_eq!(checked, 1_000);
 }
 
 /// The 10^5-position release version (task brief).
@@ -95,7 +115,7 @@ fn sayc_policy_argmax_matches_choose_bid_1e5() {
         "sayc_policy_argmax_matches_choose_bid_1e5: {checked} position(s) checked in {:?}",
         started.elapsed()
     );
-    assert!(checked > 0, "no position had a Chosen candidate to compare");
+    assert_eq!(checked, 100_000);
 }
 
 const TRIALS_PER_POSITION: usize = 5_000;
@@ -113,18 +133,18 @@ fn ctx() -> BidContext<'static> {
 }
 
 /// Runs the property at one auction prefix, over `TRIALS_PER_POSITION` random hands.
-fn check_position(sys: &bridge_system::SystemIR, prefix: &Auction) {
+fn check_position(table: &Table, prefix: &Auction) {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x00C0_FFEE);
     let ctx = ctx();
     let mut checked = 0usize;
 
     for _ in 0..TRIALS_PER_POSITION {
         let hand = random_hand13(&mut rng);
-        let choice = choose_bid(sys, hand, prefix, &ctx);
+        let choice = choose_bid(table, hand, prefix, &ctx);
         let Some(expected) = choice.call() else {
             continue; // NoCandidate: nothing to compare (no legal call has positive priority).
         };
-        let dist = call_distribution(sys, hand, prefix, &ctx);
+        let dist = call_distribution(table, hand, prefix, &ctx);
         let p_max = dist
             .iter()
             .map(|(_, p)| *p)
@@ -154,15 +174,17 @@ fn check_position(sys: &bridge_system::SystemIR, prefix: &Auction) {
 #[test]
 fn policy_argmax_matches_choose_bid_opening() {
     let sys = sayc_system();
+    let table = table_of(&sys);
     let empty = Auction::new(Seat::North, Vulnerability::None);
-    check_position(&sys.sys, &empty);
+    check_position(&table, &empty);
 }
 
 #[test]
 fn policy_argmax_matches_choose_bid_response_to_1h() {
     let sys = sayc_system();
+    let table = table_of(&sys);
     let after_1h = auction(Seat::North, Vulnerability::None, &[bid(1, Strain::Hearts)]);
-    check_position(&sys.sys, &after_1h);
+    check_position(&table, &after_1h);
 }
 
 /// Regression: every node in `sayc_system()` has `priority: 0` (see `tests/common`), so every
@@ -195,7 +217,8 @@ fn policy_argmax_respects_distinct_priorities() {
         "lower priority",
         1,
     );
-    let sys = b.build();
+    let sys = Arc::new(b.build());
+    let table = Table::uniform(sys, Arc::new(bridge_system::NaturalInference::default()));
     let empty = Auction::new(Seat::North, Vulnerability::None);
     let ctx = BidContext {
         scoring: Scoring::Imp,
@@ -210,13 +233,13 @@ fn policy_argmax_respects_distinct_priorities() {
     // candidates and priority alone must decide between them.
     let hand = weak_hand();
 
-    let choice = choose_bid(&sys, hand, &empty, &ctx);
+    let choice = choose_bid(&table, hand, &empty, &ctx);
     let BidChoice::Chosen(chosen) = choice else {
         panic!("both candidates are satisfied; expected Chosen")
     };
     assert_eq!(chosen.call, bid(1, Strain::Clubs));
 
-    let dist = call_distribution(&sys, hand, &empty, &ctx);
+    let dist = call_distribution(&table, hand, &empty, &ctx);
     let p = |call| dist.iter().find(|(c, _)| *c == call).unwrap().1;
     let p_1c = p(bid(1, Strain::Clubs));
     let p_1d = p(bid(1, Strain::Diamonds));

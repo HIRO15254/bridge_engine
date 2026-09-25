@@ -9,7 +9,7 @@
 use bridge_core::{Auction, Call, Deal, Hand};
 
 use crate::choose::kept_priorities;
-use crate::{BidContext, SystemIR, Table};
+use crate::{BidContext, Table};
 
 /// Softmax parameters.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -53,7 +53,7 @@ const N_CALLS: usize = 38;
 /// single-threaded and a multi-threaded run. The fixed array also drops the two per-call heap
 /// allocations the two `HashMap`s used to cost on this hot path.
 pub fn call_distribution(
-    system: &SystemIR,
+    table: &Table,
     hand: Hand,
     auction: &Auction,
     ctx: &BidContext<'_>,
@@ -65,7 +65,7 @@ pub fn call_distribution(
     let n_legal = legal.len() as f32;
     let eps = ctx.policy.epsilon;
 
-    let kept = kept_priorities(system, hand, auction, ctx);
+    let kept = kept_priorities(table, hand, auction, ctx);
     if kept.is_empty() {
         return legal.into_iter().map(|c| (c, 1.0 / n_legal)).collect();
     }
@@ -100,7 +100,9 @@ pub fn call_distribution(
 }
 
 /// `Σ_j ln p_j(calls[j])` where `p_j` is the distribution of the seat that made call `j` given
-/// its hand and the prefix. About 2–5 µs per deal.
+/// its hand and the prefix. About 2–5 µs per deal on-system; a call `j` whose prefix is off-system
+/// (the natural branch fires) also runs `interpret`'s Step A over that prefix, to fill
+/// `CallContext::partner_constraint`/`forcing_situation` the same way `interpret` itself does.
 pub fn sequence_log_likelihood(
     table: &Table,
     deal: &Deal,
@@ -122,10 +124,9 @@ pub fn sequence_log_likelihood(
     for j in 0..n {
         let seat = auction.seat_at(j);
         let call = auction.calls()[j];
-        let system = &table.systems[seat.index() as usize];
         let hand = deal.hand(seat);
 
-        let dist = call_distribution(system, hand, &prefix, &ctx);
+        let dist = call_distribution(table, hand, &prefix, &ctx);
         let p = dist
             .iter()
             .find(|(c, _)| *c == call)

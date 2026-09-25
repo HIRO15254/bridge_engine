@@ -18,8 +18,10 @@ use bridge_core::{Auction, Call, Hand};
 use bridge_system::natural::classify;
 use bridge_system::{LookupKey, RelVul, TieBreak};
 
-use crate::interpret::{LENIENT_MAX_SUBST, complement_of, summary_satisfiable};
-use crate::{BidContext, ImplicitPass, NodeId, SystemIR};
+use crate::interpret::{
+    LENIENT_MAX_SUBST, complement_of, partner_context_for_prefix, summary_satisfiable,
+};
+use crate::{BidContext, ImplicitPass, NodeId, SystemIR, Table};
 
 /// The outcome of a bidding decision. `NoCandidate` is information about the system's coverage,
 /// not an error.
@@ -144,17 +146,27 @@ pub(crate) struct Kept {
     pub(crate) node: Option<NodeId>,
     pub(crate) priority: i16,
     pub(crate) source: ChoiceSource,
+    /// For a `Natural` candidate, the `(explanation, rule)` of the `Inference` that produced it,
+    /// kept so [`choose_bid`] can build the winner's explanation without re-running `infer` (and
+    /// the partner-context computation it needs).
+    pub(crate) natural_text: Option<(String, &'static str)>,
 }
 
 /// Steps 1–3 of §5.2, shared by [`choose_bid`] and `policy::call_distribution` (which needs the
 /// same surviving-candidate set to score calls, but not the final sort/pick).
+///
+/// Takes the whole `table`, not just the acting seat's own `SystemIR`: the natural branch needs
+/// the interpretation of the auction so far (partner's system included) to fill
+/// `CallContext::partner_constraint`/`forcing_situation` exactly as `interpret`'s natural step
+/// does, so the two agree on what a natural call shows.
 pub(crate) fn gather(
-    system: &SystemIR,
+    table: &Table,
     hand: Hand,
     auction: &Auction,
     ctx: &BidContext<'_>,
 ) -> (Vec<Kept>, Vec<Tried>, Vec<Diagnostic>) {
     let seat = auction.next_seat();
+    let system = &table.systems[seat.index() as usize];
     let vulnerability = auction.vulnerability();
     let vul = RelVul {
         we: vulnerability.is_vulnerable(seat),
@@ -240,24 +252,47 @@ pub(crate) fn gather(
                 node: Some(node_id),
                 priority: node.priority,
                 source: ChoiceSource::System,
+                natural_text: None,
             });
         }
     } else if let Some(natural) = ctx.natural {
-        for (call, constraint, priority) in natural.candidates(auction, seat) {
+        // `NaturalInference::candidates` builds each call's `CallContext` with a bare `classify`,
+        // leaving `partner_constraint`/`forcing_situation` at `None`/`false`, whereas
+        // `interpret`'s natural step fills both from the prefix's interpretation before `infer`.
+        // Rules that read them (`rule_cue`'s `min_hcp`, `rule_pass_forcing`) would then give a
+        // different constraint here than `interpret` gives for the same call, breaking the
+        // bidirectional consistency of 07-bidding.md §2.3. So this branch builds the same context
+        // as `interpret` (classify on the extended auction, partner context from the prefix's
+        // Step A, then `infer`), keeping `candidates`' filtering and priority rule.
+        let (partner_constraint, forcing_situation) =
+            partner_context_for_prefix(table, auction, seat);
+        for call in auction.legal_calls() {
+            let Ok(next) = auction.with(call) else {
+                continue;
+            };
+            let mut call_ctx = classify(&next, auction.len(), seat);
+            call_ctx.partner_constraint = partner_constraint.clone();
+            call_ctx.forcing_situation = forcing_situation;
+            let inf = natural.infer(&call_ctx);
+            if inf.rule == "fallback" {
+                continue;
+            }
             if call == Call::Pass {
                 pass_offered = true;
             }
-            if !auction.is_legal(call) || !constraint.satisfies(hand) {
+            if !inf.constraint.satisfies(hand) {
                 // Natural candidates are not system nodes, so a rejection is not reported
                 // (`Tried` and `IllegalSystemCall`/`UnsatisfiableNode` only ever reference a
                 // system `NodeId`; see 07-bidding.md §5.2).
                 continue;
             }
+            let priority = (inf.confidence * 100.0).round() as i16;
             kept.push(Kept {
                 call,
                 node: None,
                 priority,
                 source: ChoiceSource::Natural,
+                natural_text: Some((inf.explanation, inf.rule)),
             });
         }
     }
@@ -301,6 +336,7 @@ pub(crate) fn gather(
                 node: None,
                 priority: i16::MIN + 1,
                 source: ChoiceSource::ImplicitPass,
+                natural_text: None,
             });
         }
     }
@@ -311,12 +347,12 @@ pub(crate) fn gather(
 /// `(call, priority)` for every kept candidate, dropping node identity and diagnostics; used by
 /// `policy::call_distribution`, which only needs to score calls.
 pub(crate) fn kept_priorities(
-    system: &SystemIR,
+    table: &Table,
     hand: Hand,
     auction: &Auction,
     ctx: &BidContext<'_>,
 ) -> Vec<(Call, i16)> {
-    let (kept, _, _) = gather(system, hand, auction, ctx);
+    let (kept, _, _) = gather(table, hand, auction, ctx);
     kept.into_iter().map(|k| (k.call, k.priority)).collect()
 }
 
@@ -351,14 +387,13 @@ fn tie_break_cmp(system: &SystemIR, tie_break: TieBreak, a: &Kept, b: &Kept) -> 
     }
 }
 
-/// Chooses a call for `hand` after `auction` under `system`.
-pub fn choose_bid(
-    system: &SystemIR,
-    hand: Hand,
-    auction: &Auction,
-    ctx: &BidContext<'_>,
-) -> BidChoice {
-    let (mut kept, tried, diagnostics) = gather(system, hand, auction, ctx);
+/// Chooses a call for `hand` after `auction` under `table` (its acting seat's system, or its
+/// natural fallback; see [`gather`]'s doc comment for why the whole `table` is needed rather than
+/// just the acting seat's own [`SystemIR`]).
+pub fn choose_bid(table: &Table, hand: Hand, auction: &Auction, ctx: &BidContext<'_>) -> BidChoice {
+    let seat = auction.next_seat();
+    let system = &table.systems[seat.index() as usize];
+    let (mut kept, tried, diagnostics) = gather(table, hand, auction, ctx);
     let tie_break = system.meta.tie_break;
     kept.sort_by(|a, b| {
         b.priority
@@ -370,7 +405,6 @@ pub fn choose_bid(
         return BidChoice::NoCandidate(NoCandidate { tried, diagnostics });
     }
 
-    let seat = auction.next_seat();
     let winner_call = kept[0].call;
     let winner_node = kept[0].node;
     let winner_source = kept[0].source;
@@ -387,15 +421,11 @@ pub fn choose_bid(
         Some(node_id) => system.node(node_id).description.clone(),
         None => match winner_source {
             ChoiceSource::Natural => {
-                let natural = ctx
-                    .natural
-                    .expect("a Natural-sourced kept candidate implies ctx.natural is Some");
-                let extended = auction
-                    .with(winner_call)
-                    .expect("choose_bid only keeps legal calls");
-                let call_ctx = classify(&extended, auction.len(), seat);
-                let inf = natural.infer(&call_ctx);
-                format!("{} ({})", inf.explanation, inf.rule)
+                let (text, rule) = kept[0]
+                    .natural_text
+                    .take()
+                    .expect("a Natural-sourced kept candidate carries its inference text");
+                format!("{text} ({rule})")
             }
             ChoiceSource::ImplicitPass => "implicit pass".to_string(),
             ChoiceSource::System => String::new(),

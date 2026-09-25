@@ -346,37 +346,80 @@ fn apply_epsilon_mixture(
     ));
 }
 
+/// The partner's constraint and forcing-situation flag from their most recent call, if any
+/// (07-bidding.md §2.2): the maximum-weight alternative of partner's most recent call, and
+/// whether that alternative's node is forcing.
+///
+/// Used by [`fill_partner_context`] (`interpret`'s own natural step) and, through
+/// [`partner_context_for_prefix`], by `choose_bid`'s natural branch, so both compute
+/// `CallContext::partner_constraint`/`forcing_situation` identically for the same auction prefix.
+pub(crate) fn partner_context(
+    table: &Table,
+    per_call_so_far: &[CallInterpretation],
+    s: Seat,
+) -> (Option<HandConstraint>, bool) {
+    let partner = s.partner();
+    let Some(last) = per_call_so_far.iter().rev().find(|ci| ci.seat == partner) else {
+        return (None, false);
+    };
+    // Skip the `Fallback` branch the ε-mixture appended (07-bidding.md §4.2): it is always
+    // present after `apply_epsilon_mixture` and would otherwise win `max_by` whenever partner's
+    // call is `Partial`/`Natural` with enough real alternatives that each falls under
+    // `eps_partial`/`eps_natural` on its own, silently turning `partner_constraint` into `ANY`
+    // and `forcing_situation` into `false` even when the node is actually forcing.
+    let Some((c, _, ex)) = last
+        .alternatives
+        .iter()
+        .filter(|(_, _, ex)| ex.kind != ResolutionKind::Fallback)
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+    else {
+        return (None, false);
+    };
+    let forcing = match ex.node {
+        Some(node_id) => {
+            let partner_sys = &table.systems[partner.index() as usize];
+            let flags = &partner_sys.node(node_id).flags;
+            matches!(flags.forcing, Forcing::OneRound | Forcing::ToGame)
+        }
+        None => false,
+    };
+    (Some(c.clone()), forcing)
+}
+
+/// [`partner_context`] for seat `s` about to call after `auction`, computed from Step A of
+/// `auction` itself (no Step B). `choose_bid`'s natural branch (07-bidding.md §5.2 step 4) needs
+/// the same `CallContext` that `interpret`'s natural step (§4.1 step 6) builds for the call it is
+/// about to make, and Step A's `per_call[..n]` of `auction` equals that of `auction.with(call)`
+/// for any `call`: each entry `j` reads only the calls up to `j` (the lookup key is truncated to
+/// `n_k` calls, `classify` reads only history up to `j`, and the leading-pass count of the prefix
+/// agrees with the extended auction's for every `j < n`). Strict options are used because
+/// `partner_context` ignores the ε-mixture's `Fallback` branch anyway and the mixture scales every
+/// other weight uniformly; `lenient_decay` stays at its default, so an `interpret` called with a
+/// non-default `lenient_decay` can in rare ties pick a different partner alternative.
+pub(crate) fn partner_context_for_prefix(
+    table: &Table,
+    auction: &Auction,
+    s: Seat,
+) -> (Option<HandConstraint>, bool) {
+    let opts = InterpretOptions {
+        strict: true,
+        ..InterpretOptions::default()
+    };
+    let (per_call, _) = step_a(table, auction, &opts);
+    partner_context(table, &per_call, s)
+}
+
 /// Fills `ctx.partner_constraint` / `ctx.forcing_situation` from the interpretation of partner's
-/// calls so far (07-bidding.md §2.2): the maximum-weight alternative of partner's most recent
-/// call, and whether that alternative's node is forcing.
+/// calls so far (07-bidding.md §2.2); see [`partner_context`].
 fn fill_partner_context(
     mut ctx: CallContext,
     table: &Table,
     per_call_so_far: &[CallInterpretation],
     s: Seat,
 ) -> CallContext {
-    let partner = s.partner();
-    if let Some(last) = per_call_so_far.iter().rev().find(|ci| ci.seat == partner) {
-        // Skip the `Fallback` branch the ε-mixture appended (07-bidding.md §4.2): it is always
-        // present after `apply_epsilon_mixture` and would otherwise win `max_by` whenever partner's
-        // call is `Partial`/`Natural` with enough real alternatives that each falls under
-        // `eps_partial`/`eps_natural` on its own, silently turning `partner_constraint` into `ANY`
-        // and `forcing_situation` into `false` even when the node is actually forcing.
-        if let Some((c, _, ex)) = last
-            .alternatives
-            .iter()
-            .filter(|(_, _, ex)| ex.kind != ResolutionKind::Fallback)
-            .max_by(|a, b| a.1.total_cmp(&b.1))
-        {
-            ctx.partner_constraint = Some(c.clone());
-            if let Some(node_id) = ex.node {
-                let partner_sys = &table.systems[partner.index() as usize];
-                let flags = &partner_sys.node(node_id).flags;
-                ctx.forcing_situation =
-                    matches!(flags.forcing, Forcing::OneRound | Forcing::ToGame);
-            }
-        }
-    }
+    let (constraint, forcing) = partner_context(table, per_call_so_far, s);
+    ctx.partner_constraint = constraint;
+    ctx.forcing_situation = forcing;
     ctx
 }
 
