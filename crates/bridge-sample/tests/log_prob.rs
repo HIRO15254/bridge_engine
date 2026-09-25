@@ -311,8 +311,91 @@ fn enumerate_three_way_splits(pool: Hand, pool_cards: &[Card]) -> Vec<(Hand, Han
 /// `log_prob_consistency` above.
 #[test]
 fn middle_seat_coarse_log_prob_consistency() {
+    check_three_seat_consistency(&three_seat_interpretation(), 20260926);
+}
+
+/// High-card points of `hand` (A = 4, K = 3, Q = 2, J = 1).
+fn hcp(hand: Hand) -> u8 {
+    hand.cards()
+        .map(|c| match c.rank() {
+            bridge_core::Rank::Ace => 4,
+            bridge_core::Rank::King => 3,
+            bridge_core::Rank::Queen => 2,
+            bridge_core::Rank::Jack => 1,
+            _ => 0,
+        })
+        .sum()
+}
+
+/// Like [`three_seat_interpretation`], but South (the re-prepared middle seat) has three
+/// alternatives, two of which differ only in a `cards` literal and so coarsen to the *same*
+/// shape + HCP summary (§6.4 (c)); `ConstraintProposal` merges those into one component. The
+/// third has a different HCP window. The merged mixture must stay exact against `propose`.
+fn three_seat_merged_summary_interpretation(south_fixed: Hand) -> Interpretation {
+    let ace = Holding::top_ranks(1);
+    let king = Holding::top_ranks(2).without(ace.highest().expect("non-empty"));
+    let queen = Holding::top_ranks(3)
+        .without(ace.highest().expect("non-empty"))
+        .without(king.highest().expect("non-empty"));
+    let h0 = hcp(south_fixed);
+    let with_hcp = |range: core::ops::RangeInclusive<u8>, cards: Vec<CardRequirement>| {
+        HandConstraint::Atom(Atom {
+            shapes: ShapeSet::ALL,
+            hcp: range,
+            cards,
+            eval: Vec::new(),
+        })
+    };
+
+    let holds_ace = atom(vec![CardRequirement::in_suit(Suit::Spades, ace, 1..=1)]);
+    let south = vec![
+        (
+            with_hcp(
+                h0 + 3..=h0 + 7,
+                vec![CardRequirement::in_suit(Suit::Spades, king, 1..=1)],
+            ),
+            0.5,
+            empty_explanation(),
+        ),
+        (
+            with_hcp(
+                h0 + 3..=h0 + 7,
+                vec![CardRequirement::in_suit(Suit::Spades, queen, 1..=1)],
+            ),
+            0.3,
+            empty_explanation(),
+        ),
+        (with_hcp(h0..=h0 + 2, Vec::new()), 0.2, empty_explanation()),
+    ];
+
+    Interpretation {
+        seats: [
+            Vec::new(),
+            vec![(holds_ace, 1.0, empty_explanation())],
+            south,
+            Vec::new(),
+        ],
+        per_call: Vec::new(),
+        divergence: None,
+    }
+}
+
+/// The merged-summary fast path (identical coarse summaries share one component) must keep
+/// `log_prob` exact: same enumeration + chi-square checks as the test above.
+#[test]
+fn middle_seat_merged_summaries_log_prob_consistency() {
+    let (known, _) = three_seat_pool_context();
+    let south_fixed = known.known[Seat::South.index() as usize];
+    check_three_seat_consistency(
+        &three_seat_merged_summary_interpretation(south_fixed),
+        20260927,
+    );
+}
+
+/// Enumerates every 3/3/3 split of [`three_seat_pool_context`]'s pool, checks that
+/// `exp(log_prob)` sums to 1 over them, and checks 10^5 proposals against it by chi-square.
+fn check_three_seat_consistency(interpretation: &Interpretation, seed: u64) {
     let (known, pool) = three_seat_pool_context();
-    let interpretation = three_seat_interpretation();
     let play_constraints = [
         HandConstraint::ANY,
         HandConstraint::ANY,
@@ -321,7 +404,7 @@ fn middle_seat_coarse_log_prob_consistency() {
     ];
     let ctx = SampleContext {
         known,
-        interpretation: &interpretation,
+        interpretation,
         play_constraints: &play_constraints,
         play_soft: None,
         bidding: None,
@@ -360,7 +443,7 @@ fn middle_seat_coarse_log_prob_consistency() {
     );
 
     let n = 100_000u64;
-    let mut rng = rng_for(20260926, 0);
+    let mut rng = rng_for(seed, 0);
     let mut observed = vec![0u64; deals.len()];
     let mut unmatched = 0u64;
     for _ in 0..n {
