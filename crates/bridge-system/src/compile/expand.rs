@@ -940,6 +940,17 @@ fn build_or_reuse_node(
             ex.trie
                 .covering_entry(we_opened_of(next_frame), &next_frame.edges, seat, vul)
         {
+            // This row is never given its own node (the trie entry is reused, see above), so it
+            // would otherwise keep the `Recognition::default()` it was created with (ratio 0.0)
+            // forever, dragging down every `mean recognition` roll-up over `SystemIR::rows` with
+            // a phantom failure for a row that has no description to recognise in the first
+            // place. An empty description is defined as fully recognised (`recognition::compute`'s
+            // own early return, ratio 1.0); give this row that same, correct value instead of
+            // leaving the pre-compile placeholder in place.
+            let row_recognition = &mut ex.rows[row_id.0 as usize].recognition;
+            if row_recognition.total == 0 && row_recognition.ratio == 0.0 {
+                row_recognition.ratio = 1.0;
+            }
             return Some(existing);
         }
     }
@@ -1571,6 +1582,20 @@ mod tests {
         };
         let lookup = ex.trie.resolve(&key);
         assert_eq!(lookup.by_depth[0], Some(NodeId(0)));
+
+        // Regression: the seat-34 retrace still gets its own `Row` (RowId(1), row 0 is the
+        // opening's own "1H" and row 2 is its "2C" child) even though it reuses the opening's
+        // node -- and that row's `description_raw` is genuinely empty (a pure history retrace,
+        // not real content), so its recognition must be the same "empty description, ratio 1.0"
+        // answer `compile_description` gives everywhere else, not the pre-compile
+        // `Recognition::default()` placeholder (ratio 0.0) it was created with. Left unfixed,
+        // this phantom row drags down every mean-recognition roll-up over `SystemIR::rows` by one
+        // 0.0 entry per history retrace in the file, for content that was never actually
+        // unrecognised.
+        assert_eq!(ex.rows.len(), 3);
+        assert_eq!(ex.rows[1].description_raw, "");
+        assert_eq!(ex.rows[1].recognition.ratio, 1.0);
+        assert_eq!(ex.rows[1].recognition.total, 0);
     }
 
     #[test]
