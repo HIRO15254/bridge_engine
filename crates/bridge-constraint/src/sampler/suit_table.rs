@@ -99,11 +99,14 @@ impl SuitTable {
     /// `nk` is the dense per-length index domain size ([`DENSE_NK_NO_X`] when the caller's `key`
     /// never produces a nonzero `x` component, [`DENSE_NK_WITH_X`] otherwise): every `key(h)` this
     /// call ever produces must map to a [`dense_index`] under `nk`.
+    ///
+    /// `filter` and `key` are generic (not `&dyn Fn`) so each call site's closures are inlined
+    /// into the two enumeration passes below, which run up to `2 × 2^13` times per table.
     pub(crate) fn build(
         pool: Holding,
         fixed: Holding,
-        filter: &dyn Fn(Holding) -> bool,
-        key: &dyn Fn(Holding) -> u16,
+        filter: impl Fn(Holding) -> bool,
+        key: impl Fn(Holding) -> u16,
         nk: usize,
     ) -> SuitTable {
         // Pass 1: histogram of (len, d) -> count, a dense `14 * nk` array. `nk` is `11` or `154`
@@ -196,8 +199,8 @@ static FULL_SUIT: LazyLock<Arc<SuitTable>> = LazyLock::new(|| {
     Arc::new(SuitTable::build(
         Holding::FULL,
         Holding::EMPTY,
-        &|_| true,
-        &|h| u16::from(bridge_eval::holding_hcp(h)),
+        |_| true,
+        |h| u16::from(bridge_eval::holding_hcp(h)),
         DENSE_NK_NO_X,
     ))
 });
@@ -210,10 +213,13 @@ pub(crate) fn full_suit() -> Arc<SuitTable> {
 /// A flat, allocation-free index from a `(len_a, len_b)` pair (each `0..=13`) to a lazily-built
 /// [`PairConv`] (§10: replaces a `HashMap<(u8,u8), PairConv>`, whose default hasher is SipHash over
 /// a key space that is really just `14 * 14 = 196` slots).
+///
+/// Entries are `Arc`s so that terms prepared against the same pool and fixed part with the same
+/// (trivial) per-suit tables can share one convolution per pair (see `term::SharedPlain`).
 pub(crate) struct PairMap {
     /// `idx[len_a * 14 + len_b]` is the index into `convs`, or `u16::MAX` when not yet built.
     idx: [u16; 196],
-    convs: Vec<PairConv>,
+    convs: Vec<Arc<PairConv>>,
 }
 
 impl PairMap {
@@ -230,15 +236,35 @@ impl PairMap {
         len_a: u8,
         len_b: u8,
         build: impl FnOnce() -> PairConv,
-    ) -> &PairConv {
+    ) -> &Arc<PairConv> {
         let slot = len_a as usize * 14 + len_b as usize;
         if self.idx[slot] == u16::MAX {
             let i = self.convs.len();
             debug_assert!(i < usize::from(u16::MAX), "at most 196 distinct pairs");
-            self.convs.push(build());
+            self.convs.push(Arc::new(build()));
             self.idx[slot] = i as u16;
         }
         &self.convs[self.idx[slot] as usize]
+    }
+
+    /// Stores an already-built (typically shared) `PairConv` for `(len_a, len_b)`, unless that
+    /// pair is already present.
+    pub(crate) fn insert(&mut self, len_a: u8, len_b: u8, conv: &Arc<PairConv>) {
+        let slot = len_a as usize * 14 + len_b as usize;
+        if self.idx[slot] == u16::MAX {
+            let i = self.convs.len();
+            self.convs.push(Arc::clone(conv));
+            self.idx[slot] = i as u16;
+        }
+    }
+
+    /// The shared handle to the `PairConv` for `(len_a, len_b)`, if present.
+    pub(crate) fn get_arc(&self, len_a: u8, len_b: u8) -> Option<&Arc<PairConv>> {
+        let slot = len_a as usize * 14 + len_b as usize;
+        match self.idx[slot] {
+            u16::MAX => None,
+            i => Some(&self.convs[i as usize]),
+        }
     }
 
     /// The `PairConv` for `(len_a, len_b)` if it was already built via `get_or_build`.
@@ -246,7 +272,7 @@ impl PairMap {
         let slot = len_a as usize * 14 + len_b as usize;
         match self.idx[slot] {
             u16::MAX => None,
-            i => Some(&self.convs[i as usize]),
+            i => Some(&*self.convs[i as usize]),
         }
     }
 }

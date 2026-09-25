@@ -25,6 +25,53 @@ use super::suit_table::{
 };
 use crate::{Atom, CardRequirement, DnfTerm, Metric};
 
+/// Work shared between every term prepared against one `(pool, fixed)` whose literals leave the
+/// per-suit tables *plain*: no per-suit filter (`cards` / `SuitQuality` on one suit) and no
+/// additive feature, so each suit's table is just "every holding of the pool, bucketed by length
+/// and HCP" — independent of the term's shapes and HCP window. Such terms (every term of a
+/// shape + HCP atom, e.g. `bridge-sample`'s coarse §6.4 (c) summaries) share the four tables and
+/// every `(l0, l1)` / `(l2, l3)` convolution any of them needs, so preparing `n` of them costs one
+/// table build plus the union of their pair convolutions instead of `n` of each.
+///
+/// Sharing never changes a result: the shared tables and convolutions are exactly what each term
+/// would have built on its own (same enumeration, same order).
+pub(crate) struct SharedPlain {
+    pool: Hand,
+    fixed: Hand,
+    suits: Option<[Arc<SuitTable>; 4]>,
+    pair01: PairMap,
+    pair23: PairMap,
+}
+
+impl SharedPlain {
+    /// An empty cache for terms prepared against exactly this `pool` and `fixed`.
+    pub(crate) fn new(pool: Hand, fixed: Hand) -> SharedPlain {
+        SharedPlain {
+            pool,
+            fixed,
+            suits: None,
+            pair01: PairMap::new(),
+            pair23: PairMap::new(),
+        }
+    }
+}
+
+/// The plain per-suit table for one suit (see [`SharedPlain`]): the shared `FULL_SUIT` table for
+/// a full, fixed-free suit, otherwise a fresh HCP-keyed enumeration with no filter.
+fn plain_suit_table(p: Holding, f: Holding) -> Arc<SuitTable> {
+    if p == Holding::FULL && f == Holding::EMPTY {
+        full_suit()
+    } else {
+        Arc::new(SuitTable::build(
+            p,
+            f,
+            |_| true,
+            |h| pack_key(holding_hcp(h), 0),
+            DENSE_NK_NO_X,
+        ))
+    }
+}
+
 /// A DNF term prepared for a fixed pool and fixed part.
 pub(crate) struct PreparedTerm {
     /// Size of the exact superset this term contributes (before any rejection check): the number
@@ -568,12 +615,20 @@ fn burn_in_seed(atom: &Atom, pool: Hand, fixed: Hand) -> u64 {
 }
 
 impl PreparedTerm {
+    /// Prepares `term` against `(pool, fixed)`. `shared` must have been created for this same
+    /// `(pool, fixed)`; plain terms (see [`SharedPlain`]) take their tables and convolutions
+    /// from it, building whatever is missing.
     pub(crate) fn prepare(
         term: DnfTerm,
         pool: Hand,
         fixed: Hand,
         opts: &super::SampleOptions,
+        shared: &mut SharedPlain,
     ) -> PreparedTerm {
+        debug_assert!(
+            shared.pool == pool && shared.fixed == fixed,
+            "SharedPlain reused across a different (pool, fixed)"
+        );
         // Unconstrained fast path (§9): drawn combinatorially instead of via the shape/HCP
         // machinery.
         if term.is_exact() && term.atom == Atom::ANY {
@@ -594,10 +649,22 @@ impl PreparedTerm {
         let needs_full_check =
             classified.needs_full_check || !term.custom.is_empty() || term.residual.is_some();
 
+        let plain = classified.additive.is_none()
+            && classified.suit_filters.iter().all(SuitFilter::is_trivial);
+
         // Per-suit tables: shared `FULL_SUIT` for the common "full pool, no filter, no feature"
         // case, otherwise a fresh enumeration.
         let mut suits: [Option<Arc<SuitTable>>; 4] = [None, None, None, None];
+        if plain {
+            let tables = shared.suits.get_or_insert_with(|| {
+                Suit::ALL.map(|suit| plain_suit_table(pool.holding(suit), fixed.holding(suit)))
+            });
+            suits = tables.clone().map(Some);
+        }
         for (i, suit) in Suit::ALL.into_iter().enumerate() {
+            if suits[i].is_some() {
+                continue;
+            }
             let p = pool.holding(suit);
             let f = fixed.holding(suit);
             let filter = &classified.suit_filters[i];
@@ -619,7 +686,7 @@ impl PreparedTerm {
                 } else {
                     DENSE_NK_NO_X
                 };
-                Arc::new(SuitTable::build(p, f, &filter_fn, &key_fn, nk))
+                Arc::new(SuitTable::build(p, f, filter_fn, key_fn, nk))
             };
             suits[i] = Some(table);
         }
@@ -635,6 +702,13 @@ impl PreparedTerm {
 
         let mut pair01 = PairMap::new();
         let mut pair23 = PairMap::new();
+        // Plain terms build (or find) their convolutions in `shared`; the ones a feasible shape
+        // actually uses are copied (as `Arc`s) into this term's own maps after the loop.
+        let (build01, build23) = if plain {
+            (&mut shared.pair01, &mut shared.pair23)
+        } else {
+            (&mut pair01, &mut pair23)
+        };
         let mut shapes: Vec<(Shape, u64, (u8, u8))> = Vec::new();
 
         for shape in term.atom.shapes.iter() {
@@ -676,16 +750,32 @@ impl PreparedTerm {
 
             let (l0, l1, l2, l3) = (lens[0], lens[1], lens[2], lens[3]);
             let with_x = classified.additive.is_some();
-            let p01 = pair01.get_or_build(l0, l1, || {
+            let p01 = build01.get_or_build(l0, l1, || {
                 PairConv::build(&suits[0], &suits[1], l0, l1, with_x)
             });
-            let p23 = pair23.get_or_build(l2, l3, || {
+            let p23 = build23.get_or_build(l2, l3, || {
                 PairConv::build(&suits[2], &suits[3], l2, l3, with_x)
             });
 
             let weight = shape_weight(p01, p23, lo, hi, x_window.0, x_window.1);
             if weight > 0 {
                 shapes.push((shape, weight, (lo, hi)));
+            }
+        }
+
+        if plain {
+            for &(shape, _, _) in &shapes {
+                let [l0, l1, l2, l3] = shape.lens();
+                let p01 = shared
+                    .pair01
+                    .get_arc(l0, l1)
+                    .expect("built above for every feasible shape");
+                pair01.insert(l0, l1, p01);
+                let p23 = shared
+                    .pair23
+                    .get_arc(l2, l3)
+                    .expect("built above for every feasible shape");
+                pair23.insert(l2, l3, p23);
             }
         }
 
@@ -773,8 +863,8 @@ mod tests {
         SuitTable::build(
             pool,
             Holding::EMPTY,
-            &|_| true,
-            &|h| u16::from(holding_hcp(h)),
+            |_| true,
+            |h| u16::from(holding_hcp(h)),
             DENSE_NK_NO_X,
         )
     }
@@ -823,15 +913,15 @@ mod tests {
         let a = SuitTable::build(
             Holding::from_bits(0b0111_1110_0000).unwrap(),
             Holding::EMPTY,
-            &|_| true,
-            &key_with_len_feature,
+            |_| true,
+            key_with_len_feature,
             DENSE_NK_WITH_X,
         );
         let b = SuitTable::build(
             Holding::from_bits(0b0000_0001_1111).unwrap(),
             Holding::EMPTY,
-            &|_| true,
-            &key_with_len_feature,
+            |_| true,
+            key_with_len_feature,
             DENSE_NK_WITH_X,
         );
 
@@ -938,7 +1028,8 @@ mod tests {
             residual: None,
         };
         let opts = super::super::SampleOptions::default();
-        let prepared = PreparedTerm::prepare(term, Hand::FULL, Hand::EMPTY, &opts);
+        let mut shared = SharedPlain::new(Hand::FULL, Hand::EMPTY);
+        let prepared = PreparedTerm::prepare(term, Hand::FULL, Hand::EMPTY, &opts, &mut shared);
         let alpha = prepared
             .alpha
             .expect("two multi-suit card literals force needs_full_check");

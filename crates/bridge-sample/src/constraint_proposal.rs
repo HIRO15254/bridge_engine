@@ -457,9 +457,14 @@ fn prepare_components(
     fixed: Hand,
     opts: &bridge_constraint::SampleOptions,
 ) -> Option<Vec<(Sampler, f64)>> {
+    // One `prepare_many` call rather than a `Sampler::prepare` per candidate: every candidate
+    // is prepared against the same `(pool, fixed)`, so terms with plain per-suit tables (all of
+    // a re-prepared seat's coarse shape + HCP summaries) share one table build and their pair
+    // convolutions (`Sampler::prepare_many`'s doc comment); the samplers are identical either way.
+    let samplers =
+        Sampler::prepare_many(candidates.iter().map(|c| &c.constraint), pool, fixed, opts).ok()?;
     let mut survivors: Vec<(Sampler, f64)> = Vec::with_capacity(candidates.len());
-    for candidate in candidates {
-        let sampler = Sampler::prepare(&candidate.constraint, pool, fixed, opts).ok()?;
+    for (candidate, sampler) in candidates.iter().zip(samplers) {
         let count = sampler.count();
         if count == 0 {
             continue;

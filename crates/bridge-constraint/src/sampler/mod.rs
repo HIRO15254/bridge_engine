@@ -34,6 +34,18 @@ use bridge_core::Hand;
 use crate::{DnfOptions, HandConstraint, PrepareError};
 use rand_util::random_below;
 
+/// The argument checks shared by [`Sampler::prepare`] and [`Sampler::prepare_many`].
+fn check_pool_and_fixed(pool: Hand, fixed: Hand) -> Result<(), PrepareError> {
+    if !pool.is_disjoint(fixed) {
+        return Err(PrepareError::Overlap);
+    }
+    let fixed_len = fixed.len();
+    if fixed_len > 13 {
+        return Err(PrepareError::TooManyFixed(fixed_len));
+    }
+    Ok(())
+}
+
 /// Options for [`Sampler::prepare`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SampleOptions {
@@ -102,13 +114,43 @@ impl Sampler {
         fixed: Hand,
         opts: &SampleOptions,
     ) -> Result<Sampler, PrepareError> {
-        if !pool.is_disjoint(fixed) {
-            return Err(PrepareError::Overlap);
-        }
-        let fixed_len = fixed.len();
-        if fixed_len > 13 {
-            return Err(PrepareError::TooManyFixed(fixed_len));
-        }
+        check_pool_and_fixed(pool, fixed)?;
+        let mut shared = term::SharedPlain::new(pool, fixed);
+        Sampler::prepare_shared(constraint, pool, fixed, opts, &mut shared)
+    }
+
+    /// Prepares one sampler per constraint, all against the same `pool` and `fixed`, in order.
+    ///
+    /// Each returned `Sampler` is identical to what [`Sampler::prepare`] would return for that
+    /// constraint alone. The difference is cost: DNF terms whose per-suit tables do not depend
+    /// on the term (terms with no single-suit `cards` / `SuitQuality` literal and no additive
+    /// feature — in particular every plain shape + HCP atom) share the four per-suit tables and
+    /// the pair convolutions across *all* the constraints, so preparing `n` such constraints
+    /// against a shrunken pool costs roughly one table build instead of `n`. This is the call a
+    /// caller that re-prepares a mixture of alternatives on every draw should use.
+    ///
+    /// Errors as [`Sampler::prepare`] does, on the first constraint that fails.
+    pub fn prepare_many<'a>(
+        constraints: impl IntoIterator<Item = &'a HandConstraint>,
+        pool: Hand,
+        fixed: Hand,
+        opts: &SampleOptions,
+    ) -> Result<Vec<Sampler>, PrepareError> {
+        check_pool_and_fixed(pool, fixed)?;
+        let mut shared = term::SharedPlain::new(pool, fixed);
+        constraints
+            .into_iter()
+            .map(|c| Sampler::prepare_shared(c, pool, fixed, opts, &mut shared))
+            .collect()
+    }
+
+    fn prepare_shared(
+        constraint: &HandConstraint,
+        pool: Hand,
+        fixed: Hand,
+        opts: &SampleOptions,
+        shared: &mut term::SharedPlain,
+    ) -> Result<Sampler, PrepareError> {
         let samplable = constraint.is_samplable();
         if !opts.allow_rejection && !samplable {
             return Err(PrepareError::NotSamplable);
@@ -130,7 +172,7 @@ impl Sampler {
 
         let mut terms = Vec::with_capacity(dnf.terms.len());
         for dnf_term in dnf.terms {
-            let prepared = term::PreparedTerm::prepare(dnf_term, pool, fixed, opts);
+            let prepared = term::PreparedTerm::prepare(dnf_term, pool, fixed, opts, shared);
             if !opts.allow_rejection && prepared.alpha.is_some() {
                 return Err(PrepareError::NotSamplable);
             }
@@ -277,5 +319,120 @@ impl Sampler {
     /// (`count() == 0` for every term) as satisfiable.
     pub(crate) fn any_definitely_satisfiable(&self) -> bool {
         self.terms.iter().any(|t| t.total > 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bridge_core::{Card, Holding, Suit};
+    use rand_xoshiro::Xoshiro256PlusPlus;
+    use rand_xoshiro::rand_core::SeedableRng;
+
+    use super::*;
+    use crate::{Atom, CardRequirement, ShapeSet};
+
+    fn atom(shapes: ShapeSet, hcp: core::ops::RangeInclusive<u8>) -> HandConstraint {
+        HandConstraint::Atom(Atom {
+            shapes,
+            hcp,
+            ..Atom::ANY
+        })
+    }
+
+    /// Differential test for the table/convolution sharing in [`Sampler::prepare_many`]: every
+    /// sampler it returns must behave exactly like the one [`Sampler::prepare`] builds alone —
+    /// same count and exactness, the same hand for the same RNG stream, and the same `log_prob`
+    /// on every hand either one draws. The mix covers plain atoms (which share tables), an atom
+    /// with a single-suit card filter and a multi-suit (additive) card requirement (which do
+    /// not), `ANY`, a two-term `Or`, and an unsatisfiable atom, on the full deck and on a
+    /// shrunken mid-deal pool with fixed cards.
+    #[test]
+    fn prepare_many_matches_prepare_one_by_one() {
+        let spade_ace = CardRequirement::in_suit(Suit::Spades, Holding::top_ranks(1), 1..=1);
+        let two_aces = CardRequirement {
+            mask: Hand::EMPTY
+                .with_holding(Suit::Hearts, Holding::top_ranks(1))
+                .with_holding(Suit::Clubs, Holding::top_ranks(1)),
+            count: 1..=2,
+        };
+        let constraints = vec![
+            atom(ShapeSet::BALANCED, 15..=17),
+            atom(ShapeSet::from_suit_len(Suit::Spades, 5, 13), 11..=21),
+            HandConstraint::ANY,
+            atom(ShapeSet::BALANCED, 15..=17),
+            HandConstraint::Atom(Atom {
+                cards: vec![spade_ace],
+                ..Atom::ANY.with_hcp(8..=37)
+            }),
+            HandConstraint::Atom(Atom {
+                cards: vec![two_aces],
+                ..Atom::ANY.with_hcp(0..=12)
+            }),
+            HandConstraint::Or(vec![
+                atom(ShapeSet::from_suit_len(Suit::Hearts, 6, 13), 5..=10),
+                atom(ShapeSet::ALL, 0..=5),
+            ]),
+            atom(ShapeSet::from_suit_len(Suit::Hearts, 4, 13), 0..=37),
+            atom(ShapeSet::BALANCED, 37..=37),
+        ];
+
+        let mut mid_pool = Hand::EMPTY;
+        let mut mid_fixed = Hand::EMPTY;
+        for i in 0..52u8 {
+            let card = Card::from_index(i).expect("index < 52");
+            match i % 4 {
+                0 if mid_fixed.len() < 4 => mid_fixed = mid_fixed.with(card),
+                1 => {}
+                _ => mid_pool = mid_pool.with(card),
+            }
+        }
+        let opts = SampleOptions::default();
+
+        for (pool, fixed) in [(Hand::FULL, Hand::EMPTY), (mid_pool, mid_fixed)] {
+            let many = Sampler::prepare_many(&constraints, pool, fixed, &opts)
+                .expect("pool and fixed are disjoint");
+            assert_eq!(many.len(), constraints.len());
+            let alone: Vec<Sampler> = constraints
+                .iter()
+                .map(|c| Sampler::prepare(c, pool, fixed, &opts).expect("disjoint"))
+                .collect();
+            for (i, (shared, solo)) in many.iter().zip(&alone).enumerate() {
+                assert_eq!(shared.count(), solo.count(), "count, constraint {i}");
+                assert_eq!(
+                    shared.is_exact(),
+                    solo.is_exact(),
+                    "exactness, constraint {i}"
+                );
+                let mut rng_a = Xoshiro256PlusPlus::seed_from_u64(1000 + i as u64);
+                let mut rng_b = Xoshiro256PlusPlus::seed_from_u64(1000 + i as u64);
+                for _ in 0..200 {
+                    let a = shared.sample(&mut rng_a);
+                    let b = solo.sample(&mut rng_b);
+                    assert_eq!(a, b, "sample, constraint {i}");
+                    if let Some(sample) = a {
+                        for (j, (s, o)) in many.iter().zip(&alone).enumerate() {
+                            assert_eq!(
+                                s.log_prob(sample.hand).to_bits(),
+                                o.log_prob(sample.hand).to_bits(),
+                                "log_prob under constraint {j} of a hand from constraint {i}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The argument checks still apply to the batch entry point.
+    #[test]
+    fn prepare_many_rejects_overlapping_pool_and_fixed() {
+        let card = Hand::EMPTY.with(Card::from_index(0).expect("index < 52"));
+        let result = Sampler::prepare_many(
+            [&HandConstraint::ANY],
+            Hand::FULL,
+            card,
+            &SampleOptions::default(),
+        );
+        assert!(matches!(result, Err(PrepareError::Overlap)));
     }
 }
