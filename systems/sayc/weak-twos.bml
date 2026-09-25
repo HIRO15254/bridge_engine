@@ -1,0 +1,58 @@
+* Weak two-bids
+
+Booklet section "SEQUENCE AFTER A WEAK TWO-BID OF 2D, 2H OR 2S". A weak two shows a
+six-card suit of reasonable quality and 5--11 HCP. The booklet also allows a good
+five-card suit or a poor seven-card suit "on rare occasions"; this file keeps the
+length at exactly six and treats those judgment calls as out of scope (NOTES.md
+#3). 2NT is forcing, asking for a minimum/maximum (and, opposite a maximum, a
+feature the vocabulary here cannot express -- see NOTES.md #4); any raise is to
+play; a new suit is forcing one round and shows a five-card suit ("RONF").
+
+2D = {prio:63} 6=!d, 5--11 hcp
+2H = {prio:64} 6=!h, 5--11 hcp
+2S = {prio:65} 6=!s, 5--11 hcp
+
+** After 2!d
+
+2D-
+2N = F
+  3D = 5--8 hcp
+  3C = 9--11 hcp
+  3H = 9--11 hcp
+  3S = 9--11 hcp
+  3N = 9--11 hcp
+3C = F, 5+!c
+3H = F, 5+!h
+3S = F, 5+!s
+3N = unlimited
+4D = unlimited
+
+** After 2!h
+
+2H-
+2N = F
+  3H = 5--8 hcp
+  3C = 9--11 hcp
+  3D = 9--11 hcp
+  3S = 9--11 hcp
+  3N = 9--11 hcp
+3C = F, 5+!c
+3D = F, 5+!d
+3S = F, 5+!s
+3N = unlimited
+4H = unlimited
+
+** After 2!s
+
+2S-
+2N = F
+  3S = 5--8 hcp
+  3C = 9--11 hcp
+  3D = 9--11 hcp
+  3H = 9--11 hcp
+  3N = 9--11 hcp
+3C = F, 5+!c
+3D = F, 5+!d
+3H = F, 5+!h
+3N = unlimited
+4S = unlimited

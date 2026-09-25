@@ -1,0 +1,13 @@
+* Opening bids of one in a suit
+
+Booklet section "GENERAL APPROACH" / "RESPONSES TO A 1C OR A 1D OPENING". Five-card
+majors; a minor-suit opening promises 3+ clubs or 4+ diamonds, with clubs preferred
+on 3-3 minors and diamonds on 4-4 minors (and on the 4-4-3-2 shape, where the
+"longer" minor is only 3 cards). See NOTES.md #1 for hands where a longer minor
+would technically outrank a shorter one but this file cannot express that
+comparison and falls back on priority.
+
+1C = {prio:70} 12--21 hcp, 3+!c
+1D = {prio:71} 12--21 hcp, 4+!d or 4432
+1H = {prio:81} 12--21 hcp, 5+!h
+1S = {prio:82} 12--21 hcp, 5+!s

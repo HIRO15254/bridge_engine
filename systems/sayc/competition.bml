@@ -1,0 +1,182 @@
+* Competitive bidding
+
+Booklet sections "DEFENSIVE BIDDING" and "COMPETITIVE BIDDING". Unless otherwise
+noted, a bid or double by an opponent cancels a convention meant for
+non-competitive sequences (for example 1!h-(2!s)-2NT reverts to natural,
+12--14 HCP). A "direct" overcall/double follows the opening with no other calls
+in between (`(1X)-`); a "balancing" one follows two passes, ours and then the
+opener's partner's (`(1X)-P-(P)-`).
+
+** Overcalls
+
+A simple overcall shows 8--16 points and a 4+ card suit; the only forcing
+response is a cuebid of the overcall suit, asking about quality. A 1NT overcall
+shows 15--18 balanced with a stopper. A jump overcall is preemptive, to the same
+values as the matching opening bid; a jump to 2NT is the unusual notrump,
+5+5+ in the two lowest unbid suits.
+
+(1X)-
+1Y = 8--16 hcp, 4+#
+2N = !UNT
+D = 12+ hcp
+
+(1m)-
+2m = !Michaels, 8+ hcp, 5+!h, 5+!s
+
+(1H)-
+2H = !Michaels, 10+ hcp, 5+!s, 5+m
+
+(1S)-
+2S = !Michaels, 10+ hcp, 5+!h, 5+m
+
+(1X)-1Y-
+2X = F
+
+*** Weak jump overcalls
+
+A jump overcall at the two level is worth the same as a weak two in that suit; a
+jump to the three level is worth the same as a three-level preempt.
+
+(1X)-
+2Y = 6=#, 5--11 hcp
+3Y = 7=#, 5--9 hcp
+
+*** Notrump overcalls
+
+(1X)-
+1N = 15--18 hcp, bal
+
+There are no conventional responses opposite the 1NT overcall except 2!c, which
+is Stayman; everything else is natural, as if partner had opened 1NT.
+
+(1X)-1N-
+2C = !STAY NF, 8+ hcp
+
+** Takeout doubles
+
+A double of an opening partscore bid (through 4!d) is for takeout; a double of an
+opening game bid (4!h or higher) is for penalty. A below-game jump response is
+invitational; to force, responder cuebids the opponent's suit.
+
+(1X)-D-
+1Y = unlimited
+1N = 8--10 hcp
+2Y = INV
+2X = F, 10+ hcp
+
+** Negative doubles
+
+Through 2!s, a double by responder after RHO's overcall promises 4+ cards (at
+least) in an unbid major and 6+ points; a new suit bid at the two level or higher
+instead shows 11+ points and a 5+ card suit.
+
+1C-(1D)-
+D = 6+ hcp, 4+!s, 4+!h
+2H = 11+ hcp, 5+!h
+2S = 11+ hcp, 5+!s
+
+1C-(1H)-
+D = 6+ hcp, 4=!s
+
+1C-(1S)-
+D = 4=!h and 6+ hcp or 5+!h and 5--10 hcp
+
+1D-(1H)-
+D = 6+ hcp, 4=!s
+
+1D-(1S)-
+D = 4=!h and 6+ hcp or 5+!h and 5--10 hcp
+
+** Responses to a double of our opening
+
+If RHO doubles our opening, a new suit response is forcing regardless of point
+count; a two-level bid is non-forcing (6--10, usually a six-card suit); 2NT is a
+limit raise or better; redouble shows 10+ points; a jump raise of our suit is
+preemptive with good support but fewer than 10 points; a jump shift is to play,
+showing a six-plus card suit.
+
+1D-(D)-
+1H = F
+1S = F
+2C = NF, 6--10 hcp
+2N = INV, 10+ hcp
+R = 10+ hcp
+3D = PRE, 6+!d
+2H = 6+!h
+2S = 6+!s
+3C = 6+!c
+
+1C-(D)-
+1D = F
+1H = F
+1S = F
+2N = INV, 10+ hcp
+R = 10+ hcp
+3C = PRE, 6+!c
+
+1H-(D)-
+1S = F
+2C = NF, 6--10 hcp
+2D = NF, 6--10 hcp
+2N = INV, 10+ hcp
+R = 10+ hcp
+3H = PRE, 6+!h
+
+1S-(D)-
+2C = NF, 6--10 hcp
+2D = NF, 6--10 hcp
+2H = NF, 6--10 hcp
+2N = INV, 10+ hcp
+R = 10+ hcp
+3S = PRE, 6+!s
+
+** Responses to an overcall and to Michaels/the unusual notrump
+
+A cuebid of opener's suit is the only forcing response to a simple overcall, and
+asks about the quality of the overcall. Over a major-suit Michaels cuebid, 2NT
+asks for the minor. If the opponents use a two-suited convention (Michaels or
+the unusual notrump) against our own opening, a double shows 10+ points
+(probably balanced), and cuebidding one of their known suits is a game force;
+which suit that is depends on what their cuebid showed, so it is spelled out per
+opening suit below rather than with a variable (see NOTES.md #14).
+
+(1X)-1Y-(P)-
+2X = F
+
+(1H)-2H-(P)-
+2N = F
+
+(1S)-2S-(P)-
+2N = F
+
+1H-(2H)-
+D = 10+ hcp
+3S = F
+
+1S-(2S)-
+D = 10+ hcp
+3H = F
+
+1C-(2C)-
+D = 10+ hcp
+3H = F
+3S = F
+
+1D-(2D)-
+D = 10+ hcp
+3H = F
+3S = F
+
+1X-(2N)-
+D = 10+ hcp
+
+** Balancing
+
+A reopening bid means much the same as a direct-seat bid, but it can be lighter,
+especially the takeout double and the 1NT overcall.
+
+(1X)-P-(P)-
+D = 8+ hcp
+1Y = 6--16 hcp, 4+#
+1N = 10--15 hcp, bal
+2Y = 6--16 hcp, 5+#

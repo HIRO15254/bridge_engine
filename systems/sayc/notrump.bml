@@ -1,0 +1,89 @@
+* Notrump openings
+
+Booklet sections "GENERAL APPROACH", "RESPONSES AND LATER BIDDING AFTER A 15--17 1NT
+OPENING", "INTERFERENCE AFTER A 1NT OPENING BID" and "RESPONSES TO A 2NT OR A 3NT
+OPENING". A notrump opening may contain a 5-card suit, even a major. 2NT and 3NT
+continue the same ladder (2NT = 20--21, 3NT = 25--27) and outrank 2!c for an
+equivalent balanced hand, since SAYC treats the direct notrump bid as the more
+specific call for those two ranges (see NOTES.md #2).
+
+1N = {prio:90} 15--17 hcp, bal
+2N = {prio:95} 20--21 hcp, bal
+3N = {prio:101} 25--27 hcp, bal
+
+** Responses to 1NT
+
+Stayman is non-forcing (the auction may stop in 2 of a suit); opener bids 2H with
+4-4 in the majors. Jacoby transfers are used for both majors; 2S is a minor-suit
+relay showing both minors (a lower-frequency convention many partnerships do
+not fully exploit, per the booklet's own annotation) -- opener must rebid 3C, and
+responder passes with clubs or corrects to 3D with diamonds (see NOTES.md #13).
+
+1N-
+2C = !STAY NF, 8+ hcp
+  2D = 0--3!s, 0--3!h
+  2H = {prio:1} 4+M
+  2S = {prio:0} 4+M
+2D = !TRF, 5+!h
+  2H = {prio:0} unlimited
+    P = 6--9 hcp
+    2N = INV, 6--9 hcp
+    3C = F, 5+!c
+    3D = F, 5+!d
+    3H = F, 5+!s
+    3N = CoG
+    4S = 6+!s
+  3H = {prio:1} MAX, 17 hcp, 4+!h
+2H = !TRF, 5+!s
+  2S = {prio:0} unlimited
+    P = 6--9 hcp
+    2N = INV, 6--9 hcp
+    3C = F, 5+!c
+    3D = F, 5+!d
+    3H = F, 5+!h
+    3N = CoG
+  3S = {prio:1} MAX, 17 hcp, 4+!s
+2S = !TRF, 5+5+ minors
+  3C = unlimited
+    P = 5+!c
+    3D = 5+!d
+3C = INV, 6+!c
+3D = INV, 6+!d
+3H = S/T, 6+!h
+3S = S/T, 6+!s
+4C = !BW
+4N = 16--17 hcp
+
+*** Interference over 1NT
+
+If an opponent doubles, Stayman and transfers stay on. If an opponent overcalls,
+Stayman and transfers are off (bids are natural) except that a cuebid of the
+overcaller's suit may substitute for Stayman with game-forcing strength. If the
+opponents intervene over a conventional response, a further voluntary bid keeps its
+normal meaning ("I have a real fit").
+
+1N-(D)-
+2C = !STAY NF, 8+ hcp
+2D = !TRF, 5+!h
+2H = !TRF, 5+!s
+
+1N-(1X)-
+2X = NAT
+2N = !cue, FG
+
+** Responses to 2NT and 3NT
+
+The same Stayman and Jacoby-transfer machinery is used one level higher for 2NT,
+and two levels higher for 3NT.
+
+2N-
+3C = !STAY, 5+M or INV+ 4M
+3D = !TRF, 5+!h
+3H = !TRF, 5+!s
+4C = !BW
+4N = 20--21 hcp
+
+3N-
+4C = !STAY, 5+M or INV+ 4M
+4D = !TRF, 5+!h
+4H = !TRF, 5+!s

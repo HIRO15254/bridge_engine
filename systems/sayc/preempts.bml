@@ -1,0 +1,69 @@
+* Opening preempts
+
+Booklet section "OPENING PREEMPTS": a 3- or 4-level opening tends toward sound at
+equal or unfavorable vulnerability (within two or three tricks of the bid) and
+lighter at favorable vulnerability (within four tricks). The booklet gives no
+numeric HCP/length table, so the ranges below (7 cards for a 3-level preempt, 8+
+for a 4-level preempt, all in the 5--10/11 HCP band) are an interpolation from the
+"rule of 2/3/4" and standard practice; see NOTES.md #5. Vulnerability itself is not
+part of the description vocabulary, so the trick-count discipline is left to the
+sampler/user rather than encoded here.
+
+3C = {prio:51} 7=!c, 5--9 hcp
+3D = {prio:52} 7=!d, 5--9 hcp
+3H = {prio:53} 7=!h, 5--9 hcp
+3S = {prio:54} 7=!s, 5--9 hcp
+4C = {prio:55} 8+!c, 5--10 hcp
+4D = {prio:56} 8+!d, 5--10 hcp
+4H = {prio:57} 8+!h, 5--10 hcp
+4S = {prio:58} 8+!s, 5--10 hcp
+
+** Responses to a 3-level preempt
+
+A raise is to play (further preemption); a new suit is forcing; 3NT is to play;
+4NT is Blackwood.
+
+3C-
+4C = unlimited
+3D = F
+3H = F
+3S = F
+3N = unlimited
+4N = !BW
+
+3D-
+4D = unlimited
+3H = F
+3S = F
+3N = unlimited
+4N = !BW
+
+3H-
+4H = unlimited
+3S = F
+3N = unlimited
+4N = !BW
+
+3S-
+4S = unlimited
+3N = unlimited
+4N = !BW
+
+** Responses to a 4-level preempt
+
+At the 4-level the only realistic continuations are to pass, raise further, or
+ask for aces.
+
+4C-
+5C = unlimited
+4N = !BW
+
+4D-
+5D = unlimited
+4N = !BW
+
+4H-
+4N = !BW
+
+4S-
+4N = !BW

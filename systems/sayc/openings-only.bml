@@ -1,0 +1,22 @@
+#+TITLE: SAYC openings only
+#+DESCRIPTION: SAYC restricted to opening bids (no responses, rebids or competitive auctions), for phase 3's consistency test
+#+AUTHOR: bridge_engine
+#+VERSION: 1.0
+#+STRENGTH: gf=25 inv=22-24 slam=31 strong=16 weak=9 opening=12 neg=7
+#+NATURAL: 1M=5 1m=3 1N=15-17 2N=20-21 weak2=6 overcall=5
+#+DISTPOINTS: 321
+#+TIEBREAK: row-order
+#+BALANCED: 4333 4432 5332
+#+CONVENTION: transfer=5 stayman=4M
+
+* SAYC (openings only)
+
+The same opening-bid rows as `sayc.bml`, without any of the response, rebid or
+competitive tables. Used by the phase 3 forward-consistency harness, which only
+needs opener's first call to be well defined for every hand.
+
+#INCLUDE openings.bml
+#INCLUDE notrump.bml
+#INCLUDE strong-2c.bml
+#INCLUDE weak-twos.bml
+#INCLUDE preempts.bml

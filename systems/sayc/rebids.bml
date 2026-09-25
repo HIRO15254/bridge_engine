@@ -1,0 +1,101 @@
+* Opener's rebids
+
+Booklet section "SUBSEQUENT BIDDING BY RESPONDER" and the rebid-strength framework
+under "RESPONSES AND LATER BIDDING AFTER A 1H OR A 1S OPENING": a minimum opener
+(13--15) rebids notrump at the lowest level, raises responder's suit at the
+lowest level, or bids a new suit without reversing; a medium opener (16--18)
+jump-raises, jump-rebids its own suit, or reverses (there is no reverse available
+in the 1!h-1!s auction itself, since spades already belongs to responder); a
+maximum opener (19--21) jumps in notrump, double-jumps, or jump-shifts. A new
+suit by responder after a one-level response is forcing one round; the fourth
+suit is artificial and forcing; a new suit after a 1NT rebid is non-forcing
+(a reverse or jump shift there is a game force); a jump preference to the three
+level after a two-over-one response is game forcing, and a plain 2-level new-suit
+response promises another bid unless opener's rebid is already at game.
+
+** After 1!h-1!s
+
+1H-1S-
+1N = 12--14 hcp, bal
+2H = 12--15 hcp, 5+!h
+2S = 12--15 hcp, 3+!s
+2C = 13--18 hcp, 4+!c
+2D = 13--18 hcp, 4+!d
+2N = 18--19 hcp, bal
+3H = 16--18 hcp, 6+!h
+3S = 16--18 hcp, 4+!s
+3C = 19--21 hcp, 5+!c
+3D = 19--21 hcp, 5+!d
+
+1H-1S-2C-
+P = 6--9 hcp
+2D = F
+2H = 6--9 hcp, 3+!h
+2S = 6--9 hcp, 5+!s
+2N = 10--11 hcp
+3H = 10--11 hcp, 3+!h
+3S = 10--11 hcp, 5+!s
+
+1H-1S-1N-
+2C = NF, 5+!c
+2D = NF, 5+!d
+3C = F, 5+!c
+3D = F, 5+!d
+
+** After 1!s-2!c
+
+1S-2C-
+2D = 13--18 hcp, 4+!d
+2H = 13--18 hcp, 4+!h
+2N = 18--19 hcp, bal
+2S = 12--15 hcp, 6+!s
+3C = 12--15 hcp, 3+!c
+3S = 16--18 hcp, 6+!s
+
+1S-2C-2H-
+2N = 10--11 hcp
+3C = 10--11 hcp, 3+!c
+3H = 10--11 hcp, 3+!h
+2S = 11--12 hcp, 2=!s
+3D = F
+3S = F
+
+** After a minor-suit response to a minor opening
+
+1C-1D-
+1H = 13--18 hcp, 4+!h
+1S = 13--18 hcp, 4+!s
+1N = 12--14 hcp, bal
+2C = 12--15 hcp, 5+!c
+2D = 12--15 hcp, 4+!d
+2N = 18--19 hcp, bal
+3C = 16--18 hcp, 6+!c
+3D = 16--18 hcp, 4+!d
+
+** After a major-suit response to a minor opening
+
+1C-1H-
+1S = 13--18 hcp, 4+!s
+1N = 12--14 hcp, bal
+2C = 12--15 hcp, 5+!c
+2D = 13--18 hcp, 4+!d
+2H = 12--15 hcp, 3+!h
+2N = 18--19 hcp, bal
+3C = 16--18 hcp, 6+!c
+3H = 16--18 hcp, 4+!h
+
+A reverse or a jump shift after opener's 1NT rebid is a game force (the
+booklet's own example is 1!c-1!h-1NT-2!s or 3!d).
+
+1C-1H-1N-
+2S = F
+3D = F
+
+1D-1H-
+1S = 13--18 hcp, 4+!s
+1N = 12--14 hcp, bal
+2D = 12--15 hcp, 5+!d
+2H = 12--15 hcp, 3+!h
+2N = 18--19 hcp, bal
+3D = 16--18 hcp, 6+!d
+3H = 16--18 hcp, 4+!h
