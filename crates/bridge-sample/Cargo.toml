@@ -28,6 +28,9 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+# Always available to tests (independent of the library's own optional `parallel` feature);
+# the determinism test itself is gated on `cfg(feature = "parallel")`.
+rayon = { workspace = true }
 
 [[bench]]
 name = "deals"
