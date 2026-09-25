@@ -12,6 +12,92 @@ use common::*;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use rand_xoshiro::rand_core::SeedableRng;
 
+// ================================================================================================
+// Phase 3.10: the same `policy_argmax_matches_choose_bid` property (07-bidding.md §6.1, §8), but
+// over positions from the real, compiled `systems/sayc/sayc.bml` reached by replaying `choose_bid`
+// itself (`common::random_sayc_position`, shared with `tests/consistency.rs`), rather than the
+// two hand-picked auctions against the small hand-built system above. `τ = 0.01` (near-greedy);
+// the task brief's own gate is 100% agreement, so this asserts every position, not a tolerance
+// band over a sampled fraction.
+// ================================================================================================
+
+fn sayc_ctx(table: &bridge_bidding::Table) -> BidContext<'_> {
+    BidContext {
+        scoring: Scoring::Imp,
+        natural: Some(table.natural.as_ref()),
+        implicit_pass: ImplicitPass::Complement,
+        policy: PolicyParams {
+            temperature: 0.01,
+            epsilon: 1e-3,
+        },
+    }
+}
+
+/// Runs the property over `n` positions on the real, compiled SAYC system and returns how many
+/// were actually checked (a `NoCandidate` position has nothing to compare, exactly as
+/// `check_position` above already treats it).
+fn run_sayc_policy_check(n: u64, seed: u64) -> u64 {
+    let table = common::compile_sayc("sayc.bml");
+    let ctx = sayc_ctx(&table);
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+    let mut checked = 0u64;
+
+    for _ in 0..n {
+        let (deal, auction) =
+            std::iter::repeat_with(|| common::random_sayc_position(&mut rng, &table, &ctx))
+                .find(|(_, auction)| !auction.is_complete())
+                .expect("random_sayc_position eventually yields an incomplete auction");
+        let seat = auction.next_seat();
+        let hand = deal.hand(seat);
+        let system = &table.systems[seat.index() as usize];
+
+        let choice = choose_bid(system, hand, &auction, &ctx);
+        let Some(expected) = choice.call() else {
+            continue; // NoCandidate: nothing to compare, as above.
+        };
+
+        let dist = call_distribution(system, hand, &auction, &ctx);
+        let p_max = dist
+            .iter()
+            .map(|(_, p)| *p)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let p_chosen = dist
+            .iter()
+            .find(|(c, _)| *c == expected)
+            .map(|(_, p)| *p)
+            .unwrap_or_else(|| {
+                panic!("choose_bid picked {expected:?}, not among call_distribution's legal_calls")
+            });
+        assert!(
+            (p_chosen - p_max).abs() < 1e-3,
+            "choose_bid picked {expected:?} with p={p_chosen}, but max p over the distribution \
+             is {p_max} for hand {hand:?} at {auction}"
+        );
+        checked += 1;
+    }
+    checked
+}
+
+/// Non-`#[ignore]`d, debug-friendly version (task brief: 10^3 positions, 100% agreement).
+#[test]
+fn sayc_policy_argmax_matches_choose_bid_1e3() {
+    let checked = run_sayc_policy_check(1_000, 0x5A1C_1001);
+    assert!(checked > 0, "no position had a Chosen candidate to compare");
+}
+
+/// The 10^5-position release version (task brief).
+#[test]
+#[ignore = "10^5 positions; run with `cargo test --release -- --ignored`"]
+fn sayc_policy_argmax_matches_choose_bid_1e5() {
+    let started = std::time::Instant::now();
+    let checked = run_sayc_policy_check(100_000, 0x5A1C_1002);
+    eprintln!(
+        "sayc_policy_argmax_matches_choose_bid_1e5: {checked} position(s) checked in {:?}",
+        started.elapsed()
+    );
+    assert!(checked > 0, "no position had a Chosen candidate to compare");
+}
+
 const TRIALS_PER_POSITION: usize = 5_000;
 
 fn ctx() -> BidContext<'static> {
