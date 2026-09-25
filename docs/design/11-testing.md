@@ -22,6 +22,7 @@
 | サンプラー一般経路の draw χ² (単一スート `cards` 制約、`Controls` 加法特徴、`fixed` 併用。§4) | `bridge-constraint` `tests/sampler_chi_square.rs` | unit χ² (10^5 サンプル、全列挙との比較) | p ≥ 0.001、抽出手が全て厳密な上位集合に属する |
 | サンプラーベンチ (`Sampler::sample`、`prepare`) | `bridge-constraint` `benches/sampler.rs` | criterion | ≥ 10^5 手/秒/コア、`prepare` 20〜60 μs |
 | BML 実ファイル約 40 本のパース | `bridge-system` `tests/parse_real.rs` | 統合 (`systems/vendor/data/` 取得時) | Error lint 0、AST スナップショット一致 |
+| BML 実ファイル全 54 本の説明文コンパイル (roadmap 3.2-3.4) | `bridge-system` `tests/compile_real.rs` | 統合 (取得時) | `Error` lint の集合が `tests/data/real_expected_errors.txt` (`<path>\t<line>\t<code>\t<reason>`) と完全一致。新規の `Error` も、期待ファイルの陳腐化したエントリも失敗。現在 64 件で、各エントリはソースファイル自体の矛盾 (class b) か、既知のコンパイラ/語彙ギャップとして記録された未対応分 (class c)。修正可能だったコンパイラのバグ (class a) は全て直し、回帰テストを追加済み (`#INCLUDE` 先の誤帰属を含む、`tests/compile_real.rs`/`tests/common/mod.rs` 自体のバグも修正: `lint.span.file` をルートファイルのパスと取り違えていた)。トリアージ全件は `tests/data/real_lint_triage.md` (原因ごとにグループ化、file:line・行・lint・分類) |
 | BML 展開 == `.bss` 期待出力 (§5) | `bridge-system` `tests/bss_oracle.rs` | 統合 (取得時) | 一致 |
 | 説明文コンパイラの認識率 | `bridge-system` `tests/recognition.rs` | 統合 (取得時) | jdh8 ≥ 0.65、gpaulissen ≥ 0.5 |
 | `Custom` 非生成 (R10) | `bridge-system` `tests/no_custom.rs` | 統合 | 全ファイルで `Custom` 0、`postcard` 往復一致 |

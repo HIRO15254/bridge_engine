@@ -80,6 +80,13 @@ fn join_path(base: &str, path: &str) -> String {
 }
 
 fn normalize_path(path: &str) -> String {
+    // An empty split segment appears both for a leading `/` (absolute path) and for a doubled
+    // `//` in the middle; the `"" | "."` arm below drops both the same way, which used to also
+    // silently drop the leading slash of an absolute `root_path` (any real filesystem path,
+    // typically -- `#INCLUDE` targets computed from it then read back as a *relative*-looking
+    // path missing its leading `/`, corrupting every file-table entry downstream of the first
+    // `#INCLUDE`). Preserve it explicitly instead.
+    let absolute = path.starts_with('/');
     let mut out: Vec<&str> = Vec::new();
     for seg in path.split('/') {
         match seg {
@@ -90,7 +97,12 @@ fn normalize_path(path: &str) -> String {
             seg => out.push(seg),
         }
     }
-    out.join("/")
+    let joined = out.join("/");
+    if absolute {
+        format!("/{joined}")
+    } else {
+        joined
+    }
 }
 
 /// Loads `root` and resolves includes recursively (cycle guard, depth ≤ 16).
@@ -259,6 +271,29 @@ mod tests {
         assert_eq!(loaded.lints.len(), 1);
         assert_eq!(loaded.lints[0].code, LintCode::IncludeCycle);
         assert_eq!(loaded.lints[0].severity, crate::Severity::Error);
+    }
+
+    // Regression: an absolute root path (the normal case for `FsLoader`, e.g. `compile_real`'s
+    // vendored-file walk) used to have its `#INCLUDE`d files' resolved path silently lose its
+    // leading `/` (`normalize_path`'s `""` arm, meant only to drop `//` and `.` segments,
+    // previously dropped the leading-slash split artifact of an absolute path the same way).
+    #[test]
+    fn included_files_keep_the_root_paths_leading_slash() {
+        let mem = MemLoader {
+            files: vec![(
+                "/vendor/data/jdh8/blue/1C.bml".to_string(),
+                "1C  Included\n".to_string(),
+            )],
+        };
+        let loaded = load(
+            "/vendor/data/jdh8/blue.bml",
+            "1C  Any hand\n#INCLUDE blue/1C.bml\n",
+            &mem,
+        );
+        assert!(loaded.lints.is_empty(), "{:?}", loaded.lints);
+        assert_eq!(loaded.files.len(), 2);
+        assert_eq!(loaded.files[0].0.as_ref(), "/vendor/data/jdh8/blue.bml");
+        assert_eq!(loaded.files[1].0.as_ref(), "/vendor/data/jdh8/blue/1C.bml");
     }
 
     #[test]

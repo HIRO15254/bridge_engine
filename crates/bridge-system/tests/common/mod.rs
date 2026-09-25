@@ -73,6 +73,43 @@ pub fn compile_guarded(
     }
 }
 
+/// Same as [`compile_guarded`], but also returns the path per [`bridge_system::ast::FileId`]
+/// (the root file, then every `#INCLUDE`d file in load order) -- needed to resolve a lint's
+/// `span.file` back to the file it actually names, since an included file's lints carry its own
+/// `FileId`, not the root's. Loads the source a second time (once here for the file table via
+/// `lexer::load`, once inside `compile` itself); both loads are deterministic over the same
+/// bytes, so the two file tables always agree on order.
+pub fn compile_guarded_with_files(
+    path: &std::path::Path,
+    opts: &bridge_system::CompileOptions,
+) -> Option<(bridge_system::SystemIR, Vec<String>)> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let path_str = path.to_string_lossy().into_owned();
+    let loaded = bridge_system::lexer::load(&path_str, &text, &bridge_system::lexer::FsLoader);
+    let files: Vec<String> = loaded
+        .files
+        .iter()
+        .map(|(p, _)| p.as_ref().to_string())
+        .collect();
+
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        bridge_system::compile(&path_str, &text, &bridge_system::lexer::FsLoader, opts)
+    }));
+    std::panic::set_hook(prev_hook);
+    match result {
+        Ok((ir, _lints)) => Some((ir, files)),
+        Err(payload) => {
+            if panic_looks_like_todo(&payload) {
+                None
+            } else {
+                std::panic::resume_unwind(payload);
+            }
+        }
+    }
+}
+
 /// True when a caught panic payload's message contains the boilerplate `todo!()`/
 /// `unimplemented!()` wording, as opposed to a genuine assertion or logic-error message.
 fn panic_looks_like_todo(payload: &(dyn std::any::Any + Send)) -> bool {

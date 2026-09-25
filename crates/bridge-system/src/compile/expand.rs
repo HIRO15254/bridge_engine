@@ -76,7 +76,42 @@ pub(crate) fn expand_file(
         }
         expand_table(table, meta, opts, &mut ex);
     }
+    demote_illegal_call_for_bindings_that_succeeded(&mut ex);
     ex
+}
+
+/// An exact row nested under a variable-bound ancestor (a history token, or a `Var`/`Strains`
+/// pattern higher in the tree) is expanded once per binding the ancestor can take, and the row's
+/// own call can be illegal for some of those bindings while sufficient for others (`docs/design/
+/// 06-system.md` §4.2 point 3's example: under `1C-(1X)-`, the child row `1H` is only illegal
+/// when `X` is bound to `H` or `S`; for `X = C`/`D` the same row is a perfectly legal, intended
+/// bid). `expand_row` cannot tell the two cases apart at the point it discovers one binding is
+/// illegal -- it does not yet know whether a sibling binding of the same ancestor will later
+/// succeed for this row -- so it always records the finding, and this pass demotes it after the
+/// fact once every binding has been tried: a row that has at least one successful expansion
+/// anywhere in the file had its `IllegalCall` correctly authored (the author meant the *reachable*
+/// bindings), so the illegal ones are downgraded to `Info` the way `bss.py` silently drops them,
+/// keeping `Error` only for a row that never expands under any binding.
+fn demote_illegal_call_for_bindings_that_succeeded(ex: &mut Expansion) {
+    let rows_with_a_success: std::collections::HashSet<RowId> = ex
+        .rows
+        .iter()
+        .filter(|row| !row.expansions.is_empty())
+        .map(|row| row.id)
+        .collect();
+    for lint in &mut ex.lints {
+        if lint.code != LintCode::IllegalCall {
+            continue;
+        }
+        let Some(row_id) = lint.row else { continue };
+        if rows_with_a_success.contains(&row_id) {
+            lint.severity = crate::Severity::Info;
+            lint.message = format!(
+                "{} (legal for at least one other binding of this row; dropped)",
+                lint.message
+            );
+        }
+    }
 }
 
 /// The state threaded down one path of the expansion tree.
@@ -970,8 +1005,22 @@ fn build_or_reuse_node(
         .map(|id| &ex.nodes[id.0 as usize]);
     let their_last_bid = opponents_last_bid(&next_frame.auction, seat_now);
     let bid_suit = call.bid().and_then(|b| b.strain().suit());
-    let partner_bid_this_suit = bid_suit.is_some()
-        && partner_last.is_some_and(|n| n.call.bid().and_then(|b| b.strain().suit()) == bid_suit);
+    // Partner's call only agrees `bid_suit` when it actually shows length there: a bare
+    // same-strain call is not enough on its own (`docs/design/06-system.md` §7.5's
+    // `partner_len_min = partner_last.constraint.suit_len(agreed).start`). Two guards, both
+    // needed: `!artificial` rules out relays/asks that name a suit only as a code (a puppet or a
+    // step response), and the length check rules out a *non*-artificial call that mentions the
+    // strain while showing shortness or the other hand's suits there (e.g. opener's `2S` over
+    // `1C-1D-2S = 16+, 5+!c and 4+!h`, which is clubs-and-hearts, not spades). Without the length
+    // guard a later splinter in that same strain would wrongly agree it and AND its own
+    // shortness claim against a phantom length requirement, contradicting itself.
+    let partner_bid_this_suit = bid_suit.is_some_and(|suit| {
+        partner_last.is_some_and(|n| {
+            !n.flags.artificial
+                && n.call.bid().and_then(|b| b.strain().suit()) == Some(suit)
+                && *n.constraint.suit_len(suit).start() >= 3
+        })
+    });
     let agreed_suit = if partner_bid_this_suit {
         bid_suit
     } else {
@@ -1699,6 +1748,134 @@ mod tests {
         );
     }
 
+    // Regression for the real-file triage (roadmap 3.2-3.4, class a/c):
+    // `docs/design/06-system.md` §4.2 point 3's own example, built directly as AST literals:
+    // `1C-(1X)-1H` (jdh8/blue/1C.bml). `X` (`Var::X`) excludes clubs (already used by our own
+    // `1C`), so it has three candidates D/H/S, all sufficient bids over `1C` themselves. The
+    // child row `1H` is then only a *legal* continuation when `X = D` (`H` outranks `D` at the
+    // same level); over `X = H` it repeats the same call (insufficient) and over `X = S` it is a
+    // lower strain at the same level (also insufficient) -- both illegal.
+    #[test]
+    fn illegal_call_is_demoted_to_info_when_a_sibling_binding_of_the_same_row_succeeds() {
+        let their_x = test_row(
+            vec![tok(
+                Side::Them,
+                CallPattern::Var {
+                    level: Level::At(1),
+                    var: Var::X,
+                },
+                "1X",
+            )],
+            "",
+            vec![test_row(
+                vec![exact_tok(
+                    Side::Us,
+                    Call::Bid(Bid::new(1, Strain::Hearts).unwrap()),
+                    "1H",
+                )],
+                "F, 4=!h",
+                Vec::new(),
+            )],
+        );
+        let table = test_table(
+            SeatCond::Any,
+            vec![exact_tok(
+                Side::Us,
+                Call::Bid(Bid::new(1, Strain::Clubs).unwrap()),
+                "1C",
+            )],
+            vec![their_x],
+        );
+
+        let ex = expand(&[&table]);
+
+        let child_row = ex
+            .rows
+            .iter()
+            .find(|r| r.description_raw == "F, 4=!h")
+            .expect("the 1H row");
+        assert_eq!(
+            child_row.expansions.len(),
+            1,
+            "only X = D makes 1H a sufficient (legal) bid"
+        );
+
+        let illegal_lints: Vec<&Lint> = ex
+            .lints
+            .iter()
+            .filter(|l| l.code == LintCode::IllegalCall && l.row == Some(child_row.id))
+            .collect();
+        assert_eq!(
+            illegal_lints.len(),
+            2,
+            "X = H and X = S both make 1H illegal"
+        );
+        for lint in illegal_lints {
+            assert_eq!(
+                lint.severity,
+                crate::Severity::Info,
+                "demoted: a sibling binding (X = D) of this same row did succeed"
+            );
+        }
+    }
+
+    // Same family, opposite outcome: when a row is illegal under *every* binding of its
+    // variable-bound ancestor, `IllegalCall` must stay `Error` (nothing to demote it against).
+    // The child here re-bids `1C`, our own opening's own strain: `X` never binds to clubs (already
+    // used), so every one of its three candidates (D/H/S) outranks clubs at the same level, making
+    // a bare `1C` repeat insufficient regardless of which one X took.
+    #[test]
+    fn illegal_call_stays_an_error_when_no_binding_of_the_row_ever_succeeds() {
+        let their_x = test_row(
+            vec![tok(
+                Side::Them,
+                CallPattern::Var {
+                    level: Level::At(1),
+                    var: Var::X,
+                },
+                "1X",
+            )],
+            "",
+            vec![test_row(
+                vec![exact_tok(
+                    Side::Us,
+                    Call::Bid(Bid::new(1, Strain::Clubs).unwrap()),
+                    "1C",
+                )],
+                "never legal",
+                Vec::new(),
+            )],
+        );
+        let table = test_table(
+            SeatCond::Any,
+            vec![exact_tok(
+                Side::Us,
+                Call::Bid(Bid::new(1, Strain::Clubs).unwrap()),
+                "1C",
+            )],
+            vec![their_x],
+        );
+
+        let ex = expand(&[&table]);
+
+        let child_row = ex
+            .rows
+            .iter()
+            .find(|r| r.description_raw == "never legal")
+            .expect("the re-bid 1C row");
+        assert_eq!(child_row.expansions.len(), 0);
+
+        let illegal_lints: Vec<&Lint> = ex
+            .lints
+            .iter()
+            .filter(|l| l.code == LintCode::IllegalCall && l.row == Some(child_row.id))
+            .collect();
+        assert_eq!(illegal_lints.len(), 3, "all of X = D/H/S make 1C illegal");
+        for lint in illegal_lints {
+            assert_eq!(lint.severity, crate::Severity::Error);
+        }
+    }
+
     #[test]
     fn overlapping_equal_specificity_vul_conditions_across_tables_report_condition_tie() {
         // Two tables both define the opening `1C`, under different but overlapping, equally
@@ -1860,6 +2037,67 @@ mod tests {
             .find(|n| n.call == two_hearts)
             .expect("2H node exists");
         assert_eq!(node.flags.agreed_suit, Some(Suit::Hearts));
+    }
+
+    /// Regression for `systems/vendor/data/bml-test/data/example3.bml:27`'s `1C-1D-2S / 3S
+    /// Splinter`: `2S` is a two-suiter ("5+!c and 4+!h") that happens to share its strain with
+    /// the row's own later `3S` call, but never shows *spade* length. `partner_bid_this_suit`
+    /// must not agree spades from that same-strain coincidence alone (it previously did,
+    /// producing `suit_len[S] >= 4` ANDed against the splinter's own `suit_len[S] <= 1`, an
+    /// unsatisfiable contradiction that was wrongly attributed to the source file rather than to
+    /// this compiler bug).
+    #[test]
+    fn splinter_does_not_agree_partners_same_strain_call_with_no_shown_length_there() {
+        let opening = exact_tok(
+            Side::Us,
+            Call::Bid(Bid::new(1, Strain::Clubs).unwrap()),
+            "1C",
+        );
+        let overcall = exact_tok(
+            Side::Them,
+            Call::Bid(Bid::new(1, Strain::Diamonds).unwrap()),
+            "1D",
+        );
+        let rebid = exact_tok(
+            Side::Us,
+            Call::Bid(Bid::new(2, Strain::Spades).unwrap()),
+            "2S",
+        );
+        let splinter = exact_tok(
+            Side::Us,
+            Call::Bid(Bid::new(3, Strain::Spades).unwrap()),
+            "3S",
+        );
+        let table = test_table(
+            SeatCond::Any,
+            vec![opening, overcall],
+            vec![test_row(
+                vec![rebid],
+                "16+ hcp, 5+!c and 4+!h",
+                vec![test_row(vec![splinter], "Splinter", Vec::new())],
+            )],
+        );
+
+        let ex = expand(&[&table]);
+
+        let three_spades = Call::Bid(Bid::new(3, Strain::Spades).unwrap());
+        let node = ex
+            .nodes
+            .iter()
+            .find(|n| n.call == three_spades)
+            .expect("3S node exists");
+        assert!(
+            node.constraint.is_satisfiable(),
+            "3S's splinter must not agree spades from 2S's same-strain call alone: {:?}",
+            node.constraint
+        );
+        assert!(
+            !ex.lints
+                .iter()
+                .any(|l| l.code == LintCode::UnsatisfiableConstraint),
+            "unexpected UnsatisfiableConstraint: {:?}",
+            ex.lints
+        );
     }
 
     #[test]

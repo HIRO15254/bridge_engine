@@ -21,7 +21,7 @@ use bridge_constraint::{Atom, DnfOptions, DnfTerm, HandConstraint};
 
 use self::{
     clause::{Clause, Fragment, FragmentKind},
-    context::{Provenance, RowContext},
+    context::{Provenance, RowContext, own_suit, suit_len_pins},
     tokens::{StrengthWord, Token},
 };
 use crate::{Lint, LintCode, NodeFlags, Recognition, Severity, SystemMeta};
@@ -73,6 +73,62 @@ pub fn compile_description(text: &str, ctx: &RowContext<'_>, meta: &SystemMeta) 
         })
         .collect();
     let (atoms, provs) = context::resolve(&pass1_tokens, ctx, meta);
+    // Pass 2 can resolve a context-dependent strength word (`INV`, `MIN`, `S/T`, …) to an HCP
+    // range that contradicts a number the author wrote out explicitly in the same description
+    // (`docs/design/06-system.md` §7.5's "衝突は明示が勝つ" rule, generalized from `NAT` to every
+    // `Strength` word): e.g. jdh8's `3C = INV, 7+!c, 4--7 HCP` states its own 4--7 HCP range, so
+    // `INV`'s context-derived range must not be ANDed against it (that would make the row
+    // unsatisfiable whenever the two disagree). An explicit `Hcp`/`Points` fragment anywhere in
+    // the description means every `Strength` word's HCP contribution is dropped (treated as
+    // `Atom::ANY`, which `build` already elides): the explicit number is what the author meant to
+    // constrain the hand by, and the strength word's own atom would only ever narrow or
+    // contradict it. This does not touch a `Strength` word's other effects (`NodeFlags` from
+    // `derive_flags`, e.g. `GF` still implies `Forcing::ToGame`), only the HCP atom this pass
+    // would otherwise have produced from it.
+    let has_explicit_number = pass1_tokens
+        .iter()
+        .any(|t| matches!(t, Token::Hcp(_) | Token::Points(_)));
+    let atoms: Vec<Atom> = if has_explicit_number {
+        pass1_tokens
+            .iter()
+            .zip(atoms)
+            .map(|(tok, atom)| {
+                if matches!(tok, Token::Strength(_)) {
+                    Atom::ANY
+                } else {
+                    atom
+                }
+            })
+            .collect()
+    } else {
+        atoms
+    };
+
+    // `NAT` itself is the origin of the "衝突は明示が勝つ" rule generalized above, but never
+    // implemented it for its own suit-length atom: `resolve_natural` always ANDs
+    // `suit_len[call's suit] >= natural_suit_length` (5 by default), even when the row states its
+    // own length for that suit explicitly (e.g. gjp's `NAT, normally 4!s`, or an `at least 4!c`
+    // read as an exact 4). An explicit `SuitLen`/`Shape` fragment that pins the length of NAT's
+    // own suit means the author already said what that length is; `NAT`'s assumed minimum must
+    // not additionally AND against it (unsatisfiable whenever the two disagree, e.g. a 5+ default
+    // against a stated 4).
+    let nat_suit_pinned_explicitly =
+        own_suit(ctx).is_some_and(|suit| pass1_tokens.iter().any(|t| suit_len_pins(t, suit, ctx)));
+    let atoms: Vec<Atom> = if nat_suit_pinned_explicitly {
+        pass1_tokens
+            .iter()
+            .zip(atoms)
+            .map(|(tok, atom)| {
+                if matches!(tok, Token::Natural) {
+                    Atom::ANY
+                } else {
+                    atom
+                }
+            })
+            .collect()
+    } else {
+        atoms
+    };
 
     let mut resolved: Vec<Option<(Atom, Provenance)>> = vec![None; fragments.len()];
     for ((&idx, atom), mut prov) in token_indices.iter().zip(atoms).zip(provs) {
@@ -603,6 +659,65 @@ mod tests {
         let compiled = compile_description("5+!c {w:0.6} or 4+!h {w:0.4} {prio:2}", &c, &meta);
         assert_eq!(compiled.priority, 2);
         assert_eq!(compiled.branch_weights, Some(vec![0.6, 0.4]));
+    }
+
+    // Regression for the real-file triage (roadmap 3.2-3.4, class a): jdh8's `3C = INV, 7+!c,
+    // 4--7 HCP` states its own HCP range, but with an assumed opening partner (12..=21, since
+    // there is no `partner_last` here) `INV`'s context-derived range is 22-12=10 .. 24-12=12 --
+    // disjoint from the author's own 4-7, so ANDing both (as Pass 2 used to) made the whole row
+    // `Unsatisfiable`. The explicit number must win: `INV`'s HCP atom is dropped, not intersected.
+    #[test]
+    fn explicit_hcp_wins_over_a_conflicting_context_strength_word() {
+        let binding = Binding::default();
+        let c = ctx(&binding, Call::Pass, Role::Responder);
+        let meta = SystemMeta::default();
+        let compiled = compile_description("INV, 7+!c, 4-7 hcp", &c, &meta);
+        assert_eq!(compiled.constraint.hcp_range(), 4..=7);
+        assert!(
+            compiled.constraint.is_satisfiable(),
+            "explicit range must win, not be ANDed with INV's contradicting context range"
+        );
+
+        // Sanity: without the explicit HCP fragment, INV's context range is exactly the
+        // conflicting 10..=12 this test relies on, so the fix is actually exercised above.
+        let inv_only = compile_description("INV", &c, &meta);
+        assert_eq!(inv_only.constraint.hcp_range(), 10..=12);
+    }
+
+    // Regression for gjp/common/1m-2m.bml:9 and its siblings (real_lint_triage.md): `NAT` never
+    // implemented the "衝突は明示が勝つ" rule for its own suit length, so `1H-1S / 2S = NAT, 4=!s`
+    // ANDed NAT's assumed 4+ minimum (`Role::Opener` at level 2 defaults to 5, well past the
+    // stated 4) against the row's own exact `4=!s`, making the row unsatisfiable no matter which
+    // number the author actually wrote.
+    #[test]
+    fn explicit_suit_length_wins_over_nats_own_assumed_minimum() {
+        let binding = Binding::default();
+        let c = ctx(
+            &binding,
+            Call::Bid(Bid::new(2, Strain::Spades).unwrap()),
+            Role::Opener,
+        );
+        let meta = SystemMeta::default();
+        let compiled = compile_description("NAT, 4=!s", &c, &meta);
+        assert_eq!(
+            compiled.constraint.suit_len(bridge_core::Suit::Spades),
+            4..=4
+        );
+        assert!(
+            compiled.constraint.is_satisfiable(),
+            "the row's own exact spade length must win, not be ANDed with NAT's assumed minimum"
+        );
+
+        // Sanity: bare `NAT` here really does default to a longer minimum than 4, so the fix is
+        // actually exercised above.
+        let nat_only = compile_description("NAT", &c, &meta);
+        assert!(
+            *nat_only
+                .constraint
+                .suit_len(bridge_core::Suit::Spades)
+                .start()
+                > 4
+        );
     }
 
     #[test]

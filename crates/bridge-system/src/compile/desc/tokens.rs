@@ -366,6 +366,17 @@ fn match_length_or_metric(s: &str) -> Option<(Token, usize)> {
     // `N-M ...`: a range.
     if let Some(rest2) = rest.strip_prefix('-') {
         let (n2, l2) = parse_number(rest2)?;
+        // A descending pair (`n1 > n2`) is not a range at all -- most often the leading half of a
+        // two-suit shape shorthand missing its group word (`gjp/common/1C.bml`'s `3C = variant 2,
+        // 5-4`, meant as "5 cards in one major, 4 in the other" and left implicit by the
+        // surrounding prose, not a real numeric range). Accepting it as `n1..=n2` here would hand
+        // `Atom::ANY`'s `hcp`/length field a `RangeInclusive` that can never be satisfied (`5..=4`
+        // matches no value at all), silently turning stray prose into an always-false constraint.
+        // Refusing the match here instead lets the fragment fall through to `Unrecognized` (it
+        // still counts against the recognition ratio, correctly, since it *is* unrecognised).
+        if n1 > n2 {
+            return None;
+        }
         consumed += 1 + l2;
         let after = &rest2[l2..];
         if let Some((suitref, l3)) = parse_suit_ref_ws(after) {
@@ -599,6 +610,20 @@ fn match_full_shape(s: &str) -> Option<(ShapeSet, usize)> {
     }
     if slots.len() != 4 {
         return None;
+    }
+    // A fully digit-specified pattern (no `x` wildcard anywhere, grouped or not) names an exact
+    // 13-card distribution; reject one whose digits do not sum to 13, so that an unrelated
+    // 4-digit numeral elsewhere in the vocabulary (RKCB step-response codes like `0314`, a year
+    // fragment, …) is not mistaken for a hand shape. A pattern with any `x` is a genuine partial
+    // shape (the remaining cards are unspecified) and is left unvalidated as before.
+    if slots.iter().all(|slot| slot.digit.is_some()) {
+        let sum: u32 = slots
+            .iter()
+            .map(|slot| u32::from(slot.digit.unwrap()))
+            .sum();
+        if sum != 13 {
+            return None;
+        }
     }
 
     let mut acc = ShapeSet::ALL;
@@ -1039,6 +1064,44 @@ mod tests {
         assert_eq!(rec("5+ M"), Token::SuitLen(SuitRef::AnyMajor, 5..=13));
         assert_eq!(rec("4+m"), Token::SuitLen(SuitRef::AnyMinor, 4..=13));
         assert_eq!(rec("4M"), Token::SuitLen(SuitRef::AnyMajor, 4..=4));
+    }
+
+    // Regression for the real-file triage (roadmap 3.2-3.4, class a): gjp's `3C = variant 2,
+    // 5-4` means "5 in one major, 4 in the other" (a two-suit shape shorthand missing its group
+    // word), not a numeric range -- `n1 > n2` can never be satisfied as `n1..=n2`. Before this
+    // guard it matched as `Token::SuitLen`/a length metric with an always-empty range, silently
+    // turning stray prose into an always-false constraint instead of falling through to
+    // `Unrecognized` (still counted against the recognition ratio, correctly, since it *is*
+    // unrecognised).
+    #[test]
+    fn descending_numeric_range_is_not_a_valid_range() {
+        assert!(match_length_or_metric("5-4").is_none());
+        assert!(match_length_or_metric("5-4 hcp").is_none());
+        assert!(match_length_or_metric("5-4♣").is_none());
+        // A genuine ascending range still matches, and an equal pair still matches too (as an
+        // exact 1-value "range").
+        assert!(match_length_or_metric("4-5 hcp").is_some());
+        assert!(match_length_or_metric("5-5 hcp").is_some());
+    }
+
+    // Regression for the real-file triage (roadmap 3.2-3.4, class a): a fully digit-specified
+    // pattern (no `x` wildcard) names an exact 13-card distribution. Before this guard, an
+    // unrelated 4-digit numeral elsewhere in the vocabulary (an RKCB step-response code, a year
+    // fragment, …) whose digits do not sum to 13 was still accepted as a `Shape`, contradicting
+    // the row's own explicit suit-length fragments once resolved.
+    #[test]
+    fn full_shape_digits_must_sum_to_thirteen() {
+        assert!(
+            match_full_shape("4432").is_some(),
+            "4+4+3+2 = 13: a real shape"
+        );
+        assert!(
+            match_full_shape("0314").is_none(),
+            "an RKCB step-response code (sums to 8), not a shape"
+        );
+        assert!(match_full_shape("9999").is_none(), "sums to 36");
+        // A pattern with any `x` wildcard is a genuine partial shape and stays unvalidated.
+        assert!(match_full_shape("44xx").is_some());
     }
 
     #[test]
