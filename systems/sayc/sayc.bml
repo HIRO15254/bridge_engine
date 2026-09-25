@@ -1,0 +1,36 @@
+#+TITLE: SAYC (Standard American Yellow Card)
+#+DESCRIPTION: ACBL Standard American Yellow Card, as documented in the ACBL SAYC System Booklet (revised January 2006)
+#+AUTHOR: bridge_engine
+#+VERSION: 1.0
+#+STRENGTH: gf=25 inv=22-24 slam=31 strong=16 weak=9 opening=12 neg=7
+#+NATURAL: 1M=5 1m=3 1N=15-17 2N=20-21 weak2=6 overcall=5
+#+DISTPOINTS: 321
+#+TIEBREAK: row-order
+#+BALANCED: 4333 4432 5332
+#+CONVENTION: transfer=5 stayman=4M
+
+* SAYC
+
+Standard American Yellow Card: five-card majors, a strong (15--17) 1NT, a strong
+artificial 2!c, weak two-bids in the three lower suits, Stayman, Jacoby transfers,
+standard Blackwood, negative doubles, Michaels cuebids, and the unusual notrump.
+See `systems/sayc/NOTES.md` for the places where the booklet leaves room for judgment
+and the choices this file makes there.
+
+#INCLUDE openings.bml
+
+#INCLUDE notrump.bml
+
+#INCLUDE strong-2c.bml
+
+#INCLUDE weak-twos.bml
+
+#INCLUDE preempts.bml
+
+#INCLUDE responses-major.bml
+
+#INCLUDE responses-minor.bml
+
+#INCLUDE rebids.bml
+
+#INCLUDE competition.bml

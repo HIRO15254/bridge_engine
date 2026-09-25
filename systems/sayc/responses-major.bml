@@ -1,0 +1,53 @@
+* Responses to a major-suit opening
+
+Booklet section "RESPONSES AND LATER BIDDING AFTER A 1H OR A 1S OPENING". A new
+suit at the one level shows 4+ cards and 6+ points; 1NT is 6--9 and non-forcing;
+a 2/1 new suit shows 10+ points and (ordinarily) 4+ cards, except that a response
+of 2!h over 1!s specifically needs a fifth heart (the booklet's own annotation);
+a single raise is 6--10 dummy points with 3+ trumps; 2NT is the Jacoby 2NT
+game-forcing raise (13+ points, 4+ trumps); jump shifts show a new suit without
+support and invite a slam (17+ points); a limit raise is 10--11 with 3+ trumps;
+3NT shows a balanced 15--17 with only two-card support; the direct raise to game
+shows 0--9 points with 5+ trumps and shortness elsewhere (a "shutout" raise).
+
+Several of these calls overlap on a hand that also has 4+ card support for
+opener (for example 10+ hcp with both a new suit and a fit): SAYC's own
+priority is to show the fit first, so the more descriptive support-showing
+bid outranks a plain new suit here ({prio:N}, high to low: Jacoby 2NT, jump
+shift, limit raise, 2/1 new suit, one-level new suit, everything else). The
+non-forcing notrump response and the single raise sit at the same default
+priority and both cover the 6--9 hcp band, so the notrump response excludes
+3+ card support (`not 3+!h`/`not 3+!s`) rather than relying on row order,
+letting a 6--9 hcp hand with trump support raise instead of bidding notrump.
+
+** After 1!h
+
+1H-
+2N = {prio:5} F, 13+ hcp, 4+!h
+2S = {prio:4} F, 17+ hcp, 5+!s, not 3+!h
+3C = {prio:4} F, 17+ hcp, 5+!c, not 3+!h
+3D = {prio:4} F, 17+ hcp, 5+!d, not 3+!h
+3H = {prio:3} 10--11 hcp, 3+!h
+2C = {prio:2} F, 10+ hcp, 4+!c
+2D = {prio:2} F, 10+ hcp, 4+!d
+1S = {prio:1} F, 6+ hcp, 4+!s
+1N = NF, 6--9 hcp, not 3+!h
+2H = 6--10 hcp, 3+!h
+3N = 15--17 hcp, bal, 2=!h
+4H = 0--9 hcp, 5+!h, 0--1!c or 0--1!d or 0--1!s
+
+** After 1!s
+
+1S-
+2N = {prio:5} F, 13+ hcp, 4+!s
+3C = {prio:4} F, 17+ hcp, 5+!c, not 3+!s
+3D = {prio:4} F, 17+ hcp, 5+!d, not 3+!s
+3H = {prio:4} F, 17+ hcp, 5+!h, not 3+!s
+3S = {prio:3} 10--11 hcp, 3+!s
+2C = {prio:2} F, 10+ hcp, 4+!c
+2D = {prio:2} F, 10+ hcp, 4+!d
+2H = {prio:2} F, 10+ hcp, 5+!h
+1N = NF, 6--9 hcp, not 3+!s
+2S = 6--10 hcp, 3+!s
+3N = 15--17 hcp, bal, 2=!s
+4S = 0--9 hcp, 5+!s, 0--1!c or 0--1!d or 0--1!h
