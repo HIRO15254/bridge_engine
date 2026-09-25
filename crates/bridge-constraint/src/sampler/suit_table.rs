@@ -1,6 +1,5 @@
 //! Per-suit enumeration of candidate holdings, bucketed by `(length, key)`.
 
-use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 
 use bridge_core::Holding;
@@ -10,8 +9,20 @@ use bridge_core::Holding;
 pub(crate) const HCP_BITS: u32 = 6;
 /// Number of bits the optional additive-feature component uses.
 pub(crate) const X_BITS: u32 = 5;
-/// Number of distinct keys: HCP `0..=37` in the low 6 bits, one extra feature in bits `6..`.
-pub(crate) const KEYS: usize = 64 * 32;
+
+/// The largest HCP a single suit's holding can carry (A+K+Q+J = 10).
+const SUIT_HCP_MAX: usize = 10;
+/// The largest additive-feature value a single suit's holding can carry: every additive feature
+/// (`Controls`, `Losers`, `QuickTricks`, or a `CardRequirement`'s per-suit popcount) is bounded by
+/// the suit's own length, so `0..=13` covers all of them.
+const SUIT_X_MAX: usize = 13;
+
+/// Size of the dense per-length index domain when a term carries no additive feature (K=1): every
+/// entry's `x` is `0`, so only the HCP axis (`0..=10`) matters.
+pub(crate) const DENSE_NK_NO_X: usize = SUIT_HCP_MAX + 1;
+/// Size of the dense per-length index domain when a term carries one additive feature (K=2):
+/// `hcp` (`0..=10`) times `x` (`0..=13`).
+pub(crate) const DENSE_NK_WITH_X: usize = (SUIT_HCP_MAX + 1) * (SUIT_X_MAX + 1);
 
 /// The largest combined HCP of a two-suit pair (`2 × 10`).
 pub(crate) const PAIR_HCP_MAX: u8 = 20;
@@ -32,20 +43,32 @@ pub(crate) fn unpack_key(key: u16) -> (u8, u8) {
     ((key & ((1 << HCP_BITS) - 1)) as u8, (key >> HCP_BITS) as u8)
 }
 
+/// Maps a packed `(hcp, x)` key to a dense index `hcp + (SUIT_HCP_MAX + 1) * x` in `0..nk`. `nk`
+/// is either [`DENSE_NK_NO_X`] (only `x = 0` is ever produced) or [`DENSE_NK_WITH_X`] (the full
+/// per-suit `x` range); either way a single suit's `(hcp, x)` pair always lands inside `0..nk`, so
+/// this is a plain array index rather than a hash lookup or a binary search.
+fn dense_index(key: u16, nk: usize) -> usize {
+    let (hcp, x) = unpack_key(key);
+    let d = hcp as usize + (SUIT_HCP_MAX + 1) * x as usize;
+    debug_assert!(d < nk, "dense index {d} out of range for nk={nk}");
+    d
+}
+
 /// The candidate holdings of one suit for one prepared term.
 ///
-/// `holdings` is sorted by `(len, key)` (counting sort). Unlike `counts`/`bucket`, this sort is
-/// only ever over the `(len, key)` pairs that actually occur (D9: `pool.submasks()` is at most
-/// `2^13`, almost always far fewer than the `14 * KEYS` a dense table over the whole packed-key
-/// domain would force every build to zero and scan regardless of how small `pool` is). `offsets`
-/// gives each `counts[len]` entry's start index into `holdings`, parallel to `counts[len].0`
-/// (both sorted ascending by key); `bucket` locates a key with a binary search over `counts[len]`
-/// instead of an O(1) dense-array lookup. Every holding already includes the suit's fixed cards.
+/// `holdings` is sorted by `(len, key)` (counting sort). The per-length index domain is the
+/// *dense* but *small* `nk` from [`dense_index`] (`11` or `154`, never the `14 * KEYS` a table
+/// over the full 16-bit packed-key domain would force every build to zero and scan regardless of
+/// how small `pool` is - see §9/D9). `start[len * (nk+1) + d] ..= start[len * (nk+1) + d+1]` gives
+/// `holdings`' range for dense index `d`, so [`SuitTable::bucket`] is an O(1) array lookup rather
+/// than a hash lookup or a binary search.
 pub(crate) struct SuitTable {
     pub(crate) holdings: Vec<u16>,
-    /// `offsets[len][i]` is `holdings`' start index for `counts[len].0[i]` (same length, same
-    /// order).
-    offsets: [Vec<u32>; 14],
+    /// Flattened `[14][nk+1]` offset table (row-major, row length `nk + 1`).
+    start: Vec<u32>,
+    /// The dense-key domain size this table was built with ([`DENSE_NK_NO_X`] or
+    /// [`DENSE_NK_WITH_X`]); `bucket` must derive `d` the same way `build` did.
+    nk: usize,
     /// `counts[len]` = sparse `(key, n)` list with `n > 0`, sorted ascending by key.
     pub(crate) counts: [SparseVec; 14],
 }
@@ -72,74 +95,85 @@ impl SuitTable {
     /// Enumerates `sub ⊆ pool`, folds in `fixed`, applies `filter`, and bucket-sorts by
     /// `(len(H), key(H))` where `H = sub ∪ fixed` (D3: the fixed cards are composed in here, so
     /// every downstream quantity is already exact for the original 13-card hand).
+    ///
+    /// `nk` is the dense per-length index domain size ([`DENSE_NK_NO_X`] when the caller's `key`
+    /// never produces a nonzero `x` component, [`DENSE_NK_WITH_X`] otherwise): every `key(h)` this
+    /// call ever produces must map to a [`dense_index`] under `nk`.
     pub(crate) fn build(
         pool: Holding,
         fixed: Holding,
         filter: &dyn Fn(Holding) -> bool,
         key: &dyn Fn(Holding) -> u16,
+        nk: usize,
     ) -> SuitTable {
-        // Pass 1: histogram of (len, key) -> count, one hash map per length rather than a dense
-        // `14 * KEYS` array: this costs O(pool.submasks()), never O(14 * KEYS) regardless of how
-        // small `pool` is (`KEYS` is a generous upper bound on the packed-key domain - `0..=10`
-        // HCP times up to 14 additive-feature values - almost never anywhere near saturated).
-        let mut hist: [HashMap<u16, u32>; 14] = core::array::from_fn(|_| HashMap::new());
+        // Pass 1: histogram of (len, d) -> count, a dense `14 * nk` array. `nk` is `11` or `154`
+        // (never the `14 * KEYS = 14 * 2048` a table over the whole packed-key domain would need),
+        // so this is cheap regardless of how small `pool` is.
+        let mut hist = vec![0u32; 14 * nk];
         for sub in pool.submasks() {
             let h = sub.union(fixed);
             if !filter(h) {
                 continue;
             }
             let len = h.len() as usize;
-            let k = key(h);
-            debug_assert!((k as usize) < KEYS, "key() must stay within 0..KEYS");
-            *hist[len].entry(k).or_insert(0) += 1;
+            let d = dense_index(key(h), nk);
+            hist[len * nk + d] += 1;
         }
 
-        // Sort each length's observed keys ascending (matching the dense implementation's
-        // row-major (len, key) order, since an unobserved key contributed zero width there too)
-        // and lay out each bucket's start offset in that same order.
-        let mut offsets: [Vec<u32>; 14] = core::array::from_fn(|_| Vec::new());
-        let mut counts: [SparseVec; 14] = core::array::from_fn(|_| SparseVec::default());
-        let mut total = 0u32;
+        // Prefix-sum each length's row into `start` (row width `nk + 1`, the trailing entry being
+        // the row's total).
+        let mut start = vec![0u32; 14 * (nk + 1)];
+        let mut offset = 0u32;
         for len in 0..14 {
-            let mut entries: Vec<(u16, u32)> = hist[len].drain().collect();
-            entries.sort_unstable_by_key(|&(k, _)| k);
-            let mut offs = Vec::with_capacity(entries.len());
-            for &(_, n) in &entries {
-                offs.push(total);
-                total += n;
+            for d in 0..nk {
+                start[len * (nk + 1) + d] = offset;
+                offset += hist[len * nk + d];
             }
-            offsets[len] = offs;
-            counts[len] = SparseVec(
-                entries
-                    .into_iter()
-                    .map(|(k, n)| (k, u64::from(n)))
-                    .collect(),
-            );
+            start[len * (nk + 1) + nk] = offset;
         }
+        let total = offset as usize;
 
-        // Pass 2: place each holding into its bucket (a mutable copy of `offsets` as the cursor,
-        // located via the same binary search `bucket` uses).
-        let mut cursor = offsets.clone();
-        let mut holdings = vec![0u16; total as usize];
+        // Pass 2: place each holding into its bucket. `hist` is reused as the placement cursor
+        // (one allocation instead of two): every `hist[len*nk+d]` slot is overwritten with its
+        // `start` offset before any cursor read touches it.
+        for len in 0..14 {
+            hist[len * nk..len * nk + nk]
+                .copy_from_slice(&start[len * (nk + 1)..len * (nk + 1) + nk]);
+        }
+        let mut holdings = vec![0u16; total];
         for sub in pool.submasks() {
             let h = sub.union(fixed);
             if !filter(h) {
                 continue;
             }
             let len = h.len() as usize;
-            let k = key(h);
-            let idx = counts[len]
-                .0
-                .binary_search_by_key(&k, |&(kk, _)| kk)
-                .expect("every key placed here was counted in pass 1");
-            let slot = &mut cursor[len][idx];
+            let d = dense_index(key(h), nk);
+            let slot = &mut hist[len * nk + d];
             holdings[*slot as usize] = h.bits();
             *slot += 1;
         }
 
+        // `counts`: the sparse (key, n>0) list per length, in ascending dense-index order. Since
+        // `nk` is exactly `SUIT_HCP_MAX + 1` (no gap between consecutive `x` blocks), ascending
+        // dense index implies ascending packed key too, so this matches the order a full
+        // packed-key-domain scan would produce.
+        let counts: [SparseVec; 14] = core::array::from_fn(|len| {
+            let mut v = Vec::new();
+            for d in 0..nk {
+                let n = u64::from(start[len * (nk + 1) + d + 1] - start[len * (nk + 1) + d]);
+                if n > 0 {
+                    let hcp = (d % (SUIT_HCP_MAX + 1)) as u8;
+                    let x = (d / (SUIT_HCP_MAX + 1)) as u8;
+                    v.push((pack_key(hcp, x), n));
+                }
+            }
+            SparseVec(v)
+        });
+
         SuitTable {
             holdings,
-            offsets,
+            start,
+            nk,
             counts,
         }
     }
@@ -147,14 +181,11 @@ impl SuitTable {
     /// The bucket for `(len, key)`, or an empty slice when that key was never observed.
     pub(crate) fn bucket(&self, len: u8, key: u16) -> &[u16] {
         let len = len as usize;
-        match self.counts[len].0.binary_search_by_key(&key, |&(k, _)| k) {
-            Ok(idx) => {
-                let start = self.offsets[len][idx] as usize;
-                let end = start + self.counts[len].0[idx].1 as usize;
-                &self.holdings[start..end]
-            }
-            Err(_) => &[],
-        }
+        let d = dense_index(key, self.nk);
+        let base = len * (self.nk + 1);
+        let start = self.start[base + d] as usize;
+        let end = self.start[base + d + 1] as usize;
+        &self.holdings[start..end]
     }
 }
 
@@ -167,12 +198,57 @@ static FULL_SUIT: LazyLock<Arc<SuitTable>> = LazyLock::new(|| {
         Holding::EMPTY,
         &|_| true,
         &|h| u16::from(bridge_eval::holding_hcp(h)),
+        DENSE_NK_NO_X,
     ))
 });
 
 /// A cheap `Arc` clone of the shared full-suit table.
 pub(crate) fn full_suit() -> Arc<SuitTable> {
     Arc::clone(&FULL_SUIT)
+}
+
+/// A flat, allocation-free index from a `(len_a, len_b)` pair (each `0..=13`) to a lazily-built
+/// [`PairConv`] (§10: replaces a `HashMap<(u8,u8), PairConv>`, whose default hasher is SipHash over
+/// a key space that is really just `14 * 14 = 196` slots).
+pub(crate) struct PairMap {
+    /// `idx[len_a * 14 + len_b]` is the index into `convs`, or `u16::MAX` when not yet built.
+    idx: [u16; 196],
+    convs: Vec<PairConv>,
+}
+
+impl PairMap {
+    pub(crate) fn new() -> PairMap {
+        PairMap {
+            idx: [u16::MAX; 196],
+            convs: Vec::new(),
+        }
+    }
+
+    /// The `PairConv` for `(len_a, len_b)`, building and caching it via `build` on first use.
+    pub(crate) fn get_or_build(
+        &mut self,
+        len_a: u8,
+        len_b: u8,
+        build: impl FnOnce() -> PairConv,
+    ) -> &PairConv {
+        let slot = len_a as usize * 14 + len_b as usize;
+        if self.idx[slot] == u16::MAX {
+            let i = self.convs.len();
+            debug_assert!(i < usize::from(u16::MAX), "at most 196 distinct pairs");
+            self.convs.push(build());
+            self.idx[slot] = i as u16;
+        }
+        &self.convs[self.idx[slot] as usize]
+    }
+
+    /// The `PairConv` for `(len_a, len_b)` if it was already built via `get_or_build`.
+    pub(crate) fn get(&self, len_a: u8, len_b: u8) -> Option<&PairConv> {
+        let slot = len_a as usize * 14 + len_b as usize;
+        match self.idx[slot] {
+            u16::MAX => None,
+            i => Some(&self.convs[i as usize]),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -189,18 +265,19 @@ mod tests {
     }
 
     /// A reference re-implementation of the pre-optimization dense `SuitTable::build` (a
-    /// `14 * KEYS`-sized histogram and prefix-sum scan over the *whole* packed-key domain,
-    /// instead of only the keys `pool.submasks()` can actually reach). Used only to check the
-    /// optimized `build` produces bit-identical `holdings`/`counts`: the fix must change how fast
-    /// a table is built, never what a bucket contains or in what order (§9's `pick_holding`
-    /// selects uniformly within a bucket by index, so the bucket's element order is observable
-    /// through which hand a given RNG draw returns).
+    /// `14 * KEYS`-sized histogram and prefix-sum scan over the *whole* 16-bit packed-key domain,
+    /// instead of the small `14 * nk` domain the real `nk`-aware `dense_index` needs). Used only
+    /// to check the optimized `build` produces bit-identical `holdings`/`counts`: the fix must
+    /// change how fast a table is built, never what a bucket contains or in what order (§9's
+    /// `pick_holding` selects uniformly within a bucket by index, so the bucket's element order is
+    /// observable through which hand a given RNG draw returns).
     fn build_dense_reference(
         pool: Holding,
         fixed: Holding,
         filter: &dyn Fn(Holding) -> bool,
         key: &dyn Fn(Holding) -> u16,
     ) -> (Vec<u16>, [SparseVec; 14]) {
+        const KEYS: usize = 64 * 32;
         let mut hist = vec![0u32; 14 * KEYS];
         for sub in pool.submasks() {
             let h = sub.union(fixed);
@@ -271,16 +348,24 @@ mod tests {
             Holding,
             &'a dyn Fn(Holding) -> bool,
             &'a dyn Fn(Holding) -> u16,
+            usize,
         );
         let cases: &[Case<'_>] = &[
             // The FULL_SUIT case itself.
-            (Holding::FULL, Holding::EMPTY, trivial_filter, hcp_only_key),
+            (
+                Holding::FULL,
+                Holding::EMPTY,
+                trivial_filter,
+                hcp_only_key,
+                DENSE_NK_NO_X,
+            ),
             // A small pool (the common "mostly fixed, small remaining pool" case §9 is about).
             (
                 Holding::from_bits(0b0000_0000_0111).unwrap(),
                 Holding::from_bits(0b1000_0000_0000).unwrap(),
                 trivial_filter,
                 hcp_only_key,
+                DENSE_NK_NO_X,
             ),
             // Empty pool (every holding is exactly `fixed`).
             (
@@ -288,6 +373,7 @@ mod tests {
                 Holding::from_bits(0b1010_0000_0101).unwrap(),
                 trivial_filter,
                 hcp_only_key,
+                DENSE_NK_NO_X,
             ),
             // A medium pool with a nonzero additive feature.
             (
@@ -295,6 +381,7 @@ mod tests {
                 Holding::EMPTY,
                 trivial_filter,
                 with_feature_key,
+                DENSE_NK_WITH_X,
             ),
             // A pool with a non-trivial filter and some fixed cards.
             (
@@ -302,11 +389,12 @@ mod tests {
                 Holding::from_bits(0b0000_0000_1100).unwrap(),
                 no_ace_filter,
                 hcp_only_key,
+                DENSE_NK_NO_X,
             ),
         ];
 
-        for &(pool, fixed, filter, key) in cases {
-            let optimized = SuitTable::build(pool, fixed, filter, key);
+        for &(pool, fixed, filter, key, nk) in cases {
+            let optimized = SuitTable::build(pool, fixed, filter, key, nk);
             let (dense_holdings, dense_counts) = build_dense_reference(pool, fixed, filter, key);
             assert_eq!(
                 optimized.holdings, dense_holdings,
@@ -347,5 +435,38 @@ mod tests {
         let key = pack_key(9, 0);
         let bucket = table.bucket(3, key);
         assert!(bucket.contains(&akq.bits()));
+    }
+
+    #[test]
+    fn pair_map_builds_once_and_caches() {
+        use core::cell::Cell;
+
+        let mut map = PairMap::new();
+        let builds = Cell::new(0u32);
+        {
+            let conv = map.get_or_build(3, 5, || {
+                builds.set(builds.get() + 1);
+                PairConv {
+                    p: SparseVec(vec![(pack_key(1, 0), 7)]),
+                    prefix: vec![7u64].into_boxed_slice(),
+                    width: 1,
+                }
+            });
+            assert_eq!(conv.p.0, vec![(pack_key(1, 0), 7)]);
+        }
+        assert_eq!(builds.get(), 1);
+        assert!(map.get(3, 5).is_some());
+        assert!(map.get(0, 0).is_none());
+
+        // A second `get_or_build` for the same pair reuses the cached entry.
+        map.get_or_build(3, 5, || {
+            builds.set(builds.get() + 1);
+            PairConv {
+                p: SparseVec(Vec::new()),
+                prefix: Box::new([]),
+                width: 1,
+            }
+        });
+        assert_eq!(builds.get(), 1);
     }
 }

@@ -13,7 +13,6 @@
 //!   estimated by a burn-in probe.
 
 use core::ops::RangeInclusive;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use bridge_core::{Card, Hand, Holding, Shape, Suit};
@@ -21,7 +20,8 @@ use bridge_eval::{DistMethod, LtcMethod, SUIT, holding_hcp, shape_points};
 
 use super::rand_util::{SplitMix64, random_below};
 use super::suit_table::{
-    PAIR_HCP_MAX, PAIR_X_MAX, PairConv, SparseVec, SuitTable, full_suit, pack_key, unpack_key,
+    DENSE_NK_NO_X, DENSE_NK_WITH_X, PAIR_HCP_MAX, PAIR_X_MAX, PairConv, PairMap, SparseVec,
+    SuitTable, full_suit, pack_key, unpack_key,
 };
 use crate::{Atom, CardRequirement, DnfTerm, Metric};
 
@@ -79,9 +79,9 @@ impl AnyTerm {
 struct GeneralTerm {
     suits: [Arc<SuitTable>; 4],
     /// Pair convolutions for `(len_clubs, len_diamonds)` pairs used by some feasible shape.
-    pair01: HashMap<(u8, u8), PairConv>,
+    pair01: PairMap,
     /// Pair convolutions for `(len_hearts, len_spades)` pairs used by some feasible shape.
-    pair23: HashMap<(u8, u8), PairConv>,
+    pair23: PairMap,
     /// Feasible shapes with their weights and HCP windows.
     shapes: Vec<(Shape, u64, (u8, u8))>,
     cum: Vec<u64>,
@@ -99,11 +99,11 @@ impl GeneralTerm {
         let (l0, l1, l2, l3) = (lens[0], lens[1], lens[2], lens[3]);
         let pair01 = self
             .pair01
-            .get(&(l0, l1))
+            .get(l0, l1)
             .expect("built for every feasible shape in `prepare`");
         let pair23 = self
             .pair23
-            .get(&(l2, l3))
+            .get(l2, l3)
             .expect("built for every feasible shape in `prepare`");
         let (xlo, xhi) = self.x_window;
 
@@ -281,23 +281,22 @@ impl PairConv {
             }
         }
 
-        let mut prefix = vec![0u64; height * width];
+        // Turn `acc` into its own 2-D prefix sum in place (one allocation instead of two, per
+        // §10). Within row `h`, `acc[h*width+x]` still holds the raw count when it is read into
+        // `row` (only lower-`x` slots of this same row have been overwritten so far), and
+        // `acc[(h-1)*width+x]` was already turned into a prefix sum on the previous `h` iteration.
         for h in 0..height {
             let mut row = 0u64;
             for x in 0..width {
                 row += acc[h * width + x];
-                let up = if h == 0 {
-                    0
-                } else {
-                    prefix[(h - 1) * width + x]
-                };
-                prefix[h * width + x] = up + row;
+                let up = if h == 0 { 0 } else { acc[(h - 1) * width + x] };
+                acc[h * width + x] = up + row;
             }
         }
 
         PairConv {
             p: SparseVec(p),
-            prefix: prefix.into_boxed_slice(),
+            prefix: acc.into_boxed_slice(),
             width,
         }
     }
@@ -615,7 +614,12 @@ impl PreparedTerm {
                         None => pack_key(hcp, 0),
                     }
                 };
-                Arc::new(SuitTable::build(p, f, &filter_fn, &key_fn))
+                let nk = if additive.is_some() {
+                    DENSE_NK_WITH_X
+                } else {
+                    DENSE_NK_NO_X
+                };
+                Arc::new(SuitTable::build(p, f, &filter_fn, &key_fn, nk))
             };
             suits[i] = Some(table);
         }
@@ -629,8 +633,8 @@ impl PreparedTerm {
         let fixed_lens = suit_lens(fixed);
         let pool_lens = suit_lens(pool);
 
-        let mut pair01: HashMap<(u8, u8), PairConv> = HashMap::new();
-        let mut pair23: HashMap<(u8, u8), PairConv> = HashMap::new();
+        let mut pair01 = PairMap::new();
+        let mut pair23 = PairMap::new();
         let mut shapes: Vec<(Shape, u64, (u8, u8))> = Vec::new();
 
         for shape in term.atom.shapes.iter() {
@@ -672,12 +676,12 @@ impl PreparedTerm {
 
             let (l0, l1, l2, l3) = (lens[0], lens[1], lens[2], lens[3]);
             let with_x = classified.additive.is_some();
-            let p01 = pair01
-                .entry((l0, l1))
-                .or_insert_with(|| PairConv::build(&suits[0], &suits[1], l0, l1, with_x));
-            let p23 = pair23
-                .entry((l2, l3))
-                .or_insert_with(|| PairConv::build(&suits[2], &suits[3], l2, l3, with_x));
+            let p01 = pair01.get_or_build(l0, l1, || {
+                PairConv::build(&suits[0], &suits[1], l0, l1, with_x)
+            });
+            let p23 = pair23.get_or_build(l2, l3, || {
+                PairConv::build(&suits[2], &suits[3], l2, l3, with_x)
+            });
 
             let weight = shape_weight(p01, p23, lo, hi, x_window.0, x_window.1);
             if weight > 0 {
@@ -766,9 +770,13 @@ mod tests {
     use super::*;
 
     fn suit_table_hcp_only(pool: Holding) -> SuitTable {
-        SuitTable::build(pool, Holding::EMPTY, &|_| true, &|h| {
-            u16::from(holding_hcp(h))
-        })
+        SuitTable::build(
+            pool,
+            Holding::EMPTY,
+            &|_| true,
+            &|h| u16::from(holding_hcp(h)),
+            DENSE_NK_NO_X,
+        )
     }
 
     /// `PairConv::build`'s `with_x: false` path (`width == 1`, used whenever a term carries no
@@ -817,12 +825,14 @@ mod tests {
             Holding::EMPTY,
             &|_| true,
             &key_with_len_feature,
+            DENSE_NK_WITH_X,
         );
         let b = SuitTable::build(
             Holding::from_bits(0b0000_0001_1111).unwrap(),
             Holding::EMPTY,
             &|_| true,
             &key_with_len_feature,
+            DENSE_NK_WITH_X,
         );
 
         for len_a in 0..=7u8 {
