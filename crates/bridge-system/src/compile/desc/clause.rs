@@ -252,10 +252,24 @@ fn consume_unrecognized(s: &str) -> usize {
             break;
         }
         i += j;
-        // Absorb exactly one trailing space before re-checking (matches `andgroup`'s implicit
-        // whitespace-AND so runs of unrecognised words merge into one fragment).
-        if s[i..].starts_with(' ') {
-            i += 1;
+        // Absorb exactly one trailing space so runs of unrecognised words merge into one
+        // fragment — but only when the run actually continues into another unrecognised word.
+        // If what follows the space is a clause/or separator or a recognised token, the space
+        // itself must be left unconsumed: it is exactly what `parse_andgroup`'s `peek_connective`
+        // needs to see as the implicit whitespace-`and` joining this Unrecognized fragment to the
+        // next (recognised) one. Consuming it here would silently glue that next fragment onto
+        // this run with no connective left to notice, stranding it for `finish_line` to swallow
+        // whole instead of letting the andgroup loop parse it as its own fragment.
+        if let Some(after) = s[i..].strip_prefix(' ') {
+            let run_continues = !after.is_empty()
+                && !matches!(
+                    peek_connective(after),
+                    Connective::Clause(_) | Connective::Or(_)
+                )
+                && tokens::recognize(after).is_none();
+            if run_continues {
+                i += 1;
+            }
         }
     }
     i
