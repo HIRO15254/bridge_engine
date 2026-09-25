@@ -72,6 +72,10 @@ pub(crate) fn expand_file(
     };
     for table in tables {
         if ex.nodes.len() >= opts.max_nodes {
+            // The limit can be reached exactly on the previous table's last candidate, in
+            // which case `expand_row` never saw a candidate it had to refuse: report the
+            // tables dropped here the same way.
+            report_too_many_nodes(opts, &mut ex);
             break;
         }
         expand_table(table, meta, opts, &mut ex);
@@ -772,13 +776,7 @@ fn expand_row(
     let mut out = Vec::new();
     for cand in candidates {
         if ex.nodes.len() >= opts.max_nodes {
-            if !ex.too_many_nodes_reported {
-                ex.lints.push(Lint::error(
-                    LintCode::TooManyNodes,
-                    format!("expansion aborted: reached max_nodes = {}", opts.max_nodes),
-                ));
-                ex.too_many_nodes_reported = true;
-            }
+            report_too_many_nodes(opts, ex);
             break;
         }
 
@@ -884,6 +882,17 @@ fn expand_row(
         out.push((node_id, next));
     }
     out
+}
+
+/// Reports [`LintCode::TooManyNodes`] once per file.
+fn report_too_many_nodes(opts: &CompileOptions, ex: &mut Expansion) {
+    if !ex.too_many_nodes_reported {
+        ex.lints.push(Lint::error(
+            LintCode::TooManyNodes,
+            format!("expansion aborted: reached max_nodes = {}", opts.max_nodes),
+        ));
+        ex.too_many_nodes_reported = true;
+    }
 }
 
 fn report_empty_candidates(
