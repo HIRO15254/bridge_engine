@@ -133,17 +133,22 @@ impl HandConstraint {
             .unwrap_or(RangeInclusive::new(1, 0))
     }
 
-    /// `true` when some hand satisfies the constraint.
+    /// `true` when some hand satisfies the constraint (§5's decisive stage 5).
     ///
-    /// Provisional (2.2/2.3): `to_dnf` already drops every trivially-unsatisfiable term (§5,
-    /// stages 1-4), so this is `!dnf.terms.is_empty()`.
-    /// TODO(2.4): switch to `Sampler::prepare(self, Hand::FULL, Hand::EMPTY, &opts).count() > 0`,
-    /// which is also exact for the interactions `is_trivially_unsat` cannot see (stage 5).
+    /// Prepares an exact sampler over the full deck and checks whether it has a non-empty
+    /// support: for an exact term (no `Custom`, no DNF residual, no `DistMethod::BergenStarting`,
+    /// no additive feature left unslotted) `count() > 0` is the definitive answer, including
+    /// literal interactions stages 1-4 of `Atom::is_trivially_unsat` cannot see (e.g. "top 3 of
+    /// ♠, 2 of them" ∧ "♠ <= 1"). A term that still needs rejection is treated as satisfiable
+    /// only when [`Sampler::prepare`]'s burn-in probe also found an accepting hand (this is
+    /// `Sampler::any_definitely_satisfiable`'s rule; see that private method's own doc comment
+    /// for the exact rule and its one-sided approximation).
     pub fn is_satisfiable(&self) -> bool {
-        let dnf = self
-            .to_dnf(&DnfOptions::default())
-            .expect("DnfOptions::default uses Overflow::Residual, which never errors");
-        !dnf.terms.is_empty()
+        let sampler = Sampler::prepare(self, Hand::FULL, Hand::EMPTY, &SampleOptions::default())
+            .expect(
+                "Hand::FULL and Hand::EMPTY never overlap, and the default options allow rejection",
+            );
+        sampler.any_definitely_satisfiable()
     }
 
     /// `self ∧ other`, flattening nested conjunctions.
