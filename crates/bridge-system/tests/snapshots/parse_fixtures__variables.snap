@@ -1,0 +1,492 @@
+---
+source: crates/bridge-system/tests/parse_fixtures.rs
+expression: "(& file.blocks, & file.lints)"
+---
+(
+    [
+        Heading {
+            level: 1,
+            text: "Variable strains",
+            span: Span {
+                file: FileId(
+                    0,
+                ),
+                line: 1,
+                col: 0,
+                pasted_from: None,
+            },
+        },
+        BidTable(
+            BidTable {
+                hidden: false,
+                seat: Any,
+                vul: VulCond {
+                    we: Any,
+                    they: Any,
+                },
+                history: [
+                    CallToken {
+                        side: Us,
+                        pattern: Exact(
+                            Bid(
+                                1C,
+                            ),
+                        ),
+                        raw: "1C-",
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 3,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                ],
+                history_desc: None,
+                rows: [
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Var {
+                                    level: At(
+                                        1,
+                                    ),
+                                    var: Major,
+                                },
+                                raw: "1M",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 4,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "5+ major, M shown",
+                            alert: false,
+                            col: 5,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 4,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Var {
+                                    level: At(
+                                        1,
+                                    ),
+                                    var: OtherMajor,
+                                },
+                                raw: "1oM",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 5,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "other major, needs M bound",
+                            alert: false,
+                            col: 6,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 5,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Var {
+                                    level: At(
+                                        1,
+                                    ),
+                                    var: Minor,
+                                },
+                                raw: "1m",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 6,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "3+ minor",
+                            alert: false,
+                            col: 5,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 6,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Var {
+                                    level: At(
+                                        1,
+                                    ),
+                                    var: OtherMinor,
+                                },
+                                raw: "1om",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 7,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "other minor, needs m bound",
+                            alert: false,
+                            col: 6,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 7,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Var {
+                                    level: At(
+                                        1,
+                                    ),
+                                    var: X,
+                                },
+                                raw: "1X",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 8,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "any new suit",
+                            alert: false,
+                            col: 5,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 8,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Var {
+                                    level: At(
+                                        1,
+                                    ),
+                                    var: Y,
+                                },
+                                raw: "1Y",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 9,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "next new suit above X",
+                            alert: false,
+                            col: 5,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 9,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Var {
+                                    level: At(
+                                        1,
+                                    ),
+                                    var: Z,
+                                },
+                                raw: "1Z",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 10,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "highest new suit",
+                            alert: false,
+                            col: 5,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 10,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Var {
+                                    level: At(
+                                        1,
+                                    ),
+                                    var: X,
+                                },
+                                raw: "1x",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 11,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "lowercase x (accepted extension)",
+                            alert: false,
+                            col: 5,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 11,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Strains {
+                                    level: At(
+                                        1,
+                                    ),
+                                    strains: StrainSet(
+                                        3,
+                                    ),
+                                },
+                                raw: "1CD",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 12,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "clubs or diamonds (literal, no binding)",
+                            alert: false,
+                            col: 6,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 12,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Strains {
+                                    level: At(
+                                        2,
+                                    ),
+                                    strains: StrainSet(
+                                        6,
+                                    ),
+                                },
+                                raw: "2red",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 13,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "hearts or diamonds",
+                            alert: false,
+                            col: 7,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 13,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Strains {
+                                    level: At(
+                                        2,
+                                    ),
+                                    strains: StrainSet(
+                                        9,
+                                    ),
+                                },
+                                raw: "2black",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 14,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "clubs or spades",
+                            alert: false,
+                            col: 9,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 14,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                ],
+                span: Span {
+                    file: FileId(
+                        0,
+                    ),
+                    line: 3,
+                    col: 0,
+                    pasted_from: None,
+                },
+            },
+        ),
+    ],
+    [
+        Lint {
+            severity: Info,
+            code: NonStandardToken,
+            row: None,
+            node: None,
+            span: Some(
+                Span {
+                    file: FileId(
+                        0,
+                    ),
+                    line: 11,
+                    col: 0,
+                    pasted_from: None,
+                },
+            ),
+            message: "1x: lowercase variable (x/y/z)",
+        },
+    ],
+)

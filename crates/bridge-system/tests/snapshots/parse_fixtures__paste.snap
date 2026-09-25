@@ -1,0 +1,413 @@
+---
+source: crates/bridge-system/tests/parse_fixtures.rs
+expression: "(& file.blocks, & file.lints)"
+---
+(
+    [
+        Heading {
+            level: 1,
+            text: "PASTE with replacements",
+            span: Span {
+                file: FileId(
+                    0,
+                ),
+                line: 1,
+                col: 0,
+                pasted_from: None,
+            },
+        },
+        Clipboard {
+            name: "transfer",
+            lines: [
+                RawLine {
+                    span: Span {
+                        file: FileId(
+                            0,
+                        ),
+                        line: 4,
+                        col: 0,
+                        pasted_from: None,
+                    },
+                    text: "2\\R Transfer",
+                },
+                RawLine {
+                    span: Span {
+                        file: FileId(
+                            0,
+                        ),
+                        line: 5,
+                        col: 0,
+                        pasted_from: None,
+                    },
+                    text: "  2\\M Transfer accept",
+                },
+                RawLine {
+                    span: Span {
+                        file: FileId(
+                            0,
+                        ),
+                        line: 6,
+                        col: 0,
+                        pasted_from: None,
+                    },
+                    text: "  3\\M Super accept",
+                },
+            ],
+        },
+        BidTable(
+            BidTable {
+                hidden: false,
+                seat: Any,
+                vul: VulCond {
+                    we: Any,
+                    they: Any,
+                },
+                history: [
+                    CallToken {
+                        side: Us,
+                        pattern: Exact(
+                            Bid(
+                                1NT,
+                            ),
+                        ),
+                        raw: "1N-",
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 9,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                ],
+                history_desc: None,
+                rows: [
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Exact(
+                                    Bid(
+                                        2C,
+                                    ),
+                                ),
+                                raw: "2C",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 10,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "Stayman",
+                            alert: false,
+                            col: 3,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 10,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Exact(
+                                    Bid(
+                                        2D,
+                                    ),
+                                ),
+                                raw: "2D",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 11,
+                                    col: 0,
+                                    pasted_from: Some(
+                                        (
+                                            "transfer",
+                                            0,
+                                        ),
+                                    ),
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "Transfer",
+                            alert: false,
+                            col: 3,
+                        },
+                        children: [
+                            BmlNode {
+                                calls: [
+                                    CallToken {
+                                        side: Us,
+                                        pattern: Exact(
+                                            Bid(
+                                                2H,
+                                            ),
+                                        ),
+                                        raw: "2H",
+                                        span: Span {
+                                            file: FileId(
+                                                0,
+                                            ),
+                                            line: 11,
+                                            col: 2,
+                                            pasted_from: Some(
+                                                (
+                                                    "transfer",
+                                                    1,
+                                                ),
+                                            ),
+                                        },
+                                    },
+                                ],
+                                description: Description {
+                                    text: "Transfer accept",
+                                    alert: false,
+                                    col: 5,
+                                },
+                                children: [],
+                                indent: 2,
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 11,
+                                    col: 2,
+                                    pasted_from: Some(
+                                        (
+                                            "transfer",
+                                            1,
+                                        ),
+                                    ),
+                                },
+                            },
+                            BmlNode {
+                                calls: [
+                                    CallToken {
+                                        side: Us,
+                                        pattern: Exact(
+                                            Bid(
+                                                3H,
+                                            ),
+                                        ),
+                                        raw: "3H",
+                                        span: Span {
+                                            file: FileId(
+                                                0,
+                                            ),
+                                            line: 11,
+                                            col: 2,
+                                            pasted_from: Some(
+                                                (
+                                                    "transfer",
+                                                    2,
+                                                ),
+                                            ),
+                                        },
+                                    },
+                                ],
+                                description: Description {
+                                    text: "Super accept",
+                                    alert: false,
+                                    col: 5,
+                                },
+                                children: [],
+                                indent: 2,
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 11,
+                                    col: 2,
+                                    pasted_from: Some(
+                                        (
+                                            "transfer",
+                                            2,
+                                        ),
+                                    ),
+                                },
+                            },
+                        ],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 11,
+                            col: 0,
+                            pasted_from: Some(
+                                (
+                                    "transfer",
+                                    0,
+                                ),
+                            ),
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Exact(
+                                    Bid(
+                                        2H,
+                                    ),
+                                ),
+                                raw: "2H",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 12,
+                                    col: 0,
+                                    pasted_from: Some(
+                                        (
+                                            "transfer",
+                                            0,
+                                        ),
+                                    ),
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "Transfer",
+                            alert: false,
+                            col: 3,
+                        },
+                        children: [
+                            BmlNode {
+                                calls: [
+                                    CallToken {
+                                        side: Us,
+                                        pattern: Exact(
+                                            Bid(
+                                                2S,
+                                            ),
+                                        ),
+                                        raw: "2S",
+                                        span: Span {
+                                            file: FileId(
+                                                0,
+                                            ),
+                                            line: 12,
+                                            col: 2,
+                                            pasted_from: Some(
+                                                (
+                                                    "transfer",
+                                                    1,
+                                                ),
+                                            ),
+                                        },
+                                    },
+                                ],
+                                description: Description {
+                                    text: "Transfer accept",
+                                    alert: false,
+                                    col: 5,
+                                },
+                                children: [],
+                                indent: 2,
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 12,
+                                    col: 2,
+                                    pasted_from: Some(
+                                        (
+                                            "transfer",
+                                            1,
+                                        ),
+                                    ),
+                                },
+                            },
+                            BmlNode {
+                                calls: [
+                                    CallToken {
+                                        side: Us,
+                                        pattern: Exact(
+                                            Bid(
+                                                3S,
+                                            ),
+                                        ),
+                                        raw: "3S",
+                                        span: Span {
+                                            file: FileId(
+                                                0,
+                                            ),
+                                            line: 12,
+                                            col: 2,
+                                            pasted_from: Some(
+                                                (
+                                                    "transfer",
+                                                    2,
+                                                ),
+                                            ),
+                                        },
+                                    },
+                                ],
+                                description: Description {
+                                    text: "Super accept",
+                                    alert: false,
+                                    col: 5,
+                                },
+                                children: [],
+                                indent: 2,
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 12,
+                                    col: 2,
+                                    pasted_from: Some(
+                                        (
+                                            "transfer",
+                                            2,
+                                        ),
+                                    ),
+                                },
+                            },
+                        ],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 12,
+                            col: 0,
+                            pasted_from: Some(
+                                (
+                                    "transfer",
+                                    0,
+                                ),
+                            ),
+                        },
+                    },
+                ],
+                span: Span {
+                    file: FileId(
+                        0,
+                    ),
+                    line: 9,
+                    col: 0,
+                    pasted_from: None,
+                },
+            },
+        ),
+    ],
+    [],
+)

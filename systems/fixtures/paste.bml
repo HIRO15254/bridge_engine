@@ -1,0 +1,12 @@
+* PASTE with replacements
+
+#CUT transfer
+2\R Transfer
+  2\M Transfer accept
+  3\M Super accept
+#ENDCUT
+
+1N-
+2C Stayman
+#PASTE transfer \R=D \M=H
+#PASTE transfer \R=H \M=S

@@ -1,0 +1,14 @@
+* Variable strains
+
+1C-
+1M = 5+ major, M shown
+1oM = other major, needs M bound
+1m = 3+ minor
+1om = other minor, needs m bound
+1X = any new suit
+1Y = next new suit above X
+1Z = highest new suit
+1x = lowercase x (accepted extension)
+1CD = clubs or diamonds (literal, no binding)
+2red = hearts or diamonds
+2black = clubs or spades
