@@ -9,6 +9,9 @@ use bridge_constraint::{Atom, CardRequirement, HandConstraint, KnownCards, Shape
 use bridge_core::{Card, Hand, Holding, Seat, Suit};
 use bridge_sample::{ConstraintProposal, Proposal, SampleContext, rng_for};
 
+mod support;
+use support::multi_component_rejecting_last_seat;
+
 /// Lanczos approximation to `ln(Gamma(x))`, matching
 /// `bridge-constraint/tests/sampler_chi_square.rs` (duplicated rather than shared: there is no
 /// cross-crate test-support crate in this workspace and the function is a dozen lines).
@@ -472,6 +475,187 @@ fn log_prob_consistency() {
     // Chi-square over the bins with positive expected mass (an exact sampler should never place
     // any draws in a zero-probability bin, so every observed bin has one).
     let expected: Vec<f64> = log_probs.iter().map(|lp| lp.exp() * n as f64).collect();
+    let mut used_observed = Vec::new();
+    let mut used_expected = Vec::new();
+    for (i, &e) in expected.iter().enumerate() {
+        if e > 0.0 {
+            used_observed.push(observed[i]);
+            used_expected.push(e);
+        } else {
+            assert_eq!(observed[i], 0, "a zero-probability deal was proposed");
+        }
+    }
+    assert!(
+        used_expected.len() > 1,
+        "the support must have more than one deal"
+    );
+
+    let chi2 = chi_square_statistic(&used_observed, &used_expected);
+    let df = (used_expected.len() - 1) as f64;
+    let p_value = chi_square_p_value(chi2, df);
+    assert!(
+        p_value > 0.01,
+        "chi-square = {chi2} (df = {df}) rejects at the 0.01 level (p = {p_value})"
+    );
+}
+
+/// Covers two gaps `middle_seat_coarse_log_prob_consistency` leaves open (see `support`'s doc
+/// comment): a re-prepared middle seat (South) with a genuine two-component mixture that
+/// survives [`coarsen`](bridge_sample) instead of trivialising to `ANY`, and a last seat (West)
+/// that is `Sampled` and does fail its own `satisfies` check for some residual pools, so
+/// `log_prob`'s last-seat rejection branch is actually exercised (both prior tests kept the last
+/// seat unconstrained specifically to avoid this).
+///
+/// Because the last seat can fail, the enumerated support no longer sums to 1 — only to the
+/// single-shot acceptance probability `α < 1` — so this test checks `Σ exp(log_prob) ≤ 1` (not
+/// `≈ 1`), and compares `propose` (retried on rejection) against `exp(log_prob) / α`.
+#[test]
+fn middle_seat_multi_component_and_last_seat_rejection_log_prob_consistency() {
+    let fixture = multi_component_rejecting_last_seat();
+    let play_constraints = [
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+    ];
+    let ctx = SampleContext {
+        known: fixture.known,
+        interpretation: &fixture.interpretation,
+        play_constraints: &play_constraints,
+        play_soft: None,
+        bidding: None,
+    };
+
+    let proposal = ConstraintProposal::default();
+    let prepared = proposal
+        .prepare(&ctx)
+        .expect("prepare succeeds: every seat has support");
+
+    let north = fixture.known.known[Seat::North.index() as usize];
+    let east_fixed = fixture.known.known[Seat::East.index() as usize];
+    let south_fixed = fixture.known.known[Seat::South.index() as usize];
+    let west_fixed = fixture.known.known[Seat::West.index() as usize];
+    let pool = fixture.known.pool();
+    let pool_cards: Vec<Card> = pool.cards().collect();
+    assert_eq!(pool_cards.len(), 9);
+
+    // Every way to split the 9-card pool 2/3/4 between East, South and West.
+    let mut deals = Vec::new();
+    for east_drawn in subsets_of_size(&pool_cards, 2) {
+        let after_east = pool.difference(east_drawn);
+        let remaining: Vec<Card> = after_east.cards().collect();
+        for south_drawn in subsets_of_size(&remaining, 3) {
+            let west_drawn = after_east.difference(south_drawn);
+            let deal = bridge_core::Deal::new([
+                north,
+                east_fixed.union(east_drawn),
+                south_fixed.union(south_drawn),
+                west_fixed.union(west_drawn),
+            ])
+            .expect("four disjoint 13-card hands covering the deck");
+            deals.push(deal);
+        }
+    }
+    assert_eq!(deals.len(), 36 * 35);
+
+    let log_probs: Vec<f64> = deals.iter().map(|d| prepared.log_prob(d)).collect();
+    let total: f64 = log_probs
+        .iter()
+        .map(|lp| if lp.is_finite() { lp.exp() } else { 0.0 })
+        .sum();
+    assert!(total <= 1.0 + 1e-9, "Σ exp(log_prob) = {total} exceeds 1");
+    assert!(total > 0.0, "expected some deals in the support");
+    assert!(
+        total < 1.0 - 1e-6,
+        "expected real rejection at the last seat (West must hold the diamond ace), but Σ \
+         exp(log_prob) = {total} is essentially the full mass"
+    );
+
+    // Isolate the last-seat rejection path: among deals where East and South's own alternatives
+    // are satisfied (so any -inf can only come from West's last-seat check), West holding the
+    // diamond ace must give a finite log_prob and West missing it must give exactly -inf.
+    let south_alts = &fixture.interpretation.seats[Seat::South.index() as usize];
+    let mut saw_last_seat_rejection = false;
+    let mut saw_last_seat_acceptance = false;
+    for deal in &deals {
+        let east_ok = deal.hand(Seat::East).contains(fixture.spade_ace);
+        let south_ok = south_alts
+            .iter()
+            .any(|(c, _, _)| c.satisfies(deal.hand(Seat::South)));
+        if !east_ok || !south_ok {
+            continue;
+        }
+        let west_ok = deal.hand(Seat::West).contains(fixture.diamond_ace);
+        let lp = prepared.log_prob(deal);
+        if west_ok {
+            assert!(
+                lp.is_finite(),
+                "expected finite log_prob when all three seats are satisfied, got {lp}"
+            );
+            saw_last_seat_acceptance = true;
+        } else {
+            assert_eq!(
+                lp,
+                f64::NEG_INFINITY,
+                "expected -inf when only the last seat (West) fails its own constraint"
+            );
+            saw_last_seat_rejection = true;
+        }
+    }
+    assert!(
+        saw_last_seat_rejection,
+        "no enumerated deal exercised the last-seat rejection path"
+    );
+    assert!(
+        saw_last_seat_acceptance,
+        "no enumerated deal exercised the last-seat acceptance path"
+    );
+
+    // Proposals, retrying on rejection (`propose` returning `None`), histogrammed against the
+    // *conditional* density `exp(log_prob) / total`. Unlike the other two tests in this file,
+    // South's mixture here is genuinely two HCP-window components rather than a candidate that
+    // coarsens to `ANY` — `Sampler::prepare` does real shape/HCP work for both on every draw, at
+    // roughly two orders of magnitude the per-draw cost of the `ANY` fast path in an unoptimized
+    // build (`cargo test`, no `--release`). `n` is scaled down accordingly (the enumerated
+    // probabilities span less than a 3x range — checked separately — so `n = 3_000` still keeps
+    // every used bin's expected count comfortably above the usual chi-square rule of thumb of 5).
+    let n = 3_000u64;
+    let mut rng = rng_for(20260927, 0);
+    let mut observed = vec![0u64; deals.len()];
+    let mut unmatched = 0u64;
+    let mut produced = 0u64;
+    let mut attempts = 0u64;
+    let max_attempts = n * 1000;
+    while produced < n {
+        attempts += 1;
+        assert!(
+            attempts <= max_attempts,
+            "acceptance rate too low: {produced} of {n} accepted in {attempts} attempts"
+        );
+        let Some(deal) = prepared.propose(&mut rng) else {
+            continue;
+        };
+        produced += 1;
+        match deals.iter().position(|d| d == &deal) {
+            Some(i) => observed[i] += 1,
+            None => unmatched += 1,
+        }
+    }
+    assert_eq!(
+        unmatched, 0,
+        "every proposed deal must be one of the enumerated splits"
+    );
+
+    let expected: Vec<f64> = log_probs
+        .iter()
+        .map(|lp| {
+            if lp.is_finite() {
+                lp.exp() / total * n as f64
+            } else {
+                0.0
+            }
+        })
+        .collect();
     let mut used_observed = Vec::new();
     let mut used_expected = Vec::new();
     for (i, &e) in expected.iter().enumerate() {
