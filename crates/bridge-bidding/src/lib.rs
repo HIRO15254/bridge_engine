@@ -10,10 +10,6 @@
 //! or the application, never here.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
-// `Interpretation::satisfied_by` and `Interpretation::likelihood` are implemented by a parallel
-// lane (see the "bidding" lane's task notes) and are still `todo!()` on this branch; their unused
-// parameters are the only remaining reason this allow is needed.
-#![allow(dead_code, unused_variables)]
 
 mod cache;
 mod choose;

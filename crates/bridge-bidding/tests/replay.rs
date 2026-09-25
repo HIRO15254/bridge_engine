@@ -5,8 +5,8 @@ mod common;
 use std::sync::Arc;
 
 use bridge_bidding::{
-    BidContext, ImplicitPass, InterpretCache, InterpretOptions, PolicyParams, Scoring, Table,
-    interpret, replay,
+    BidChoice, BidContext, ImplicitPass, InterpretCache, InterpretOptions, PolicyParams, Scoring,
+    Table, choose_bid, interpret, replay,
 };
 use bridge_core::{Auction, Seat, Strain, Vulnerability};
 use common::*;
@@ -56,6 +56,20 @@ fn replay_terminates_on_random_deals() {
         for &(idx, seat) in &result.gaps {
             assert_eq!(result.auction.calls()[idx], bridge_core::Call::Pass);
             assert_eq!(result.auction.seat_at(idx), seat);
+            let prefix = Auction::from_calls(
+                result.auction.dealer(),
+                result.auction.vulnerability(),
+                result.auction.calls()[..idx].iter().copied(),
+            )
+            .expect("a prefix of a valid auction is itself a valid auction");
+            let system = &table.systems[seat.index() as usize];
+            let hand = deal.hand(seat);
+            let choice = choose_bid(system, hand, &prefix, &ctx);
+            assert!(
+                matches!(choice, BidChoice::NoCandidate(_)),
+                "gap at {idx} for {seat:?} did not reproduce NoCandidate when choose_bid was \
+                 re-run on the prefix"
+            );
         }
     }
 }

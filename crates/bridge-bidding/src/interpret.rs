@@ -135,12 +135,18 @@ pub struct Interpretation {
 impl Interpretation {
     /// Whether `hand` satisfies at least one non-`Fallback` alternative of `seat` (the strict
     /// check used by the consistency test).
+    // Implemented by a parallel lane (see the "bidding" lane's task notes); still `todo!()` on
+    // this branch. The `#[allow]` covers only its own still-unused parameters.
+    #[allow(unused_variables)]
     pub fn satisfied_by(&self, seat: Seat, hand: Hand) -> bool {
         todo!("phase 3")
     }
 
     /// `Σ w_i · [C_i ∋ hand]`: the set-membership mass of `hand` under the mixture. This is not
     /// the bidding-policy likelihood (see `sequence_log_likelihood`).
+    // Implemented by a parallel lane (see the "bidding" lane's task notes); still `todo!()` on
+    // this branch. The `#[allow]` covers only its own still-unused parameters.
+    #[allow(unused_variables)]
     pub fn likelihood(&self, seat: Seat, hand: Hand) -> f32 {
         todo!("phase 3")
     }
@@ -327,7 +333,17 @@ fn fill_partner_context(
 ) -> CallContext {
     let partner = s.partner();
     if let Some(last) = per_call_so_far.iter().rev().find(|ci| ci.seat == partner) {
-        if let Some((c, _, ex)) = last.alternatives.iter().max_by(|a, b| a.1.total_cmp(&b.1)) {
+        // Skip the `Fallback` branch the ε-mixture appended (07-bidding.md §4.2): it is always
+        // present after `apply_epsilon_mixture` and would otherwise win `max_by` whenever partner's
+        // call is `Partial`/`Natural` with enough real alternatives that each falls under
+        // `eps_partial`/`eps_natural` on its own, silently turning `partner_constraint` into `ANY`
+        // and `forcing_situation` into `false` even when the node is actually forcing.
+        if let Some((c, _, ex)) = last
+            .alternatives
+            .iter()
+            .filter(|(_, _, ex)| ex.kind != ResolutionKind::Fallback)
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+        {
             ctx.partner_constraint = Some(c.clone());
             if let Some(node_id) = ex.node {
                 let partner_sys = &table.systems[partner.index() as usize];
@@ -442,9 +458,51 @@ fn step_a_call(
             normalize_alts(&mut alts);
             return (ResolutionKind::Exact, alts);
         }
-        // Defensive: the depth matched but our own call has no attached row (07-bidding.md does
-        // not spell out this case). Treat it like a one-short partial match so the fallback
-        // machinery below still applies instead of panicking.
+        // The walk matched all `n_k` calls, but the last one landed on an implicit-pass trie
+        // node (06-system.md §4.3): a node that exists only because some *deeper* row's path
+        // runs through it (e.g. a competitive continuation like `1H-(P)-P-(1S)-X`), carrying no
+        // row/entries of its own. This is fully on-system, not a fall-through — resolve the
+        // §4.1.5.1 implicit-pass complement at the *parent* position (the siblings of this
+        // call), not at `lookup.end` (which the walk already advanced past this call to: its
+        // children are the calls *after* our pass, not our pass's siblings). Re-resolving the
+        // one-call-shorter key is the only way to recover that parent `TrieId`, since `Lookup`
+        // only ever exposes the trie id reached at its own `matched_depth`.
+        if call == Call::Pass {
+            let parent_key = LookupKey {
+                we_opened: key.we_opened,
+                calls: &key.calls[..n_k - 1],
+                opener_pos: key.opener_pos,
+                vul: key.vul,
+            };
+            let parent = sys.index.resolve(&parent_key);
+            if parent.matched_depth == n_k - 1 {
+                let siblings = sys.index.children(parent.end, key.opener_pos, key.vul);
+                let legal_siblings: Vec<(Call, NodeId)> = siblings
+                    .into_iter()
+                    .filter(|(c, _)| prefix.is_legal(*c))
+                    .collect();
+                if !legal_siblings.is_empty() {
+                    let complement = complement_of(sys, &legal_siblings);
+                    return (
+                        ResolutionKind::Exact,
+                        vec![(
+                            complement,
+                            1.0,
+                            CallExplanation {
+                                call_index: j,
+                                call,
+                                node: None,
+                                kind: ResolutionKind::Exact,
+                                text: "implicit pass".to_string(),
+                            },
+                        )],
+                    );
+                }
+            }
+        }
+        // Defensive: no row at this depth and no legal system siblings to complement either
+        // (07-bidding.md does not spell out this case). Treat it like a one-short partial match
+        // so the lenient/natural machinery below still applies instead of panicking.
         d = n_k - 1;
     }
 
@@ -572,12 +630,28 @@ fn step_a(
     (per_call, divergence)
 }
 
+/// `true` for the unconstrained atom (`HandConstraint::ANY`, i.e. `Atom::ANY`).
+fn is_any(c: &HandConstraint) -> bool {
+    matches!(c, HandConstraint::Atom(a) if *a == bridge_constraint::Atom::ANY)
+}
+
 /// `existing ∧ addition`, allocating the new `And`'s backing `Vec` once at its final size instead
 /// of `HandConstraint::and`'s clone-then-push (which, starting from an already-owned `Vec` of
 /// exactly `len` capacity, reallocates again on the `push`). Called once per surviving candidate
 /// in Step B's cross product, so this compounds; see [`Combo`]'s doc comment for the same
 /// reasoning applied to `key`.
+///
+/// `ANY` is treated as the identity of `∧` on both sides: without this, every combo that ever
+/// passed through the initial `ANY` seed or a `Fallback` alternative carried it along forever as
+/// a redundant `And` member (`And([ANY, c1, ANY, …])`), which was cloned and re-summarised at
+/// every subsequent step of the cross product for no semantic benefit (07-bidding.md §4.4.2).
 fn and_one_more(existing: &HandConstraint, addition: &HandConstraint) -> HandConstraint {
+    if is_any(addition) {
+        return existing.clone();
+    }
+    if is_any(existing) {
+        return addition.clone();
+    }
     match existing {
         HandConstraint::And(children) => {
             let mut v = Vec::with_capacity(children.len() + 1);
@@ -586,6 +660,83 @@ fn and_one_more(existing: &HandConstraint, addition: &HandConstraint) -> HandCon
             HandConstraint::And(v)
         }
         other => HandConstraint::And(vec![other.clone(), addition.clone()]),
+    }
+}
+
+/// `a ∩ b`: the tighter of two HCP ranges, or an empty range when they don't overlap.
+fn clamp_hcp(
+    a: &core::ops::RangeInclusive<u8>,
+    b: &core::ops::RangeInclusive<u8>,
+) -> core::ops::RangeInclusive<u8> {
+    (*a.start().max(b.start()))..=(*a.end().min(b.end()))
+}
+
+/// A combo's running shape/HCP summary and the (expensive) `ShapeSet::min_hcp`/`max_hcp` bounds
+/// derived from it, kept incrementally instead of being recomputed from the whole constraint tree
+/// at every step of the cross product (see [`Combo`]'s doc comment for why this matters).
+#[derive(Clone)]
+struct Summary {
+    shapes: bridge_core::ShapeSet,
+    hcp: core::ops::RangeInclusive<u8>,
+    /// `Some((min_hcp, max_hcp))` of `shapes`, or `None` when `shapes == ShapeSet::ALL` (no walk
+    /// is needed then: every HCP in `0..=37` is reachable by *some* shape, so the cross-check
+    /// below can never fail — see `summary_satisfiable`).
+    bounds: Option<(u8, u8)>,
+}
+
+impl Summary {
+    const ANY: Summary = Summary {
+        shapes: bridge_core::ShapeSet::ALL,
+        hcp: 0..=37,
+        bounds: None,
+    };
+
+    /// The standalone summary of one alternative's own constraint (computed once per alternative
+    /// in [`step_b`], not once per combo).
+    fn of(c: &HandConstraint) -> Summary {
+        let shapes = c.shapes();
+        let bounds =
+            (shapes != bridge_core::ShapeSet::ALL).then(|| (shapes.min_hcp(), shapes.max_hcp()));
+        Summary {
+            shapes,
+            hcp: c.hcp_range(),
+            bounds,
+        }
+    }
+
+    /// `self ∧ addition`'s summary, or `None` when the cheap check finds it unsatisfiable (an
+    /// empty shape set, an inverted HCP range, or an HCP range no shape in the set can reach —
+    /// the same three checks as `summary_satisfiable`, just computed incrementally). The
+    /// `min_hcp`/`max_hcp` walk (`ShapeSet::{min,max}_hcp`, up to ~560 member shapes) only runs
+    /// when the shape set actually narrows from `self`'s, not on every combination; when it does
+    /// not narrow, `self.bounds` is still valid for the new (possibly HCP-narrower) range and is
+    /// reused as-is (07-bidding.md §4.4.2's `interpret < 10 µs` budget).
+    fn and(&self, addition: &Summary) -> Option<Summary> {
+        let shapes = self.shapes.intersect(addition.shapes);
+        if shapes.is_empty() {
+            return None;
+        }
+        let hcp = clamp_hcp(&self.hcp, &addition.hcp);
+        if hcp.is_empty() {
+            return None;
+        }
+        let bounds = if shapes == bridge_core::ShapeSet::ALL {
+            None
+        } else if shapes == self.shapes {
+            self.bounds
+        } else {
+            Some((shapes.min_hcp(), shapes.max_hcp()))
+        };
+        if let Some((min_hcp, max_hcp)) = bounds {
+            if *hcp.start() > max_hcp || *hcp.end() < min_hcp {
+                return None;
+            }
+        }
+        Some(Summary {
+            shapes,
+            hcp,
+            bounds,
+        })
     }
 }
 
@@ -602,8 +753,16 @@ fn and_one_more(existing: &HandConstraint, addition: &HandConstraint) -> HandCon
 /// materialised once per surviving (post-dedup, post-truncation) combo instead of once per
 /// intermediate one; on the 12-call bench auction this alone was the difference between roughly
 /// 95 µs and single-digit µs (07-bidding.md §6.2's `interpret < 10 µs` target).
+///
+/// `summary` is the running `Summary` of `constraint` (see [`Summary::and`]): keeping it
+/// incrementally, instead of recomputing `constraint.shapes()`/`hcp_range()` (a walk of the whole
+/// `And` tree) and then `ShapeSet::min_hcp`/`max_hcp` (a walk of up to ~560 member shapes) from
+/// scratch at every combination, is what keeps the cross-product's per-combination pre-check cheap
+/// once a node's constraint carries a real suit-length or shape atom (`summary_satisfiable`'s
+/// `shapes == ShapeSet::ALL` shortcut alone only covers bare-HCP atoms).
 struct Combo {
     constraint: HandConstraint,
+    summary: Summary,
     weight: f32,
     key: Vec<(Option<NodeId>, ResolutionKind, usize)>,
 }
@@ -632,19 +791,27 @@ fn step_b(
             per_call.iter().filter(|c| c.seat == seat).collect();
         let mut combos: Vec<Combo> = vec![Combo {
             constraint: HandConstraint::ANY,
+            summary: Summary::ANY,
             weight: 1.0,
             key: Vec::new(),
         }];
         let had_calls = !seat_calls.is_empty();
 
         for cj in &seat_calls {
+            // Precomputed once per call, not once per (combo, alternative) pair: the same
+            // `Summary::of` result is reused across every combo this call is folded into below.
+            let alt_summaries: Vec<Summary> = cj
+                .alternatives
+                .iter()
+                .map(|(c, _, _)| Summary::of(c))
+                .collect();
             let mut next: Vec<Combo> = Vec::new();
             for combo in &combos {
                 for (i, (ci, wi, ex)) in cj.alternatives.iter().enumerate() {
-                    let c2 = and_one_more(&combo.constraint, ci);
-                    if !summary_satisfiable(&c2) {
+                    let Some(summary) = combo.summary.and(&alt_summaries[i]) else {
                         continue;
-                    }
+                    };
+                    let c2 = and_one_more(&combo.constraint, ci);
                     // `with_capacity` + `extend_from_slice` (one allocation, sized exactly right)
                     // instead of `combo.key.clone()` then `push` (which can reallocate a second
                     // time): `key` is rebuilt on every surviving candidate in this loop, so the
@@ -654,6 +821,7 @@ fn step_b(
                     key.push((ex.node, ex.kind, i));
                     next.push(Combo {
                         constraint: c2,
+                        summary,
                         weight: combo.weight * wi,
                         key,
                     });
@@ -676,6 +844,7 @@ fn step_b(
             tracing::warn!(?seat, "seat contradicts itself");
             combos = vec![Combo {
                 constraint: HandConstraint::ANY,
+                summary: Summary::ANY,
                 weight: 1.0,
                 key: Vec::new(),
             }];

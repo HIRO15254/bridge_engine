@@ -6,8 +6,6 @@
 //! probability, so no sampled deal ever gets weight zero; an off-system call costs `ln ε`.
 //! As `τ → 0` the argmax equals `choose_bid`.
 
-use std::collections::HashMap;
-
 use bridge_core::{Auction, Call, Deal, Hand};
 
 use crate::choose::kept_priorities;
@@ -41,7 +39,19 @@ fn logsumexp(xs: &[f32]) -> f32 {
     m + sum.ln()
 }
 
+/// One slot per `Call::index()` value (`0..38`, Pass/Double/Redouble plus every `Bid`); see
+/// `Call::index`.
+const N_CALLS: usize = 38;
+
 /// The distribution over legal calls for `hand` after `auction`.
+///
+/// Grouped and summed by `Call::index()` in a fixed-size array, not a `HashMap` (D12/09-sample
+/// §7): a `HashMap`'s iteration order varies between instances (and process/thread), and `f32`
+/// summation is order-sensitive, so `lse_all`'s `logsumexp` over `scores.values()` used to differ
+/// in its last bits from one call to the next — breaking the bit-for-bit determinism
+/// `sequence_log_likelihood` (the importance weights' `ln L` term) is required to have between a
+/// single-threaded and a multi-threaded run. The fixed array also drops the two per-call heap
+/// allocations the two `HashMap`s used to cost on this hot path.
 pub fn call_distribution(
     system: &SystemIR,
     hand: Hand,
@@ -61,24 +71,28 @@ pub fn call_distribution(
     }
 
     let tau = ctx.policy.temperature;
-    let mut groups: HashMap<Call, Vec<f32>> = HashMap::new();
+    let mut scores_by_call: [Vec<f32>; N_CALLS] = std::array::from_fn(|_| Vec::new());
     for (call, priority) in kept {
-        groups
-            .entry(call)
-            .or_default()
-            .push(f32::from(priority) / tau);
+        scores_by_call[call.index() as usize].push(f32::from(priority) / tau);
     }
-    let scores: HashMap<Call, f32> = groups
-        .into_iter()
-        .map(|(call, xs)| (call, logsumexp(&xs)))
-        .collect();
-    let all_scores: Vec<f32> = scores.values().copied().collect();
+    let mut scores = [f32::NEG_INFINITY; N_CALLS];
+    for (i, xs) in scores_by_call.iter().enumerate() {
+        if !xs.is_empty() {
+            scores[i] = logsumexp(xs);
+        }
+    }
+    let all_scores: Vec<f32> = scores.iter().copied().filter(|s| s.is_finite()).collect();
     let lse_all = logsumexp(&all_scores);
 
     legal
         .into_iter()
         .map(|c| {
-            let softmax = scores.get(&c).map_or(0.0, |s| (s - lse_all).exp());
+            let s = scores[c.index() as usize];
+            let softmax = if s.is_finite() {
+                (s - lse_all).exp()
+            } else {
+                0.0
+            };
             let p = (1.0 - eps) * softmax + eps / n_legal;
             (c, p)
         })

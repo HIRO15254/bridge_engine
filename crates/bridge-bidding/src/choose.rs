@@ -177,7 +177,16 @@ pub(crate) fn gather(
     let mut pass_offered = false;
 
     let lookup = system.index.resolve(&key);
-    let system_children: Option<Vec<(Call, NodeId)>> = if lookup.matched_depth == key.calls.len() {
+    // Whether `system_children` came from the exact resolve or from `resolve_lenient` (the
+    // opponents' real call substituted by `Pass`, "system on"). This gates both the
+    // `IllegalSystemCall` lint below and the implicit-pass synthesis further down, so that
+    // `choose_bid` only ever treats a position as fully on-system under the same condition
+    // `interpret`'s Step A does (07-bidding.md §4.1.5.1/§5.2 step 3) — otherwise the two disagree
+    // whenever an opponents' off-system call is more than one substitution away from a match
+    // (`interpret` falls through to Natural there, `choose_bid` must too, not synthesise a Pass
+    // from a lenient sibling that Natural would never reproduce).
+    let exact_match = lookup.matched_depth == key.calls.len();
+    let system_children: Option<Vec<(Call, NodeId)>> = if exact_match {
         Some(system.index.children(lookup.end, key.opener_pos, key.vul))
     } else {
         system
@@ -199,10 +208,18 @@ pub(crate) fn gather(
                     call,
                     reason: Rejected::Illegal,
                 });
-                diagnostics.push(Diagnostic::IllegalSystemCall {
-                    node: node_id,
-                    call,
-                });
+                // A compiled system never lists an exact-resolve child that is illegal at its own
+                // position (the compiler drops those via `Lint::IllegalCall`). A lenient-derived
+                // child, though, stands for a *different*, substituted sequence and is routinely
+                // illegal against the real auction (e.g. a raise that is fine "as if they had
+                // passed" but not after their real overcall) — that is not a system-definition
+                // problem, so only an exact-resolve candidate is worth the lint.
+                if exact_match {
+                    diagnostics.push(Diagnostic::IllegalSystemCall {
+                        node: node_id,
+                        call,
+                    });
+                }
                 continue;
             }
             legal_system_candidates.push((call, node_id));
@@ -265,10 +282,14 @@ pub(crate) fn gather(
         }
     }
 
-    // Implicit pass (07-bidding.md §5.2 step 3). Only synthesised against *system* siblings, so
-    // that the complement matches the one `interpret`'s Step A §4.1.5.1 would compute at the same
-    // point (bidirectional consistency, 07-bidding.md §2.3).
+    // Implicit pass (07-bidding.md §5.2 step 3). Only synthesised against *system* siblings from
+    // the *exact* resolve (`exact_match`), so that the complement matches the one `interpret`'s
+    // Step A §4.1.5.1 would compute at the same point (bidirectional consistency, 07-bidding.md
+    // §2.3): `interpret` only ever takes its own implicit-pass branch when the direct (non-lenient)
+    // resolve stalls exactly one call short, never when it only succeeds after substituting an
+    // opponents' call via `resolve_lenient`.
     if ctx.implicit_pass == ImplicitPass::Complement
+        && exact_match
         && !pass_offered
         && auction.is_legal(Call::Pass)
         && !legal_system_candidates.is_empty()

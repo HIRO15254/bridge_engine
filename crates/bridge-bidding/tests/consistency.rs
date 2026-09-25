@@ -8,7 +8,8 @@ use bridge_bidding::{
     BidChoice, BidContext, ImplicitPass, InterpretOptions, PolicyParams, ResolutionKind, Scoring,
     Table, choose_bid, interpret,
 };
-use bridge_core::{Auction, Deal, Seat, Vulnerability};
+use bridge_core::{Auction, Deal, Seat, Strain, Suit, Vulnerability};
+use bridge_system::ast::{SeatCond, VulCond};
 use common::*;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use rand_xoshiro::rand_core::SeedableRng;
@@ -150,4 +151,80 @@ fn forward_consistency_opening_only() {
         );
     }
     let _ = Vulnerability::None;
+}
+
+/// Regression: `choose_bid`'s implicit-pass synthesis (`choose::gather`) used to treat candidates
+/// found through `resolve_lenient` (the opponents' real call substituted by `Pass`, "system on")
+/// just like an exact match, building a `Pass` from *those* siblings' complement. But
+/// `interpret`'s own Step A only ever takes its implicit-pass branch on an *exact* resolve
+/// (07-bidding.md §4.1.5.1) — past an off-system opponents' call, it falls through to
+/// `resolve_lenient` and then `Natural`, never re-deriving the same complement. So `choose_bid`
+/// could synthesise a `Pass` that `interpret` would never accept as `Exact` for the same position
+/// (§5.2 step 3's bidirectional-consistency requirement).
+///
+/// A full round-trip through `interpret` can't be asserted here: with the resolve no longer
+/// exact, South's `Pass` after the off-system overcall falls through Step A to
+/// `NaturalInference` (`classify`/`infer`, still `todo!()` on this branch, would panic). The fixed
+/// expectation is that `choose_bid` no longer manufactures a mismatched `Pass` in the first
+/// place — with no natural fallback wired in, there is genuinely no system-backed candidate for
+/// this off-system position, so it must report `NoCandidate` instead.
+#[test]
+fn choose_bid_does_not_synthesize_pass_from_lenient_siblings() {
+    let mut b = SystemBuilder::new();
+    b.insert(
+        true,
+        &[bid(1, Strain::Hearts)],
+        bid(1, Strain::Hearts),
+        atom_hcp(12, 21),
+        SeatCond::Any,
+        VulCond::default(),
+        "opening",
+        0,
+    );
+    b.insert(
+        true,
+        &[bid(1, Strain::Hearts), PASS, bid(2, Strain::Hearts)],
+        bid(2, Strain::Hearts),
+        atom_suit_hcp(Suit::Hearts, 3, 13, 6, 9),
+        SeatCond::Any,
+        VulCond::default(),
+        "raise",
+        0,
+    );
+    let sys = std::sync::Arc::new(b.build());
+    let table = Table::uniform(
+        sys,
+        std::sync::Arc::new(bridge_system::NaturalInference::default()),
+    );
+
+    let hand = weak_hand();
+    // North opens 1H, East overcalls 1S: off-system for NS (only "1H-Pass-2H" is in the trie), one
+    // substitution away from `resolve_lenient` finding the `2H` response node, which `hand` (0
+    // HCP) does not satisfy.
+    let after_overcall = auction(
+        Seat::North,
+        Vulnerability::None,
+        &[bid(1, Strain::Hearts), bid(1, Strain::Spades)],
+    );
+    let ctx = BidContext {
+        scoring: Scoring::Imp,
+        natural: None,
+        implicit_pass: ImplicitPass::Complement,
+        policy: PolicyParams::default(),
+    };
+    let choice = choose_bid(
+        &table.systems[Seat::South.index() as usize],
+        hand,
+        &after_overcall,
+        &ctx,
+    );
+    match choice {
+        BidChoice::NoCandidate(_) => {}
+        BidChoice::Chosen(c) => panic!(
+            "expected NoCandidate (no natural fallback wired in for this off-system position); \
+             got {:?} via {:?} instead \u{2014} the pre-fix bug synthesised a Pass from a lenient \
+             sibling that `interpret` would never accept as Exact here",
+            c.call, c.source
+        ),
+    }
 }

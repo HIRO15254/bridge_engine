@@ -220,7 +220,10 @@ impl SystemBuilder {
 /// - opponents' interference handled two ways: a concrete `Double`/`Redouble` sub-tree
 ///   (plain [`SystemBuilder::insert`]) and a wildcard overcall class
 ///   (`SystemBuilder::insert_path` with [`Edge::Class`]), demonstrating negative doubles;
-/// - an implicit mid-auction pass at `1H-(X)-Pass` (no row at that depth: §4.1.5.1).
+/// - an implicit mid-auction pass at `1H-(X)-Pass` (no row at that depth: §4.1.5.1);
+/// - an implicit pass reached *through* a deeper row (`ew_pass_2nd_over_1c`'s path structurally
+///   creates East's own unrowed pass at `1C-Pass`), exercising the parent-position resolution in
+///   `interpret::step_a_call`'s `d == n_k` branch.
 pub struct Sayc {
     pub sys: Arc<SystemIR>,
     pub one_c: NodeId,
@@ -238,8 +241,7 @@ pub struct Sayc {
     pub ew_over_1c: NodeId,
     pub ew_over_1h_nt: NodeId,
     pub ew_over_1h_dbl: NodeId,
-    pub ew_pass_over_1c: NodeId,
-    pub ew_pass_over_1c_2: NodeId,
+    pub ew_pass_2nd_over_1c: NodeId,
 }
 
 pub fn sayc_system() -> Sayc {
@@ -399,9 +401,7 @@ pub fn sayc_system() -> Sayc {
     // The "they opened" arena (`we_opened = false`): with `Table::uniform`, every seat's own
     // calls are interpreted through *this same* system, so East/West's own actions after North
     // (or South) opens must resolve here too, or Step A falls through to natural inference
-    // (`classify`/`infer`, still `todo!()` on this branch, see the module doc). Each entry also
-    // gives every *other* plain pass at that point a non-empty sibling set, so it resolves as an
-    // implicit pass (07-bidding.md §4.1.5.1) instead of falling through as well.
+    // (`classify`/`infer`, still `todo!()` on this branch, see the module doc).
     let ew_over_1c = b.insert(
         false,
         &[bid(1, Strain::Clubs), bid(1, Strain::NoTrump)],
@@ -433,24 +433,20 @@ pub fn sayc_system() -> Sayc {
         0,
     );
 
-    // Explicit EW passes over 1C, both rounds: Step A's implicit-pass shortcut (§4.1.5.1) only
-    // ever looks at the *last* position of the truncated key, so it cannot bridge an
-    // intermediate silent call when a *later* call (here West's second pass) needs to resolve
-    // through it too. A hand-built trie has to spell out every such intermediate node explicitly
-    // (the real BML compiler would do this for every row automatically); real systems would
-    // phrase this as "pass, insufficient to act" rather than `ANY`, but the exact constraint
-    // does not matter for these tests.
-    let ew_pass_over_1c = b.insert(
-        false,
-        &[bid(1, Strain::Clubs), PASS],
-        PASS,
-        HandConstraint::ANY,
-        SeatCond::Any,
-        VulCond::default(),
-        "pass, insufficient to act",
-        0,
-    );
-    let ew_pass_over_1c_2 = b.insert(
+    // West's second pass over "1C-P-1D-P" (`we_opened: false`): a genuine row, not a per-level
+    // workaround. Inserting it (via `insert`, all-concrete-call edges) structurally creates every
+    // intermediate trie node along its path (06-system.md §4.3), including East's own *first*
+    // pass at `[1C, Pass]` — which gets no row of its own. That is exactly the
+    // implicit-pass-through-a-deeper-row shape `interpret::step_a_call`'s `d == n_k` branch
+    // resolves (07-bidding.md §4.1.5.1): East's pass is picked up as the complement of `1C`'s
+    // real children (`ew_over_1c`) at the *parent* position, not treated as off-system. A real
+    // BML-compiled system would have deeper EW continuations everywhere and never need a row
+    // spelled out by hand just for this; this one row is what keeps
+    // `and_combination_drops_contradictions`'s auction (which walks through both EW passes to
+    // reach North's own rebid) resolvable without ever reaching `NaturalInference`, still
+    // `todo!()` on this branch — and, as a side effect, is exactly the shape
+    // `implicit_pass_through_deeper_row` below exercises directly.
+    let ew_pass_2nd_over_1c = b.insert(
         false,
         &[bid(1, Strain::Clubs), PASS, bid(1, Strain::Diamonds), PASS],
         PASS,
@@ -478,8 +474,7 @@ pub fn sayc_system() -> Sayc {
         ew_over_1c,
         ew_over_1h_nt,
         ew_over_1h_dbl,
-        ew_pass_over_1c,
-        ew_pass_over_1c_2,
+        ew_pass_2nd_over_1c,
     }
 }
 

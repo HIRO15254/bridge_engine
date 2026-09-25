@@ -6,7 +6,7 @@ use bridge_bidding::{
     BidChoice, BidContext, ChoiceSource, ImplicitPass, InterpretOptions, PolicyParams,
     ResolutionKind, Scoring, Table, choose_bid, interpret,
 };
-use bridge_core::{Seat, Strain, Vulnerability};
+use bridge_core::{Seat, Strain, Suit, Vulnerability};
 use bridge_system::ast::{SeatCond, VulCond};
 use common::*;
 use rand_xoshiro::rand_core::SeedableRng;
@@ -215,6 +215,150 @@ fn partial_and_natural_epsilon() {
         .unwrap()
         .1;
     assert!((real_weight - (1.0 - opts.eps_partial)).abs() < TOL);
+
+    // `strict: true` removes the `Fallback` branch entirely (07-bidding.md §4.2), rather than
+    // just shrinking its weight.
+    let strict_opts = InterpretOptions {
+        strict: true,
+        ..InterpretOptions::default()
+    };
+    let strict_interp = interpret(&table, &a, &strict_opts);
+    let strict_pc = &strict_interp.per_call[2];
+    assert_eq!(strict_pc.alternatives.len(), 1);
+    assert!(
+        strict_pc
+            .alternatives
+            .iter()
+            .all(|(_, _, ex)| ex.kind != ResolutionKind::Fallback)
+    );
+    let (_, strict_weight, _) = &strict_pc.alternatives[0];
+    assert!((*strict_weight - 1.0).abs() < TOL);
+}
+
+/// Regression: our own call can land exactly on an implicit-pass trie node that exists only
+/// because some *deeper* row's path runs through it (06-system.md §4.3), not because our own call
+/// has a listed row of its own — e.g. a competitive continuation like `1H-(P)-P-(1S)-X`. Before
+/// the fix, Step A's `d == n_k` branch used `lookup.end` (which the walk had already advanced
+/// *past* our own pass) to look for siblings, found none (its children are the calls after our
+/// pass, not our pass's siblings), fell through to `NaturalInference` (still `todo!()` on this
+/// branch, so this would panic), and marked `divergence` even though the auction is fully
+/// on-system. The fix re-resolves the one-call-shorter key to find the *parent* position instead.
+#[test]
+fn implicit_pass_through_deeper_row() {
+    let mut b = SystemBuilder::new();
+    b.insert(
+        true,
+        &[bid(1, Strain::Hearts)],
+        bid(1, Strain::Hearts),
+        atom_hcp(12, 21),
+        SeatCond::Any,
+        VulCond::default(),
+        "opening",
+        0,
+    );
+    b.insert(
+        true,
+        &[bid(1, Strain::Hearts), PASS, bid(1, Strain::Spades)],
+        bid(1, Strain::Spades),
+        atom_suit_hcp(Suit::Spades, 4, 13, 6, 10),
+        SeatCond::Any,
+        VulCond::default(),
+        "4+ spades, new suit",
+        0,
+    );
+    b.insert(
+        true,
+        &[bid(1, Strain::Hearts), PASS, bid(2, Strain::Hearts)],
+        bid(2, Strain::Hearts),
+        atom_suit_hcp(Suit::Hearts, 3, 13, 6, 9),
+        SeatCond::Any,
+        VulCond::default(),
+        "raise",
+        0,
+    );
+    // The deeper competitive row 1H-(P)-P-(1S)-X: its path structurally creates South's own pass
+    // at `[1H, Pass]` as a trie node with no row of its own (exactly the shape this test exists
+    // to cover).
+    b.insert(
+        true,
+        &[
+            bid(1, Strain::Hearts),
+            PASS,
+            PASS,
+            bid(1, Strain::Spades),
+            DBL,
+        ],
+        DBL,
+        atom_suit_hcp(Suit::Spades, 4, 13, 6, 21),
+        SeatCond::Any,
+        VulCond::default(),
+        "negative double",
+        0,
+    );
+    // East's own pass needs to resolve too (`Table::uniform` shares this system across all seats):
+    // a real, direct row (not an implicit one), so this test's `divergence` assertions are about
+    // South's resolution only, not entangled with East's.
+    b.insert(
+        false,
+        &[bid(1, Strain::Hearts), PASS],
+        PASS,
+        bridge_constraint::HandConstraint::ANY,
+        SeatCond::Any,
+        VulCond::default(),
+        "pass, nothing to say",
+        0,
+    );
+    let sys = Arc::new(b.build());
+    let table = Table::uniform(sys, Arc::new(bridge_system::NaturalInference::default()));
+    let opts = InterpretOptions {
+        strict: true,
+        ..InterpretOptions::default()
+    };
+    let weak = weak_hand();
+
+    // interpret([1H, Pass(E), Pass(S)]): South's own pass must resolve `Exact` (the complement of
+    // 1S/2H), never fall through to `Natural`, and never mark `divergence`.
+    let three_calls = auction(
+        Seat::North,
+        Vulnerability::None,
+        &[bid(1, Strain::Hearts), PASS, PASS],
+    );
+    let interp = interpret(&table, &three_calls, &opts);
+    assert!(interp.divergence.is_none());
+    assert_eq!(interp.per_call[0].kind, ResolutionKind::Exact);
+    assert_eq!(interp.per_call[1].kind, ResolutionKind::Exact);
+    let south_pc = &interp.per_call[2];
+    assert_eq!(south_pc.seat, Seat::South);
+    assert_eq!(south_pc.kind, ResolutionKind::Exact);
+    assert!(
+        south_pc
+            .alternatives
+            .iter()
+            .any(|(c, w, _)| *w > 0.0 && c.satisfies(weak))
+    );
+
+    // Bidirectional: `choose_bid` for South with a hand that fits neither 1S nor 2H must choose
+    // the same implicit `Pass` that `interpret` just accepted.
+    let two_calls = auction(
+        Seat::North,
+        Vulnerability::None,
+        &[bid(1, Strain::Hearts), PASS],
+    );
+    let ctx = BidContext {
+        implicit_pass: ImplicitPass::Complement,
+        ..default_ctx()
+    };
+    let choice = choose_bid(
+        &table.systems[Seat::South.index() as usize],
+        weak,
+        &two_calls,
+        &ctx,
+    );
+    let BidChoice::Chosen(chosen) = choice else {
+        panic!("weak_hand should satisfy the implicit-pass complement")
+    };
+    assert_eq!(chosen.call, bridge_core::Call::Pass);
+    assert_eq!(chosen.source, ChoiceSource::ImplicitPass);
 }
 
 /// `classify`/`infer` (natural inference) are still `todo!()` on this branch (owned by a parallel
