@@ -19,7 +19,22 @@ pub struct KnownCards {
 impl KnownCards {
     /// Validates that the four sets are pairwise disjoint and each has at most 13 cards.
     pub fn new(known: [Hand; 4]) -> Result<KnownCards, KnownCardsError> {
-        todo!("phase 2")
+        for seat in Seat::ALL {
+            let count = known[seat.index() as usize].len();
+            if count > 13 {
+                return Err(KnownCardsError::TooMany { seat, count });
+            }
+        }
+        let mut seen = Hand::EMPTY;
+        for hand in known {
+            let overlap = seen.intersect(hand);
+            if !overlap.is_empty() {
+                let card = overlap.cards().next().expect("overlap is non-empty");
+                return Err(KnownCardsError::Duplicate(card));
+            }
+            seen = seen.union(hand);
+        }
+        Ok(KnownCards { known })
     }
 
     /// Nothing known.
@@ -41,8 +56,12 @@ impl KnownCards {
     }
 
     /// Adds every card each seat has played so far.
-    pub fn with_play(self, history: &PlayHistory) -> KnownCards {
-        todo!("phase 5")
+    pub fn with_play(mut self, history: &PlayHistory) -> KnownCards {
+        for seat in Seat::ALL {
+            let i = seat.index() as usize;
+            self.known[i] = self.known[i].union(history.played_by(seat));
+        }
+        self
     }
 
     /// The cards whose owner is unknown.

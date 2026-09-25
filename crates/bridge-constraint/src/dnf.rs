@@ -16,7 +16,12 @@ pub struct DnfTerm {
 impl DnfTerm {
     /// Whether `hand` satisfies the whole term (atom, custom literals and residual).
     pub fn satisfies(&self, hand: bridge_core::Hand) -> bool {
-        todo!("phase 2")
+        self.atom.satisfies(hand)
+            && self
+                .custom
+                .iter()
+                .all(|(pred, negated)| (pred.f)(hand) != *negated)
+            && self.residual.as_ref().is_none_or(|c| c.satisfies(hand))
     }
 
     /// `true` when the term has neither custom literals nor a residual.

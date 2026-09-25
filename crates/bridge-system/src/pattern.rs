@@ -116,6 +116,22 @@ pub enum OppClass {
     Pass,
 }
 
+impl OppClass {
+    /// Whether `call` belongs to this class of opponents' calls. Used by the trie's wildcard
+    /// edges (`trie.rs`) to match a concrete opponents' call against a `Class` pattern.
+    pub const fn matches(self, call: Call) -> bool {
+        match (self, call) {
+            (OppClass::AnyCall, _) => true,
+            (OppClass::AnyBid, Call::Bid(_)) => true,
+            (OppClass::AnySuitBid, Call::Bid(b)) => !matches!(b.strain(), Strain::NoTrump),
+            (OppClass::AnyBidAtLevel(n), Call::Bid(b)) => b.level() == n,
+            (OppClass::Double, Call::Double) => true,
+            (OppClass::Pass, Call::Pass) => true,
+            _ => false,
+        }
+    }
+}
+
 /// A pattern with its side.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

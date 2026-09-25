@@ -150,6 +150,7 @@ dependencies = [
  "rand_core 0.10.1",
  "rand_xoshiro",
  "serde",
+ "serde_json",
  "thiserror",
  "tracing",
 ]
@@ -233,6 +234,7 @@ dependencies = [
  "insta",
  "postcard",
  "serde",
+ "serde_json",
  "smallvec",
  "thiserror",
  "tracing",

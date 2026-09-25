@@ -10,8 +10,6 @@
 //! or the application, never here.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
-// Phase 0 skeleton: the public surface is final, bodies are `todo!()`.
-#![allow(dead_code, unused_variables)]
 
 mod cache;
 mod choose;

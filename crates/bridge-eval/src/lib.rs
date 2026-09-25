@@ -10,8 +10,6 @@
 //! metadata and passed in as a [`DistMethod`].
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
-// Phase 0 skeleton: the public surface is final, some bodies are `todo!()`.
-#![allow(dead_code, unused_variables)]
 
 mod dist;
 mod half;

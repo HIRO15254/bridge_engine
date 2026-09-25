@@ -1,6 +1,8 @@
 //! Distribution points and losing-trick-count variants.
 
-use bridge_core::{Hand, Shape};
+use bridge_core::{Hand, Shape, Suit};
+
+use crate::{SUIT, aces, jacks, queens, tens};
 
 /// Which losing-trick count to use.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -53,15 +55,86 @@ impl DistMethod {
     }
 }
 
+/// `+1` when `aces + tens − queens − jacks >= 3`, `−1` when `<= −3`, else `0` (Bergen adjust-3).
+fn adjust3(hand: Hand) -> i8 {
+    let plus = aces(hand) as i16 + tens(hand) as i16;
+    let minus = queens(hand) as i16 + jacks(hand) as i16;
+    let delta = plus - minus;
+    if delta >= 3 {
+        1
+    } else if delta <= -3 {
+        -1
+    } else {
+        0
+    }
+}
+
+/// Long-suit points of a [`Shape`]: `Σ_suit max(0, len − 4)`.
+const fn long_suit_points(shape: Shape) -> i8 {
+    let lens = shape.lens();
+    let mut i = 0;
+    let mut total: i8 = 0;
+    while i < 4 {
+        let len = lens[i];
+        if len > 4 {
+            total += (len - 4) as i8;
+        }
+        i += 1;
+    }
+    total
+}
+
+/// Short-suit points of a [`Shape`].
+const fn short_suit_points(shape: Shape, void: u8, singleton: u8, doubleton: u8) -> i8 {
+    let lens = shape.lens();
+    let mut i = 0;
+    let mut total: i8 = 0;
+    while i < 4 {
+        total += match lens[i] {
+            0 => void as i8,
+            1 => singleton as i8,
+            2 => doubleton as i8,
+            _ => 0,
+        };
+        i += 1;
+    }
+    total
+}
+
 /// Distribution points of `hand`. Signed because the Bergen adjust-3 correction can be negative.
 pub fn distribution_points(hand: Hand, method: DistMethod) -> i8 {
-    todo!("phase 2")
+    match method {
+        DistMethod::ShortSuit {
+            void,
+            singleton,
+            doubleton,
+        } => short_suit_points(hand.shape(), void, singleton, doubleton),
+        DistMethod::LongSuit => long_suit_points(hand.shape()),
+        DistMethod::BergenStarting => {
+            let quality_suits = Suit::ALL
+                .into_iter()
+                .filter(|&suit| {
+                    let holding = hand.holding(suit);
+                    holding.len() >= 4 && SUIT.honors5[holding.bits() as usize] >= 3
+                })
+                .count() as i8;
+            long_suit_points(hand.shape()) + quality_suits + adjust3(hand)
+        }
+    }
 }
 
 /// Distribution points as a function of the shape alone, or `None` for methods that also look
 /// at the cards (see [`DistMethod::is_shape_only`]).
 pub fn shape_points(shape: Shape, method: DistMethod) -> Option<i8> {
-    todo!("phase 2")
+    match method {
+        DistMethod::ShortSuit {
+            void,
+            singleton,
+            doubleton,
+        } => Some(short_suit_points(shape, void, singleton, doubleton)),
+        DistMethod::LongSuit => Some(long_suit_points(shape)),
+        DistMethod::BergenStarting => None,
+    }
 }
 
 /// `hcp + distribution_points`, saturating at zero.

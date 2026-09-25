@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use bridge_core::{Auction, Call, Seat, Vulnerability};
 
-use crate::{InterpretOptions, Interpretation, Table};
+use crate::{InterpretOptions, Interpretation, Table, interpret};
 
 /// Memoises [`interpret`](crate::interpret) by `(dealer, vulnerability, calls)`.
 #[derive(Default)]
@@ -26,7 +26,17 @@ impl InterpretCache {
         auction: &Auction,
         opts: &InterpretOptions,
     ) -> Arc<Interpretation> {
-        todo!("phase 3")
+        let key = (
+            auction.dealer(),
+            auction.vulnerability(),
+            auction.calls().to_vec(),
+        );
+        if let Some(existing) = self.map.get(&key) {
+            return existing.clone();
+        }
+        let interpretation = Arc::new(interpret(table, auction, opts));
+        self.map.insert(key, interpretation.clone());
+        interpretation
     }
 
     /// Number of entries.

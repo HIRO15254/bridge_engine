@@ -18,16 +18,21 @@
 //!
 //! # Cost
 //!
-//! `prepare` is the expensive step (20–60 µs for a full deck without per-suit filters, up to
-//! +65 µs per suit that needs enumeration, 3–10 µs mid-play); `sample` costs about 0.3–0.5 µs.
-//! Callers keep a prepared `Sampler` and sample from it many times.
+//! `prepare` is the expensive step: about 18 µs for the full 52-card deck with a shape and HCP
+//! window (shared `FULL_SUIT` tables, no per-suit enumeration needed), about 100 µs for a
+//! mid-play position (26 unknown cards, 6 fixed, one HCP window) where every suit's table is
+//! rebuilt for the smaller pool. `sample` costs about 150–200 ns once a `Sampler` is prepared
+//! (release build; see `benches/sampler.rs`). Callers keep a prepared `Sampler` and sample from it
+//! many times.
 
+mod rand_util;
 mod suit_table;
 mod term;
 
 use bridge_core::Hand;
 
-use crate::{HandConstraint, PrepareError};
+use crate::{DnfOptions, HandConstraint, PrepareError};
+use rand_util::random_below;
 
 /// Options for [`Sampler::prepare`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -76,6 +81,7 @@ pub struct Sampler {
     pool: Hand,
     fixed: Hand,
     exact: bool,
+    max_tries: u32,
 }
 
 impl Sampler {
@@ -90,7 +96,48 @@ impl Sampler {
         fixed: Hand,
         opts: &SampleOptions,
     ) -> Result<Sampler, PrepareError> {
-        todo!("phase 2")
+        if !pool.is_disjoint(fixed) {
+            return Err(PrepareError::Overlap);
+        }
+        let fixed_len = fixed.len();
+        if fixed_len > 13 {
+            return Err(PrepareError::TooManyFixed(fixed_len));
+        }
+        if !opts.allow_rejection && !constraint.is_samplable() {
+            return Err(PrepareError::NotSamplable);
+        }
+
+        let dnf = constraint
+            .to_dnf(&DnfOptions::default())
+            .expect("DnfOptions::default uses Overflow::Residual, which never errors");
+
+        let mut terms = Vec::with_capacity(dnf.terms.len());
+        for dnf_term in dnf.terms {
+            let prepared = term::PreparedTerm::prepare(dnf_term, pool, fixed, opts);
+            if !opts.allow_rejection && prepared.alpha.is_some() {
+                return Err(PrepareError::NotSamplable);
+            }
+            terms.push(prepared);
+        }
+
+        let mut cum = Vec::with_capacity(terms.len());
+        let mut running = 0u64;
+        for t in &terms {
+            running += t.total;
+            cum.push(running);
+        }
+        let total = running;
+        let exact = terms.iter().all(|t| t.alpha.is_none());
+
+        Ok(Sampler {
+            terms,
+            cum,
+            total,
+            pool,
+            fixed,
+            exact,
+            max_tries: opts.max_tries,
+        })
     }
 
     /// Number of hands in the union of the terms (exact for the exact path; terms produced by
@@ -105,14 +152,70 @@ impl Sampler {
     }
 
     /// Draws one hand, or `None` when `count() == 0` or `max_tries` was exhausted.
+    ///
+    /// The term is chosen once, proportional to its count (§8.2); retries (up to
+    /// `opts.max_tries`) redraw within that same term, matching the definition of its estimated
+    /// acceptance rate `alpha` (§8.3).
     pub fn sample<R: rand_core::Rng + ?Sized>(&self, rng: &mut R) -> Option<Sample> {
-        todo!("phase 2")
+        if self.total == 0 {
+            return None;
+        }
+        let target = random_below(rng, self.total);
+        let term_idx = self.cum.partition_point(|&c| c <= target);
+        let term = &self.terms[term_idx];
+
+        let tries_limit = self.max_tries.max(1);
+        for tries in 1..=tries_limit {
+            let hand = term.draw(rng);
+            if term.alpha.is_none() {
+                debug_assert!(
+                    term.term.atom.satisfies(hand),
+                    "an exact term produced a hand violating its own atom"
+                );
+                let log_prob = self.log_prob(hand);
+                return Some(Sample {
+                    hand,
+                    log_prob,
+                    tries,
+                });
+            }
+            if term.term.satisfies(hand) {
+                let log_prob = self.log_prob(hand);
+                return Some(Sample {
+                    hand,
+                    log_prob,
+                    tries,
+                });
+            }
+        }
+        None
     }
 
     /// `ln P(hand)`: `ln(Σ_{terms ∋ hand} 1/α_i) − ln Σ_i c_i` (α = 1 for exact terms), or
     /// `-∞` when no term contains `hand`.
     pub fn log_prob(&self, hand: Hand) -> f64 {
-        todo!("phase 2")
+        if hand.len() != 13
+            || self.total == 0
+            || !self.fixed.is_subset(hand)
+            || !hand.is_subset(self.fixed.union(self.pool))
+        {
+            return f64::NEG_INFINITY;
+        }
+        let mut sum = 0.0f64;
+        for term in &self.terms {
+            if term.total == 0 {
+                continue;
+            }
+            if term.term.satisfies(hand) {
+                let alpha = term.alpha.unwrap_or(1.0).max(f64::MIN_POSITIVE);
+                sum += 1.0 / alpha;
+            }
+        }
+        if sum <= 0.0 {
+            f64::NEG_INFINITY
+        } else {
+            sum.ln() - (self.total as f64).ln()
+        }
     }
 
     /// The pool this sampler draws from.
@@ -123,5 +226,20 @@ impl Sampler {
     /// The fixed part every sampled hand contains.
     pub fn fixed(&self) -> Hand {
         self.fixed
+    }
+
+    /// Whether at least one term is definitely satisfiable: an exact term (`alpha.is_none()`)
+    /// with a non-empty superset always is; a term needing rejection also needs its burn-in probe
+    /// (`prepare`'s `opts.burn_in` draws) to have found at least one hand that passed the full
+    /// check.
+    ///
+    /// This is the rule [`HandConstraint::is_satisfiable`](crate::HandConstraint::is_satisfiable)
+    /// uses. It can under-report a genuinely satisfiable but extremely narrow rejection-only term
+    /// when every burn-in draw happens to miss, but it never reports an empty constraint as
+    /// satisfiable.
+    pub(crate) fn any_definitely_satisfiable(&self) -> bool {
+        self.terms
+            .iter()
+            .any(|t| t.total > 0 && t.alpha != Some(0.0))
     }
 }
