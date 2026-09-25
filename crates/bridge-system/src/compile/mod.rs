@@ -16,7 +16,10 @@
 
 pub mod desc;
 
-use crate::{Lint, SystemIR, lexer::SourceLoader};
+mod expand;
+mod meta;
+
+use crate::{Lint, SystemIR, ast::Block, lexer::SourceLoader};
 
 /// Compiler options.
 #[derive(Clone, Debug)]
@@ -47,5 +50,74 @@ pub fn compile(
     loader: &dyn SourceLoader,
     opts: &CompileOptions,
 ) -> (SystemIR, Vec<Lint>) {
-    todo!("phase 3")
+    // `Instant::now()` panics at runtime on `wasm32-unknown-unknown` ("time not implemented on
+    // this platform"); this timing is only ever used for the tracing `elapsed_ms` field below, so
+    // it is simply skipped there instead of pulling in a wasm-clock dependency.
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    let started = Some(std::time::Instant::now());
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    let started: Option<std::time::Instant> = None;
+
+    let loaded = crate::lexer::load(root_path, source, loader);
+    let resolved_source: String = loaded.files.iter().map(|(_, t)| t.as_ref()).collect();
+    let bml = crate::parser::parse(loaded);
+    let mut lints = bml.lints.clone();
+
+    let default_name = root_path
+        .rsplit('/')
+        .next()
+        .unwrap_or(root_path)
+        .to_string();
+    let mut meta = meta::parse_meta(&bml.blocks, &default_name, &mut lints);
+    meta.source_hash = source_hash(resolved_source.as_bytes());
+
+    let tables: Vec<&crate::ast::BidTable> = bml
+        .blocks
+        .iter()
+        .filter_map(|b| match b {
+            Block::BidTable(t) => Some(t),
+            _ => None,
+        })
+        .collect();
+    let expansion = expand::expand_file(&tables, &meta, opts);
+    lints.extend(expansion.lints);
+
+    let mut ir = SystemIR {
+        meta,
+        rows: expansion.rows,
+        nodes: expansion.nodes,
+        index: expansion.trie,
+        lints,
+    };
+    crate::lint::run_post_compile_checks(&mut ir, opts);
+
+    let summary = crate::lint::LintSummary::of(&ir.lints);
+    tracing::info!(
+        target: "bridge_system::compile",
+        name = %ir.meta.name,
+        rows = ir.rows.len(),
+        nodes = ir.nodes.len(),
+        lints_error = summary.errors,
+        lints_warn = summary.warnings,
+        lints_info = summary.infos,
+        elapsed_ms = started.map_or(0, |s| s.elapsed().as_millis() as u64),
+        "compiled a BML system"
+    );
+
+    let lints_out = ir.lints.clone();
+    (ir, lints_out)
+}
+
+/// blake3 of the resolved source, when the hasher is available (feature `cache`); otherwise the
+/// zero hash, documented on [`crate::SystemMeta::source_hash`]'s only writer.
+#[cfg(feature = "cache")]
+fn source_hash(source: &[u8]) -> [u8; 32] {
+    *blake3::hash(source).as_bytes()
+}
+
+/// Without the `cache` feature, `blake3` is not a dependency at all (see `Cargo.toml`), so
+/// `SystemMeta::source_hash` is left at its all-zero default; enable `cache` for a real hash.
+#[cfg(not(feature = "cache"))]
+fn source_hash(_source: &[u8]) -> [u8; 32] {
+    [0; 32]
 }

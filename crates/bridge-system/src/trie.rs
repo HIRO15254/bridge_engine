@@ -296,6 +296,90 @@ impl AuctionTrie {
         self.insert_path(we_opened, &path, seat, vul, node)
     }
 
+    /// An already-inserted entry at the trie position reached by `path`, among those already
+    /// present, whose `(seat, vul)` condition *covers* the given `(seat, vul)`: every
+    /// `(opener_position, vulnerability)` that would satisfy the given condition also satisfies
+    /// the existing entry's. Read-only: a `path` that does not exist yet in the trie yields
+    /// `None`, the same as when no entry covers.
+    ///
+    /// Used by expansion to avoid inserting a needlessly more specific, empty-description entry
+    /// (typically a history token re-traced under a table's own `#SEAT`/`#VUL`) that would
+    /// shadow an already-defined node whose conditions already cover it
+    /// (`docs/design/06-system.md` §4.2).
+    pub(crate) fn covering_entry(
+        &self,
+        we_opened: bool,
+        path: &[Edge],
+        seat: SeatCond,
+        vul: VulCond,
+    ) -> Option<NodeId> {
+        let mut cur = Self::root_id(we_opened);
+        for edge in path {
+            cur = match *edge {
+                Edge::Call(call) => self.find_child_call(cur, call)?,
+                Edge::Class(class) => self.find_child_class(cur, class)?,
+            };
+        }
+        self.nodes[cur.0 as usize]
+            .entries
+            .iter()
+            .find(|e| condition_covers(e.seat, e.vul, seat, vul))
+            .map(|e| e.node)
+    }
+
+    /// An existing entry at the trie position reached by `path` whose specificity equals the
+    /// given `(seat, vul)`'s and which *overlaps* it (some `(opener_position, vulnerability)`
+    /// satisfies both) without being identical to it (`insert_path` already returns `Err` for an
+    /// identical condition -- first definition wins, no tie to report there). This is a genuine
+    /// specificity tie: at lookup, either entry could match the same real auction, and only
+    /// insertion order (via [`Self::best_entry`]'s `>=`) decides which one wins
+    /// (`docs/design/06-system.md` §4.2/§9.3, `LintCode::ConditionTie`). Read-only, like
+    /// [`Self::covering_entry`]: a `path` that does not exist yet yields `None`.
+    pub(crate) fn tied_entry(
+        &self,
+        we_opened: bool,
+        path: &[Edge],
+        seat: SeatCond,
+        vul: VulCond,
+    ) -> Option<NodeId> {
+        let mut cur = Self::root_id(we_opened);
+        for edge in path {
+            cur = match *edge {
+                Edge::Call(call) => self.find_child_call(cur, call)?,
+                Edge::Class(class) => self.find_child_class(cur, class)?,
+            };
+        }
+        let specificity = seat.specificity() * 3 + vul.specificity();
+        self.nodes[cur.0 as usize]
+            .entries
+            .iter()
+            .find(|e| {
+                e.specificity == specificity
+                    && !(e.seat == seat && e.vul == vul)
+                    && condition_overlaps(e.seat, e.vul, seat, vul)
+            })
+            .map(|e| e.node)
+    }
+
+    /// The existing child of `at` for `call`, without creating it.
+    fn find_child_call(&self, at: TrieId, call: Call) -> Option<TrieId> {
+        let idx = call.index();
+        self.nodes[at.0 as usize]
+            .exact
+            .binary_search_by_key(&idx, |&(k, _)| k)
+            .ok()
+            .map(|pos| self.nodes[at.0 as usize].exact[pos].1)
+    }
+
+    /// The existing wildcard child of `at` for `class`, without creating it.
+    fn find_child_class(&self, at: TrieId, class: OppClass) -> Option<TrieId> {
+        self.nodes[at.0 as usize]
+            .classes
+            .iter()
+            .find(|(c, _)| *c == class)
+            .map(|&(_, id)| id)
+    }
+
     /// Inserts a node for a path of edges, where an opponents' step may be a concrete [`Call`]
     /// or an [`OppClass`] wildcard. Returns the existing entry's node if an entry with identical
     /// conditions is already present at the resulting trie node (first definition wins).
@@ -409,6 +493,48 @@ impl AuctionTrie {
         self.nodes[at.0 as usize].classes.push((class, new_id));
         new_id
     }
+}
+
+/// Whether every `(opener_position, vulnerability)` satisfying `(b_seat, b_vul)` also satisfies
+/// `(a_seat, a_vul)` -- i.e. an entry under `(a_seat, a_vul)` already covers whatever
+/// `(b_seat, b_vul)` would match, so a new entry for `(b_seat, b_vul)` could only ever shadow it,
+/// never add a case it does not already handle. Checked by brute force over the finite domain
+/// (4 positions x 2 x 2 vulnerabilities): both condition types are small enums with no relation
+/// between variants worth hand-encoding.
+/// Whether some `(opener_position, vulnerability)` satisfies both `(a_seat, a_vul)` and
+/// `(b_seat, b_vul)` -- i.e. the two conditions can genuinely both match the same real auction.
+/// Brute force over the same finite domain as [`condition_covers`], for the same reason.
+fn condition_overlaps(a_seat: SeatCond, a_vul: VulCond, b_seat: SeatCond, b_vul: VulCond) -> bool {
+    for position in 1..=4u8 {
+        if !a_seat.matches(position) || !b_seat.matches(position) {
+            continue;
+        }
+        for we in [true, false] {
+            for they in [true, false] {
+                if a_vul.matches(we, they) && b_vul.matches(we, they) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn condition_covers(a_seat: SeatCond, a_vul: VulCond, b_seat: SeatCond, b_vul: VulCond) -> bool {
+    for position in 1..=4u8 {
+        if !b_seat.matches(position) {
+            continue;
+        }
+        for &we in &[false, true] {
+            for &they in &[false, true] {
+                if b_vul.matches(we, they) && !(a_seat.matches(position) && a_vul.matches(we, they))
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 impl Default for AuctionTrie {
@@ -738,6 +864,142 @@ mod tests {
             lookup.by_depth.as_slice(),
             &[Some(opening), None, Some(rebid)]
         );
+    }
+
+    #[test]
+    fn covering_entry_finds_a_general_entry_covering_a_specific_condition() {
+        let mut trie = AuctionTrie::new();
+        let general = NodeId(1);
+        trie.insert(
+            true,
+            &[bid(1, Strain::Hearts)],
+            SeatCond::Any,
+            VulCond::default(),
+            general,
+        )
+        .unwrap();
+
+        // SeatCond::Any/VulCond::default() (the general entry) covers any more specific
+        // condition, such as ThirdOrFourth/Any.
+        let covering = trie.covering_entry(
+            true,
+            &[Edge::Call(bid(1, Strain::Hearts))],
+            SeatCond::ThirdOrFourth,
+            VulCond::default(),
+        );
+        assert_eq!(covering, Some(general));
+    }
+
+    #[test]
+    fn tied_entry_finds_an_overlapping_equal_specificity_condition() {
+        use crate::ast::Tri;
+
+        let mut trie = AuctionTrie::new();
+        let first = NodeId(1);
+        trie.insert(
+            true,
+            &[bid(1, Strain::Clubs)],
+            SeatCond::Any,
+            VulCond {
+                we: Tri::Yes,
+                they: Tri::Any,
+            },
+            first,
+        )
+        .unwrap();
+
+        // `we=Any, they=Yes` has the same specificity (1) as `we=Yes, they=Any`, and both match
+        // a real "both vulnerable" auction: a genuine tie, not a duplicate.
+        let tied = trie.tied_entry(
+            true,
+            &[Edge::Call(bid(1, Strain::Clubs))],
+            SeatCond::Any,
+            VulCond {
+                we: Tri::Any,
+                they: Tri::Yes,
+            },
+        );
+        assert_eq!(tied, Some(first));
+    }
+
+    #[test]
+    fn tied_entry_ignores_an_identical_condition() {
+        // An identical condition is `insert_path`'s own `Err` case (`DuplicatePath`, first wins
+        // outright) -- not a tie, so `tied_entry` must not also report it.
+        let mut trie = AuctionTrie::new();
+        trie.insert(
+            true,
+            &[bid(1, Strain::Clubs)],
+            SeatCond::Any,
+            VulCond::default(),
+            NodeId(1),
+        )
+        .unwrap();
+
+        let tied = trie.tied_entry(
+            true,
+            &[Edge::Call(bid(1, Strain::Clubs))],
+            SeatCond::Any,
+            VulCond::default(),
+        );
+        assert_eq!(tied, None);
+    }
+
+    #[test]
+    fn tied_entry_ignores_a_less_specific_non_overlapping_condition() {
+        let mut trie = AuctionTrie::new();
+        trie.insert(
+            true,
+            &[bid(1, Strain::Clubs)],
+            SeatCond::First,
+            VulCond::default(),
+            NodeId(1),
+        )
+        .unwrap();
+
+        // `Second` has the same specificity as `First` but never overlaps it (no position
+        // satisfies both): not a tie.
+        let tied = trie.tied_entry(
+            true,
+            &[Edge::Call(bid(1, Strain::Clubs))],
+            SeatCond::Second,
+            VulCond::default(),
+        );
+        assert_eq!(tied, None);
+    }
+
+    #[test]
+    fn covering_entry_is_none_when_no_entry_covers() {
+        let mut trie = AuctionTrie::new();
+        trie.insert(
+            true,
+            &[bid(1, Strain::Hearts)],
+            SeatCond::First,
+            VulCond::default(),
+            NodeId(1),
+        )
+        .unwrap();
+
+        // SeatCond::First only covers position 1, not every position ThirdOrFourth matches.
+        let covering = trie.covering_entry(
+            true,
+            &[Edge::Call(bid(1, Strain::Hearts))],
+            SeatCond::ThirdOrFourth,
+            VulCond::default(),
+        );
+        assert_eq!(covering, None);
+    }
+
+    #[test]
+    fn covering_entry_is_none_for_a_path_not_yet_in_the_trie() {
+        let trie = AuctionTrie::new();
+        let covering = trie.covering_entry(
+            true,
+            &[Edge::Call(bid(1, Strain::Hearts))],
+            SeatCond::Any,
+            VulCond::default(),
+        );
+        assert_eq!(covering, None);
     }
 
     #[test]

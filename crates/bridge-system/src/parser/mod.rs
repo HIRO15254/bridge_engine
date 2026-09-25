@@ -479,7 +479,12 @@ fn parse_table_paragraph(
 
         if let Some(col) = active_col {
             if indent == col {
-                let text_from_col = &line.text[indent as usize..];
+                // `bml.py` appends each continuation row with `row.strip()` (both `bml.py`'s
+                // `lastnode.desc += '\n' + row.strip()` and the history-description equivalent):
+                // trailing whitespace on a continuation line (e.g. an indented lone `.` row
+                // followed by stray spaces) must not survive into the stored description, or a
+                // later `\n.`-suffix check (dropping a trailing blank line) fails to match.
+                let text_from_col = line.text[indent as usize..].trim_end();
                 match active {
                     ActiveDesc::History => {
                         let d = history_desc.get_or_insert_with(|| Description {
