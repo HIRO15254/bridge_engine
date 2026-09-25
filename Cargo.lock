@@ -130,11 +130,13 @@ version = "0.0.1"
 dependencies = [
  "bridge-constraint",
  "bridge-core",
+ "bridge-format",
  "bridge-system",
  "criterion",
  "proptest",
  "rand_xoshiro",
  "serde",
+ "serde_json",
  "smallvec",
  "tracing",
 ]
