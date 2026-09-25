@@ -219,16 +219,15 @@ pub(crate) fn summary_satisfiable(c: &HandConstraint) -> bool {
     if hcp.is_empty() {
         return false;
     }
-    // `ShapeSet::min_hcp`/`max_hcp` walk every member shape (up to ~560 for an unrestricted set),
-    // which is exactly the case for most calls here (a bare HCP atom never narrows `shapes`). An
-    // unrestricted shape set can never make the HCP range cross-check below fail (every HCP from
-    // 0 to 37 is reachable by *some* shape), so skip the walk entirely when `shapes == ALL`; this
-    // keeps the cross product's per-combination pre-check cheap enough for the 10 µs budget
-    // (07-bidding.md §4.4.2) without changing the result.
+    // An unrestricted shape set can never make the HCP range cross-check below fail (every HCP
+    // from 0 to 37 is reachable by *some* shape), so skip `ShapeSet::hcp_bounds` entirely when
+    // `shapes == ALL`; this keeps the cross product's per-combination pre-check cheap enough for
+    // the 10 µs budget (07-bidding.md §4.4.2) without changing the result.
     if shapes == bridge_core::ShapeSet::ALL {
         return true;
     }
-    if *hcp.start() > shapes.max_hcp() || *hcp.end() < shapes.min_hcp() {
+    let (shapes_min_hcp, shapes_max_hcp) = shapes.hcp_bounds();
+    if *hcp.start() > shapes_max_hcp || *hcp.end() < shapes_min_hcp {
         return false;
     }
     true
@@ -719,8 +718,7 @@ impl Summary {
     /// in [`step_b`], not once per combo).
     fn of(c: &HandConstraint) -> Summary {
         let shapes = c.shapes();
-        let bounds =
-            (shapes != bridge_core::ShapeSet::ALL).then(|| (shapes.min_hcp(), shapes.max_hcp()));
+        let bounds = (shapes != bridge_core::ShapeSet::ALL).then(|| shapes.hcp_bounds());
         Summary {
             shapes,
             hcp: c.hcp_range(),
@@ -749,7 +747,7 @@ impl Summary {
         } else if shapes == self.shapes {
             self.bounds
         } else {
-            Some((shapes.min_hcp(), shapes.max_hcp()))
+            Some(shapes.hcp_bounds())
         };
         if let Some((min_hcp, max_hcp)) = bounds {
             if *hcp.start() > max_hcp || *hcp.end() < min_hcp {
@@ -769,23 +767,26 @@ impl Summary {
 /// function: `CallExplanation` has no `branch_index` field, so the position of the chosen
 /// alternative within its call's list stands in for it.
 ///
-/// `key` doubles as a lightweight stand-in for `parts` during the fold: since calls are folded in
-/// a fixed order (`seat_calls`, built once per seat below), `key[level].2` is enough to look the
-/// level's actual `CallExplanation` back up afterwards (`materialize_parts`). This avoids cloning
-/// a `Vec<CallExplanation>` (each element owning a `String`) at every intermediate combination —
-/// only `Copy` tuples are cloned during the cross product, and the real `CallExplanation`s are
-/// materialised once per surviving (post-dedup, post-truncation) combo instead of once per
-/// intermediate one; on the 12-call bench auction this alone was the difference between roughly
-/// 95 µs and single-digit µs (07-bidding.md §6.2's `interpret < 10 µs` target).
+/// `key` doubles as a lightweight stand-in for both `parts` and `constraint` during the fold:
+/// since calls are folded in a fixed order (`seat_calls`, built once per seat below), `key[level]`
+/// is enough to look the level's actual `CallExplanation` *and* `HandConstraint` back up
+/// afterwards (`materialize_parts`/`materialize_constraint`). This avoids cloning a
+/// `Vec<CallExplanation>` (each element owning a `String`) or rebuilding the `HandConstraint::And`
+/// tree (an allocation per surviving candidate — `and_one_more`) at every intermediate
+/// combination: only `Copy` tuples are cloned during the cross product, and the real
+/// `CallExplanation`s/`HandConstraint` are materialised once per surviving (post-dedup,
+/// post-truncation) combo instead of once per intermediate one; on the 12-call bench auction this
+/// alone was the difference between roughly 95 µs and single-digit µs (07-bidding.md §6.2's
+/// `interpret < 10 µs` target).
 ///
-/// `summary` is the running `Summary` of `constraint` (see [`Summary::and`]): keeping it
-/// incrementally, instead of recomputing `constraint.shapes()`/`hcp_range()` (a walk of the whole
-/// `And` tree) and then `ShapeSet::min_hcp`/`max_hcp` (a walk of up to ~560 member shapes) from
-/// scratch at every combination, is what keeps the cross-product's per-combination pre-check cheap
-/// once a node's constraint carries a real suit-length or shape atom (`summary_satisfiable`'s
-/// `shapes == ShapeSet::ALL` shortcut alone only covers bare-HCP atoms).
+/// `summary` is the running `Summary` of the combo's (not-yet-materialised) constraint (see
+/// [`Summary::and`]): keeping it incrementally, instead of recomputing
+/// `constraint.shapes()`/`hcp_range()` (a walk of the whole `And` tree) and then
+/// `ShapeSet::hcp_bounds` (a walk of up to ~560 member shapes) from scratch at every combination,
+/// is what keeps the cross-product's per-combination pre-check cheap once a node's constraint
+/// carries a real suit-length or shape atom (`summary_satisfiable`'s `shapes == ShapeSet::ALL`
+/// shortcut alone only covers bare-HCP atoms).
 struct Combo {
-    constraint: HandConstraint,
     summary: Summary,
     weight: f32,
     key: Vec<(Option<NodeId>, ResolutionKind, usize)>,
@@ -803,6 +804,22 @@ fn materialize_parts(
         .collect()
 }
 
+/// Rebuilds a surviving combo's `HandConstraint` (the `And` of one alternative per call) from its
+/// `key` and the seat's own calls in fold order (see [`Combo`]'s doc comment): the same tree
+/// `and_one_more` would have built incrementally, but assembled once instead of once per
+/// intermediate cross-product candidate. An empty `key` (a seat with no calls) is `ANY`, matching
+/// [`Summary::ANY`]/the initial `Combo`.
+fn materialize_constraint(
+    seat_calls: &[&CallInterpretation],
+    key: &[(Option<NodeId>, ResolutionKind, usize)],
+) -> HandConstraint {
+    key.iter()
+        .enumerate()
+        .fold(HandConstraint::ANY, |acc, (level, &(_, _, alt_index))| {
+            and_one_more(&acc, &seat_calls[level].alternatives[alt_index].0)
+        })
+}
+
 /// Step B: combines `per_call` into the four seats' weighted disjunctions.
 fn step_b(
     per_call: &[CallInterpretation],
@@ -814,7 +831,6 @@ fn step_b(
         let seat_calls: Vec<&CallInterpretation> =
             per_call.iter().filter(|c| c.seat == seat).collect();
         let mut combos: Vec<Combo> = vec![Combo {
-            constraint: HandConstraint::ANY,
             summary: Summary::ANY,
             weight: 1.0,
             key: Vec::new(),
@@ -829,22 +845,25 @@ fn step_b(
                 .iter()
                 .map(|(c, _, _)| Summary::of(c))
                 .collect();
-            let mut next: Vec<Combo> = Vec::new();
+            // Upper bound: every (combo, alternative) pair survives. Sized once so the cross
+            // product's `push` calls below never trigger a reallocation.
+            let mut next: Vec<Combo> = Vec::with_capacity(combos.len() * cj.alternatives.len());
             for combo in &combos {
-                for (i, (ci, wi, ex)) in cj.alternatives.iter().enumerate() {
+                for (i, (_, wi, ex)) in cj.alternatives.iter().enumerate() {
                     let Some(summary) = combo.summary.and(&alt_summaries[i]) else {
                         continue;
                     };
-                    let c2 = and_one_more(&combo.constraint, ci);
                     // `with_capacity` + `extend_from_slice` (one allocation, sized exactly right)
                     // instead of `combo.key.clone()` then `push` (which can reallocate a second
                     // time): `key` is rebuilt on every surviving candidate in this loop, so the
-                    // saving compounds across the cross product.
+                    // saving compounds across the cross product. No `HandConstraint` is built
+                    // here at all (see `Combo`'s doc comment): the alternative's own constraint is
+                    // only needed through `alt_summaries[i]` (already folded into `summary` above)
+                    // until a combo survives to the end.
                     let mut key = Vec::with_capacity(combo.key.len() + 1);
                     key.extend_from_slice(&combo.key);
                     key.push((ex.node, ex.kind, i));
                     next.push(Combo {
-                        constraint: c2,
                         summary,
                         weight: combo.weight * wi,
                         key,
@@ -852,7 +871,7 @@ fn step_b(
                 }
             }
             // Dedup by (node, kind, branch) parts, summing weights.
-            let mut deduped: Vec<Combo> = Vec::new();
+            let mut deduped: Vec<Combo> = Vec::with_capacity(next.len());
             for combo in next {
                 match deduped.iter_mut().find(|d| d.key == combo.key) {
                     Some(existing) => existing.weight += combo.weight,
@@ -867,7 +886,6 @@ fn step_b(
         if had_calls && combos.is_empty() {
             tracing::warn!(?seat, "seat contradicts itself");
             combos = vec![Combo {
-                constraint: HandConstraint::ANY,
                 summary: Summary::ANY,
                 weight: 1.0,
                 key: Vec::new(),
@@ -885,7 +903,8 @@ fn step_b(
                     c.weight
                 };
                 let parts = materialize_parts(&seat_calls, &c.key);
-                (c.constraint, w, Explanation::from_parts(parts))
+                let constraint = materialize_constraint(&seat_calls, &c.key);
+                (constraint, w, Explanation::from_parts(parts))
             })
             .collect();
         if seats[idx].is_empty() {

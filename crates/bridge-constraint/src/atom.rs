@@ -317,7 +317,8 @@ impl Atom {
         if self.hcp.is_empty() {
             return true;
         }
-        if *self.hcp.start() > self.shapes.max_hcp() || *self.hcp.end() < self.shapes.min_hcp() {
+        let (shapes_min_hcp, shapes_max_hcp) = self.shapes.hcp_bounds();
+        if *self.hcp.start() > shapes_max_hcp || *self.hcp.end() < shapes_min_hcp {
             return true;
         }
         for req in &self.cards {
