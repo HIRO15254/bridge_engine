@@ -41,7 +41,6 @@ proptest! {
     /// Same as `negation_is_exclusive_and_complementary`, for the two metrics that depend on
     /// `bridge_eval::distribution_points` (2.1, implemented by another lane in parallel).
     #[test]
-    #[ignore = "needs bridge-eval 2.1 (distribution_points)"]
     fn negation_is_exclusive_and_complementary_dist_points(
         method in arb_dist_method(),
         range in arb_range(Metric::DistPoints(DistMethod::LongSuit).max()),
@@ -58,7 +57,6 @@ proptest! {
     }
 
     #[test]
-    #[ignore = "needs bridge-eval 2.1 (distribution_points)"]
     fn negation_is_exclusive_and_complementary_total_points(
         method in arb_dist_method(),
         range in arb_range(Metric::TotalPoints(DistMethod::LongSuit).max()),
