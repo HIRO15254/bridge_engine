@@ -166,21 +166,32 @@ impl tracing::Subscriber for WarnRecorder {
 }
 
 fn prepare_and_check_warn(c: &HandConstraint) -> bool {
-    let fired = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let subscriber = WarnRecorder(fired.clone());
-    let _ = tracing::subscriber::with_default(subscriber, || {
-        // `tracing`'s per-callsite `Interest` cache is process-global: if some other test's
-        // thread reaches the `tracing::warn!` in `Sampler::prepare` first while no subscriber
-        // is active, that callsite gets cached as "never interested" for the rest of the
-        // process, and `with_default` alone cannot undo that (it only changes the default
-        // dispatcher on this thread, not the cache). Rebuilding the cache here, with our
-        // `WarnRecorder` (which is always "interested") as the active dispatcher, forces every
-        // callsite to be re-queried against it, so this test does not depend on which other
-        // tests in this binary happened to run first.
-        tracing::callsite::rebuild_interest_cache();
-        Sampler::prepare(c, Hand::FULL, Hand::EMPTY, &SampleOptions::default())
-    });
-    fired.load(std::sync::atomic::Ordering::SeqCst)
+    // `tracing`'s per-callsite `Interest` cache is process-global: if some other test's thread
+    // reaches the `tracing::warn!` in `Sampler::prepare` first while no subscriber is active,
+    // that callsite gets cached as "never interested" for the rest of the process, and
+    // `with_default` alone cannot undo that (it only changes the default dispatcher on this
+    // thread, not the cache). `rebuild_interest_cache()`, called with our `WarnRecorder` (always
+    // "interested") as the active dispatcher, re-queries every *already-registered* callsite
+    // against it — but the very first time any thread ever reaches this callsite, its
+    // registration and interest query happen together, so a call racing us on another thread can
+    // register it (against whatever *that* thread's subscriber says) in the narrow window
+    // between our `rebuild_interest_cache()` and our own `Sampler::prepare()` call, before our
+    // rebuild had a chance to see it. Once registered at all, though, our next
+    // `rebuild_interest_cache()` is guaranteed to see it and fix its interest — so retrying once
+    // (this second attempt cannot lose that race, since nothing "first-registers" anymore) makes
+    // this test independent of run order and thread scheduling.
+    for _ in 0..2 {
+        let fired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let subscriber = WarnRecorder(fired.clone());
+        let _ = tracing::subscriber::with_default(subscriber, || {
+            tracing::callsite::rebuild_interest_cache();
+            Sampler::prepare(c, Hand::FULL, Hand::EMPTY, &SampleOptions::default())
+        });
+        if fired.load(std::sync::atomic::Ordering::SeqCst) {
+            return true;
+        }
+    }
+    false
 }
 
 /// `is_samplable() == false` (a `Custom` literal is present) makes `Sampler::prepare` emit a
