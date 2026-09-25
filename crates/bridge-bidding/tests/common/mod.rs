@@ -1,16 +1,17 @@
-//! A small, hand-built `SystemIR` for the integration tests.
-//!
-//! `bridge_system::compile` and `NaturalInference::infer`/`classify`/`candidates` are still
-//! `todo!()` on this branch (owned by parallel lanes), so every `SystemIR` here is built directly
-//! from `bridge_system::ir`/`trie` types instead of compiled from BML source, exactly as
-//! 07-bidding.md §11 describes for this phase.
+//! A small, hand-built `SystemIR` for most of these integration tests, plus (`compile_sayc`)
+//! the real, compiled `systems/sayc/sayc.bml` used by the phase 3.10/3.12 harnesses
+//! (`tests/consistency.rs`, `tests/policy.rs`, `tests/reproduction.rs`). The hand-built system
+//! predates `bridge_system::compile`/`NaturalInference` having real bodies (07-bidding.md §11's
+//! original phase-3 plan); it stays in use by the smaller, targeted unit tests below, which do
+//! not need a full compiled system to exercise one specific behaviour.
 #![allow(dead_code)]
 
 use std::sync::Arc;
 
 use bridge_constraint::{Atom, HandConstraint};
 use bridge_core::{
-    Auction, Bid, Call, Card, Deal, Hand, Seat, ShapeClass, Strain, Suit, Vulnerability,
+    Auction, Bid, Call, Card, Deal, Hand, Holding, Rank, Seat, ShapeClass, Strain, Suit,
+    Vulnerability,
 };
 use bridge_system::ast::{FileId, SeatCond, Span, VulCond};
 use bridge_system::pattern::{Binding, OppClass, Side};
@@ -483,6 +484,42 @@ pub fn auction(dealer: Seat, vul: Vulnerability, calls: &[Call]) -> Auction {
     Auction::from_calls(dealer, vul, calls.iter().copied()).expect("test auction must be legal")
 }
 
+/// Builds a 13-card hand from four suit holdings (clubs, diamonds, hearts, spades), each a string
+/// of rank characters (`"AKQJT98765432"`, case-insensitive, any subset, any order). Mirrors
+/// `bridge-system`'s own test helper of the same name/signature.
+pub fn hand(clubs: &str, diamonds: &str, hearts: &str, spades: &str) -> Hand {
+    Hand::from_holdings(
+        holding(clubs),
+        holding(diamonds),
+        holding(hearts),
+        holding(spades),
+    )
+}
+
+/// Parses one suit's ranks (see [`hand`]).
+pub fn holding(ranks: &str) -> Holding {
+    ranks.chars().fold(Holding::EMPTY, |h, c| h.with(rank(c)))
+}
+
+fn rank(c: char) -> Rank {
+    match c.to_ascii_uppercase() {
+        'A' => Rank::Ace,
+        'K' => Rank::King,
+        'Q' => Rank::Queen,
+        'J' => Rank::Jack,
+        'T' => Rank::Ten,
+        '9' => Rank::Nine,
+        '8' => Rank::Eight,
+        '7' => Rank::Seven,
+        '6' => Rank::Six,
+        '5' => Rank::Five,
+        '4' => Rank::Four,
+        '3' => Rank::Three,
+        '2' => Rank::Two,
+        other => panic!("not a rank: {other:?}"),
+    }
+}
+
 /// A fixed 0-HCP, short-hearts 13-card hand (the 13 lowest non-honour cards): useful whenever a
 /// test wants a hand that is certain to fail every "12+ HCP" / "6-9 HCP" style constraint.
 pub fn weak_hand() -> Hand {
@@ -532,4 +569,110 @@ pub fn random_deal(rng: &mut impl Rng) -> Deal {
         hand
     });
     Deal::new(hands).expect("a full-deck shuffle is always a valid deal")
+}
+
+/// `BRIDGE_CORPUS_DIR`, or `<workspace>/corpus/data` (mirrors `bridge-format`'s own test helper of
+/// the same name in `tests/common/mod.rs`); `None` when neither exists, so a corpus-dependent
+/// `#[ignore]`d test can return early instead of panicking.
+pub fn corpus_dir() -> Option<std::path::PathBuf> {
+    let dir = match std::env::var_os("BRIDGE_CORPUS_DIR") {
+        Some(dir) => std::path::PathBuf::from(dir),
+        None => std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/data"),
+    };
+    if dir.is_dir() { Some(dir) } else { None }
+}
+
+/// `BRIDGE_SYSTEMS_DIR`, or `<workspace>/systems` (mirrors `bridge-system`'s own test helper of
+/// the same name).
+pub fn systems_dir() -> std::path::PathBuf {
+    match std::env::var_os("BRIDGE_SYSTEMS_DIR") {
+        Some(dir) => std::path::PathBuf::from(dir),
+        None => std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../systems"),
+    }
+}
+
+/// Compiles `systems/sayc/<name>` (checked into the repo, so this panics rather than skips on
+/// any I/O error) and wraps it in a [`Table::uniform`](bridge_bidding::Table::uniform) with the
+/// real [`bridge_system::NaturalInference::default`] fallback -- the phase 3.10/3.12 harnesses'
+/// system under test, as opposed to [`sayc_system`]'s small hand-built stand-in.
+pub fn compile_sayc(name: &str) -> bridge_bidding::Table {
+    let path = systems_dir().join("sayc").join(name);
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+    let opts = bridge_system::CompileOptions::default();
+    let (ir, lints) = bridge_system::compile(
+        &path.to_string_lossy(),
+        &text,
+        &bridge_system::lexer::FsLoader,
+        &opts,
+    );
+    let errors: Vec<_> = lints
+        .iter()
+        .filter(|l| l.severity == bridge_system::Severity::Error)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "{name}: {} Error-severity lint(s):\n{}",
+        errors.len(),
+        errors
+            .iter()
+            .map(|l| format!("  {l}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    bridge_bidding::Table::uniform(
+        Arc::new(ir),
+        Arc::new(bridge_system::NaturalInference::default()),
+    )
+}
+
+/// Builds one random position against a compiled SAYC [`Table`](bridge_bidding::Table): a random
+/// deal, dealer and vulnerability, then a random-depth prefix (0..12 calls, stopping early if the
+/// auction completes) replayed with [`choose_bid`](bridge_bidding::choose_bid) itself, so the
+/// prefix is always on-system whenever the system covers it. Shared by the phase 3.10/3.12
+/// harnesses (`tests/consistency.rs`, `tests/policy.rs`, `tests/reproduction.rs`), which all need
+/// the exact same generator to compare against.
+///
+/// A `NoCandidate` during prefix-building stops the prefix right there, instead of fabricating a
+/// bare `Call::Pass` substitute (an earlier version of this helper did the latter): a coverage
+/// gap has no system-consistent continuation to speak of, so treating one as "nothing more to
+/// add" leaves the resulting position for the *outer* test loop to draw and score as its own
+/// `NoCandidate`/`Gap::NoCandidate` position (already handled, uncounted as a violation) rather
+/// than silently baking an unconstrained `Pass` into the auction *history* -- which a later seat's
+/// own calls then get AND-combined with by `Interpretation::satisfied_by`. That combination is
+/// exactly what produced 4 "unexplained" `sayc_forward_consistency_1e6` violations (all with
+/// `root_cause_kinds == [Exact]`, never `Natural`) before this fix: prefix-building hit
+/// `NoCandidate` for a real 16-HCP hand after a transfer-completion sequence with no SAYC row above
+/// 7 HCP (`1N-2H(TRF, 5+s)-2S-...`), substituted `Pass`, and a later call by the *same* seat was
+/// then checked against that position's own *explicit* `Pass` row ("0-7 hcp", `kind: Exact`, a
+/// real SAYC-defined node the fabricated call collided with) -- which the 16-HCP hand fails, a
+/// contradiction manufactured by the substitution itself, not by `sayc.bml` or by `choose_bid`/
+/// `interpret` (confirmed by hand: `choose_bid` genuinely returns `NoCandidate` at that exact
+/// position for that hand, tried against every sibling row, all `Rejected::Unsatisfied`).
+pub fn random_sayc_position(
+    rng: &mut impl Rng,
+    table: &bridge_bidding::Table,
+    ctx: &bridge_bidding::BidContext<'_>,
+) -> (Deal, Auction) {
+    use bridge_bidding::{BidChoice, choose_bid};
+
+    let deal = random_deal(rng);
+    let dealer = Seat::from_index((rng.next_u32() % 4) as u8);
+    let vul = Vulnerability::from_index((rng.next_u32() % 4) as u8);
+    let mut auction = Auction::new(dealer, vul);
+    let depth = rng.next_u32() % 12;
+    for _ in 0..depth {
+        if auction.is_complete() {
+            break;
+        }
+        let seat = auction.next_seat();
+        let hand = deal.hand(seat);
+        let system = &table.systems[seat.index() as usize];
+        let call = match choose_bid(system, hand, &auction, ctx) {
+            BidChoice::Chosen(c) => c.call,
+            BidChoice::NoCandidate(_) => break,
+        };
+        auction = auction.with(call).expect("choose_bid returns a legal call");
+    }
+    (deal, auction)
 }
