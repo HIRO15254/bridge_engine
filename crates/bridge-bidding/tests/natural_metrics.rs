@@ -16,9 +16,9 @@
 //!    separate bucket from the third-party ("vendor") files to keep the circularity visible.
 //! 2. **Reproduction.** For every non-opening decision point in the same node set,
 //!    `NaturalInference::candidates` is asked for every legal call's own natural constraint;
-//!    hands are sampled from each and replayed through `choose_bid` on an empty `SystemIR` (so
-//!    `ctx.natural` is what answers) to see how often the same call comes back out, aggregated by
-//!    the rule that produced the constraint. This is the one measurement that needs
+//!    hands are sampled from each and replayed through `choose_bid` on a `Table` of empty
+//!    `SystemIR`s (so `ctx.natural` is what answers) to see how often the same call comes back
+//!    out, aggregated by the rule that produced the constraint. This is the one measurement that needs
 //!    `choose_bid`, which is why the harness lives in `bridge-bidding` rather than
 //!    `bridge-system` (see `docs/design/11-testing.md` §6).
 //! 3. **Corpus.** For every call of every parsed corpus auction (PBN + LIN, `corpus/data`,
