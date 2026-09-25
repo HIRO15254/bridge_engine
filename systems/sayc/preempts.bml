@@ -24,30 +24,30 @@ A raise is to play (further preemption); a new suit is forcing; 3NT is to play;
 4NT is Blackwood.
 
 3C-
-4C = unlimited
-3D = F
-3H = F
-3S = F
-3N = unlimited
-4N = !BW
+4C = {prio:-1} unlimited
+3D = F, 5+!d
+3H = F, 5+!h
+3S = F, 5+!s
+3N = {prio:-2} unlimited
+4N = {prio:-3} !BW
 
 3D-
-4D = unlimited
-3H = F
-3S = F
-3N = unlimited
-4N = !BW
+4D = {prio:-1} unlimited
+3H = F, 5+!h
+3S = F, 5+!s
+3N = {prio:-2} unlimited
+4N = {prio:-3} !BW
 
 3H-
-4H = unlimited
-3S = F
-3N = unlimited
-4N = !BW
+4H = {prio:-1} unlimited
+3S = F, 5+!s
+3N = {prio:-2} unlimited
+4N = {prio:-3} !BW
 
 3S-
-4S = unlimited
-3N = unlimited
-4N = !BW
+4S = {prio:-1} unlimited
+3N = {prio:-2} unlimited
+4N = {prio:-3} !BW
 
 ** Responses to a 4-level preempt
 
@@ -56,11 +56,11 @@ ask for aces.
 
 4C-
 5C = unlimited
-4N = !BW
+4N = {prio:-1} !BW
 
 4D-
 5D = unlimited
-4N = !BW
+4N = {prio:-1} !BW
 
 4H-
 4N = !BW

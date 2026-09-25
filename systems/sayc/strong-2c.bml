@@ -15,7 +15,7 @@ and game forcing, showing at least a five-card suit and 8+ points; 2NT shows a
 balanced 8 HCP.
 
 2C-
-2D = ART
+2D = {prio:-1} ART
 2H = F, 8+ hcp, 5+!h
 2S = F, 8+ hcp, 5+!s
 3C = F, 8+ hcp, 5+!c
@@ -30,11 +30,11 @@ opener's major or 4 of opener's minor.
 
 2C-2D-
 2N = 22--24 hcp, bal
-  3C = !STAY, 5+M or INV+ 4M
-  3D = !TRF, 5+!h
-  3H = !TRF, 5+!s
+  3C = !STAY, 4+!h or 4+!s
+  3D = {prio:1} !TRF, 5+!h
+  3H = {prio:1} !TRF, 5+!s
   4C = !BW
-  4N = 22--24 hcp
+  4N = {prio:1} 9--10 hcp
 2H = F, 5+!h
   2S = F, 8+ hcp, 5+!s
   2N = F, 8+ hcp, bal

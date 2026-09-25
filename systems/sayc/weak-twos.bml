@@ -15,44 +15,44 @@ play; a new suit is forcing one round and shows a five-card suit ("RONF").
 ** After 2!d
 
 2D-
-2N = F
+2N = {prio:-2} F
   3D = 5--8 hcp
-  3C = 9--11 hcp
-  3H = 9--11 hcp
-  3S = 9--11 hcp
-  3N = 9--11 hcp
+  3C = {prio:3} 9--11 hcp
+  3H = {prio:2} 9--11 hcp
+  3S = {prio:1} 9--11 hcp
+  3N = {prio:0} 9--11 hcp
 3C = F, 5+!c
 3H = F, 5+!h
 3S = F, 5+!s
-3N = unlimited
+3N = {prio:-1} unlimited
 4D = unlimited
 
 ** After 2!h
 
 2H-
-2N = F
+2N = {prio:-2} F
   3H = 5--8 hcp
-  3C = 9--11 hcp
-  3D = 9--11 hcp
-  3S = 9--11 hcp
-  3N = 9--11 hcp
+  3C = {prio:3} 9--11 hcp
+  3D = {prio:2} 9--11 hcp
+  3S = {prio:1} 9--11 hcp
+  3N = {prio:0} 9--11 hcp
 3C = F, 5+!c
 3D = F, 5+!d
 3S = F, 5+!s
-3N = unlimited
+3N = {prio:-1} unlimited
 4H = unlimited
 
 ** After 2!s
 
 2S-
-2N = F
+2N = {prio:-2} F
   3S = 5--8 hcp
-  3C = 9--11 hcp
-  3D = 9--11 hcp
-  3H = 9--11 hcp
-  3N = 9--11 hcp
+  3C = {prio:3} 9--11 hcp
+  3D = {prio:2} 9--11 hcp
+  3H = {prio:1} 9--11 hcp
+  3N = {prio:0} 9--11 hcp
 3C = F, 5+!c
 3D = F, 5+!d
 3H = F, 5+!h
-3N = unlimited
+3N = {prio:-1} unlimited
 4S = unlimited
