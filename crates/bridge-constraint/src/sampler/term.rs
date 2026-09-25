@@ -492,15 +492,80 @@ fn binomial(n: u64, k: u64) -> u64 {
     result as u64
 }
 
+/// Folds one more fixed-width value into a running accumulator (`SplitMix64`'s own mixing step,
+/// same constants as [`super::rand_util::SplitMix64`]).
+///
+/// [`burn_in_seed`] uses this instead of `core::hash::Hash` + `DefaultHasher`: the derived `Hash`
+/// impl of a `Vec`/slice writes its length via `Hasher::write_usize`, whose byte width is the
+/// *host's* pointer width, so on wasm32 (32-bit `usize`) it feeds a different byte stream into
+/// the hasher than on a 64-bit host for the exact same logical `atom.cards`/`atom.eval`, and
+/// `DefaultHasher::finish` (SipHash) is sensitive to that. That silently broke D12 (a result must
+/// not depend on the build target) for any atom with a `cards` or `eval` literal, since
+/// `burn_in_seed`'s result feeds `PreparedTerm::prepare` (via the burn-in probe's own RNG seed),
+/// which in turn feeds `Sampler::prepare`'s output. `mix` only ever combines values already
+/// widened to `u64` by the caller, so no host-word-size ever enters the computation.
+fn mix(acc: u64, v: u64) -> u64 {
+    let mut z = acc ^ v;
+    z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+fn mix_range(acc: u64, r: &RangeInclusive<u8>) -> u64 {
+    mix(mix(acc, u64::from(*r.start())), u64::from(*r.end()))
+}
+
+fn mix_dist_method(acc: u64, m: DistMethod) -> u64 {
+    match m {
+        DistMethod::ShortSuit {
+            void,
+            singleton,
+            doubleton,
+        } => {
+            let acc = mix(acc, 0);
+            let acc = mix(acc, u64::from(void));
+            let acc = mix(acc, u64::from(singleton));
+            mix(acc, u64::from(doubleton))
+        }
+        DistMethod::LongSuit => mix(acc, 1),
+        DistMethod::BergenStarting => mix(acc, 2),
+    }
+}
+
+fn mix_metric(acc: u64, m: Metric) -> u64 {
+    match m {
+        Metric::Controls => mix(acc, 0),
+        Metric::Losers(method) => mix(mix(acc, 1), method as u64),
+        Metric::QuickTricks => mix(acc, 2),
+        Metric::DistPoints(method) => mix_dist_method(mix(acc, 3), method),
+        Metric::TotalPoints(method) => mix_dist_method(mix(acc, 4), method),
+        Metric::SuitQuality(suit) => mix(mix(acc, 5), suit as u64),
+    }
+}
+
 /// A deterministic seed for the burn-in probe, derived from the atom and the pool/fixed split so
-/// that [`PreparedTerm::prepare`] stays a pure function of its arguments.
+/// that [`PreparedTerm::prepare`] stays a pure function of its arguments (and, per D12, the same
+/// function regardless of target: see [`mix`]'s doc comment for why `Hash` + `DefaultHasher`
+/// cannot be used here).
 fn burn_in_seed(atom: &Atom, pool: Hand, fixed: Hand) -> u64 {
-    use core::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    atom.hash(&mut hasher);
-    pool.hash(&mut hasher);
-    fixed.hash(&mut hasher);
-    hasher.finish()
+    let mut acc = 0u64;
+    for word in atom.shapes.words() {
+        acc = mix(acc, word);
+    }
+    acc = mix_range(acc, &atom.hcp);
+    acc = mix(acc, atom.cards.len() as u64);
+    for req in &atom.cards {
+        acc = mix(acc, req.mask.bits());
+        acc = mix_range(acc, &req.count);
+    }
+    acc = mix(acc, atom.eval.len() as u64);
+    for req in &atom.eval {
+        acc = mix_metric(acc, req.metric);
+        acc = mix_range(acc, &req.range);
+    }
+    acc = mix(acc, pool.bits());
+    mix(acc, fixed.bits())
 }
 
 impl PreparedTerm {
@@ -797,5 +862,80 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// `burn_in_seed` must be a pure, fixed-width function of its arguments (D12): pinning its
+    /// output for a specific atom/pool/fixed catches any accidental reintroduction of
+    /// `core::hash::Hash` + `DefaultHasher` (whose `Vec`/slice impl hashes each length through
+    /// `Hasher::write_usize`, i.e. through the host's own pointer width, and so would give this
+    /// exact atom a different seed on a 32-bit target like wasm32 than on a 64-bit host, even
+    /// though `atom`/`pool`/`fixed` are logically identical there).
+    #[test]
+    fn burn_in_seed_is_pinned_for_a_fixed_atom() {
+        let atom = Atom {
+            cards: vec![
+                CardRequirement {
+                    mask: Hand::from_bits(0b11).unwrap(), // ♣A, ♣K: single-suit, not additive.
+                    count: 1..=2,
+                },
+                CardRequirement {
+                    // ♣A + ♦A: spans two suits, so this one competes for the additive-feature
+                    // slot (see `classify`).
+                    mask: Hand::from_bits(0b1 | (0b1 << 13)).unwrap(),
+                    count: 1..=2,
+                },
+            ],
+            ..Atom::ANY
+        };
+        let seed = burn_in_seed(&atom, Hand::FULL, Hand::EMPTY);
+        assert_eq!(seed, 0x53c8_d139_227b_d64e);
+
+        // Changing any single fixed-width input changes the seed (the mix isn't accidentally
+        // discarding a field, e.g. by mixing in a `Vec::len()` that std would coalesce to the
+        // same value some other way).
+        let mut other = atom.clone();
+        other.cards[0].count = 1..=1;
+        assert_ne!(burn_in_seed(&other, Hand::FULL, Hand::EMPTY), seed);
+        assert_ne!(
+            burn_in_seed(&atom, Hand::FULL, Hand::from_bits(0b100).unwrap()),
+            seed
+        );
+    }
+
+    /// End-to-end pin: for an atom whose two multi-suit `cards` literals force `needs_full_check`
+    /// (only one fits the additive-feature budget), `PreparedTerm::prepare`'s burn-in-derived
+    /// `alpha` is a deterministic function of `burn_in_seed`'s output. Pinning it here means any
+    /// future change to `burn_in_seed` (including reverting to a `Hash`-based one) that alters
+    /// the seed for this atom would change this literal, not just some internal, untested detail.
+    #[test]
+    fn rejection_term_alpha_is_pinned_for_a_fixed_atom() {
+        let atom = Atom {
+            cards: vec![
+                CardRequirement {
+                    mask: Hand::from_bits(0b1 | (0b1 << 13)).unwrap(), // ♣A + ♦A
+                    count: 1..=2,
+                },
+                CardRequirement {
+                    mask: Hand::from_bits((0b1 << 26) | (0b1 << 39)).unwrap(), // ♥A + ♠A
+                    count: 1..=2,
+                },
+            ],
+            ..Atom::ANY
+        };
+        let term = DnfTerm {
+            atom,
+            custom: Vec::new(),
+            residual: None,
+        };
+        let opts = super::super::SampleOptions::default();
+        let prepared = PreparedTerm::prepare(term, Hand::FULL, Hand::EMPTY, &opts);
+        let alpha = prepared
+            .alpha
+            .expect("two multi-suit card literals force needs_full_check");
+        assert!((0.0..=1.0).contains(&alpha));
+        assert!(
+            (alpha - 0.429_961_089_494_163_45).abs() < 1e-12,
+            "alpha = {alpha}, expected a value pinned to burn_in_seed's current output"
+        );
     }
 }
