@@ -8,24 +8,39 @@ vocabulary (`docs/design/06-system.md` §7.4) cannot express what the booklet
 says exactly. Numbers below match the `NOTES.md #N` references left as
 comments in the `.bml` files.
 
-1. **Longer-minor comparisons (`openings.bml`).** The booklet's rule for
-   opening 1!c vs. 1!d only gives two named cases: 3-3 minors open 1!c, 4-4
-   minors (and the 4-4-3-2 shape) open 1!d. The general "open the longer
-   suit" principle also applies when the minors are *unevenly* long (for
-   example 4 diamonds and 6 clubs should open 1!c). The v1 vocabulary has no
-   suit-length comparison token (§7.4 lists "longer suit" comparisons under
-   "v2, unrecognized"), so this file cannot express that comparison and
-   instead gives 1!d a flat higher `{prio:N}` than 1!c. This gets the two
-   named cases and the common "longer diamonds" case right, but a hand with
-   clubs strictly longer than diamonds while diamonds is still 4+ (e.g.
-   4=!d/6=!c) will bid 1!d instead of the technically-preferred 1!c. The
-   same gap applies, in principle, to two suits of unequal length that are
-   *both* eligible to open (e.g. a 5-card major and a longer minor, where
-   standard practice opens the longer minor first): this file always prefers
-   the 5+ card major, which matches the booklet's own "normally five-card
-   majors" framing but not the finer-grained exception some partnerships
-   play. A real suit-length-comparison token in the description vocabulary
-   would let a future revision fix both.
+1. **Longer-minor and longer-major comparisons (`openings.bml`).** The v1
+   vocabulary has no suit-length *comparison* token (§7.4 lists "longer suit"
+   comparisons under "v2, unrecognized"), so "open the longer suit" is
+   written out as the exhaustive set of length pairs for which it is true
+   (`N!x 0--(N-1)!y` for each length `N`, plus the tie cases), rather than as
+   a flat `{prio:N}` race between the two calls. This now gets both the
+   major-vs-major choice (open the longer of two 5+ card majors, higher-
+   ranking on a 5-5 tie) and the minor-vs-minor choice (open the longer
+   minor; 3-3 ties to 1!c, 4-4-or-longer ties to 1!d) exactly right for every
+   shape, including uneven lengths the previous priority-only encoding got
+   wrong (5!c/4!d used to bid 1!d; 6!h/5!s used to bid 1!s). The `4432`
+   fragment on 1!d's row is a *positional* pattern (spades-hearts-diamonds-
+   clubs order), matching only 3+!d/2=!c specifically: it extends "longer
+   diamonds" one length pair further down (a 3-2 minor split, below 1!d's own
+   4+ length branches) rather than being a general "4432 shape, whichever
+   minor is the doubleton" override -- the mirror shape 4=4=2=3 (3+!c/2=!d)
+   is a longer-*clubs* hand and opens 1!c through the ordinary length
+   branches, like any other longer-clubs shape. `crates/bridge-system/tests/
+   sayc.rs`'s `sayc_opening_choice_by_suit_length` is a table-driven
+   regression test over these shapes (6-5/5-6/5-5 majors, 4-4/3-3 minor
+   ties, 4=4=3=2, 4=4=2=3, and uneven non-tie minors down to 6-1).
+
+   One gap remains, unchanged from before: two suits of unequal length that
+   are *both* eligible to open (e.g. a 5-card major and a longer minor,
+   where standard practice opens the longer minor first) -- this file always
+   prefers the 5+ card major over any minor, regardless of the minor's
+   length, which matches the booklet's own "normally five-card majors"
+   framing but not the finer-grained exception some partnerships play. That
+   comparison is *across* the major/minor priority tiers rather than within
+   one, and closing it would need the same kind of length-pair enumeration
+   again, this time crossed with every major length; left for a future
+   revision since the task brief scoped this fix to the within-major and
+   within-minor choices.
 
 2. **1NT/2NT/2!c priority (`notrump.bml`).** A 25-27 balanced hand also
    satisfies 2!c's "22+ hcp" template, and a 20-21 balanced hand with a

@@ -1,13 +1,25 @@
 * Opening bids of one in a suit
 
 Booklet section "GENERAL APPROACH" / "RESPONSES TO A 1C OR A 1D OPENING". Five-card
-majors; a minor-suit opening promises 3+ clubs or 4+ diamonds, with clubs preferred
-on 3-3 minors and diamonds on 4-4 minors (and on the 4-4-3-2 shape, where the
-"longer" minor is only 3 cards). See NOTES.md #1 for hands where a longer minor
-would technically outrank a shorter one but this file cannot express that
-comparison and falls back on priority.
+majors: with two 5+ card majors, open the longer one, and with 5-5 open the
+higher-ranking (spades); a minor-suit opening promises 3+ clubs or 4+ diamonds,
+opening the longer minor, with clubs preferred on a 3-3 tie and diamonds on a
+4-4 (or longer) tie. The description vocabulary has no suit-length
+*comparison* token (`docs/design/06-system.md` §7.4 lists it as
+v2/unrecognized), so "longer suit" is instead written out as the exhaustive
+set of length pairs for which it is true.
 
-1C = {prio:70} 12--21 hcp, 3+!c
-1D = {prio:71} 12--21 hcp, 4+!d or 4432
-1H = {prio:81} 12--21 hcp, 5+!h
-1S = {prio:82} 12--21 hcp, 5+!s
+The `4432` fragment in 1D's row is a *positional* pattern (spades-hearts-
+diamonds-clubs order, `06-system.md` §7.4's "full shape" token), matching only
+3+!d/2=!c specifically -- it extends the "longer diamonds" case down to a
+3-2 minor split (below 1D's own 4+ length branches), not a general "4432
+shape, whichever minor is the doubleton" override: 4=4=2=3 (3+!c/2=!d) is a
+longer-*clubs* hand and correctly opens 1C via the ordinary length comparison,
+just like any other longer-clubs shape. See NOTES.md #1 for the one remaining
+gap this cannot close (a 5+ card major always outranks a longer minor here,
+which is standard "five-card major" practice but not universal).
+
+1C = {prio:70} 12--21 hcp, 3!c 0--2!d/4!c 0--3!d/5!c 0--4!d/6!c 0--5!d/7+!c 0--6!d/3!c 3!d
+1D = {prio:71} 12--21 hcp, 4!d 0--3!c/5!d 0--4!c/6!d 0--5!c/7+!d 0--6!c/4!d 4!c/5!d 5!c/6!d 6!c/4432
+1H = {prio:81} 12--21 hcp, 5!h 0--4!s/6!h 0--5!s/7+!h 0--6!s
+1S = {prio:82} 12--21 hcp, 5!s 0--5!h/6!s 0--6!h/7+!s

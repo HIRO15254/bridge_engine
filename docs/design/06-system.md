@@ -28,7 +28,7 @@
 | `jdh8/bridge-systems` `wj.bml`, `wj/{1C,1M}.bml`, `defense/{1X,1NT-STR}.bml`, `common/2X-Multi-Muiderberg.bml`, `common/evaluation.bml` | Polish Club / Blue Club / 防御メモ (著者スタイル B、jdh8 自身のフォークでビルド) |
 | `jdh8/bml` フォークの grep | `!` 接頭辞と `#` トークンはどの BML ツールも処理していない (著者独自の慣例) ことを確認 |
 
-**公開されている SAYC / 2/1 の BML ファイルは存在しない** (Polish Club、Blue Club、個人の 5 枚メジャー系のみ)。フェーズ 3 用のテストシステムは `systems/sayc.bml` として自作する (リスク R1)。
+**公開されている SAYC / 2/1 の BML ファイルは存在しない** (Polish Club、Blue Club、個人の 5 枚メジャー系のみ)。フェーズ 3 用のテストシステムは `systems/sayc/sayc.bml` として自作する (リスク R1)。
 
 ### 1.2 文書化された規則 (README、`bml.py` / `bss.py` で確認済み)
 
