@@ -691,28 +691,36 @@ impl CoverageReport {
     }
 }
 
-/// Finds the earliest of `seat`'s calls in `interp` that has no satisfying, non-`Fallback`,
-/// positive-weight alternative -- the true source of a `satisfied_by(seat, hand) == false`
-/// result, which `Interpretation::satisfied_by`'s own doc comment notes can be an *earlier* call
-/// than the one just chosen (it ANDs over every call the seat has made so far). Returns the
-/// call's index, the call itself, the `ResolutionKind`s among its alternatives, and -- when every
-/// alternative is `Natural` -- the natural-inference rule name, parsed out of
+/// Finds the root cause of a `satisfied_by(seat, hand) == false` result: one of `seat`'s calls in
+/// `interp` that has no satisfying, non-`Fallback`, positive-weight alternative (this can be an
+/// *earlier* call than the one just chosen, since `satisfied_by` ANDs over every call the seat has
+/// made so far). The earliest failing call that is *not* a forced pass (`forced_passes`) wins, so
+/// a failure of a real `choose_bid` choice is never hidden behind an earlier gap; only when every
+/// failing call is a forced pass is the earliest of those returned (a gap-induced violation).
+/// Returns the call's index, the call itself, the `ResolutionKind`s among its alternatives, and --
+/// when every alternative is `Natural` -- the natural-inference rule name, parsed out of
 /// `CallExplanation::text`'s trailing `"... (rule)"` (the format `natural_alternative` in
 /// `bridge_bidding::interpret` and `choose_bid`'s own explanation-building both use).
 fn root_cause(
     interp: &Interpretation,
     seat: Seat,
     hand: Hand,
+    forced_passes: &[usize],
 ) -> Option<(usize, Call, Vec<ResolutionKind>, Option<String>)> {
-    interp
+    let failing: Vec<_> = interp
         .per_call
         .iter()
         .filter(|pc| pc.seat == seat)
-        .find(|pc| {
+        .filter(|pc| {
             !pc.alternatives.iter().any(|(cons, w, ex)| {
                 ex.kind != ResolutionKind::Fallback && *w > 0.0 && cons.satisfies(hand)
             })
         })
+        .collect();
+    failing
+        .iter()
+        .find(|pc| !forced_passes.contains(&pc.call_index))
+        .or_else(|| failing.first())
         .map(|pc| {
             let kinds: Vec<ResolutionKind> =
                 pc.alternatives.iter().map(|(_, _, ex)| ex.kind).collect();
@@ -795,7 +803,7 @@ fn run_forward_consistency(
                     Gap::None
                 };
                 if !interp.satisfied_by(seat, hand) {
-                    let root = root_cause(&interp, seat, hand);
+                    let root = root_cause(&interp, seat, hand, &forced_passes);
                     report.record_violation(i, &auction, seat, hand, c.call, root, &forced_passes);
                 }
                 report.record_position(&auction, hand, gap, key);
