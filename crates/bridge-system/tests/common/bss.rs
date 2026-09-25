@@ -179,16 +179,87 @@ pub fn parse_bss(text: &str) -> BssFile {
     file
 }
 
-/// Merges `override_file`'s entries into `base` (same key = replace, else append), per
-/// `06-system.md` §1.4's `*.bss.override` mechanism for the documented intentional differences.
-pub fn apply_override(base: &mut BssFile, override_file: &BssFile) {
-    for entry in &override_file.entries {
-        base.entries.retain(|e| {
-            !(e.we_open == entry.we_open
-                && e.seat == entry.seat
-                && e.vul == entry.vul
-                && e.sequence == entry.sequence)
-        });
-        base.entries.push(entry.clone());
+/// The bss-encoded form of a node's description: real `\n` newlines escaped to the literal
+/// two-character `\n`, exactly as bss.py builds `i.desc` (`lastnode.desc += '\\n' + row.strip()`,
+/// found in `src/bml/bml.py`), then a trailing escaped-newline-dot (a lone `.` continuation
+/// line) dropped, exactly as `bml.replace_last_empty_line(i.desc, '')` does before writing
+/// (`src/bml/bss.py::systemdata_to_bss`, `re.sub(r'\\n\.\Z', '', desc)`). Comparing against this
+/// form, not the raw `Node::description`, is what makes the oracle comparison meaningful for a
+/// multi-line description.
+pub fn to_bss_desc(text: &str) -> String {
+    let escaped = text.replace('\n', "\\n");
+    escaped
+        .strip_suffix("\\n.")
+        .map(str::to_string)
+        .unwrap_or(escaped)
+}
+
+/// One key = `(we_open, seat, vul, sequence)`.
+pub type BssKey = (bool, char, char, String);
+
+/// One override action, from a line of a `.bss_overrides/<stem>.bss.override` file:
+/// `REPLACE <bss line>` swaps in a different expected description (an intended difference, e.g.
+/// the compiler's `#` substitution), `DELETE <*><seat><vul><sequence>` removes an oracle key
+/// entirely (an intended structural difference: we produce no node there, or produce one the
+/// oracle doesn't have). Blank lines and `# comment` lines are ignored, so every override can
+/// carry its own explanatory comment above it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OverrideAction {
+    /// Replace the oracle's expected entry (or add one it never had).
+    Replace(BssEntry),
+    /// Drop this key from the oracle's requirements.
+    Delete(BssKey),
+}
+
+/// Parses a `.bss.override` file (see [`OverrideAction`]).
+pub fn parse_overrides(text: &str) -> Vec<OverrideAction> {
+    let mut actions = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("DELETE ") {
+            // Reuse `parse_bss`'s own key parsing by feeding it a minimal, well-formed one-line
+            // `.bss` file with no description.
+            if let Some(e) = parse_bss(&format!("{rest}=NYYYYYY0\n"))
+                .entries
+                .into_iter()
+                .next()
+            {
+                actions.push(OverrideAction::Delete((
+                    e.we_open, e.seat, e.vul, e.sequence,
+                )));
+            }
+        } else if let Some(rest) = line.strip_prefix("REPLACE ") {
+            if let Some(e) = parse_bss(&format!("{rest}\n")).entries.into_iter().next() {
+                actions.push(OverrideAction::Replace(e));
+            }
+        }
     }
+    actions
+}
+
+/// Applies `actions` to `base` (mutating its entries) and returns the set of keys `DELETE`d, so
+/// the caller can also exempt them from an "extra node not in the oracle" check.
+pub fn apply_overrides(
+    base: &mut BssFile,
+    actions: &[OverrideAction],
+) -> std::collections::HashSet<BssKey> {
+    let mut deleted = std::collections::HashSet::new();
+    for action in actions {
+        let key = match action {
+            OverrideAction::Replace(e) => (e.we_open, e.seat, e.vul, e.sequence.clone()),
+            OverrideAction::Delete(k) => k.clone(),
+        };
+        base.entries
+            .retain(|e| (e.we_open, e.seat, e.vul, e.sequence.clone()) != key);
+        match action {
+            OverrideAction::Replace(e) => base.entries.push(e.clone()),
+            OverrideAction::Delete(_) => {
+                deleted.insert(key);
+            }
+        }
+    }
+    deleted
 }
