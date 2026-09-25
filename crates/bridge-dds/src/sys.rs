@@ -244,6 +244,9 @@ unsafe extern "C" {
     pub fn dds_sizeof_parResults() -> usize;
     pub fn dds_sizeof_allParResults() -> usize;
     pub fn dds_sizeof_parResultsMaster() -> usize;
+    pub fn dds_offsetof_parResultsMaster_contracts() -> usize;
+    pub fn dds_sizeof_contractType() -> usize;
+    pub fn dds_offsetof_contractType_seats() -> usize;
     pub fn dds_sizeof_playTraceBin() -> usize;
     pub fn dds_sizeof_playTracesBin() -> usize;
     pub fn dds_sizeof_solvedPlay() -> usize;
