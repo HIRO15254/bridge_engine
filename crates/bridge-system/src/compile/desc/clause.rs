@@ -92,8 +92,27 @@ const HEDGE_FILLERS: &[&str] = &["be", "have", "hold", "contain", "include"];
 /// Words after which a call-shaped token (`4!s`, `1NT`, `2!d-2!h-3!h`) names a call or an auction,
 /// not a suit length (`TRF to 4!s`, `over 1NT`, `qualify for 1!d`).
 const CALL_REF_WORDS: &[&str] = &[
-    "to", "over", "after", "for", "than", "via", "opposite", "like", "see", "from", "into", "then",
-    "by", "bid", "rebid", "opening", "open", "bids",
+    "to",
+    "over",
+    "after",
+    "for",
+    "than",
+    "via",
+    "opposite",
+    "like",
+    "see",
+    "from",
+    "into",
+    "then",
+    "by",
+    "bid",
+    "rebid",
+    "opening",
+    "open",
+    "bids",
+    "else",
+    "otherwise",
+    "instead",
 ];
 const AND_WORDS: &[&str] = &["and", "with", "w/"];
 const OR_WORDS: &[&str] = &["or"];

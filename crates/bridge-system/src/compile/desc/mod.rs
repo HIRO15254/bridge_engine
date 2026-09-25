@@ -105,6 +105,42 @@ pub fn compile_description(text: &str, ctx: &RowContext<'_>, meta: &SystemMeta) 
         atoms
     };
 
+    // `QUANT INV to 6NT`: the `INV` word only says that `QUANT` is an invitation (to a slam, not
+    // to game), so its game-invitational HCP range must not be ANDed against `QUANT`'s slam-invite
+    // range (the two are disjoint and the row would be unsatisfiable).
+    let has_quant = pass1_tokens
+        .iter()
+        .any(|t| matches!(t, Token::Strength(StrengthWord::Quantitative)));
+    let atoms: Vec<HandConstraint> = if has_quant {
+        pass1_tokens
+            .iter()
+            .zip(atoms)
+            .map(|(tok, atom)| match tok {
+                Token::Strength(
+                    StrengthWord::Invitational
+                    | StrengthWord::InvitationalPlus
+                    | StrengthWord::InvitationalMild
+                    | StrengthWord::InvitationalStrong,
+                ) => any(),
+                _ => atom,
+            })
+            .collect()
+    } else {
+        atoms
+    };
+
+    // Known beats assumed: when the strength words of one description resolve to disjoint HCP
+    // ranges and some of them rest on an assumed context (partner's or this player's range was
+    // unknown, §7.5's defaults), the assumed ones are dropped rather than making the row
+    // unsatisfiable (gjp `MAX, FG, 5-5`: `MAX` of the responder's own stated 5-9 against a `FG`
+    // derived from an assumed partner opening range).
+    let atoms = if strength_under_or(&top_clause, &fragments, false) {
+        // Strength words in different `Or` branches (`weak or GF`) are meant to be disjoint.
+        atoms
+    } else {
+        drop_conflicting_assumed_strength(&pass1_tokens, atoms, &provs)
+    };
+
     // `NAT` itself is the origin of the "衝突は明示が勝つ" rule generalized above, but never
     // implemented it for its own suit-length atom: `resolve_natural` always ANDs
     // `suit_len[call's suit] >= natural_suit_length` (5 by default), even when the row states its
@@ -253,6 +289,64 @@ pub fn compile_description(text: &str, ctx: &RowContext<'_>, meta: &SystemMeta) 
         recognition,
         lints,
     }
+}
+
+/// `true` when some `Strength` fragment sits below an `Or` node of `clause` (`inside_or` says
+/// whether an ancestor already was one).
+fn strength_under_or(clause: &Clause, fragments: &[Fragment], inside_or: bool) -> bool {
+    match clause {
+        Clause::Leaf(idx) => {
+            inside_or
+                && matches!(
+                    fragments[*idx].kind,
+                    FragmentKind::Token(Token::Strength(_))
+                )
+        }
+        Clause::And(items) => items
+            .iter()
+            .any(|c| strength_under_or(c, fragments, inside_or)),
+        Clause::Or(items) => items.iter().any(|c| strength_under_or(c, fragments, true)),
+    }
+}
+
+/// Drops the assumed-context `Strength` literals of a description whose `Strength` literals
+/// (all conjoined) resolve to disjoint HCP ranges, as long as at least one known-context one
+/// remains; otherwise returns `atoms` unchanged. `tokens`, `atoms` and `provs` are parallel.
+fn drop_conflicting_assumed_strength(
+    tokens: &[Token],
+    atoms: Vec<HandConstraint>,
+    provs: &[Provenance],
+) -> Vec<HandConstraint> {
+    let strength_hcp = |i: usize| match (&tokens[i], &atoms[i]) {
+        (Token::Strength(_), HandConstraint::Atom(a)) if *a != Atom::ANY => Some(a.hcp.clone()),
+        _ => None,
+    };
+    let ranges: Vec<(usize, core::ops::RangeInclusive<u8>)> = (0..tokens.len())
+        .filter_map(|i| strength_hcp(i).map(|r| (i, r)))
+        .collect();
+    let lo = ranges.iter().map(|(_, r)| *r.start()).max();
+    let hi = ranges.iter().map(|(_, r)| *r.end()).min();
+    let disjoint = matches!((lo, hi), (Some(lo), Some(hi)) if lo > hi);
+    let any_known = ranges.iter().any(|(i, _)| !provs[*i].assumed);
+    if !disjoint || !any_known {
+        return atoms;
+    }
+    let dropped: Vec<usize> = ranges
+        .iter()
+        .filter(|(i, _)| provs[*i].assumed)
+        .map(|(i, _)| *i)
+        .collect();
+    atoms
+        .into_iter()
+        .enumerate()
+        .map(|(i, a)| {
+            if dropped.contains(&i) {
+                HandConstraint::Atom(Atom::ANY)
+            } else {
+                a
+            }
+        })
+        .collect()
 }
 
 /// Folds a [`Clause`] tree into a [`HandConstraint`], skipping every fragment that contributes no
