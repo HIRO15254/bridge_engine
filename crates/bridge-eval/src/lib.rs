@@ -17,7 +17,9 @@ mod metrics;
 mod tables;
 
 pub use bridge_core::{Hand, Holding, Shape};
-pub use dist::{DistMethod, LtcMethod, distribution_points, shape_points, total_points};
+pub use dist::{
+    DistMethod, LtcMethod, MAX_DIST_POINTS, distribution_points, shape_points, total_points,
+};
 pub use half::Half;
 pub use metrics::{
     ACES, JACKS, KINGS, QUEENS, TENS, aces, controls, hcp, holding_hcp, honors, jacks, kings,

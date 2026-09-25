@@ -3,9 +3,9 @@
 
 use bridge_core::{Card, Hand, Holding, Rank, Shape, Suit};
 use bridge_eval::{
-    DistMethod, Half, LtcMethod, SUIT, aces, controls, distribution_points, hcp, holding_hcp,
-    honors, jacks, kings, losers, losers_with, queens, quick_tricks, shape_points, suit_quality,
-    tens, top_honors, total_points,
+    DistMethod, Half, LtcMethod, MAX_DIST_POINTS, SUIT, aces, controls, distribution_points, hcp,
+    holding_hcp, honors, jacks, kings, losers, losers_with, queens, quick_tricks, shape_points,
+    suit_quality, tens, top_honors, total_points,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -461,6 +461,74 @@ fn distribution_points_spot_checks() {
         naive_distribution_points(negative_bergen, DistMethod::BergenStarting)
     );
     assert!(bergen < 0);
+}
+
+// ---------------------------------------------------------------------------------------------
+// (c2) `DistMethod::ShortSuit` with unusually large custom weights: `distribution_points` must
+// saturate at `MAX_DIST_POINTS`, never overflow `i8` or wrap negative (dist.rs, `short_suit_points`
+// used to add each weight straight into an `i8` with no bound).
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn short_suit_points_saturates_at_max_dist_points_instead_of_overflowing() {
+    // 13-0-0-0 (one 13-card suit, three voids): a weight of 14 per void alone sums to 42 under the
+    // old unbounded formula, above `MAX_DIST_POINTS`.
+    let mono = hand_of_shape(
+        Holding::EMPTY,
+        Holding::EMPTY,
+        Holding::EMPTY,
+        Holding::FULL,
+    );
+    let large_void = DistMethod::ShortSuit {
+        void: 14,
+        singleton: 0,
+        doubleton: 0,
+    };
+    assert_eq!(distribution_points(mono, large_void), MAX_DIST_POINTS as i8);
+
+    // A weight of 200 would wrap negative under `as i8` with no saturation (200 as i8 == -56);
+    // three voids must still saturate at `MAX_DIST_POINTS`, never go negative.
+    let huge_void = DistMethod::ShortSuit {
+        void: 200,
+        singleton: 0,
+        doubleton: 0,
+    };
+    let dp = distribution_points(mono, huge_void);
+    assert_eq!(dp, MAX_DIST_POINTS as i8);
+    assert!(dp >= 0);
+
+    // A weight of 50 (`50 as i8 == 50`, no wraparound, but three voids would sum to 150, above
+    // both `i8::MAX` and `MAX_DIST_POINTS`) must saturate the same way.
+    let mid_void = DistMethod::ShortSuit {
+        void: 50,
+        singleton: 0,
+        doubleton: 0,
+    };
+    assert_eq!(distribution_points(mono, mid_void), MAX_DIST_POINTS as i8);
+
+    // A 4-4-4-1 shape with `singleton: 30` and everything else zero: one singleton contributes
+    // exactly 30, well under the cap, so this is a plain (non-saturating) sanity check alongside
+    // the saturating cases above.
+    let one_singleton = hand_of_shape(
+        Holding::from_bits(0b1).unwrap(),    // clubs: 1 card (singleton)
+        Holding::from_bits(0b1111).unwrap(), // diamonds: 4 cards
+        Holding::from_bits(0b1111).unwrap(), // hearts: 4 cards
+        Holding::from_bits(0b1111).unwrap(), // spades: 4 cards
+    );
+    assert_eq!(one_singleton.len(), 13);
+    let large_singleton = DistMethod::ShortSuit {
+        void: 0,
+        singleton: 30,
+        doubleton: 0,
+    };
+    assert_eq!(distribution_points(one_singleton, large_singleton), 30);
+
+    // `Metric::max()` for `DistPoints`/`TotalPoints` must stay in lockstep with this cap: a hand
+    // scoring at the cap must still satisfy an eval requirement whose range reaches the cap, and
+    // `total_points` must not exceed its own advertised maximum either.
+    assert_eq!(MAX_DIST_POINTS, 40);
+    let tp = total_points(mono, huge_void);
+    assert!(tp <= 37 + MAX_DIST_POINTS);
 }
 
 // ---------------------------------------------------------------------------------------------

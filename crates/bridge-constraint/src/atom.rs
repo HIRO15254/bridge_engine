@@ -4,8 +4,8 @@ use core::ops::RangeInclusive;
 
 use bridge_core::{Hand, Holding, ShapeSet, Suit};
 use bridge_eval::{
-    DistMethod, LtcMethod, controls, distribution_points, hcp, losers_with, quick_tricks,
-    suit_quality, total_points,
+    DistMethod, LtcMethod, MAX_DIST_POINTS, controls, distribution_points, hcp, losers_with,
+    quick_tricks, suit_quality, total_points,
 };
 
 /// `popcount(hand ∩ mask) ∈ count`.
@@ -81,8 +81,8 @@ impl Metric {
             Metric::Controls => 12,
             Metric::Losers(_) => 24,
             Metric::QuickTricks => 16,
-            Metric::DistPoints(_) => 40,
-            Metric::TotalPoints(_) => 77,
+            Metric::DistPoints(_) => MAX_DIST_POINTS,
+            Metric::TotalPoints(_) => 37 + MAX_DIST_POINTS,
             Metric::SuitQuality(_) => 5,
         }
     }
