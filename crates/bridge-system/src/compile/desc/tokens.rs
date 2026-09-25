@@ -642,6 +642,7 @@ fn match_strength(s: &str) -> Option<(Token, usize)> {
     const WORDS: &[(&str, StrengthWord)] = &[
         ("forcing to game", StrengthWord::GameForcing),
         ("game forcing", StrengthWord::GameForcing),
+        ("gameforcing", StrengthWord::GameForcing),
         ("game force", StrengthWord::GameForcing),
         ("any game force", StrengthWord::GameForcing),
         ("gf", StrengthWord::GameForcing),
@@ -807,7 +808,7 @@ fn match_quality(s: &str) -> Option<(Token, usize)> {
 }
 
 fn match_stopper(s: &str) -> Option<(Token, usize)> {
-    const WORDS: &[&str] = &["with stopper", "stopper in", "stopper", "stop"];
+    const WORDS: &[&str] = &["with stopper", "stopper in", "stoppers", "stopper", "stop"];
     for phrase in WORDS {
         if let Some(l) = match_word(s, phrase) {
             if let Some((suitref, l2)) = parse_suit_ref_ws(&s[l..]) {

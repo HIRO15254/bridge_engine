@@ -234,6 +234,7 @@ dependencies = [
  "insta",
  "postcard",
  "serde",
+ "serde_json",
  "smallvec",
  "thiserror",
  "tracing",
