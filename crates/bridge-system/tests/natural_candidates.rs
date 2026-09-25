@@ -34,17 +34,18 @@ fn candidates_are_legal_and_match_classify_infer() {
 
 #[test]
 fn candidates_excludes_fallback_calls() {
-    // Opener's notrump rebid matches no rule in the v1 table (see the `fallback` test in
-    // `natural_rules.rs`); `candidates` must simply omit that call rather than report it with the
-    // `ANY` fallback constraint.
+    // A redouble matches no rule in the v1 table (see the `fallback` test in `natural_rules.rs`);
+    // `candidates` must simply omit that call rather than report it with the `ANY` fallback
+    // constraint.
     let engine = NaturalInference::default();
-    let a = auction(Seat::North, Vulnerability::None, "1C P 1H P");
+    let a = auction(Seat::North, Vulnerability::None, "1S X");
     let owner = a.next_seat();
     let candidates = engine.candidates(&a, owner);
-    let nt: bridge_core::Call = "1NT".parse().unwrap();
     assert!(
-        candidates.iter().all(|(call, _, _)| *call != nt),
-        "1NT rebid should have been dropped as a fallback-only candidate"
+        candidates
+            .iter()
+            .all(|(call, _, _)| *call != bridge_core::Call::Redouble),
+        "the redouble should have been dropped as a fallback-only candidate"
     );
 }
 
