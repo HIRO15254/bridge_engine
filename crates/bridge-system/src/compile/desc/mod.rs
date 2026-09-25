@@ -21,7 +21,7 @@ use bridge_constraint::{Atom, DnfOptions, DnfTerm, HandConstraint};
 
 use self::{
     clause::{Clause, Fragment, FragmentKind},
-    context::{Provenance, RowContext},
+    context::{Provenance, RowContext, own_suit, suit_len_pins},
     tokens::{StrengthWord, Token},
 };
 use crate::{Lint, LintCode, NodeFlags, Recognition, Severity, SystemMeta};
@@ -94,6 +94,32 @@ pub fn compile_description(text: &str, ctx: &RowContext<'_>, meta: &SystemMeta) 
             .zip(atoms)
             .map(|(tok, atom)| {
                 if matches!(tok, Token::Strength(_)) {
+                    Atom::ANY
+                } else {
+                    atom
+                }
+            })
+            .collect()
+    } else {
+        atoms
+    };
+
+    // `NAT` itself is the origin of the "衝突は明示が勝つ" rule generalized above, but never
+    // implemented it for its own suit-length atom: `resolve_natural` always ANDs
+    // `suit_len[call's suit] >= natural_suit_length` (5 by default), even when the row states its
+    // own length for that suit explicitly (e.g. gjp's `NAT, normally 4!s`, or an `at least 4!c`
+    // read as an exact 4). An explicit `SuitLen`/`Shape` fragment that pins the length of NAT's
+    // own suit means the author already said what that length is; `NAT`'s assumed minimum must
+    // not additionally AND against it (unsatisfiable whenever the two disagree, e.g. a 5+ default
+    // against a stated 4).
+    let nat_suit_pinned_explicitly =
+        own_suit(ctx).is_some_and(|suit| pass1_tokens.iter().any(|t| suit_len_pins(t, suit, ctx)));
+    let atoms: Vec<Atom> = if nat_suit_pinned_explicitly {
+        pass1_tokens
+            .iter()
+            .zip(atoms)
+            .map(|(tok, atom)| {
+                if matches!(tok, Token::Natural) {
                     Atom::ANY
                 } else {
                     atom
@@ -656,6 +682,42 @@ mod tests {
         // conflicting 10..=12 this test relies on, so the fix is actually exercised above.
         let inv_only = compile_description("INV", &c, &meta);
         assert_eq!(inv_only.constraint.hcp_range(), 10..=12);
+    }
+
+    // Regression for gjp/common/1m-2m.bml:9 and its siblings (real_lint_triage.md): `NAT` never
+    // implemented the "衝突は明示が勝つ" rule for its own suit length, so `1H-1S / 2S = NAT, 4=!s`
+    // ANDed NAT's assumed 4+ minimum (`Role::Opener` at level 2 defaults to 5, well past the
+    // stated 4) against the row's own exact `4=!s`, making the row unsatisfiable no matter which
+    // number the author actually wrote.
+    #[test]
+    fn explicit_suit_length_wins_over_nats_own_assumed_minimum() {
+        let binding = Binding::default();
+        let c = ctx(
+            &binding,
+            Call::Bid(Bid::new(2, Strain::Spades).unwrap()),
+            Role::Opener,
+        );
+        let meta = SystemMeta::default();
+        let compiled = compile_description("NAT, 4=!s", &c, &meta);
+        assert_eq!(
+            compiled.constraint.suit_len(bridge_core::Suit::Spades),
+            4..=4
+        );
+        assert!(
+            compiled.constraint.is_satisfiable(),
+            "the row's own exact spade length must win, not be ANDed with NAT's assumed minimum"
+        );
+
+        // Sanity: bare `NAT` here really does default to a longer minimum than 4, so the fix is
+        // actually exercised above.
+        let nat_only = compile_description("NAT", &c, &meta);
+        assert!(
+            *nat_only
+                .constraint
+                .suit_len(bridge_core::Suit::Spades)
+                .start()
+                > 4
+        );
     }
 
     #[test]

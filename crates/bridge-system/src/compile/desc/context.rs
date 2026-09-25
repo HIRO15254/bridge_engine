@@ -119,10 +119,23 @@ fn natural_default() -> Provenance {
 }
 
 /// The suit of this row's own call, if it is a suit bid (`None` for notrump/pass/double/redouble).
-fn own_suit(ctx: &RowContext<'_>) -> Option<Suit> {
+pub(super) fn own_suit(ctx: &RowContext<'_>) -> Option<Suit> {
     match ctx.call {
         Call::Bid(bid) => bid.strain().suit(),
         _ => None,
+    }
+}
+
+/// Whether `token` is an explicit fragment that already pins the length of `suit`: a `SuitLen`
+/// naming it (possibly through a [`SuitRef`] that resolves to it) or a full `Shape` (which pins
+/// every suit's length at once). Used by `compile_description`'s NAT explicit-wins rule
+/// (`docs/design/06-system.md` §7.5's "NAT" row: "衝突は明示が勝つ" -- NAT's own assumed minimum
+/// length must give way to a length the author wrote out explicitly for the same suit).
+pub(super) fn suit_len_pins(token: &Token, suit: Suit, ctx: &RowContext<'_>) -> bool {
+    match token {
+        Token::SuitLen(suitref, _) => resolve_single_suit(*suitref, ctx) == Some(suit),
+        Token::Shape(_) => true,
+        _ => false,
     }
 }
 
@@ -163,8 +176,14 @@ fn agreed_suit_or_partner_last(ctx: &RowContext<'_>) -> Option<Suit> {
     ctx.agreed_suit.or_else(|| {
         ctx.partner_last
             .filter(|node| !node.flags.artificial)
-            .and_then(|node| node.call.bid())
-            .and_then(|bid| bid.strain().suit())
+            .and_then(|node| {
+                let suit = node.call.bid().and_then(|bid| bid.strain().suit())?;
+                // As in `compile::expand`'s `partner_bid_this_suit`: a non-artificial call still
+                // only agrees the suit it names when its own constraint shows length there. A call
+                // that mentions the strain while actually showing shortness or the other hand's
+                // suits (e.g. `1C-1D-2S = 16+, 5+!c and 4+!h`) is not a spade agreement.
+                (*node.constraint.suit_len(suit).start() >= 3).then_some(suit)
+            })
     })
 }
 
@@ -913,6 +932,14 @@ mod tests {
         let mut ctx = base_ctx(&binding, call, Role::Opener);
         let mut partner = node_with_hcp(12..=14);
         partner.call = Call::Bid(Bid::new(1, Strain::Hearts).unwrap());
+        // The guard added for `example3.bml`'s 1C-1D-2S contradiction requires partner's
+        // constraint to actually show length in the named suit, not just the same-strain call:
+        // give this fixture a genuine 5+!h so the fallback still applies here.
+        partner.constraint = HandConstraint::Atom(Atom {
+            hcp: 12..=14,
+            shapes: ShapeSet::from_suit_len(Suit::Hearts, 5, 13),
+            ..Atom::ANY
+        });
         ctx.partner_last = Some(&partner);
         // `ctx.agreed_suit` deliberately left `None`: nothing upstream has agreed a trump yet.
         let meta = SystemMeta::default();
