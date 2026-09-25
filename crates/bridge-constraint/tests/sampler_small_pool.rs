@@ -6,7 +6,7 @@ mod common;
 
 use bridge_constraint::{Atom, HandConstraint, Metric, SampleOptions, Sampler};
 use bridge_core::{Card, Hand};
-use common::{arb_atom_dist_shape_only, arb_atom_safe};
+use common::{arb_atom_dist_shape_only, arb_atom_safe, assert_samples_are_uniform_and_satisfy};
 use proptest::prelude::*;
 use proptest::sample::Index;
 
@@ -124,7 +124,13 @@ fn is_effectively_exact(atom: &Atom) -> bool {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(24))]
+    // 128 cases rather than the previous 24: `single_atom_matches_brute_force` and
+    // `single_atom_dist_shape_only_matches_brute_force` now also draw real samples from every
+    // exact general-path case (not just brute-forcing `count()`/`log_prob()`), and reliably
+    // catching a `draw`-specific bug (e.g. `sampler::term::pick_holding` always returning a
+    // bucket's first element) needs enough distinct general-path shapes to turn up a bucket with
+    // more than one candidate holding - rare enough that 24 cases missed it in review.
+    #![proptest_config(ProptestConfig::with_cases(128))]
 
     /// A single atom (shape ranges, HCP window, single/multi-suit card requirements,
     /// controls/losers/quick-tricks ranges): `count()` matches brute force, `log_prob` sums to 1
@@ -162,6 +168,14 @@ proptest! {
         }
         if expected_exact && brute > 0 {
             prop_assert!((sum - 1.0).abs() < 1e-9, "sum of exp(log_prob) = {sum}");
+
+            // Beyond `count()`/`log_prob()` (computed from the same weight tables `sample`
+            // draws from, so a bug specific to `draw` itself would not necessarily show up
+            // there): draw real samples and check they land only on `satisfies`-true hands, and
+            // uniformly across them (§9's exact-sampler contract).
+            let satisfying: Vec<Hand> = all.iter().copied().filter(|&h| atom.satisfies(h)).collect();
+            let draws = brute.saturating_mul(50).clamp(200, 20_000);
+            assert_samples_are_uniform_and_satisfy(&sampler, &satisfying, 0xC0FF_EE00_1234_5678, draws);
         }
     }
 
@@ -202,6 +216,10 @@ proptest! {
         }
         if expected_exact && brute > 0 {
             prop_assert!((sum - 1.0).abs() < 1e-9, "sum of exp(log_prob) = {sum}");
+
+            let satisfying: Vec<Hand> = all.iter().copied().filter(|&h| atom.satisfies(h)).collect();
+            let draws = brute.saturating_mul(50).clamp(200, 20_000);
+            assert_samples_are_uniform_and_satisfy(&sampler, &satisfying, 0xC0FF_EE00_1234_5679, draws);
         }
     }
 

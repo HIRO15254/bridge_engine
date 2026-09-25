@@ -8,7 +8,7 @@ use bridge_constraint::{
     Atom, CardRequirement, EvalRequirement, HandConstraint, Metric, SampleOptions, Sampler,
     ShapeSet,
 };
-use bridge_core::{Card, Hand, Holding, Suit};
+use bridge_core::{Card, Hand, Holding, SHAPES, Shape, Suit};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use rand_xoshiro::rand_core::SeedableRng;
 
@@ -409,4 +409,172 @@ fn general_path_additive_feature_and_fixed_samples_are_uniform() {
     );
 
     assert_general_path_draw_is_uniform(&sampler, &satisfying, 0x5EED_0002, 100_000);
+}
+
+/// The general path's `draw` when the shared `hcp` window is a genuine multi-value sub-range
+/// (neither the unrestricted `0..=37` every other `honors_pool` test here uses, nor a single fixed
+/// point like `full_deck_hcp_marginal_matches_exact_counts`'s per-value samplers): steps 3-4 of
+/// `GeneralTerm::draw` shift that shared window by each candidate `(hcp, x)` before querying the
+/// other suit-pair's `box_sum`, and a bug in that shift (e.g. an off-by-one, or using the
+/// unshifted window) would only show up once the window actually excludes some `(hcp, x)`
+/// combinations, which a fixed-point or unrestricted window cannot do.
+#[test]
+fn general_path_hcp_window_with_fixed_cards_samples_are_uniform() {
+    let pool = honors_pool();
+    let fixed = Hand::EMPTY
+        .with(Card::from_index(0).expect("index 0 is a valid card")) // low card, outside the pool
+        .with(Card::from_index(13).expect("index 13 is a valid card")); // ditto, another suit
+    let atom = Atom::ANY.with_hcp(21..=24);
+    let c = HandConstraint::Atom(atom.clone());
+    let sampler = Sampler::prepare(&c, pool, fixed, &SampleOptions::default()).unwrap();
+    assert!(sampler.is_exact());
+
+    let satisfying = satisfying_completions(pool, fixed, |h| atom.satisfies(h));
+    assert_eq!(satisfying.len() as u64, sampler.count());
+    assert!(
+        (100..=560).contains(&satisfying.len()),
+        "expected a sizeable but proper subset of the completions, got {}",
+        satisfying.len()
+    );
+
+    assert_general_path_draw_is_uniform(&sampler, &satisfying, 0x5EED_0003, 100_000);
+}
+
+/// The design's own uniformity check (05-constraint.md §10, 11-testing.md §4): draw `10^6` hands
+/// from the exact general path for a realistic constraint (15-17 balanced, full deck) and check
+/// both the per-shape marginal (13 balanced shapes) and the per-HCP marginal (15/16/17) against
+/// the exact counts `Sampler::prepare` reports for each - not against each other, so this catches
+/// what the small χ² tests above cannot: a sampler that draws a uniformly random *shape* first
+/// (ignoring each shape's true weight, e.g. `sampler::term::tests`' `M2` mutation from the review)
+/// would still pass a hand-level χ² test *within* one shape's own bucket, but would fail this
+/// per-shape marginal, since balanced shapes do not all have the same number of 15-17-HCP
+/// completions.
+///
+/// `#[ignore]`d: `10^6` draws is slow for routine `cargo test`. Run explicitly with
+/// `cargo test -p bridge-constraint --test sampler_chi_square -- --ignored`.
+#[test]
+#[ignore = "10^6 draws; run explicitly with `-- --ignored`"]
+fn full_deck_15_17_balanced_shape_and_hcp_marginal_chi_square_1e6() {
+    const HCP_LO: u8 = 15;
+    const HCP_HI: u8 = 17;
+
+    let atom = Atom {
+        shapes: ShapeSet::BALANCED,
+        ..Atom::ANY.with_hcp(HCP_LO..=HCP_HI)
+    };
+    let sampler = Sampler::prepare(
+        &HandConstraint::Atom(atom),
+        Hand::FULL,
+        Hand::EMPTY,
+        &SampleOptions::default(),
+    )
+    .unwrap();
+    assert!(sampler.is_exact());
+    let total_exact = sampler.count();
+
+    // Exact per-shape counts (§10): one `Sampler::prepare` per balanced shape, restricted to the
+    // same HCP window, whose `count()`s must sum back to `total_exact`.
+    let balanced_shapes: Vec<Shape> = SHAPES
+        .iter()
+        .copied()
+        .filter(|&s| ShapeSet::BALANCED.contains(s))
+        .collect();
+    let shape_index: HashMap<Shape, usize> = balanced_shapes
+        .iter()
+        .enumerate()
+        .map(|(i, &s)| (s, i))
+        .collect();
+    let shape_exact: Vec<u64> = balanced_shapes
+        .iter()
+        .map(|&shape| {
+            let a = Atom {
+                shapes: ShapeSet::EMPTY.insert(shape),
+                ..Atom::ANY.with_hcp(HCP_LO..=HCP_HI)
+            };
+            Sampler::prepare(
+                &HandConstraint::Atom(a),
+                Hand::FULL,
+                Hand::EMPTY,
+                &SampleOptions::default(),
+            )
+            .unwrap()
+            .count()
+        })
+        .collect();
+    assert_eq!(shape_exact.iter().sum::<u64>(), total_exact);
+
+    // Exact per-HCP counts (already established by `full_deck_hcp_marginal_matches_exact_counts`,
+    // recomputed here so this test is self-contained).
+    let hcp_exact: Vec<u64> = (HCP_LO..=HCP_HI)
+        .map(|hcp| {
+            let a = Atom {
+                shapes: ShapeSet::BALANCED,
+                ..Atom::ANY.with_hcp(hcp..=hcp)
+            };
+            Sampler::prepare(
+                &HandConstraint::Atom(a),
+                Hand::FULL,
+                Hand::EMPTY,
+                &SampleOptions::default(),
+            )
+            .unwrap()
+            .count()
+        })
+        .collect();
+    assert_eq!(hcp_exact.iter().sum::<u64>(), total_exact);
+
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x1E6_1E6_1E6);
+    let draws = 1_000_000u64;
+    let mut shape_observed = vec![0u64; balanced_shapes.len()];
+    let mut hcp_observed = vec![0u64; (HCP_HI - HCP_LO + 1) as usize];
+    for _ in 0..draws {
+        let sample = sampler.sample(&mut rng).unwrap();
+        let shape = sample.hand.shape();
+        let idx = *shape_index
+            .get(&shape)
+            .unwrap_or_else(|| panic!("drew a non-balanced shape: {shape:?}"));
+        shape_observed[idx] += 1;
+        let hcp = bridge_eval::hcp(sample.hand);
+        hcp_observed[(hcp - HCP_LO) as usize] += 1;
+    }
+
+    let shape_expected: Vec<f64> = shape_exact
+        .iter()
+        .map(|&c| draws as f64 * c as f64 / total_exact as f64)
+        .collect();
+    let shape_chi2: f64 = shape_observed
+        .iter()
+        .zip(shape_expected.iter())
+        .map(|(&o, &e)| {
+            let d = o as f64 - e;
+            d * d / e
+        })
+        .sum();
+    let shape_df = (balanced_shapes.len() - 1) as f64;
+    let shape_p = chi_square_p_value(shape_chi2, shape_df);
+    assert!(
+        shape_p > 1e-3,
+        "per-shape marginal: chi2={shape_chi2}, df={shape_df}, p={shape_p} (uniformity rejected)"
+    );
+
+    let hcp_expected: Vec<f64> = hcp_exact
+        .iter()
+        .map(|&c| draws as f64 * c as f64 / total_exact as f64)
+        .collect();
+    // `chi_square_statistic` assumes one shared `expected`; the three HCP bins have distinct
+    // exact counts, so compute it by hand instead (same formula as the per-shape one above).
+    let hcp_chi2: f64 = hcp_observed
+        .iter()
+        .zip(hcp_expected.iter())
+        .map(|(&o, &e)| {
+            let d = o as f64 - e;
+            d * d / e
+        })
+        .sum();
+    let hcp_df = (hcp_exact.len() - 1) as f64;
+    let hcp_p = chi_square_p_value(hcp_chi2, hcp_df);
+    assert!(
+        hcp_p > 1e-3,
+        "per-HCP marginal: chi2={hcp_chi2}, observed={hcp_observed:?}, expected={hcp_expected:?}, p={hcp_p}"
+    );
 }
