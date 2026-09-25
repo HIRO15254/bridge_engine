@@ -1,0 +1,681 @@
+//! `ConstraintProposal::log_prob` must be exact against its own `propose` (§6.3 of
+//! `09-sample.md`): a small pool (8 unknown cards) with overlapping alternatives (both can hold
+//! the same hand) and an overlapping DNF term inside one of them (an `Or` whose branches are not
+//! disjoint) is fully enumerated (`C(8, 4) = 70` splits), and `10^5` proposals are checked
+//! against `exp(log_prob)` by chi-square.
+
+use bridge_bidding::{Explanation, Interpretation, ResolutionKind};
+use bridge_constraint::{Atom, CardRequirement, HandConstraint, KnownCards, ShapeSet};
+use bridge_core::{Card, Hand, Holding, Seat, Suit};
+use bridge_sample::{ConstraintProposal, Proposal, SampleContext, rng_for};
+
+mod support;
+use support::multi_component_rejecting_last_seat;
+
+/// Lanczos approximation to `ln(Gamma(x))`, matching
+/// `bridge-constraint/tests/sampler_chi_square.rs` (duplicated rather than shared: there is no
+/// cross-crate test-support crate in this workspace and the function is a dozen lines).
+fn ln_gamma(x: f64) -> f64 {
+    const G: f64 = 7.0;
+    const COEF: [f64; 9] = [
+        0.999_999_999_999_809_9,
+        676.520_368_121_885_1,
+        -1_259.139_216_722_402_8,
+        771.323_428_777_653_1,
+        -176.615_029_162_140_6,
+        12.507_343_278_686_905,
+        -0.138_571_095_265_720_12,
+        9.984_369_578_019_572e-6,
+        1.505_632_735_149_312e-7,
+    ];
+    if x < 0.5 {
+        (std::f64::consts::PI / (std::f64::consts::PI * x).sin()).ln() - ln_gamma(1.0 - x)
+    } else {
+        let x = x - 1.0;
+        let t = x + G + 0.5;
+        let mut a = COEF[0];
+        for (i, &c) in COEF.iter().enumerate().skip(1) {
+            a += c / (x + i as f64);
+        }
+        0.5 * (2.0 * std::f64::consts::PI).ln() + (x + 0.5) * t.ln() - t + a.ln()
+    }
+}
+
+fn gamma_p_series(a: f64, x: f64) -> f64 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    let gln = ln_gamma(a);
+    let mut ap = a;
+    let mut sum = 1.0 / a;
+    let mut del = sum;
+    for _ in 0..200 {
+        ap += 1.0;
+        del *= x / ap;
+        sum += del;
+        if del.abs() < sum.abs() * 1e-14 {
+            break;
+        }
+    }
+    sum * (-x + a * x.ln() - gln).exp()
+}
+
+fn gamma_q_cf(a: f64, x: f64) -> f64 {
+    let gln = ln_gamma(a);
+    let fpmin = 1e-300;
+    let mut b = x + 1.0 - a;
+    let mut c = 1.0 / fpmin;
+    let mut d = 1.0 / b;
+    let mut h = d;
+    for i in 1..200 {
+        let an = -(f64::from(i)) * (f64::from(i) - a);
+        b += 2.0;
+        d = an * d + b;
+        if d.abs() < fpmin {
+            d = fpmin;
+        }
+        c = b + an / c;
+        if c.abs() < fpmin {
+            c = fpmin;
+        }
+        d = 1.0 / d;
+        let del = d * c;
+        h *= del;
+        if (del - 1.0).abs() < 1e-14 {
+            break;
+        }
+    }
+    (-x + a * x.ln() - gln).exp() * h
+}
+
+fn gamma_q(a: f64, x: f64) -> f64 {
+    if x < a + 1.0 {
+        1.0 - gamma_p_series(a, x)
+    } else {
+        gamma_q_cf(a, x)
+    }
+}
+
+/// The upper-tail p-value of a chi-square statistic with `df` degrees of freedom.
+fn chi_square_p_value(chi2: f64, df: f64) -> f64 {
+    gamma_q(df / 2.0, chi2 / 2.0)
+}
+
+fn chi_square_statistic(observed: &[u64], expected: &[f64]) -> f64 {
+    observed
+        .iter()
+        .zip(expected)
+        .map(|(&o, &e)| {
+            let d = o as f64 - e;
+            d * d / e
+        })
+        .sum()
+}
+
+fn cards_to_hand(cards: &[Card]) -> Hand {
+    cards.iter().fold(Hand::EMPTY, |h, &c| h.with(c))
+}
+
+fn atom(cards: Vec<CardRequirement>) -> HandConstraint {
+    HandConstraint::Atom(Atom {
+        shapes: ShapeSet::ALL,
+        hcp: 0..=37,
+        cards,
+        eval: Vec::new(),
+    })
+}
+
+fn empty_explanation() -> Explanation {
+    Explanation {
+        text: String::new(),
+        node: None,
+        resolution: ResolutionKind::Exact,
+        parts: Vec::new(),
+    }
+}
+
+/// All `C(pool.len(), k)` subsets of `pool`, as hands (standard lexicographic combination
+/// enumeration: at each step, the rightmost index still below its maximum is incremented and
+/// everything to its right is reset to consecutive values).
+fn subsets_of_size(pool: &[Card], k: usize) -> Vec<Hand> {
+    let n = pool.len();
+    let mut out = Vec::new();
+    if k > n {
+        return out;
+    }
+    let mut indices: Vec<usize> = (0..k).collect();
+    loop {
+        let cards: Vec<Card> = indices.iter().map(|&i| pool[i]).collect();
+        out.push(cards_to_hand(&cards));
+
+        let mut advanced = false;
+        let mut i = k;
+        while i > 0 {
+            i -= 1;
+            if indices[i] < i + n - k {
+                indices[i] += 1;
+                for j in (i + 1)..k {
+                    indices[j] = indices[j - 1] + 1;
+                }
+                advanced = true;
+                break;
+            }
+        }
+        if !advanced {
+            break;
+        }
+    }
+    out
+}
+
+/// North holds all clubs, East all diamonds (both fully known, `needed == 0`); the 18 remaining
+/// hearts-and-low-spades are split 9/9 between South and West's fixed cards; the top 8 spades
+/// (`A K Q J T 9 8 7`) are the unknown pool, split 4/4 between South and West.
+fn small_pool_context() -> (KnownCards, Vec<Card>) {
+    let clubs = Hand::EMPTY.with_holding(Suit::Clubs, Holding::FULL);
+    let diamonds = Hand::EMPTY.with_holding(Suit::Diamonds, Holding::FULL);
+    let spades_full = Hand::EMPTY.with_holding(Suit::Spades, Holding::FULL);
+    let spades_pool_hand = Hand::EMPTY.with_holding(Suit::Spades, Holding::top_ranks(8));
+    let spades_low = spades_full.difference(spades_pool_hand);
+    let hearts = Hand::EMPTY.with_holding(Suit::Hearts, Holding::FULL);
+
+    let fixed_pool: Vec<Card> = hearts.union(spades_low).cards().collect();
+    assert_eq!(fixed_pool.len(), 18);
+    let south_fixed = cards_to_hand(&fixed_pool[0..9]);
+    let west_fixed = cards_to_hand(&fixed_pool[9..18]);
+
+    let known = KnownCards::new([clubs, diamonds, south_fixed, west_fixed])
+        .expect("the four hands are pairwise disjoint by construction");
+    assert_eq!(known.pool(), spades_pool_hand);
+    assert_eq!(known.needed(Seat::North), 0);
+    assert_eq!(known.needed(Seat::East), 0);
+    assert_eq!(known.needed(Seat::South), 4);
+    assert_eq!(known.needed(Seat::West), 4);
+
+    let pool: Vec<Card> = spades_pool_hand.cards().collect();
+    (known, pool)
+}
+
+/// South's two alternatives overlap (a hand can hold both the spade ace and the spade king), and
+/// the first alternative is itself an `Or` of two overlapping card requirements (holding the ace
+/// or holding the king, which are not disjoint from the outer alternative split either): both
+/// `Sampler::log_prob`'s own term-level mixture and `ConstraintProposal`'s alternative-level
+/// mixture (§6.3) are exercised at once. West has no calls (`ANY`, direct dealing, §6.4 (a)).
+fn overlapping_interpretation() -> Interpretation {
+    let ace = Holding::top_ranks(1);
+    let king = Holding::top_ranks(2).without(ace.highest().expect("top_ranks(1) is non-empty"));
+    let queen = Holding::top_ranks(3)
+        .without(ace.highest().expect("non-empty"))
+        .without(king.highest().expect("non-empty"));
+
+    let has_ace = CardRequirement::in_suit(Suit::Spades, ace, 1..=1);
+    let has_king = CardRequirement::in_suit(Suit::Spades, king, 1..=1);
+    let has_queen = CardRequirement::in_suit(Suit::Spades, queen, 1..=1);
+
+    // Alternative 1: "ace or queen" (an `Or`, so its two branches are separate DNF terms; a hand
+    // with both the ace and the queen is counted once by the sampler but satisfies either
+    // branch, exercising the term-overlap path).
+    let ace_or_queen = HandConstraint::Or(vec![atom(vec![has_ace]), atom(vec![has_queen])]);
+    // Alternative 2: "king" alone. Overlaps alternative 1 whenever a hand holds both the ace and
+    // the king (or the queen and the king).
+    let has_king_only = atom(vec![has_king]);
+
+    let south = vec![
+        (ace_or_queen, 0.6, empty_explanation()),
+        (has_king_only, 0.4, empty_explanation()),
+    ];
+
+    Interpretation {
+        seats: [Vec::new(), Vec::new(), south, Vec::new()],
+        per_call: Vec::new(),
+        divergence: None,
+    }
+}
+
+/// North fully known; East and South each need 3 cards from a 9-card spade-top pool and carry a
+/// `cards`-only alternative (`shapes = ALL`, `hcp = 0..=37`): East must hold the pool's ace,
+/// South the king. West is left completely unconstrained (direct-dealt, §6.4 (a)), so `propose`
+/// never rejects at the last seat — the point of this context is to isolate the "middle seat"
+/// itself (§6.4 (c)), not add a second source of rejection on top of it. East's mass (`1.0 ×
+/// C(8, 2)` at the full pool) is smaller than South's or West's direct-deal mass (`C(9, 3)`), so
+/// East is cached (k=0) and South — genuinely re-prepared every draw, the seat §6.4 (c) actually
+/// applies to — sits at k=1, neither first nor last.
+fn three_seat_pool_context() -> (KnownCards, Vec<Card>) {
+    let clubs = Hand::EMPTY.with_holding(Suit::Clubs, Holding::FULL);
+    let diamonds = Hand::EMPTY.with_holding(Suit::Diamonds, Holding::FULL);
+    let hearts = Hand::EMPTY.with_holding(Suit::Hearts, Holding::FULL);
+    let spades_full = Hand::EMPTY.with_holding(Suit::Spades, Holding::FULL);
+    let spades_pool_hand = Hand::EMPTY.with_holding(Suit::Spades, Holding::top_ranks(9));
+    let spades_low = spades_full.difference(spades_pool_hand);
+
+    let north = clubs;
+    let fixed_pool: Vec<Card> = diamonds.union(hearts).union(spades_low).cards().collect();
+    assert_eq!(fixed_pool.len(), 30);
+    let east_fixed = cards_to_hand(&fixed_pool[0..10]);
+    let south_fixed = cards_to_hand(&fixed_pool[10..20]);
+    let west_fixed = cards_to_hand(&fixed_pool[20..30]);
+
+    let known = KnownCards::new([north, east_fixed, south_fixed, west_fixed])
+        .expect("the four hands are pairwise disjoint by construction");
+    assert_eq!(known.pool(), spades_pool_hand);
+    assert_eq!(known.needed(Seat::North), 0);
+    assert_eq!(known.needed(Seat::East), 3);
+    assert_eq!(known.needed(Seat::South), 3);
+    assert_eq!(known.needed(Seat::West), 3);
+
+    let pool: Vec<Card> = spades_pool_hand.cards().collect();
+    (known, pool)
+}
+
+fn three_seat_interpretation() -> Interpretation {
+    let ace = Holding::top_ranks(1);
+    let king = Holding::top_ranks(2).without(ace.highest().expect("non-empty"));
+
+    let holds_ace = atom(vec![CardRequirement::in_suit(Suit::Spades, ace, 1..=1)]);
+    let holds_king = atom(vec![CardRequirement::in_suit(Suit::Spades, king, 1..=1)]);
+
+    Interpretation {
+        seats: [
+            Vec::new(),
+            vec![(holds_ace, 1.0, empty_explanation())],
+            vec![(holds_king, 1.0, empty_explanation())],
+            Vec::new(),
+        ],
+        per_call: Vec::new(),
+        divergence: None,
+    }
+}
+
+/// Every way to split the 9-card pool 3/3/3 between East, South and West (`C(9,3) · C(6,3) =
+/// 1680`); the raw combinatorial space, not filtered by any seat's own constraint (log_prob
+/// itself assigns `-∞` wherever East doesn't hold the ace — the middle seat, South, has no gate
+/// at all once its sampler is coarsened to `ANY`, §6.4 (c), and West is unconstrained so it never
+/// rejects, so every one of the 1680 splits is in fact in the support).
+fn enumerate_three_way_splits(pool: Hand, pool_cards: &[Card]) -> Vec<(Hand, Hand, Hand)> {
+    let mut out = Vec::new();
+    for east in subsets_of_size(pool_cards, 3) {
+        let after_east = pool.difference(east);
+        let remaining: Vec<Card> = after_east.cards().collect();
+        for south in subsets_of_size(&remaining, 3) {
+            let west = after_east.difference(south);
+            out.push((east, south, west));
+        }
+    }
+    out
+}
+
+/// §6.4 (c)'s middle-seat coarsening must not break `log_prob`'s exactness against `propose`:
+/// with three genuinely `Sampled` seats (East cached, South re-prepared every draw — the actual
+/// "middle" position — West residual), the enumerated support must still sum to 1 and 10^5
+/// proposals must still match `exp(log_prob)` by chi-square, the same two checks as
+/// `log_prob_consistency` above.
+#[test]
+fn middle_seat_coarse_log_prob_consistency() {
+    let (known, pool) = three_seat_pool_context();
+    let interpretation = three_seat_interpretation();
+    let play_constraints = [
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+    ];
+    let ctx = SampleContext {
+        known,
+        interpretation: &interpretation,
+        play_constraints: &play_constraints,
+        play_soft: None,
+        bidding: None,
+    };
+
+    let proposal = ConstraintProposal::default();
+    let prepared = proposal
+        .prepare(&ctx)
+        .expect("prepare succeeds: every seat has support");
+
+    let north = known.known[Seat::North.index() as usize];
+    let east_fixed = known.known[Seat::East.index() as usize];
+    let south_fixed = known.known[Seat::South.index() as usize];
+    let west_fixed = known.known[Seat::West.index() as usize];
+
+    let splits = enumerate_three_way_splits(known.pool(), &pool);
+    assert_eq!(splits.len(), 1680);
+    let deals: Vec<bridge_core::Deal> = splits
+        .iter()
+        .map(|&(e, s, w)| {
+            bridge_core::Deal::new([
+                north,
+                east_fixed.union(e),
+                south_fixed.union(s),
+                west_fixed.union(w),
+            ])
+            .expect("four disjoint 13-card hands covering the deck")
+        })
+        .collect();
+
+    let log_probs: Vec<f64> = deals.iter().map(|d| prepared.log_prob(d)).collect();
+    let total: f64 = log_probs.iter().map(|lp| lp.exp()).sum();
+    assert!(
+        (total - 1.0).abs() < 1e-9,
+        "Σ exp(log_prob) over the enumerated support = {total}, expected 1"
+    );
+
+    let n = 100_000u64;
+    let mut rng = rng_for(20260926, 0);
+    let mut observed = vec![0u64; deals.len()];
+    let mut unmatched = 0u64;
+    for _ in 0..n {
+        let deal = prepared
+            .propose(&mut rng)
+            .expect("this context always has support");
+        match deals.iter().position(|d| d == &deal) {
+            Some(i) => observed[i] += 1,
+            None => unmatched += 1,
+        }
+    }
+    assert_eq!(
+        unmatched, 0,
+        "every proposed deal must be one of the 1680 enumerated splits"
+    );
+
+    let expected: Vec<f64> = log_probs.iter().map(|lp| lp.exp() * n as f64).collect();
+    let mut used_observed = Vec::new();
+    let mut used_expected = Vec::new();
+    for (i, &e) in expected.iter().enumerate() {
+        if e > 0.0 {
+            used_observed.push(observed[i]);
+            used_expected.push(e);
+        } else {
+            assert_eq!(observed[i], 0, "a zero-probability deal was proposed");
+        }
+    }
+    assert!(
+        used_expected.len() > 1,
+        "the support must have more than one deal"
+    );
+
+    let chi2 = chi_square_statistic(&used_observed, &used_expected);
+    let df = (used_expected.len() - 1) as f64;
+    let p_value = chi_square_p_value(chi2, df);
+    assert!(
+        p_value > 0.01,
+        "chi-square = {chi2} (df = {df}) rejects at the 0.01 level (p = {p_value})"
+    );
+}
+
+#[test]
+fn log_prob_consistency() {
+    let (known, pool) = small_pool_context();
+    let interpretation = overlapping_interpretation();
+    let play_constraints = [
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+    ];
+    let ctx = SampleContext {
+        known,
+        interpretation: &interpretation,
+        play_constraints: &play_constraints,
+        play_soft: None,
+        bidding: None,
+    };
+
+    let proposal = ConstraintProposal::default();
+    let prepared = proposal
+        .prepare(&ctx)
+        .expect("prepare succeeds: every seat has support");
+
+    // Enumerate all 70 ways to split the 8-card pool 4/4 between South and West.
+    let south_hands = subsets_of_size(&pool, 4);
+    assert_eq!(south_hands.len(), 70);
+    let south_fixed = known.known[Seat::South.index() as usize];
+    let west_fixed = known.known[Seat::West.index() as usize];
+    let north = known.known[Seat::North.index() as usize];
+    let east = known.known[Seat::East.index() as usize];
+
+    let deals: Vec<bridge_core::Deal> = south_hands
+        .iter()
+        .map(|&south_drawn| {
+            let south = south_fixed.union(south_drawn);
+            let west = west_fixed.union(known.pool().difference(south_drawn));
+            bridge_core::Deal::new([north, east, south, west])
+                .expect("four disjoint 13-card hands covering the deck")
+        })
+        .collect();
+
+    let log_probs: Vec<f64> = deals.iter().map(|d| prepared.log_prob(d)).collect();
+
+    // The enumerated support sums to 1 (within the tolerance `09-sample.md` §9 asks for).
+    let total: f64 = log_probs.iter().map(|lp| lp.exp()).sum();
+    assert!(
+        (total - 1.0).abs() < 1e-9,
+        "Σ exp(log_prob) over the enumerated support = {total}, expected 1"
+    );
+
+    // Draw 10^5 proposals from a single deterministic stream and histogram them by which of the
+    // 70 enumerated deals they match.
+    let n = 100_000u64;
+    let mut rng = rng_for(20260925, 0);
+    let mut observed = vec![0u64; deals.len()];
+    let mut unmatched = 0u64;
+    for _ in 0..n {
+        let deal = prepared
+            .propose(&mut rng)
+            .expect("this context always has support");
+        match deals.iter().position(|d| d == &deal) {
+            Some(i) => observed[i] += 1,
+            None => unmatched += 1,
+        }
+    }
+    assert_eq!(
+        unmatched, 0,
+        "every proposed deal must be one of the 70 enumerated ones"
+    );
+
+    // Chi-square over the bins with positive expected mass (an exact sampler should never place
+    // any draws in a zero-probability bin, so every observed bin has one).
+    let expected: Vec<f64> = log_probs.iter().map(|lp| lp.exp() * n as f64).collect();
+    let mut used_observed = Vec::new();
+    let mut used_expected = Vec::new();
+    for (i, &e) in expected.iter().enumerate() {
+        if e > 0.0 {
+            used_observed.push(observed[i]);
+            used_expected.push(e);
+        } else {
+            assert_eq!(observed[i], 0, "a zero-probability deal was proposed");
+        }
+    }
+    assert!(
+        used_expected.len() > 1,
+        "the support must have more than one deal"
+    );
+
+    let chi2 = chi_square_statistic(&used_observed, &used_expected);
+    let df = (used_expected.len() - 1) as f64;
+    let p_value = chi_square_p_value(chi2, df);
+    assert!(
+        p_value > 0.01,
+        "chi-square = {chi2} (df = {df}) rejects at the 0.01 level (p = {p_value})"
+    );
+}
+
+/// Covers two gaps `middle_seat_coarse_log_prob_consistency` leaves open (see `support`'s doc
+/// comment): a re-prepared middle seat (South) with a genuine two-component mixture that
+/// survives [`coarsen`](bridge_sample) instead of trivialising to `ANY`, and a last seat (West)
+/// that is `Sampled` and does fail its own `satisfies` check for some residual pools, so
+/// `log_prob`'s last-seat rejection branch is actually exercised (both prior tests kept the last
+/// seat unconstrained specifically to avoid this).
+///
+/// Because the last seat can fail, the enumerated support no longer sums to 1 — only to the
+/// single-shot acceptance probability `α < 1` — so this test checks `Σ exp(log_prob) ≤ 1` (not
+/// `≈ 1`), and compares `propose` (retried on rejection) against `exp(log_prob) / α`.
+#[test]
+fn middle_seat_multi_component_and_last_seat_rejection_log_prob_consistency() {
+    let fixture = multi_component_rejecting_last_seat();
+    let play_constraints = [
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+    ];
+    let ctx = SampleContext {
+        known: fixture.known,
+        interpretation: &fixture.interpretation,
+        play_constraints: &play_constraints,
+        play_soft: None,
+        bidding: None,
+    };
+
+    let proposal = ConstraintProposal::default();
+    let prepared = proposal
+        .prepare(&ctx)
+        .expect("prepare succeeds: every seat has support");
+
+    let north = fixture.known.known[Seat::North.index() as usize];
+    let east_fixed = fixture.known.known[Seat::East.index() as usize];
+    let south_fixed = fixture.known.known[Seat::South.index() as usize];
+    let west_fixed = fixture.known.known[Seat::West.index() as usize];
+    let pool = fixture.known.pool();
+    let pool_cards: Vec<Card> = pool.cards().collect();
+    assert_eq!(pool_cards.len(), 9);
+
+    // Every way to split the 9-card pool 2/3/4 between East, South and West.
+    let mut deals = Vec::new();
+    for east_drawn in subsets_of_size(&pool_cards, 2) {
+        let after_east = pool.difference(east_drawn);
+        let remaining: Vec<Card> = after_east.cards().collect();
+        for south_drawn in subsets_of_size(&remaining, 3) {
+            let west_drawn = after_east.difference(south_drawn);
+            let deal = bridge_core::Deal::new([
+                north,
+                east_fixed.union(east_drawn),
+                south_fixed.union(south_drawn),
+                west_fixed.union(west_drawn),
+            ])
+            .expect("four disjoint 13-card hands covering the deck");
+            deals.push(deal);
+        }
+    }
+    assert_eq!(deals.len(), 36 * 35);
+
+    let log_probs: Vec<f64> = deals.iter().map(|d| prepared.log_prob(d)).collect();
+    let total: f64 = log_probs
+        .iter()
+        .map(|lp| if lp.is_finite() { lp.exp() } else { 0.0 })
+        .sum();
+    assert!(total <= 1.0 + 1e-9, "Σ exp(log_prob) = {total} exceeds 1");
+    assert!(total > 0.0, "expected some deals in the support");
+    assert!(
+        total < 1.0 - 1e-6,
+        "expected real rejection at the last seat (West must hold the diamond ace), but Σ \
+         exp(log_prob) = {total} is essentially the full mass"
+    );
+
+    // Isolate the last-seat rejection path: among deals where East and South's own alternatives
+    // are satisfied (so any -inf can only come from West's last-seat check), West holding the
+    // diamond ace must give a finite log_prob and West missing it must give exactly -inf.
+    let south_alts = &fixture.interpretation.seats[Seat::South.index() as usize];
+    let mut saw_last_seat_rejection = false;
+    let mut saw_last_seat_acceptance = false;
+    for deal in &deals {
+        let east_ok = deal.hand(Seat::East).contains(fixture.spade_ace);
+        let south_ok = south_alts
+            .iter()
+            .any(|(c, _, _)| c.satisfies(deal.hand(Seat::South)));
+        if !east_ok || !south_ok {
+            continue;
+        }
+        let west_ok = deal.hand(Seat::West).contains(fixture.diamond_ace);
+        let lp = prepared.log_prob(deal);
+        if west_ok {
+            assert!(
+                lp.is_finite(),
+                "expected finite log_prob when all three seats are satisfied, got {lp}"
+            );
+            saw_last_seat_acceptance = true;
+        } else {
+            assert_eq!(
+                lp,
+                f64::NEG_INFINITY,
+                "expected -inf when only the last seat (West) fails its own constraint"
+            );
+            saw_last_seat_rejection = true;
+        }
+    }
+    assert!(
+        saw_last_seat_rejection,
+        "no enumerated deal exercised the last-seat rejection path"
+    );
+    assert!(
+        saw_last_seat_acceptance,
+        "no enumerated deal exercised the last-seat acceptance path"
+    );
+
+    // Proposals, retrying on rejection (`propose` returning `None`), histogrammed against the
+    // *conditional* density `exp(log_prob) / total`. Unlike the other two tests in this file,
+    // South's mixture here is genuinely two HCP-window components rather than a candidate that
+    // coarsens to `ANY` — `Sampler::prepare` does real shape/HCP work for both on every draw, at
+    // roughly two orders of magnitude the per-draw cost of the `ANY` fast path in an unoptimized
+    // build (`cargo test`, no `--release`). `n` is scaled down accordingly (the enumerated
+    // probabilities span less than a 3x range — checked separately — so `n = 3_000` still keeps
+    // every used bin's expected count comfortably above the usual chi-square rule of thumb of 5).
+    let n = 3_000u64;
+    let mut rng = rng_for(20260927, 0);
+    let mut observed = vec![0u64; deals.len()];
+    let mut unmatched = 0u64;
+    let mut produced = 0u64;
+    let mut attempts = 0u64;
+    let max_attempts = n * 1000;
+    while produced < n {
+        attempts += 1;
+        assert!(
+            attempts <= max_attempts,
+            "acceptance rate too low: {produced} of {n} accepted in {attempts} attempts"
+        );
+        let Some(deal) = prepared.propose(&mut rng) else {
+            continue;
+        };
+        produced += 1;
+        match deals.iter().position(|d| d == &deal) {
+            Some(i) => observed[i] += 1,
+            None => unmatched += 1,
+        }
+    }
+    assert_eq!(
+        unmatched, 0,
+        "every proposed deal must be one of the enumerated splits"
+    );
+
+    let expected: Vec<f64> = log_probs
+        .iter()
+        .map(|lp| {
+            if lp.is_finite() {
+                lp.exp() / total * n as f64
+            } else {
+                0.0
+            }
+        })
+        .collect();
+    let mut used_observed = Vec::new();
+    let mut used_expected = Vec::new();
+    for (i, &e) in expected.iter().enumerate() {
+        if e > 0.0 {
+            used_observed.push(observed[i]);
+            used_expected.push(e);
+        } else {
+            assert_eq!(observed[i], 0, "a zero-probability deal was proposed");
+        }
+    }
+    assert!(
+        used_expected.len() > 1,
+        "the support must have more than one deal"
+    );
+
+    let chi2 = chi_square_statistic(&used_observed, &used_expected);
+    let df = (used_expected.len() - 1) as f64;
+    let p_value = chi_square_p_value(chi2, df);
+    assert!(
+        p_value > 0.01,
+        "chi-square = {chi2} (df = {df}) rejects at the 0.01 level (p = {p_value})"
+    );
+}
