@@ -1,0 +1,32 @@
+# cargo-deny configuration. CI runs `cargo deny check licenses` (docs/design/11-testing.md §10);
+# `bans`, `advisories` and `sources` are not configured yet (phase 5.5).
+#
+# The vendored DDS sources (crates/bridge-dds/vendor/, fetched by `cargo xtask dds vendor`) are
+# Apache-2.0 but are not a Cargo dependency, so they are outside this check; see
+# crates/bridge-dds/VENDOR.md. The externally fetched test data (corpus/data/, systems/vendor/data/)
+# is never committed and is likewise outside this check.
+
+[graph]
+all-features = true
+
+[licenses]
+# The workspace itself is "MIT OR Apache-2.0"; every listed license is permissive or
+# file-level copyleft and compatible with that. MPL-2.0 covers webpki-roots < 1.0 and
+# CDLA-Permissive-2.0 covers webpki-roots >= 1.0 (the Mozilla root store shipped by ureq/rustls).
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+    "CC0-1.0",
+]
+confidence-threshold = 0.9
+# Workspace crates are published under the workspace license (or never published: xtask).
+private = { ignore = true }

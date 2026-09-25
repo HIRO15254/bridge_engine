@@ -38,8 +38,17 @@ cc = "1.4"
 
 # Dev / tooling
 proptest = "1.11"
+serde_json = "1"
 criterion = { version = "0.8", features = ["html_reports"] }
 insta = "1"
+
+# xtask only (phase 1: corpus / systems fetch, dds vendor). ureq's default TLS is rustls.
+ureq = "3"
+sha2 = "0.10"
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
+toml = "1"
 
 [profile.release]
 debug = 1          # keep symbols for profiling the sampler

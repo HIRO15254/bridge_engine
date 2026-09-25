@@ -17,7 +17,23 @@ impl Deal {
     /// The check is O(1): each hand must have 13 cards and the bitwise OR of the four hands must
     /// equal the full deck (which, given the counts, implies disjointness).
     pub fn new(hands: [Hand; 4]) -> Result<Deal, DealError> {
-        todo!("phase 1")
+        for seat in Seat::ALL {
+            let count = hands[seat.index() as usize].len();
+            if count != 13 {
+                return Err(DealError::HandSize { seat, count });
+            }
+        }
+        let [n, e, s, w] = hands;
+        if n.union(e).union(s).union(w) == Hand::FULL {
+            return Ok(Deal { hands });
+        }
+        // Four hands of 13 whose union is not the deck must overlap somewhere; report the
+        // lowest-indexed card held twice.
+        let shared = (n & e) | (n & s) | (n & w) | (e & s) | (e & w) | (s & w);
+        match shared.cards().next() {
+            Some(card) => Err(DealError::Duplicate(card)),
+            None => unreachable!("four 13-card hands not covering the deck must overlap"),
+        }
     }
 
     /// The hand of `seat`.
@@ -32,7 +48,15 @@ impl Deal {
 
     /// The seat holding `card`.
     pub fn owner(&self, card: Card) -> Seat {
-        todo!("phase 1")
+        if self.hands[0].contains(card) {
+            Seat::North
+        } else if self.hands[1].contains(card) {
+            Seat::East
+        } else if self.hands[2].contains(card) {
+            Seat::South
+        } else {
+            Seat::West
+        }
     }
 }
 

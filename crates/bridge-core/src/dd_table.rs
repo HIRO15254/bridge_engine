@@ -34,6 +34,14 @@ impl DdTable {
     /// The best strain and trick count for `declarer` (highest tricks; ties resolved toward
     /// the higher-scoring strain, i.e. later in bidding order).
     pub fn best_for(&self, declarer: Seat) -> (Strain, u8) {
-        todo!("phase 5")
+        let d = declarer.index() as usize;
+        let mut best = (Strain::Clubs, self.tricks[0][d]);
+        for strain in Strain::ALL {
+            let t = self.tricks[strain.index() as usize][d];
+            if t >= best.1 {
+                best = (strain, t);
+            }
+        }
+        best
     }
 }

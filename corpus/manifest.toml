@@ -9,7 +9,7 @@
 name = "dds-list100"
 description = "DDS v2.9.0 test hands with double-dummy tables (100 deals); tag-pinned, immutable"
 url = "https://raw.githubusercontent.com/dds-bridge/dds/v2.9.0/hands/list100.txt"
-sha256 = ""
+sha256 = "5aff1f6bc7d23c3aea63ddb65c3fa3359da3733d8591cc9ee2f2bddaff1f6192"
 unpack = "none"
 dest = "dds/list100.txt"
 formats = ["deal-string", "dd-table"]
@@ -18,7 +18,7 @@ formats = ["deal-string", "dd-table"]
 name = "dds-masterdd"
 description = "DDS v2.9.0 master double-dummy set (83,691 deals); used by the --ignored differential test"
 url = "https://raw.githubusercontent.com/dds-bridge/dds/v2.9.0/hands/masterDD.txt"
-sha256 = ""
+sha256 = "1c68f44ce4f8f74678bb4588e29f185e5a1bbc4993104ea4224adb5e9f0cd46d"
 unpack = "none"
 dest = "dds/masterDD.txt"
 formats = ["deal-string", "dd-table"]
@@ -27,7 +27,7 @@ formats = ["deal-string", "dd-table"]
 name = "pbn-optimum-result-table"
 description = "PBN 2.1 reference example with an OptimumResultTable section"
 url = "https://www.tistis.nl/pbn/OptimumResultTable.pbn"
-sha256 = ""
+sha256 = "60647ce56ba7538a2442249615c31378d788bd9a97cd242986fe77c4ae42821e"
 unpack = "none"
 dest = "pbn/OptimumResultTable.pbn"
 formats = ["pbn"]
@@ -36,29 +36,98 @@ formats = ["pbn"]
 name = "pbn-optimum-play-table"
 description = "PBN 2.1 reference example with an OptimumPlayTable section"
 url = "https://www.tistis.nl/pbn/OptimumPlayTable.pbn"
-sha256 = ""
+sha256 = "5b82b0810d2c21a7b7735acdafbc13f227d7a6e431dea1c317bd32f40e6bca64"
 unpack = "none"
 dest = "pbn/OptimumPlayTable.pbn"
 formats = ["pbn"]
 
-# Tournament records with full auctions and play (computerbridge.se). The CDN links carry a
-# `?ph=` token; pin the exact URL and hash, and re-verify if it rots.
+# Tournament records with full auctions and play: computerbridge.se, "Finals World Championship
+# in PBN" (index: https://www.computerbridge.se/finals-world-championship-in-pbn/, which also
+# lists Bermuda Bowl 2015/2017, Soloway 2019 and Swedish Cup 2019). The CDN links carry a `?ph=`
+# token, so the exact URL and hash are pinned; if a link rots, take the new one from the index
+# page and re-pin (risk R7). Each zip unpacks into corpus/data/<dest>.
+
 [[entry]]
 name = "bermuda-bowl-2019-final"
-description = "Bermuda Bowl 2019 final, PBN with auctions and play"
-url = "https://www.computerbridge.se/finals-world-championship-in-pbn/"
-sha256 = ""
+description = "Bermuda Bowl 2019 final (Wuhan), PBN with auctions and play"
+url = "https://11c38132ee.clvaw-cdnwnd.com/0829453b7d8d4bed35ccf0e915179321/200000154-dbdd6dbdd8/Bermuda%20Bowl%202019%20Final.zip?ph=11c38132ee"
+sha256 = "48b2f26b195061ab580514628f75504dc35f1c3f10c85b65c17f5299a59e264a"
 unpack = "zip"
 dest = "pbn/bermuda-bowl-2019-final/"
 formats = ["pbn"]
-note = "URL is the index page; replace with the direct zip link when pinning"
 
-# BBO vugraph LIN files: fix twenty ids, fetch at most one per second.
+[[entry]]
+name = "venice-cup-2019-final"
+description = "Venice Cup 2019 final (Wuhan), PBN with auctions and play"
+url = "https://11c38132ee.clvaw-cdnwnd.com/0829453b7d8d4bed35ccf0e915179321/200000155-4b11a4b11c/Venice%20Cup%20Final%202019.zip?ph=11c38132ee"
+sha256 = "b71403dfd5a003b1fcc9d6267e0a0571d46cc1d95f9e1b3314e30447f866b6d3"
+unpack = "zip"
+dest = "pbn/venice-cup-2019-final/"
+formats = ["pbn"]
+
+[[entry]]
+name = "spingold-2019-final"
+description = "Spingold 2019 final (NABC Las Vegas), PBN with auctions and play"
+url = "https://11c38132ee.clvaw-cdnwnd.com/0829453b7d8d4bed35ccf0e915179321/200000156-d6759d675c/Spingold%202019%20Final.zip?ph=11c38132ee"
+sha256 = "b54f5c1532ccd6b413fc291fa3b40b245261b6d89ce62721958173bc6729b9ce"
+unpack = "zip"
+dest = "pbn/spingold-2019-final/"
+formats = ["pbn"]
+
+[[entry]]
+name = "vanderbilt-2019-final"
+description = "Vanderbilt 2019 final (NABC Memphis), PBN with auctions and play"
+url = "https://11c38132ee.clvaw-cdnwnd.com/0829453b7d8d4bed35ccf0e915179321/200000157-644ab644ad/Vanderbilt%202019%20Final.zip?ph=11c38132ee"
+sha256 = "f0cf65b5e757a36e5ed063487c6fe1ea1fb49b9541ee344dd34995a3e10fb910"
+unpack = "zip"
+dest = "pbn/vanderbilt-2019-final/"
+formats = ["pbn"]
+
+# BBO vugraph LIN files, fetched at most one per second. Unknown ids answer HTTP 200 with the
+# body "Fetch failed (2)" and unplayed matches answer a near-empty file (e.g. 87146, 87148), so
+# the pinned hash is the only guarantee that an id still serves the same record.
+
+[[entry]]
+name = "bbo-vugraph-87141"
+description = "BBO vugraph LIN: Campionati Assoluti a Squadre Libere Open RR01 (Lanzarotti - Pignanelli), boards 1-16"
+url = "https://www.bridgebase.com/tools/vugraph_linfetch.php?id=87141"
+sha256 = "9b00d46d1c7501f303e4171c3b118405738af9817eebdacb45d05298d968b9e9"
+unpack = "none"
+dest = "lin/87141.lin"
+formats = ["lin"]
+
+[[entry]]
+name = "bbo-vugraph-87142"
+description = "BBO vugraph LIN: 64th Pula Bridge Festival OT round 11-12 (Zakrzes - Tosca), boards 17-24"
+url = "https://www.bridgebase.com/tools/vugraph_linfetch.php?id=87142"
+sha256 = "c8af7d85ce1d3af8554ef5aa420b79e51f773b9e7173b7c7a55f69df595dad7e"
+unpack = "none"
+dest = "lin/87142.lin"
+formats = ["lin"]
+
 [[entry]]
 name = "bbo-vugraph-87143"
-description = "BBO vugraph LIN sample (real-world irregularities: 8 names, qx|o/c, claims, chat)"
+description = "BBO vugraph LIN: 64th Pula Bridge Festival OT round 12 (Zakrzes - Tosca), boards 25-32; real-world irregularities (8 names, qx|o/c, claims, chat)"
 url = "https://www.bridgebase.com/tools/vugraph_linfetch.php?id=87143"
-sha256 = ""
+sha256 = "228b80ef24458563169ccb6cbef21dce810d0c21688dd55beedc7ff8f02bd7db"
 unpack = "none"
 dest = "lin/87143.lin"
+formats = ["lin"]
+
+[[entry]]
+name = "bbo-vugraph-87144"
+description = "BBO vugraph LIN: Campionati Assoluti a Squadre Libere RR02 (Viggiano - Piana), boards 17-32"
+url = "https://www.bridgebase.com/tools/vugraph_linfetch.php?id=87144"
+sha256 = "2f0dbee060eb7afad577476dde3148ac32ef61fbeecc5c2466ee44b42d8271bc"
+unpack = "none"
+dest = "lin/87144.lin"
+formats = ["lin"]
+
+[[entry]]
+name = "bbo-vugraph-87147"
+description = "BBO vugraph LIN: 2026 Indonesian National Bridge Championship, Antar Provinsi RR5, boards 1-14"
+url = "https://www.bridgebase.com/tools/vugraph_linfetch.php?id=87147"
+sha256 = "82c3abc38f6ba4d9988ce9b1356459dfbedf8ed1a9e81f311376ce9d33319669"
+unpack = "none"
+dest = "lin/87147.lin"
 formats = ["lin"]

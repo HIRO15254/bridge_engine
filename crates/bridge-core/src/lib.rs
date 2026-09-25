@@ -26,9 +26,6 @@
 //! not total 13 cards being asked for its [`Shape::index`]).
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
-// Phase 0 skeleton: the public surface is final, most bodies are `todo!()`.
-// Remove these allows as the bodies are implemented.
-#![allow(dead_code, unused_variables)]
 
 mod auction;
 mod call;

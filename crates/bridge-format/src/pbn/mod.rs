@@ -1,6 +1,6 @@
 //! Portable Bridge Notation 2.1.
 
-mod model;
+pub(crate) mod model;
 mod parser;
 mod view;
 mod writer;

@@ -12,4 +12,11 @@ name = "xtask"
 path = "src/main.rs"
 
 [dependencies]
-# Phase 1 adds: ureq, sha2, zip (corpus fetch); phase 5 adds: bindgen (regen-dds-bindings)
+serde = { workspace = true }
+toml = { workspace = true }
+ureq = { workspace = true }
+sha2 = { workspace = true }
+zip = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+# Phase 5 adds: bindgen (dds regen-bindings)

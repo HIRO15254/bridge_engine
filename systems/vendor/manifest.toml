@@ -1,0 +1,668 @@
+# External BML files used by the bridge-system tests. Nothing here is committed;
+# `cargo xtask systems fetch` downloads every entry into systems/vendor/data/<dest>
+# (or $BRIDGE_SYSTEMS_DIR/vendor/data/) and verifies the SHA-256. Tests skip when a file is
+# missing. Files are fetched only, never committed (risk R8 in docs/design/12-roadmap.md).
+#
+# Every URL is pinned to a commit so that the hashes are stable:
+#
+# | Repository                   | Commit                                   | License |
+# | ---------------------------- | ---------------------------------------- | ------- |
+# | gpaulissen/bml               | bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e | MIT     |
+# | jdh8/bridge-systems          | 662eb1650d5df1735e5598af34c2a7bb19105f6a | MIT     |
+# | gpaulissen/bridge-systems    | 09ee6335fbd287c028f0aa94793b9fd2ba5d4119 | MIT     |
+#
+# The MIT license of each repository was checked on 2026-09-18 (GitHub license API); the
+# `license` field repeats it per entry. `sha256 = ""` means "not pinned yet" (see
+# corpus/manifest.toml for the semantics).
+#
+# Layout of systems/vendor/data/:
+#   bml-test/data/*.bml, bml-test/data/test_include.bml   gpaulissen/bml test inputs
+#   bml-test/expected/*.bss                               expansion oracle (`bss.py` output, D7)
+#   jdh8/**                                               jdh8/bridge-systems (Polish Club "wj",
+#                                                         Blue Club, defensive methods, shared parts)
+#   gjp/common/**                                         gpaulissen/bridge-systems shared parts
+# Directory structure is preserved so that `#INCLUDE` paths resolve as in the source repository.
+
+# --- gpaulissen/bml test data: inputs and the expected `.bss` expansions ---
+
+[[entry]]
+name = "bml-example1"
+description = "gpaulissen/bml test input example1.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/data/example1.bml"
+sha256 = "400e7ab311524aca935ea3074bed89e4e8cbf25898c6e0adc0ae84274f9e3be9"
+unpack = "none"
+dest = "bml-test/data/example1.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "bml-example1-bss"
+description = "Expected bss.py expansion of example1.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/expected/example1.bss"
+sha256 = "1867c416887d5fb91919ed91fac7434d287504e445e1a0439fedbe0d9b10292f"
+unpack = "none"
+dest = "bml-test/expected/example1.bss"
+formats = ["bss"]
+license = "MIT"
+
+[[entry]]
+name = "bml-example2"
+description = "gpaulissen/bml test input example2.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/data/example2.bml"
+sha256 = "2cee189496c1b984c661793c3f5a580ca6c5af49ab5f57922b7751413afb34a5"
+unpack = "none"
+dest = "bml-test/data/example2.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "bml-example2-bss"
+description = "Expected bss.py expansion of example2.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/expected/example2.bss"
+sha256 = "900a2b7b186459685886044e41cc5c627b1ef2efbe661a5e296f8e317c2fccdf"
+unpack = "none"
+dest = "bml-test/expected/example2.bss"
+formats = ["bss"]
+license = "MIT"
+
+[[entry]]
+name = "bml-example3"
+description = "gpaulissen/bml test input example3.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/data/example3.bml"
+sha256 = "dc4352b9c04a7d499256df4e473dc0beeed1222af72179239ee694ddbb550d14"
+unpack = "none"
+dest = "bml-test/data/example3.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "bml-example3-bss"
+description = "Expected bss.py expansion of example3.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/expected/example3.bss"
+sha256 = "c00a1abf391620c04d16575d0585da881a3aaecc1e6c28f571346f2e9c0310c3"
+unpack = "none"
+dest = "bml-test/expected/example3.bss"
+formats = ["bss"]
+license = "MIT"
+
+[[entry]]
+name = "bml-example4"
+description = "gpaulissen/bml test input example4.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/data/example4.bml"
+sha256 = "a63aa47b5ecbd03fa8586ff9c52fddb48ca601503ff1d7ed7bf5b8fead76de03"
+unpack = "none"
+dest = "bml-test/data/example4.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "bml-example4-bss"
+description = "Expected bss.py expansion of example4.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/expected/example4.bss"
+sha256 = "5858d1af9e01cf85f354ad23d335f2b47a12ea89325c106b08a0a15c40c92a81"
+unpack = "none"
+dest = "bml-test/expected/example4.bss"
+formats = ["bss"]
+license = "MIT"
+
+[[entry]]
+name = "bml-example5"
+description = "gpaulissen/bml test input example5.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/data/example5.bml"
+sha256 = "ed5242a9bb629d281707336d1750ce5654cacf35790323dd9a537d40c5592fed"
+unpack = "none"
+dest = "bml-test/data/example5.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "bml-example5-bss"
+description = "Expected bss.py expansion of example5.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/expected/example5.bss"
+sha256 = "fab4787723951774ebbaadeceff780c2a7206358964d153e06bfbfacb15a596b"
+unpack = "none"
+dest = "bml-test/expected/example5.bss"
+formats = ["bss"]
+license = "MIT"
+
+[[entry]]
+name = "bml-example6"
+description = "gpaulissen/bml test input example6.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/data/example6.bml"
+sha256 = "2ef232b16e9f04b4c0fbd3386acb4f2645f5a11e71ecb0f01084cae2e321cfc7"
+unpack = "none"
+dest = "bml-test/data/example6.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "bml-example6-bss"
+description = "Expected bss.py expansion of example6.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/expected/example6.bss"
+sha256 = "252a77d67161722d847f8ff89ce6484d0240e2e688425db3311a90447d4b58e0"
+unpack = "none"
+dest = "bml-test/expected/example6.bss"
+formats = ["bss"]
+license = "MIT"
+
+[[entry]]
+name = "bml-example7"
+description = "gpaulissen/bml test input example7.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/data/example7.bml"
+sha256 = "a797564e4f71ecba6a2159db8bc813af4253c8a8ce4e9fea7fe59fb744f74c85"
+unpack = "none"
+dest = "bml-test/data/example7.bml"
+formats = ["bml"]
+license = "MIT"
+note = "Not in the phase-3 oracle list (example1..6) but present at the pinned commit"
+
+[[entry]]
+name = "bml-example7-bss"
+description = "Expected bss.py expansion of example7.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/expected/example7.bss"
+sha256 = "056a66818616ae228a5964945d200ca99198d1d261d6a1b2ef847b880175b3a2"
+unpack = "none"
+dest = "bml-test/expected/example7.bss"
+formats = ["bss"]
+license = "MIT"
+
+[[entry]]
+name = "bml-example8"
+description = "gpaulissen/bml test input example8.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/data/example8.bml"
+sha256 = "7db9ae182fbb0180c14d83a15f6e12df3394be73d74fa5cb9a4fe62aa1f108c0"
+unpack = "none"
+dest = "bml-test/data/example8.bml"
+formats = ["bml"]
+license = "MIT"
+note = "Not in the phase-3 oracle list (example1..6) but present at the pinned commit"
+
+[[entry]]
+name = "bml-example8-bss"
+description = "Expected bss.py expansion of example8.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/expected/example8.bss"
+sha256 = "77dba44d05cc557fa4e54170fc0261ac71a24930feb93031cda355d3f25230d4"
+unpack = "none"
+dest = "bml-test/expected/example8.bss"
+formats = ["bss"]
+license = "MIT"
+
+[[entry]]
+name = "bml-test"
+description = "gpaulissen/bml test input test.bml (uses #INCLUDE test_include.bml)"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/data/test.bml"
+sha256 = "1639ffb15a8158016cefc6876f28ad4b06d23080a8105f8e655294fc03cebd43"
+unpack = "none"
+dest = "bml-test/data/test.bml"
+formats = ["bml"]
+license = "MIT"
+note = "Needs bml-test-include in the same directory"
+
+[[entry]]
+name = "bml-test-include"
+description = "File included by test.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/data/test_include.bml"
+sha256 = "7cc3311e68c79e7e97b385d5a80e303bc93865f44957eca13226bbb5887a2e78"
+unpack = "none"
+dest = "bml-test/data/test_include.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "bml-test-bss"
+description = "Expected bss.py expansion of test.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bml/bd2bdc75ac0a1bea1c16b73bf0532682fbbc694e/test/expected/test.bss"
+sha256 = "6cbd7b986ab9ba22b33e7f4d65b07511809fed0faf6ac3b4f5f5cfff8f375aeb"
+unpack = "none"
+dest = "bml-test/expected/test.bss"
+formats = ["bss"]
+license = "MIT"
+
+# --- jdh8/bridge-systems: Polish Club (wj), Blue Club, defensive methods, shared parts ---
+
+[[entry]]
+name = "jdh8-wj"
+description = "Polish Club (Wspolny Jezyk) top-level file; includes wj/*.bml and common/*.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/wj.bml"
+sha256 = "3ef47d9c96f1d538bb1c1c04385a8d5480f193aac6af4580dd7075d0189ddae8"
+unpack = "none"
+dest = "jdh8/wj.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "jdh8-defense"
+description = "Defensive methods top-level file; includes defense/*.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/defense.bml"
+sha256 = "0031b933ef0185f92e2e0c9b0ffc3b75d18ce876fca8cdb972069a4c5676dd7e"
+unpack = "none"
+dest = "jdh8/defense.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "jdh8-blue"
+description = "Blue Club top-level file; includes blue/*.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/blue.bml"
+sha256 = "d01a1a7b41dbbdb77166d3b485e2a3c2d19101115a200cc2bb15eb3d57796b7c"
+unpack = "none"
+dest = "jdh8/blue.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "jdh8-wj-1C"
+description = "jdh8/bridge-systems wj/1C.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/wj/1C.bml"
+sha256 = "2352630b6751bbdf241572a92ad483d86de0a8c0630f62a62bfda4395efc6aab"
+unpack = "none"
+dest = "jdh8/wj/1C.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "jdh8-wj-1D"
+description = "jdh8/bridge-systems wj/1D.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/wj/1D.bml"
+sha256 = "796c3991347aa5f41fd8b1762217a923813074634420b480fe9f04216eb876c1"
+unpack = "none"
+dest = "jdh8/wj/1D.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "jdh8-wj-1M"
+description = "jdh8/bridge-systems wj/1M.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/wj/1M.bml"
+sha256 = "ce4dd07406ec1a8317abba7b27f8488ee26abd2052afad322eb87ad46dcae763"
+unpack = "none"
+dest = "jdh8/wj/1M.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "jdh8-wj-2C"
+description = "jdh8/bridge-systems wj/2C.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/wj/2C.bml"
+sha256 = "984f07a9129c312d30ab321db57209ca9ba5e2f4169dec81fe475829298b14c0"
+unpack = "none"
+dest = "jdh8/wj/2C.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "jdh8-defense-1NT-STR"
+description = "jdh8/bridge-systems defense/1NT-STR.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/defense/1NT-STR.bml"
+sha256 = "89a55007dcb393fe2ca44ce9da8ed04c72147b49d835c8281f8d2fc5780d02ef"
+unpack = "none"
+dest = "jdh8/defense/1NT-STR.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "jdh8-defense-1NT-WK"
+description = "jdh8/bridge-systems defense/1NT-WK.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/defense/1NT-WK.bml"
+sha256 = "58d072f334e474cc5446efc1944e742293eeed4d25c5044f45acf50b3fcd47f4"
+unpack = "none"
+dest = "jdh8/defense/1NT-WK.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "jdh8-defense-1X"
+description = "jdh8/bridge-systems defense/1X.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/defense/1X.bml"
+sha256 = "298c93f28fa18b13faee2621c0623ecdab3b7dc0e620bb8199f4b8204851cbee"
+unpack = "none"
+dest = "jdh8/defense/1X.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "jdh8-defense-2X-NAT"
+description = "jdh8/bridge-systems defense/2X-NAT.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/defense/2X-NAT.bml"
+sha256 = "9e59a6471614abd38fd2ba6adcb8312106fe43e58f55459e69352f0bf3eccebe"
+unpack = "none"
+dest = "jdh8/defense/2X-NAT.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "jdh8-common-1NT-BTU"
+description = "jdh8/bridge-systems common/1NT-BTU.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/common/1NT-BTU.bml"
+sha256 = "a8e171030d13f9a05b4ee146dd2627c77de093463e2e9a755112f6e73386b5e3"
+unpack = "none"
+dest = "jdh8/common/1NT-BTU.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "jdh8-common-2NT-UNT"
+description = "jdh8/bridge-systems common/2NT-UNT.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/common/2NT-UNT.bml"
+sha256 = "6c32c85c6d9eea469e8e26ef9b04cedb8f2cdd68838d0453052f02498692f461"
+unpack = "none"
+dest = "jdh8/common/2NT-UNT.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "jdh8-common-2X-Multi-Muiderberg"
+description = "jdh8/bridge-systems common/2X-Multi-Muiderberg.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/common/2X-Multi-Muiderberg.bml"
+sha256 = "d88b5a109f212ad7f3ba48b39e9af2e375fcd721115b1145a9790cdc55328c09"
+unpack = "none"
+dest = "jdh8/common/2X-Multi-Muiderberg.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "jdh8-common-4X-BTU"
+description = "jdh8/bridge-systems common/4X-BTU.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/common/4X-BTU.bml"
+sha256 = "88c62f990952c63eccdae34ee74d241b2d24c602f2238577019ef8eb842fb589"
+unpack = "none"
+dest = "jdh8/common/4X-BTU.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "jdh8-common-evaluation"
+description = "jdh8/bridge-systems common/evaluation.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/common/evaluation.bml"
+sha256 = "707afaaf3171f2e706208fdccaaaa79e77c1782f3b11025239c1e95684facc3e"
+unpack = "none"
+dest = "jdh8/common/evaluation.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "jdh8-blue-1C"
+description = "jdh8/bridge-systems blue/1C.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/blue/1C.bml"
+sha256 = "f55a795071e43263d6b84b0f9c9ed886fb5f1e5c2807b2041ea5358ae854ceb6"
+unpack = "none"
+dest = "jdh8/blue/1C.bml"
+formats = ["bml"]
+license = "MIT"
+note = "Included by blue.bml; fetched so that the top-level file compiles"
+
+[[entry]]
+name = "jdh8-blue-1D"
+description = "jdh8/bridge-systems blue/1D.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/blue/1D.bml"
+sha256 = "b65360c1187ccac52c5eb41c09a3e221b9f1e36fc604558d40ca370ef8580812"
+unpack = "none"
+dest = "jdh8/blue/1D.bml"
+formats = ["bml"]
+license = "MIT"
+note = "Included by blue.bml; fetched so that the top-level file compiles"
+
+[[entry]]
+name = "jdh8-blue-1M"
+description = "jdh8/bridge-systems blue/1M.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/blue/1M.bml"
+sha256 = "a0a3d029ec1df6c05de000ff01768bfb7af52ff9b6d6123489c843acf3bc1fdf"
+unpack = "none"
+dest = "jdh8/blue/1M.bml"
+formats = ["bml"]
+license = "MIT"
+note = "Included by blue.bml; fetched so that the top-level file compiles"
+
+[[entry]]
+name = "jdh8-blue-2C"
+description = "jdh8/bridge-systems blue/2C.bml"
+url = "https://raw.githubusercontent.com/jdh8/bridge-systems/662eb1650d5df1735e5598af34c2a7bb19105f6a/blue/2C.bml"
+sha256 = "1254d95a399b64fa3a44d2f7b9fef170255b08db1da24a5c24fdf145ed45c46f"
+unpack = "none"
+dest = "jdh8/blue/2C.bml"
+formats = ["bml"]
+license = "MIT"
+note = "Included by blue.bml; fetched so that the top-level file compiles"
+
+# --- gpaulissen/bridge-systems: shared parts of Dutch partnership systems (author style A) ---
+
+[[entry]]
+name = "gjp-common-1C-1M-2M"
+description = "gpaulissen/bridge-systems common/1C-1M-2M.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/1C-1M-2M.bml"
+sha256 = "f72ff5d43edb5f26e37e0d2d5b7b52ab937685b4cef7eb4b72b8090503c83a04"
+unpack = "none"
+dest = "gjp/common/1C-1M-2M.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-1C"
+description = "gpaulissen/bridge-systems common/1C.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/1C.bml"
+sha256 = "d69c883ccaf4410e3cdbc084597a9b0d317f0d478c1567dbc9235747e7833e60"
+unpack = "none"
+dest = "gjp/common/1C.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-1D"
+description = "gpaulissen/bridge-systems common/1D.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/1D.bml"
+sha256 = "627645f7dec079d8267acf59260bafe5ba3704a50ffe736409d3dd5e0aed21a3"
+unpack = "none"
+dest = "gjp/common/1D.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-1H-1S-2N"
+description = "gpaulissen/bridge-systems common/1H-1S-2N.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/1H-1S-2N.bml"
+sha256 = "87617b4b400066e0b0ace5084d9d254dd34acebaf5a96f7f8814162e66dd6f1f"
+unpack = "none"
+dest = "gjp/common/1H-1S-2N.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-1H-1S"
+description = "gpaulissen/bridge-systems common/1H-1S.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/1H-1S.bml"
+sha256 = "765798d56401cafc141fd35f82d9f99120c2badcf7034068d0a6391a6c834b2c"
+unpack = "none"
+dest = "gjp/common/1H-1S.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-1M-1N"
+description = "gpaulissen/bridge-systems common/1M-1N.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/1M-1N.bml"
+sha256 = "14135a7a73a7956b50815e0d3dcfff507fda184335366ddb7c3bb5dee24e0b5b"
+unpack = "none"
+dest = "gjp/common/1M-1N.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-1M-fit"
+description = "gpaulissen/bridge-systems common/1M-fit.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/1M-fit.bml"
+sha256 = "023f84c47436fe6e4931291cfa8338b57d4df8dc78e9c70afc5bc5e3e98ac1bc"
+unpack = "none"
+dest = "gjp/common/1M-fit.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-1M"
+description = "gpaulissen/bridge-systems common/1M.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/1M.bml"
+sha256 = "2d971e951be9cf4a73b4d7b4e38be6c278020f2e563ffa616df72e5c4bc673a1"
+unpack = "none"
+dest = "gjp/common/1M.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-1N"
+description = "gpaulissen/bridge-systems common/1N.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/1N.bml"
+sha256 = "fda2377ea0c9d45c884f013fddadfc625237fb6ecc0e5c1062fc1d17d1320fdb"
+unpack = "none"
+dest = "gjp/common/1N.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-1m-(1X)"
+description = "gpaulissen/bridge-systems common/1m-(1X).bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/1m-(1X).bml"
+sha256 = "0c87f859764849655777215b79f1e648fcbef1c4522a609965f80b91df086cfb"
+unpack = "none"
+dest = "gjp/common/1m-(1X).bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-1m-2m"
+description = "gpaulissen/bridge-systems common/1m-2m.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/1m-2m.bml"
+sha256 = "7c2115e72d6d224bdd153af2fd29a9593f12bc98be592ef6eaaa020dbae17047"
+unpack = "none"
+dest = "gjp/common/1m-2m.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-2C"
+description = "gpaulissen/bridge-systems common/2C.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/2C.bml"
+sha256 = "ee0542123f6eb0f8b0d69fd548675bc596341b6eb245ae2a6f9d6cfe3280ff03"
+unpack = "none"
+dest = "gjp/common/2C.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-2D"
+description = "gpaulissen/bridge-systems common/2D.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/2D.bml"
+sha256 = "68a9c815b0d1c1678282d950da4020df73fe4f11f5f7ea90381f853341743ba4"
+unpack = "none"
+dest = "gjp/common/2D.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-2N-Puppet"
+description = "gpaulissen/bridge-systems common/2N-Puppet.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/2N-Puppet.bml"
+sha256 = "6089514171b2b0e8b88e511d9adf9f700701f51bc056b791d5ebdf79888bc558"
+unpack = "none"
+dest = "gjp/common/2N-Puppet.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-2N"
+description = "gpaulissen/bridge-systems common/2N.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/2N.bml"
+sha256 = "37450674b2d6f031ddcecf67134fa5d742de450245594d627c7e601fdfd11bcb"
+unpack = "none"
+dest = "gjp/common/2N.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-2suitedovercalls"
+description = "gpaulissen/bridge-systems common/2suitedovercalls.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/2suitedovercalls.bml"
+sha256 = "0f0ebcec368ee86699695e27fc5180c447a743b662d3829541cbe6ef8b1d50c7"
+unpack = "none"
+dest = "gjp/common/2suitedovercalls.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-DefenseAgainstTwoSuiters"
+description = "gpaulissen/bridge-systems common/DefenseAgainstTwoSuiters.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/DefenseAgainstTwoSuiters.bml"
+sha256 = "63ef0edfd2fa608e71e2902c42bb793ba58220cf8303ab9b44525fcb5a574c0d"
+unpack = "none"
+dest = "gjp/common/DefenseAgainstTwoSuiters.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-TransferLebensohl"
+description = "gpaulissen/bridge-systems common/TransferLebensohl.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/TransferLebensohl.bml"
+sha256 = "2c76832e7a401a52034aaad81c81d800b3ea7698dd303ef18aa63159bb4cf666"
+unpack = "none"
+dest = "gjp/common/TransferLebensohl.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-abbreviations"
+description = "gpaulissen/bridge-systems common/abbreviations.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/abbreviations.bml"
+sha256 = "7f5e8a1048b1ece56a84aa6c2be32df52a94bafa896af1d51b00c9c196dc7635"
+unpack = "none"
+dest = "gjp/common/abbreviations.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-blackwood"
+description = "gpaulissen/bridge-systems common/blackwood.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/blackwood.bml"
+sha256 = "d9246c145d8f1910f6221b9fb31c1c2123cc33755167cbbdadf70edb9ea4719e"
+unpack = "none"
+dest = "gjp/common/blackwood.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-muiderberg"
+description = "gpaulissen/bridge-systems common/muiderberg.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/muiderberg.bml"
+sha256 = "09c652a51234780c05aa113d43dc851561fd59dfd0cbf794e890e9847f7e0ac3"
+unpack = "none"
+dest = "gjp/common/muiderberg.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-nl-slembieden"
+description = "gpaulissen/bridge-systems common/nl/slembieden.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/nl/slembieden.bml"
+sha256 = "19a5bbc19dd3b6912f4c5d2a121da456527e0ec76fdefb9b0a7492574cedae32"
+unpack = "none"
+dest = "gjp/common/nl/slembieden.bml"
+formats = ["bml"]
+license = "MIT"
+note = "Dutch-language file under common/nl/"
+
+[[entry]]
+name = "gjp-common-theyopen"
+description = "gpaulissen/bridge-systems common/theyopen.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/theyopen.bml"
+sha256 = "33f7da78488d99d3b1320f80ac2029525ac10dbf5a518dbebb6a23b294a6517c"
+unpack = "none"
+dest = "gjp/common/theyopen.bml"
+formats = ["bml"]
+license = "MIT"
+
+[[entry]]
+name = "gjp-common-weopen"
+description = "gpaulissen/bridge-systems common/weopen.bml"
+url = "https://raw.githubusercontent.com/gpaulissen/bridge-systems/09ee6335fbd287c028f0aa94793b9fd2ba5d4119/common/weopen.bml"
+sha256 = "3cd5b9691730c7fc4d5312612dca5750eb79f2bf9f69cd25b28d0b8b8eebaf48"
+unpack = "none"
+dest = "gjp/common/weopen.bml"
+formats = ["bml"]
+license = "MIT"
