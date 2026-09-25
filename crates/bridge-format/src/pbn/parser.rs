@@ -655,14 +655,14 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
-        if let (Some(&section_line), Some(tag)) = (section_lines.first(), game.tags.get(14))
-            && section_line < tag.line
-        {
-            self.warn(
-                section_line,
-                WarningKind::Other,
-                "a section may not precede the mandatory tags",
-            );
+        if let (Some(&section_line), Some(tag)) = (section_lines.first(), game.tags.get(14)) {
+            if section_line < tag.line {
+                self.warn(
+                    section_line,
+                    WarningKind::Other,
+                    "a section may not precede the mandatory tags",
+                );
+            }
         }
     }
 

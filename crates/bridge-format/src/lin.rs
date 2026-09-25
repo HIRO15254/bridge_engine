@@ -93,10 +93,13 @@ impl LinBoard {
         let vul = self
             .vul
             .or_else(|| self.board_no.map(Vulnerability::from_board_number));
-        if let Some((_, vg)) = self.raw.iter().find(|(tag, _)| tag == "vg")
-            && let Some(title) = vg.split(',').next().map(str::trim)
-            && !title.is_empty()
-        {
+        let event = self
+            .raw
+            .iter()
+            .find(|(tag, _)| tag == "vg")
+            .and_then(|(_, vg)| vg.split(',').next().map(str::trim))
+            .filter(|title| !title.is_empty());
+        if let Some(title) = event {
             push_tag(&mut game, "Event", title);
         }
         if let Some(n) = self.board_no {
@@ -129,9 +132,7 @@ impl LinBoard {
         }
 
         let mut auction: Option<Auction> = None;
-        if let Some(dealer) = dealer
-            && !self.calls.is_empty()
-        {
+        if let Some(dealer) = dealer.filter(|_| !self.calls.is_empty()) {
             let mut section = Section {
                 tag: "Auction".to_string(),
                 arg: dealer.to_string(),
@@ -168,9 +169,7 @@ impl LinBoard {
         }
 
         let mut result = self.claim;
-        if let Some(c) = contract
-            && !self.plays.is_empty()
-        {
+        if let Some(c) = contract.filter(|_| !self.plays.is_empty()) {
             let leader = c.leader();
             let mut history = PlayHistory::new(c.bid.strain(), leader);
             for card in &self.plays {
@@ -378,10 +377,10 @@ impl Parser<'_> {
                 ),
             },
             _ => {
-                if tag == "ah"
-                    && let Some(n) = number_in(value)
-                {
-                    self.current.board_no = Some(n);
+                if tag == "ah" {
+                    if let Some(n) = number_in(value) {
+                        self.current.board_no = Some(n);
+                    }
                 }
                 if !KNOWN_RAW.contains(&tag) && !self.unknown_seen.iter().any(|t| t == tag) {
                     self.unknown_seen.push(tag.to_string());
@@ -493,11 +492,10 @@ impl Parser<'_> {
             hands[seat.index() as usize] = Some(hand);
         }
         // An omitted hand is the remainder of the deck when the other three are complete.
-        if let [only] = omitted.as_slice()
-            && hands.iter().filter(|h| h.is_none()).count() == 1
-            && seen.len() == 39
-        {
-            hands[*only] = Some(seen.complement());
+        if let [only] = omitted.as_slice() {
+            if hands.iter().filter(|h| h.is_none()).count() == 1 && seen.len() == 39 {
+                hands[*only] = Some(seen.complement());
+            }
         }
         self.current.deal = Some(PartialDeal { hands });
     }
