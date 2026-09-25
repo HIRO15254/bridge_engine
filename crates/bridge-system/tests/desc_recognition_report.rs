@@ -98,6 +98,8 @@ fn neutral_ctx(binding: &Binding) -> RowContext<'_> {
         their_last_bid: None,
         agreed_suit: None,
         role: Role::Opener,
+        partner_hcp: None,
+        own_hcp: None,
     }
 }
 

@@ -55,8 +55,12 @@ pub enum Token {
     Forcing(crate::Forcing),
     /// `ART`, `(R)`, `TRF`, `PUP`, `P/C`, `S/O`, `STAY`, `SPL`, `UNT`, `Multi`, …
     Convention(String),
-    /// `SOL`, `S-SOL`, `2 of top 3`, `AKQ`, `good suit`.
+    /// `SOL`, `S-SOL`, `2 of top 3`, `good suit`.
     Quality(SuitRef, QualityWord),
+    /// A literal honour run (`AKQ`, `AKQxx`, `KQJ109x`, `QJ10xx`): exactly the listed honours
+    /// (`A K Q J T`, `10` read as `T`, stored in that canonical letter form) must all be held, and
+    /// the suit is at least as long as the number of cards written (honours plus `x`/spot filler).
+    HonourRun(SuitRef, String, u8),
     /// `stopper`, `with stopper`.
     Stopper(SuitRef),
     /// `singleton`, `void`, `short`, `0-1!h`.
@@ -69,6 +73,10 @@ pub enum Token {
     Losers(RangeInclusive<u8>),
     /// `NAT`, `natural`.
     Natural,
+    /// `SPL`, `splinter`, `mini-splinter` (`true` = the mini/invitational variant), with the
+    /// explicit short suit when one follows the word (`SPL !c`, `SPL m`); `None` means the short
+    /// suit is the row's own call.
+    Splinter(Option<SuitRef>, bool),
     /// `unlimited`, `any hand`: recognised, no constraint.
     NoBound,
 }
@@ -336,6 +344,20 @@ fn tag_of(kind: &MetricKind) -> MetricKindTag {
 /// `N controls` / `N losers` / `N+ hcp` / `N-M hcp` / `N=!s` / `N!s` / `N+!s` / `N+ SUPP` / bare
 /// `LTC` / `controls`, and everything else in the numeric family (§7.4 rows 1-3, 12-13, 20).
 fn match_length_or_metric(s: &str) -> Option<(Token, usize)> {
+    // `at least N…` / `at most N…`: the bare exact form after it (`at least 4!s`, read alone as
+    // exactly 4) widened to an open-ended bound on the stated side.
+    for (phrase, at_least) in [("at least", true), ("at most", false)] {
+        if let Some(l) = match_word(s, phrase) {
+            if let Some(rest) = s[l..].strip_prefix(' ') {
+                if let Some((token, l2)) = match_length_or_metric(rest) {
+                    if let Some(widened) = widen_bound(token, at_least) {
+                        return Some((widened, l + 1 + l2));
+                    }
+                }
+            }
+        }
+    }
+
     // `LTC` / `LTC 7`: reversed word-then-number order, handled first.
     if let Some(l) = match_word(s, "ltc") {
         let rest = &s[l..];
@@ -426,6 +448,28 @@ fn match_length_or_metric(s: &str) -> Option<(Token, usize)> {
     None
 }
 
+/// `at least` (`at_least == true`) / `at most` applied to an already-recognised numeric token:
+/// keeps the stated end of its range and opens the other one up to the metric's natural limit.
+/// `None` for a token the phrase cannot sensibly widen.
+fn widen_bound(token: Token, at_least: bool) -> Option<Token> {
+    let widen = |r: RangeInclusive<u8>, max: u8| {
+        if at_least {
+            *r.start()..=max
+        } else {
+            0..=*r.end()
+        }
+    };
+    Some(match token {
+        Token::SuitLen(suitref, r) => Token::SuitLen(suitref, widen(r, 13)),
+        Token::Hcp(r) => Token::Hcp(widen(r, 37)),
+        Token::Points(r) => Token::Points(widen(r, 40)),
+        Token::Controls(r) => Token::Controls(widen(r, 12)),
+        Token::Losers(r) => Token::Losers(widen(r, 24)),
+        Token::Support(n) if at_least => Token::Support(n),
+        _ => return None,
+    })
+}
+
 /// A bare `controls` / `losers` with no leading number: recognised, unconstrained.
 fn match_bare_metric_word(s: &str) -> Option<(Token, usize)> {
     if let Some(l) = match_word(s, "controls") {
@@ -491,14 +535,18 @@ fn parse_lenspec(s: &str) -> Option<(u8, bool, usize)> {
 /// A named group (`majors`, `minors`, `MM`, `mm`, `red suits`, `black suits`) or an explicit
 /// sentinel pair (`♦+♣`), as two suits.
 fn match_group_word(s: &str) -> Option<([Suit; 2], usize)> {
-    if s.as_bytes().starts_with(b"MM") {
-        return Some(([Suit::Hearts, Suit::Spades], 2));
-    }
-    if s.as_bytes().starts_with(b"mm") {
-        return Some(([Suit::Clubs, Suit::Diamonds], 2));
-    }
+    // One optional space before the group, for every form (`4+4+ MM`, `44 MM`, `5-5 ♦+♣` as well
+    // as `5-5 minors`): the compact `MM`/`mm` and sentinel-pair forms used to be tested only on
+    // the unstripped text, so a space in front of them made the whole shape fall through to the
+    // numeric path (`4+4+ MM` read as `4+` HCP).
     let s2 = s.strip_prefix(' ').unwrap_or(s);
     let ws = s.len() - s2.len();
+    if match_word_cs(s2, "MM").is_some() {
+        return Some(([Suit::Hearts, Suit::Spades], ws + 2));
+    }
+    if match_word_cs(s2, "mm").is_some() {
+        return Some(([Suit::Clubs, Suit::Diamonds], ws + 2));
+    }
     const WORDS: &[(&str, [Suit; 2])] = &[
         ("red suits", [Suit::Diamonds, Suit::Hearts]),
         ("black suits", [Suit::Clubs, Suit::Spades]),
@@ -513,14 +561,14 @@ fn match_group_word(s: &str) -> Option<([Suit; 2], usize)> {
         return Some((group, ws + l));
     }
     // An explicit pair of sentinels: `♦+♣`.
-    let mut chars = s.chars();
+    let mut chars = s2.chars();
     let c1 = chars.next()?;
     let suit1 = sentinel_suit(c1)?;
-    let rest = &s[c1.len_utf8()..];
+    let rest = &s2[c1.len_utf8()..];
     let rest2 = rest.strip_prefix('+')?;
     let c2 = rest2.chars().next()?;
     let suit2 = sentinel_suit(c2)?;
-    Some(([suit1, suit2], c1.len_utf8() + 1 + c2.len_utf8()))
+    Some(([suit1, suit2], ws + c1.len_utf8() + 1 + c2.len_utf8()))
 }
 
 /// `<len>[-]<len> <group>`, `<len><len>MM`, `both MM`.
@@ -616,14 +664,15 @@ fn match_full_shape(s: &str) -> Option<(ShapeSet, usize)> {
     // 4-digit numeral elsewhere in the vocabulary (RKCB step-response codes like `0314`, a year
     // fragment, …) is not mistaken for a hand shape. A pattern with any `x` is a genuine partial
     // shape (the remaining cards are unspecified) and is left unvalidated as before.
-    if slots.iter().all(|slot| slot.digit.is_some()) {
-        let sum: u32 = slots
-            .iter()
-            .map(|slot| u32::from(slot.digit.unwrap()))
-            .sum();
-        if sum != 13 {
-            return None;
-        }
+    let fixed_sum: u32 = slots
+        .iter()
+        .filter_map(|slot| slot.digit.map(u32::from))
+        .sum();
+    if fixed_sum > 13 {
+        return None;
+    }
+    if slots.iter().all(|slot| slot.digit.is_some()) && fixed_sum != 13 {
+        return None;
     }
 
     let mut acc = ShapeSet::ALL;
@@ -660,7 +709,47 @@ fn match_full_shape(s: &str) -> Option<(ShapeSet, usize)> {
         }
         acc = acc.intersect(permute_union(&digits, &digit_positions));
     }
+    // A pattern no 13-card hand can have (e.g. `44x5` with a wildcard: 13 fixed cards leave the
+    // `x` at 0, fine, but `(55)4x` style combinations can still come out empty) is not a shape.
+    if acc.is_empty() {
+        return None;
+    }
     Some((acc, i))
+}
+
+/// A bare descending or equal length pair with no group word (`6-5`, `5-4`, `6-4`, `5-5`): in
+/// bridge prose this is a two-suited distribution (the two longest suits hold at least `a` and
+/// `b` cards), never an HCP range (`6-5` would be an empty range, `5-5` a single HCP value).
+/// Only matched when nothing follows that would make it a metric, suit length or support count
+/// (`5-5 hcp` stays an HCP value), and when the pair fits in 13 cards with `a >= 4`.
+fn match_bare_two_suiter(s: &str) -> Option<(ShapeSet, usize)> {
+    let (a, la) = parse_number(s)?;
+    let rest = s[la..].strip_prefix('-')?;
+    let (b, lb) = parse_number(rest)?;
+    let consumed = la + 1 + lb;
+    if a < b || a < 4 || a + b > 13 {
+        return None;
+    }
+    let after = &s[consumed..];
+    if after
+        .as_bytes()
+        .first()
+        .is_some_and(|&c| is_word_byte(c) || matches!(c, b'-' | b'+' | b'=' | b'('))
+    {
+        return None;
+    }
+    if parse_suit_ref_ws(after).is_some()
+        || match_support_suffix(after).is_some()
+        || match_metric_suffix(after).1 > 0
+    {
+        return None;
+    }
+    let set = ShapeSet::filter(|shape| {
+        let mut lens = shape.lens();
+        lens.sort_unstable_by(|x, y| y.cmp(x));
+        lens[0] >= a && lens[1] >= b
+    });
+    Some((set, consumed))
 }
 
 fn permute_union(digits: &[u8], positions: &[usize]) -> ShapeSet {
@@ -702,7 +791,9 @@ fn permute_rec(items: &[u8], used: &mut [bool], current: &mut Vec<u8>, f: &mut i
 /// Used both by [`recognize`] (boundary detection) and `context.rs` (semantic resolution of a
 /// stored [`Token::Shape`]).
 pub(crate) fn scan_shape(text: &str) -> Option<(ShapeSet, usize)> {
-    match_two_suit_shape(text).or_else(|| match_full_shape(text))
+    match_two_suit_shape(text)
+        .or_else(|| match_full_shape(text))
+        .or_else(|| match_bare_two_suiter(text))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -731,7 +822,6 @@ fn match_strength(s: &str) -> Option<(Token, usize)> {
         ("limit", StrengthWord::Limit),
         ("lim", StrengthWord::Limit),
         ("minimum", StrengthWord::Min),
-        ("min/max", StrengthWord::Min),
         ("min", StrengthWord::Min),
         ("maximum", StrengthWord::Max),
         ("max", StrengthWord::Max),
@@ -739,7 +829,6 @@ fn match_strength(s: &str) -> Option<(Token, usize)> {
         ("light", StrengthWord::Weak),
         ("weak", StrengthWord::Weak),
         ("wk", StrengthWord::Weak),
-        ("might be strong", StrengthWord::Strong),
         ("strong", StrengthWord::Strong),
         ("str", StrengthWord::Strong),
         ("preemptive", StrengthWord::Preemptive),
@@ -765,8 +854,10 @@ fn match_forcing(s: &str) -> Option<(Token, usize)> {
         ("f2nt", crate::Forcing::OneRound),
         ("f1r", crate::Forcing::OneRound),
         ("f1", crate::Forcing::OneRound),
-        ("forcing", crate::Forcing::Unknown),
-        ("f", crate::Forcing::Unknown),
+        // An explicit, unqualified `F`/`forcing` is at least one round forcing (§7.4); only the
+        // absence of any forcing word is `Forcing::Unknown`.
+        ("forcing", crate::Forcing::OneRound),
+        ("f", crate::Forcing::OneRound),
     ];
     match_table(s, WORDS).map(|(f, l)| (Token::Forcing(f), l))
 }
@@ -821,9 +912,6 @@ fn match_convention(s: &str) -> Option<(Token, usize)> {
         "multi-coloured",
         "multi-colored",
         "multi",
-        "mini-splinter",
-        "splinter",
-        "spl",
         "sign off",
         "sign-off",
         "s/o",
@@ -838,25 +926,71 @@ fn match_convention(s: &str) -> Option<(Token, usize)> {
     None
 }
 
-fn match_quality(s: &str) -> Option<(Token, usize)> {
-    // Explicit honour runs, e.g. `AKQ`, `AKQxx`, `KQJ109x`: a run of `A K Q J T` letters
-    // (optionally followed by `x`/`9..2` filler), at least 2 honours.
+/// `SPL`, `splinter`, `mini-splinter`, optionally followed by the explicit short suit
+/// (`SPL ♣`, `SPL m`).
+fn match_splinter(s: &str) -> Option<(Token, usize)> {
+    const WORDS: &[(&str, bool)] = &[
+        ("mini-splinter", true),
+        ("mini splinter", true),
+        ("splinter", false),
+        ("spl", false),
+    ];
+    let (mini, l) = match_table(s, WORDS)?;
+    let rest = &s[l..];
+    if let Some((suitref, l2)) = parse_suit_ref_ws(rest) {
+        // `SPL suit` / `splinter cards` name no particular suit: leave it to the own call.
+        if suitref != SuitRef::Own {
+            return Some((Token::Splinter(Some(suitref), mini), l + l2));
+        }
+    }
+    Some((Token::Splinter(None, mini), l))
+}
+
+/// A literal honour run: `AKQ`, `AKQxx`, `KQJ109x`, `QJ10xx`, `AJ10x` (§7.4). At least two
+/// honours from `A K Q J T`/`10`, then any `x`/spot-card filler, ending at a word boundary.
+/// Returns the canonical honour letters and the number of cards written.
+fn match_honour_run(s: &str) -> Option<(String, u8, usize)> {
     let bytes = s.as_bytes();
-    let mut honours = 0usize;
+    let mut honours = String::new();
+    let mut cards = 0u8;
     let mut i = 0usize;
-    while i < bytes.len() && matches!(bytes[i], b'A' | b'K' | b'Q' | b'J' | b'T') {
-        honours += 1;
+    loop {
+        match bytes.get(i) {
+            Some(b'A' | b'K' | b'Q' | b'J' | b'T') => {
+                honours.push(char::from(bytes[i]));
+                i += 1;
+            }
+            Some(b'1') if bytes.get(i + 1) == Some(&b'0') => {
+                honours.push('T');
+                i += 2;
+            }
+            _ => break,
+        }
+        cards += 1;
+    }
+    if honours.len() < 2 {
+        return None;
+    }
+    while let Some(&b) = bytes.get(i) {
+        if !matches!(b, b'x' | b'X' | b'2'..=b'9') {
+            break;
+        }
+        cards += 1;
         i += 1;
     }
-    if honours >= 2 {
-        let mut j = i;
-        while j < bytes.len() && matches!(bytes[j], b'x' | b'X' | b'2'..=b'9') {
-            j += 1;
-        }
-        // A literal honour run (`AKQ`, `AKQxx`, `KQJ109x`) is approximated as "2+ of the top
-        // 3" (§7.4's `TwoOfTopThree`); the exact-count reading (`Solid`'s card part without its
-        // length requirement) is not separately representable in `QualityWord`.
-        return Some((Token::Quality(SuitRef::Own, QualityWord::TwoOfTopThree), j));
+    if bytes.get(i).is_some_and(|&b| is_word_byte(b)) {
+        return None;
+    }
+    // `QT` alone is the quick-tricks abbreviation (a `v2` word in §7.4), not a holding.
+    if honours == "QT" && cards == 2 {
+        return None;
+    }
+    Some((honours, cards.min(13), i))
+}
+
+fn match_quality(s: &str) -> Option<(Token, usize)> {
+    if let Some((honours, cards, l)) = match_honour_run(s) {
+        return Some((Token::HonourRun(SuitRef::Own, honours, cards), l));
     }
 
     const WORDS: &[(&str, QualityWord)] = &[
@@ -962,6 +1096,18 @@ fn match_no_bound(s: &str) -> Option<(Token, usize)> {
     None
 }
 
+/// Phrases recognised as [`Token::NoBound`] that must be tried before the strength table, because
+/// a strength word is their prefix (`min/max` would otherwise read as `min`, and `might be
+/// strong` as `strong` once the hedge is stripped).
+fn match_no_bound_phrase(s: &str) -> Option<(Token, usize)> {
+    for phrase in ["min/max", "might be strong"] {
+        if let Some(l) = match_word(s, phrase) {
+            return Some((Token::NoBound, l));
+        }
+    }
+    None
+}
+
 /// Tries to recognise one fragment of normalised text. Returns the token and the number of
 /// bytes consumed.
 ///
@@ -983,10 +1129,16 @@ pub fn recognize(text: &str) -> Option<(Token, usize)> {
     if let Some(hit) = match_balanced(text) {
         return Some(hit);
     }
+    if let Some(hit) = match_no_bound_phrase(text) {
+        return Some(hit);
+    }
     if let Some(hit) = match_strength(text) {
         return Some(hit);
     }
     if let Some(hit) = match_forcing(text) {
+        return Some(hit);
+    }
+    if let Some(hit) = match_splinter(text) {
         return Some(hit);
     }
     if let Some(hit) = match_convention(text) {
@@ -1189,7 +1341,8 @@ mod tests {
     #[test]
     fn forcing_words() {
         assert_eq!(rec("NF"), Token::Forcing(crate::Forcing::NonForcing));
-        assert_eq!(rec("F"), Token::Forcing(crate::Forcing::Unknown));
+        assert_eq!(rec("F"), Token::Forcing(crate::Forcing::OneRound));
+        assert_eq!(rec("forcing"), Token::Forcing(crate::Forcing::OneRound));
         assert_eq!(rec("F1"), Token::Forcing(crate::Forcing::OneRound));
         assert_eq!(rec("F2NT"), Token::Forcing(crate::Forcing::OneRound));
     }
@@ -1200,7 +1353,12 @@ mod tests {
         assert_eq!(rec("(R)"), Token::Convention("(R)".to_string()));
         assert_eq!(rec("TRF"), Token::Convention("TRF".to_string()));
         assert_eq!(rec("STAY"), Token::Convention("STAY".to_string()));
-        assert_eq!(rec("SPL"), Token::Convention("SPL".to_string()));
+        assert_eq!(rec("SPL"), Token::Splinter(None, false));
+        assert_eq!(
+            rec("SPL ♣"),
+            Token::Splinter(Some(SuitRef::Fixed(Suit::Clubs)), false)
+        );
+        assert_eq!(rec("mini-splinter"), Token::Splinter(None, true));
         assert_eq!(rec("UNT"), Token::Convention("UNT".to_string()));
         assert_eq!(rec("P/C"), Token::Convention("P/C".to_string()));
         assert_eq!(rec("S/O"), Token::Convention("S/O".to_string()));
@@ -1209,10 +1367,7 @@ mod tests {
     #[test]
     fn quality_words() {
         assert_eq!(rec("SOL"), Token::Quality(SuitRef::Own, QualityWord::Solid));
-        assert_eq!(
-            rec("AKQ"),
-            Token::Quality(SuitRef::Own, QualityWord::TwoOfTopThree)
-        );
+        assert_eq!(rec("AKQ"), Token::HonourRun(SuitRef::Own, "AKQ".into(), 3));
         assert_eq!(
             rec("good suit"),
             Token::Quality(SuitRef::Own, QualityWord::Good)

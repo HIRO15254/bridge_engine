@@ -74,6 +74,8 @@ fn base_ctx(binding: &Binding, call: Call, role: Role) -> RowContext<'_> {
         their_last_bid: None,
         agreed_suit: None,
         role,
+        partner_hcp: None,
+        own_hcp: None,
     }
 }
 
@@ -535,8 +537,9 @@ fn strength_slam_try_and_quantitative() {
     assert_eq!(slam_try.constraint.hcp_range(), 14..=37);
 
     let quant = compile_description("QUANT", &c, &meta);
-    // [gf_total(25) - partner_max(17) + 1, slam_total(31) - partner_min(15)] = [9, 16].
-    assert_eq!(quant.constraint.hcp_range(), 9..=16);
+    // An invitation to 6NT (small-slam total = slam_total + 2 = 33):
+    // [33 - partner_max(17), 33 - partner_min(15) - 1] = [16, 17].
+    assert_eq!(quant.constraint.hcp_range(), 16..=17);
 }
 
 #[test]
@@ -656,7 +659,9 @@ fn negation_word_denies() {
 }
 
 #[test]
-fn hedge_word_may_still_sets_soft_without_loosening() {
+fn hedge_word_may_is_a_possibility_that_keeps_no_literal() {
+    // A possibility hedge (`may`, `might`, `rarely`, …) says what the hand *can* have, so it
+    // sets `soft` but contributes no literal (§7.6); a probable hedge (`usually`) keeps it.
     let binding = Binding::default();
     let c = base_ctx(&binding, Call::Pass, Role::Opener);
     let meta = SystemMeta::default();
@@ -671,6 +676,11 @@ fn hedge_word_may_still_sets_soft_without_loosening() {
     let five_spades = hand("432", "432", "43", "AKQ32");
     assert!(compiled.constraint.satisfies(five_spades));
     let four_spades = hand("432", "432", "432", "AKQ2");
-    // Still an exact 5+ requirement: the hedge does not widen it.
-    assert!(!compiled.constraint.satisfies(four_spades));
+    assert!(compiled.constraint.satisfies(four_spades));
+
+    let usually = compile_description("usually 5+!s", &c, &meta);
+    assert!(usually.flags.soft);
+    assert!(usually.constraint.satisfies(five_spades));
+    // Still an exact 5+ requirement: a probable hedge does not widen it.
+    assert!(!usually.constraint.satisfies(four_spades));
 }
