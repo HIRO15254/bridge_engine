@@ -1,0 +1,18 @@
+* Seat and vulnerability
+
+#SEAT 12
+
+#VUL N0
+
+#HIDE
+1N 12--14
+
+#SEAT 34
+
+1N 14--16
+
+#VUL Y0
+
+#SEAT 0
+
+1N 14--16

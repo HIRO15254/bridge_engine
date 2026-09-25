@@ -1,0 +1,151 @@
+---
+source: crates/bridge-system/tests/parse_fixtures.rs
+expression: "(& file.blocks, & file.lints)"
+---
+(
+    [
+        Heading {
+            level: 1,
+            text: "{prio:N} / {w:X} annotations (opaque to the parser; interpreted by the description compiler)",
+            span: Span {
+                file: FileId(
+                    0,
+                ),
+                line: 1,
+                col: 0,
+                pasted_from: None,
+            },
+        },
+        BidTable(
+            BidTable {
+                hidden: false,
+                seat: Any,
+                vul: VulCond {
+                    we: Any,
+                    they: Any,
+                },
+                history: [],
+                history_desc: None,
+                rows: [
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Exact(
+                                    Bid(
+                                        1NT,
+                                    ),
+                                ),
+                                raw: "1N",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 3,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "15--17 {prio:2}",
+                            alert: false,
+                            col: 3,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 3,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Exact(
+                                    Bid(
+                                        2C,
+                                    ),
+                                ),
+                                raw: "2C",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 4,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "Stayman {w:0.6}",
+                            alert: false,
+                            col: 3,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 4,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Exact(
+                                    Bid(
+                                        2D,
+                                    ),
+                                ),
+                                raw: "2D",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 5,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "Transfer to hearts {w:0.4}",
+                            alert: false,
+                            col: 3,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 5,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                ],
+                span: Span {
+                    file: FileId(
+                        0,
+                    ),
+                    line: 3,
+                    col: 0,
+                    pasted_from: None,
+                },
+            },
+        ),
+    ],
+    [],
+)
