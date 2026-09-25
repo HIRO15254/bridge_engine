@@ -64,6 +64,11 @@ pub fn sample_deals(
     n: usize,
     opts: &SampleOptions,
 ) -> Result<(Vec<WeightedDeal>, SampleReport), SampleError> {
+    // `std::time::Instant::now()` panics on `wasm32-unknown-unknown` (no clock source), so wall
+    // time is only measured on targets that actually have one; `elapsed` is excluded from every
+    // determinism comparison in the design doc (§7 of `09-sample.md`), so reporting `Duration::
+    // ZERO` on wasm32 costs nothing.
+    #[cfg(not(target_arch = "wasm32"))]
     let start = std::time::Instant::now();
 
     KnownCards::new(ctx.known.known).map_err(|e| SampleError::Prepare(e.to_string()))?;
@@ -145,7 +150,10 @@ pub fn sample_deals(
         ess,
         ess_ratio,
         log_weight_max,
+        #[cfg(not(target_arch = "wasm32"))]
         elapsed: start.elapsed(),
+        #[cfg(target_arch = "wasm32")]
+        elapsed: std::time::Duration::ZERO,
         warnings,
     };
 

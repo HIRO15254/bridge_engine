@@ -56,6 +56,16 @@ impl PreparedProposal for PreparedUniform<'_> {
     }
 
     fn log_prob(&self, deal: &Deal) -> f64 {
+        // The constant only applies within the support: every known card must actually be in its
+        // seat's hand in `deal` (trait contract in `proposal.rs`: "`-∞` outside the support").
+        // `propose` above always produces such a deal, but `log_prob` must still reject one that
+        // was not, e.g. one built by a caller or another proposal that ignored `ctx.known`.
+        for seat in Seat::ALL {
+            let known = self.ctx.known.known[seat.index() as usize];
+            if !known.is_subset(deal.hand(seat)) {
+                return f64::NEG_INFINITY;
+            }
+        }
         self.log_prob
     }
 }
@@ -229,6 +239,55 @@ mod tests {
                 "log_prob = {log_prob}, expected {expected}"
             );
         }
+    }
+
+    #[test]
+    fn log_prob_is_neg_infinity_for_a_deal_inconsistent_with_known() {
+        // North and the dummy (East) are fully known; South and West split the rest.
+        let hands = deck_in_seat_chunks();
+        let known = KnownCards::from_viewer(Seat::North, hands[0]).with_dummy(Seat::East, hands[1]);
+        let interpretation = empty_interpretation();
+        let ctx = SampleContext {
+            known,
+            interpretation: &interpretation,
+            play_constraints: &NO_CONSTRAINTS,
+            play_soft: None,
+            bidding: None,
+        };
+
+        let prepared = UniformProposal
+            .prepare(&ctx)
+            .expect("uniform proposal always prepares");
+        let mut rng = rng_for(5, 0);
+        let deal = prepared
+            .propose(&mut rng)
+            .expect("uniform proposal never rejects");
+        assert!(prepared.log_prob(&deal).is_finite());
+
+        // Swap one of North's known cards for one of South's: North no longer holds all of
+        // `known.known[North]`, so the deal is outside the proposal's support.
+        let north_card = hands[0].cards().next().expect("North holds cards");
+        let south_card = deal
+            .hand(Seat::South)
+            .cards()
+            .next()
+            .expect("South holds cards");
+        let mut bad_hands = [
+            deal.hand(Seat::North),
+            deal.hand(Seat::East),
+            deal.hand(Seat::South),
+            deal.hand(Seat::West),
+        ];
+        bad_hands[Seat::North.index() as usize] = bad_hands[Seat::North.index() as usize]
+            .without(north_card)
+            .with(south_card);
+        bad_hands[Seat::South.index() as usize] = bad_hands[Seat::South.index() as usize]
+            .without(south_card)
+            .with(north_card);
+        let bad_deal =
+            Deal::new(bad_hands).expect("swapping one card each still partitions the deck");
+
+        assert_eq!(prepared.log_prob(&bad_deal), f64::NEG_INFINITY);
     }
 
     #[test]
