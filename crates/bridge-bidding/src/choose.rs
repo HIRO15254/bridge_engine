@@ -388,8 +388,8 @@ fn tie_break_cmp(system: &SystemIR, tie_break: TieBreak, a: &Kept, b: &Kept) -> 
 }
 
 /// Chooses a call for `hand` after `auction` under `table` (its acting seat's system, or its
-/// natural fallback; see [`gather`]'s doc comment for why the whole `table` is needed rather than
-/// just the acting seat's own [`SystemIR`]).
+/// natural fallback; see `gather`'s doc comment (in this module) for why the whole `table` is
+/// needed rather than just the acting seat's own [`SystemIR`]).
 pub fn choose_bid(table: &Table, hand: Hand, auction: &Auction, ctx: &BidContext<'_>) -> BidChoice {
     let seat = auction.next_seat();
     let system = &table.systems[seat.index() as usize];
