@@ -253,11 +253,19 @@ Atom をリテラル `L1 = shape ∈ S`, `L2 = hcp ∈ [lo, hi]`, `L3.. = cards,
 
 結果は高々 `1 + 2 + 2·(|cards| + |eval|)` 個の **互いに素な** Atom。素なので `|¬A| = Σ|項|` が厳密に成り立ち、和集合サンプリングに多重度補正が要らない。「否定したリテラルだけを持つ Atom を 1 個ずつ」の方が小さいが重なるので採らない。リテラルは安価で、厳密な個数が得られることが目的だからである。
 
-`¬Custom` は否定フラグ付き `Custom`、`¬Or` / `¬And` は de Morgan、`¬¬x = x`。
+`HandConstraint::And` の否定も同じ排他的連鎖を使う。子を `C1, …, Cn` として、
+
+```
+¬(C1 ∧ … ∧ Cn) = ⋁_j ( C1 ∧ … ∧ C(j−1) ∧ ¬Cj )
+```
+
+`C1, …, C(j−1)` は肯定形のまま連言に残す。単純な de Morgan (`¬(C1∧…∧Cn) = ⋁_j ¬Cj`) は `¬Cj` 同士が互いに素とは限らず (2 個以上の子に違反する手は複数の disjunct に入る)、`count()` が単項の和である以上それは二重計上になる。`Atom::negate` と同じ理由で、この連鎖を使う。
+
+`¬Or` は単純な de Morgan (`¬(C1∨…∨Cn) = ¬C1∧…∧¬Cn`) でよい: これは論理積であって選言ではないので、素性は要求されない (`Dnf` の項として直積に展開されるときの素性は個々の `¬Cj` 側の性質に委ねられる)。`¬Custom` は否定フラグ付き `Custom`、`¬¬x = x`。
 
 ### 4.3 `to_dnf` の手順
 
-1. `Not` を押し下げる: `¬¬x = x`、`¬Or = And(¬…)`、`¬And = Or(¬…)`、`¬Atom = §4.2 の連鎖`、`¬Custom = Custom(negated)`。
+1. `Not` を押し下げる: `¬¬x = x`、`¬Or = And(¬…)`、`¬And = §4.2 の排他的連鎖`、`¬Atom = §4.2 の連鎖`、`¬Custom = Custom(negated)`。
 2. 再帰的に展開: `dnf(Atom) = [term]`、`dnf(Custom) = [ANY + custom リテラル]`、`dnf(Or) = 連結`、`dnf(And) = 直積を intersect`。
 3. `And` を展開する前に `Π |dnf(子)|` を見積もる。`max_terms` (256) を超えるなら、DNF が最大の子から順に `residual` へ退避し (残りの子の直積の各項に `And` で付ける)、見積もりが収まるまで繰り返す。`truncated = true` とし `tracing::warn!` (ノード名付き)。`Overflow::Error` なら `DnfError::TooLarge { estimated, max_terms }` を返す (システムコンパイルの `strict_dnf` で使う)。
 4. 単純化: 各 Atom を `normalize`、自明に充足不能な項を除去、同一項を除去。リテラル単位の包含除去 (`shapes ⊆`、`hcp ⊆`) は行わない: 否定由来の項は互いに素で包含が起きず、利用者の `Or` は小さいので O(k²) の検査に見合わない。

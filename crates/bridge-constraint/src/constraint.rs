@@ -277,6 +277,7 @@ impl<'de> serde::Deserialize<'de> for HandConstraint {
 /// tree has no `Not` nodes, atoms are always positive (an atom's own negation was already expanded
 /// into an `Or` of positive atoms by [`Atom::negate`]), and a negated [`CustomPred`] carries a
 /// `true` flag instead.
+#[derive(Clone)]
 enum Nnf {
     Atom(Atom),
     Or(Vec<Nnf>),
@@ -308,13 +309,28 @@ impl Nnf {
                 }
             }
             HandConstraint::And(children) => {
-                let children = children
-                    .iter()
-                    .map(|c| Nnf::from_constraint(c, negated))
-                    .collect();
                 if negated {
-                    Nnf::Or(children)
+                    // ¬(C1∧…∧Cn) = ⋁_j(C1∧…∧C_{j-1}∧¬Cj): plain De Morgan would give
+                    // ⋁_j(¬Cj) instead, whose disjuncts are not pairwise disjoint (¬C1 and ¬C2
+                    // can both hold at once), so `count()` on the resulting DNF terms would
+                    // double-count hands that violate more than one child. Prefixing each
+                    // negated child with all of the earlier children in their *positive* form
+                    // keeps the disjuncts mutually exclusive, matching the pattern
+                    // `Atom::negate` already uses for a single atom's literals.
+                    let mut out = Vec::with_capacity(children.len());
+                    let mut prefix = Vec::with_capacity(children.len());
+                    for child in children {
+                        let mut conjuncts = prefix.clone();
+                        conjuncts.push(Nnf::from_constraint(child, true));
+                        out.push(Nnf::And(conjuncts));
+                        prefix.push(Nnf::from_constraint(child, false));
+                    }
+                    Nnf::Or(out)
                 } else {
+                    let children = children
+                        .iter()
+                        .map(|c| Nnf::from_constraint(c, false))
+                        .collect();
                     Nnf::And(children)
                 }
             }
