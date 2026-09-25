@@ -63,7 +63,18 @@ comments in the `.bml` files.
    the ace or king. The vocabulary has no "specific ace or king in this suit"
    token (`Stopper`/`Quality` are about NT stoppers and suit quality, not a
    single high card), so the feature suits are modeled only by their HCP
-   range (9--11), without the ace-or-king requirement itself.
+   range (9--11), without the ace-or-king requirement itself. A direct,
+   spelled-out consequence (`dropped.json` #16, raised again in review): since
+   the three feature-suit rows and the no-feature `3N` row all compile to the
+   exact same `9--11 hcp` constraint, only one of the four -- whichever has
+   the highest `{prio:N}` -- can ever be chosen by `choose_bid`; the other
+   three are permanently unreachable, not merely low-frequency. This is the
+   honest consequence of the missing vocabulary, not a bug this file can fix
+   without inventing an unfounded distinguishing constraint (which would be
+   worse: a fabricated feature the opener's actual hand may not have); the
+   `{prio:N}` ordering is kept only so the compiled system deterministically
+   picks *a* feature-tier response rather than leaving a 9--11 hcp maximum
+   with `NoCandidate`.
 
 5. **Preempt length/HCP bands (`preempts.bml`).** The booklet gives no table
    for opening preempts, only the "rule of 2/3/4" trick-counting judgment
@@ -225,3 +236,95 @@ comments in the `.bml` files.
     `10--15 hcp, 6+!x`, so both transfers have the same shape of
     continuation and `3N`/`4M` are cleanly split by suit length (5 vs 6+)
     rather than overlapping.
+
+20. **Advancing a takeout double had no suit-length constraint at all
+    (`competition.bml`, review finding).** The minimum and invitational
+    new-suit advance rows (`(1C)-D-` etc.) originally read `1D = {prio:6}
+    unlimited`, `2D = {prio:3} INV`, and so on, with no `#!x` atom -- every
+    row for every unbid suit compiled to the same unconstrained shape, so a
+    hand with (say) 4 hearts and no diamonds still "qualified" for `1D`, and
+    since `{prio:N}` alone (not a real constraint difference) decided which
+    row won, the cheapest suit's row always won regardless of what the hand
+    actually held: advancer was always shown bidding the cheapest unbid suit,
+    never the suit(s) it actually had. Worse, because the invitational jump
+    rows were also unconstrained, and ranked *below* the plain minimum rows in
+    `{prio:N}`, they could never be reached at all: any hand meeting a jump's
+    invitational criteria also trivially satisfied the (higher-priority,
+    unconstrained) plain minimum row in some suit. Fixed by adding the real
+    length atom to every row (4+ for a minimum call, 5+ for an invitational
+    jump) and by re-ranking the invitational tier above the minimum tier (the
+    same "more descriptive call wins" convention as note 7), so a hand's
+    actual shape decides which suit is shown, and an invitational-quality
+    5+ card suit is shown by jumping rather than folded into a same-suit or
+    different-suit minimum call. `(1S)-D-` (advancing a double of a 1!s
+    opening) was missing outright -- every unbid suit there ranks below
+    spades, so its minimum calls are already at the 2 level -- and is added
+    alongside the equivalent fix for `(1D)-D-`/`(1H)-D-`'s own missing
+    below-rank suits (clubs after a 1!d double; clubs and diamonds after a
+    1!h double).
+
+21. **Interference over 1NT was keyed on an impossible history
+    (`notrump.bml`, `confirmed.json` #8).** `1N-(1X)-` asks for a 1-level
+    overcall of a 1NT opening, but notrump is the top strain at the 1 level,
+    so no such call exists; the whole table (a natural `2Y` and a
+    game-forcing cuebid) silently expanded to nothing, leaving `1NT-(2X)-?`
+    entirely off-system. Rewritten as `1N-(2X)-` (the overcaller's suit at
+    the 2 level, the cheapest it can actually be), with the cuebid moved up a
+    level to `3X` to stay above the overcall, and, mirroring the direct-seat
+    overcall table's own "a lower suit costs an extra level" handling
+    (`competition.bml`), explicit `3C`/`3D`/`3H` rows added per overcall suit
+    for the natural suits ranked *below* it that a shared `Y` binding (which
+    only reaches suits ranked above `X`) cannot reach.
+
+22. **Stayman after interference over 1NT did not require a four-card major
+    (`notrump.bml`, `competition.bml`; `dropped.json` #13).** The direct
+    `1N- 2C` Stayman row already requires `4+!h or 4+!s`, but its two
+    siblings -- `1N-(D)- 2C` (Stayman still on after an opposing
+    double) and the 1NT-overcall's own `(1X)-1N- 2C` -- were left as
+    `!STAY NF, 8+ hcp` with no major-suit requirement at all, so any 8+ hcp
+    hand without a major, including balanced ones with no interest in either
+    major, still asked for one. Both now also read `4+!h or 4+!s`.
+
+23. **Balancing-seat overcalls had two independent problems (`competition.bml`;
+    `dropped.json` #15).** (a) The double and the plain suit overcall were
+    both at the same (default) priority, so on a tie the double -- which has
+    no shape exclusion at all -- won by row order over a hand that actually
+    held a real 4-card suit and should have overcalled it instead; the suit
+    overcall (`1Y`) is now given `{prio:1}` above the double's `{prio:-1}`. (b)
+    The jump overcall (`2Y`) shared `1Y`'s own full 6--16 hcp range with only
+    the suit length differing, so *any* 5+ card hand jumped, strong ones
+    included, rather than calmly overcalling at the one level; `2Y` now reads
+    a distinct, lower `6--10 hcp` band, making it a genuine preemptive jump
+    (extra length *and* a capped strength), not merely "the same hand, one
+    card longer."
+
+24. **Weak-two responses wrote every new suit at the 3 level, even the ones
+    ranked above the opening (`weak-twos.bml`; `dropped.json` #16).** After
+    2D, hearts and spades both rank above diamonds and are reachable at the
+    cheap 2 level (`2H`/`2S`); after 2H, spades alone ranks above it (`2S`).
+    The file instead wrote `3H`/`3S` (after 2D) and `3S` (after 2H) -- an
+    unwarranted extra-level jump with no distinct meaning of its own, and
+    with no route left at all for the plain, cheap new suit RONF describes.
+    Moved down to the correct level (`3C` after 2D, and `3C`/`3D` after 2H,
+    stay at the 3 level as before, since clubs and diamonds really do rank
+    below those openings). The same rows also had no HCP floor at all (`F,
+    5+!x` alone), so even a hopeless hand with a random 5-card suit
+    "qualified"; all now read `10+ hcp` (a new suit facing a preempt is
+    looking for game or better against partner's capped 5--11 range).
+
+25. **`1C-(1D)-`'s natural major responses required 5+ cards, leaving a plain
+    4-card major with no call at all (`competition.bml`; `dropped.json`
+    #17).** With *both* majors unbid, the negative double (which needs 4+ in
+    *both*, `4+!s, 4+!h`) only covers a hand with both majors 4-4; a hand with
+    exactly one 4-card major (not the other) needs to bid that major
+    directly, exactly as this section's own doc comment already says ("a
+    same-level new suit ... is a simple, non-forcing natural bid instead,
+    exactly as it would be with no interference"). The `1H`/`1S` rows instead
+    required `5+!h`/`5+!s`, so a hand with exactly 4 hearts (or 4 spades) and
+    no fit for a double had no call whatsoever. Loosened to `4+!h`/`4+!s`,
+    matching the uninterfered response table (`responses-minor.bml`). The
+    single-unbid-major tables (`1C-(1H)-`, `1C-(1S)-`, `1D-(1H)-`,
+    `1D-(1S)-`) were not touched: there the double's own shape is already
+    exactly the complementary case (`4=!s` in the double, `5+!s` in the
+    direct bid, so a 4-card holding always has a call and a 5+ one always has
+    the other), so no equivalent gap exists.

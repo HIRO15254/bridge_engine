@@ -66,13 +66,34 @@ opponents intervene over a conventional response, a further voluntary bid keeps 
 normal meaning ("I have a real fit").
 
 1N-(D)-
-2C = !STAY NF, 8+ hcp
+2C = !STAY NF, 8+ hcp, 4+!h or 4+!s
 2D = !TRF, 5+!h
 2H = !TRF, 5+!s
 
-1N-(1X)-
+Any overcall of a 1NT opening is at the 2 level at the cheapest (notrump is the
+top strain at the 1 level, so no 1-level call ranks above it): `X` here binds
+to the overcaller's suit at the 2 level, and `Y` (as elsewhere) to a suit
+ranked above `X`, directly reachable at 2Y; a suit ranked *below* `X` costs an
+extra level, so it is written out per overcall suit at the 3 level, exactly
+like the direct-seat overcall table in `competition.bml` (confirmed.json #8:
+this table previously read `1N-(1X)-`, an impossible history that could never
+expand to anything).
+
+1N-(2X)-
 2Y = NAT
-2X = !cue, FG
+3X = !cue, FG
+
+1N-(2D)-
+3C = NAT
+
+1N-(2H)-
+3C = NAT
+3D = NAT
+
+1N-(2S)-
+3C = NAT
+3D = NAT
+3H = NAT
 
 ** Responses to 2NT and 3NT
 

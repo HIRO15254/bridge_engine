@@ -6,7 +6,13 @@ five-card suit or a poor seven-card suit "on rare occasions"; this file keeps th
 length at exactly six and treats those judgment calls as out of scope (NOTES.md
 #3). 2NT is forcing, asking for a minimum/maximum (and, opposite a maximum, a
 feature the vocabulary here cannot express -- see NOTES.md #4); any raise is to
-play; a new suit is forcing one round and shows a five-card suit ("RONF").
+play; a new suit shows 10+ hcp and a five-card suit, forcing one round ("RONF"),
+and -- like any other new suit -- is a suit ranked *above* the opening at the
+cheapest available level (2-level) or, for a suit ranked below it, one level
+higher (review finding: this file previously wrote every new suit at the
+3 level regardless of rank, so the two suits actually ranked above each of 2D
+and 2H were an unwarranted, undocumented jump instead of the plain 2-level bid
+RONF describes; see `NOTES.md` #24).
 
 2D = {prio:63} 6=!d, 5--11 hcp
 2H = {prio:64} 6=!h, 5--11 hcp
@@ -21,9 +27,9 @@ play; a new suit is forcing one round and shows a five-card suit ("RONF").
   3H = {prio:2} 9--11 hcp
   3S = {prio:1} 9--11 hcp
   3N = {prio:0} 9--11 hcp
-3C = F, 5+!c
-3H = F, 5+!h
-3S = F, 5+!s
+2H = F, 10+ hcp, 5+!h
+2S = F, 10+ hcp, 5+!s
+3C = F, 10+ hcp, 5+!c
 3N = {prio:-1} unlimited
 4D = unlimited
 
@@ -36,9 +42,9 @@ play; a new suit is forcing one round and shows a five-card suit ("RONF").
   3D = {prio:2} 9--11 hcp
   3S = {prio:1} 9--11 hcp
   3N = {prio:0} 9--11 hcp
-3C = F, 5+!c
-3D = F, 5+!d
-3S = F, 5+!s
+2S = F, 10+ hcp, 5+!s
+3C = F, 10+ hcp, 5+!c
+3D = F, 10+ hcp, 5+!d
 3N = {prio:-1} unlimited
 4H = unlimited
 
@@ -51,8 +57,8 @@ play; a new suit is forcing one round and shows a five-card suit ("RONF").
   3D = {prio:2} 9--11 hcp
   3H = {prio:1} 9--11 hcp
   3N = {prio:0} 9--11 hcp
-3C = F, 5+!c
-3D = F, 5+!d
-3H = F, 5+!h
+3C = F, 10+ hcp, 5+!c
+3D = F, 10+ hcp, 5+!d
+3H = F, 10+ hcp, 5+!h
 3N = {prio:-1} unlimited
 4S = unlimited
