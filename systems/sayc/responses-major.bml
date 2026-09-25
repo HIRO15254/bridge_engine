@@ -14,7 +14,11 @@ Several of these calls overlap on a hand that also has 4+ card support for
 opener (for example 10+ hcp with both a new suit and a fit): SAYC's own
 priority is to show the fit first, so the more descriptive support-showing
 bid outranks a plain new suit here ({prio:N}, high to low: Jacoby 2NT, jump
-shift, limit raise, 2/1 new suit, one-level new suit, everything else).
+shift, limit raise, 2/1 new suit, one-level new suit, everything else). The
+non-forcing notrump response and the single raise sit at the same default
+priority and both cover the 6--9 hcp band, so the notrump response excludes
+3+ card support (`not 3+!h`/`not 3+!s`) rather than relying on row order,
+letting a 6--9 hcp hand with trump support raise instead of bidding notrump.
 
 ** After 1!h
 
@@ -27,7 +31,7 @@ shift, limit raise, 2/1 new suit, one-level new suit, everything else).
 2C = {prio:2} F, 10+ hcp, 4+!c
 2D = {prio:2} F, 10+ hcp, 4+!d
 1S = {prio:1} F, 6+ hcp, 4+!s
-1N = NF, 6--9 hcp
+1N = NF, 6--9 hcp, not 3+!h
 2H = 6--10 hcp, 3+!h
 3N = 15--17 hcp, bal, 2=!h
 4H = 0--9 hcp, 5+!h, 0--1!c or 0--1!d or 0--1!s
@@ -43,7 +47,7 @@ shift, limit raise, 2/1 new suit, one-level new suit, everything else).
 2C = {prio:2} F, 10+ hcp, 4+!c
 2D = {prio:2} F, 10+ hcp, 4+!d
 2H = {prio:2} F, 10+ hcp, 5+!h
-1N = NF, 6--9 hcp
+1N = NF, 6--9 hcp, not 3+!s
 2S = 6--10 hcp, 3+!s
 3N = 15--17 hcp, bal, 2=!s
 4S = 0--9 hcp, 5+!s, 0--1!c or 0--1!d or 0--1!h
