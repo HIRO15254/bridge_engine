@@ -65,6 +65,15 @@ fn parse_expected(text: &str) -> Vec<(ExpectedKey, String)> {
 fn real_files_error_set_matches_expected() {
     let dir = common::systems_dir();
     let opts = CompileOptions::default();
+    // `dir.join("vendor/data")` is not canonicalized (`systems_dir()` builds it through a
+    // `../../systems` component that is never resolved), but an `#INCLUDE`d file's path *is*
+    // normalized away down to its shortest form by `lexer::join_path` (it collapses any `..` it
+    // finds while joining, including ones from this crate-relative root having gone through a
+    // table's own directory and back). A literal `strip_prefix` between the two would then fail
+    // for every included file while still succeeding for the root file's own (never-normalized)
+    // path. Canonicalizing both sides once here keeps the comparison honest regardless of which
+    // shape a given file's path happens to be in.
+    let vendor_root = dir.join("vendor/data").canonicalize().ok();
 
     let expected_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/real_expected_errors.txt");
@@ -84,6 +93,13 @@ fn real_files_error_set_matches_expected() {
     let mut grand_files = 0usize;
     let mut grand_blocked = 0usize;
     let mut actual_set: BTreeSet<ExpectedKey> = BTreeSet::new();
+    // Count of *raw* Errors mapping to each key: several roots can `#INCLUDE` the same file (or
+    // retrace the same position), reproducing the same source Error more than once. A count > 1
+    // is reported (not just silently deduplicated) so a genuinely new second Error that happens
+    // to land on an already-listed (file, line, code) is not hidden by the set-based comparison
+    // below.
+    let mut actual_counts: std::collections::BTreeMap<ExpectedKey, u32> =
+        std::collections::BTreeMap::new();
 
     for sub in [
         "vendor/data/bml-test/data",
@@ -98,37 +114,64 @@ fn real_files_error_set_matches_expected() {
         }
         for path in &files {
             grand_files += 1;
-            let Some(ir) = common::compile_guarded(path, &opts) else {
+            let Some((ir, file_table)) = common::compile_guarded_with_files(path, &opts) else {
                 grand_blocked += 1;
                 continue;
             };
-            // Path relative to `systems/vendor/data`, the same anchor
-            // `real_expected_errors.txt` uses, so entries survive the vendored checkout living
-            // at whatever absolute path this machine happened to clone it to.
-            let rel = path
-                .strip_prefix(dir.join("vendor/data"))
-                .unwrap_or(path)
-                .to_string_lossy()
-                .replace('\\', "/");
+            // A lint's `span.file` names the file it actually came from -- the root file being
+            // compiled here only when there was no `#INCLUDE` involved. An `Error` raised inside
+            // an `#INCLUDE`d file must be attributed to *that* file's path and line, not to the
+            // root's: otherwise every included file's Errors are misattributed to whichever root
+            // happened to pull it in, at a line number that belongs to a different file entirely
+            // (`real_lint_triage.md`'s review), and the same source Error is double-counted once
+            // per root that includes it.
             for lint in &ir.lints {
                 if lint.severity != Severity::Error {
                     continue;
                 }
-                let line = lint.span.as_ref().map(|s| s.line).unwrap_or(0);
-                actual_set.insert(ExpectedKey {
-                    path: rel.clone(),
+                let span = lint.span.as_ref();
+                let file_id = span.map_or(0, |s| s.file.0 as usize);
+                let true_path = file_table.get(file_id).map(String::as_str).unwrap_or("");
+                // Path relative to `systems/vendor/data`, the same anchor
+                // `real_expected_errors.txt` uses, so entries survive the vendored checkout
+                // living at whatever absolute path this machine happened to clone it to.
+                // Canonicalized on both sides first (see the comment on `vendor_root` above).
+                let canonical = std::fs::canonicalize(true_path).ok();
+                let rel = match (&canonical, &vendor_root) {
+                    (Some(c), Some(root)) => c
+                        .strip_prefix(root)
+                        .map(|p| p.to_string_lossy().replace('\\', "/"))
+                        .unwrap_or_else(|_| true_path.to_string()),
+                    _ => true_path.to_string(),
+                };
+                let line = span.map_or(0, |s| s.line);
+                let key = ExpectedKey {
+                    path: rel,
                     line,
                     code: format!("{:?}", lint.code),
-                });
+                };
+                actual_set.insert(key.clone());
+                *actual_counts.entry(key).or_insert(0) += 1;
             }
+        }
+    }
+
+    let duplicate_locations: Vec<(&ExpectedKey, &u32)> =
+        actual_counts.iter().filter(|&(_, &n)| n > 1).collect();
+    if !duplicate_locations.is_empty() {
+        eprintln!("--- (file, line, code) reached more than once (multiple roots/retraces) ---");
+        for (k, n) in &duplicate_locations {
+            eprintln!("  {}:{} {} x{}", k.path, k.line, k.code, n);
         }
     }
 
     eprintln!(
         "compile_real: {grand_files} file(s), {grand_blocked} blocked \
-         (compile_description still todo!()), {} compiled, {} distinct Error location(s)",
+         (compile_description still todo!()), {} compiled, {} distinct Error location(s), \
+         {} raw Error(s)",
         grand_files - grand_blocked,
-        actual_set.len()
+        actual_set.len(),
+        actual_counts.values().sum::<u32>()
     );
     if grand_files == grand_blocked {
         return; // nothing landed to check yet; not a failure
