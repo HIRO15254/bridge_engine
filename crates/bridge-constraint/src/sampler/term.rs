@@ -318,7 +318,7 @@ impl PairConv {
             }
         }
 
-        let mut p = Vec::new();
+        let mut p = Vec::with_capacity(acc.iter().filter(|&&n| n > 0).count());
         for h in 0..height {
             for x in 0..width {
                 let n = acc[h * width + x];
@@ -511,6 +511,30 @@ fn suit_lens(hand: Hand) -> [u8; 4] {
 }
 
 fn shape_weight(pair01: &PairConv, pair23: &PairConv, hlo: u8, hhi: u8, xlo: u8, xhi: u8) -> u64 {
+    if pair23.width == 1 {
+        // No additive feature (every `x` is 0 and the window is `(0, 0)`): `pair23.prefix` is a
+        // plain 1-D CDF over HCP, so each box sum is two lookups instead of four.
+        debug_assert!(xlo == 0 && xhi == 0);
+        let cdf = |h: i64| -> u64 {
+            if h < 0 {
+                0
+            } else {
+                pair23.prefix[h.min(i64::from(PAIR_HCP_MAX)) as usize]
+            }
+        };
+        let mut weight = 0u64;
+        for &(key, n) in &pair01.p.0 {
+            let (ah, _) = unpack_key(key);
+            let hi = i64::from(hhi) - i64::from(ah);
+            if hi < 0 {
+                // `pair01.p` is sorted by ascending HCP, so every later entry is out too.
+                break;
+            }
+            let lo = i64::from(hlo) - i64::from(ah);
+            weight += n * (cdf(hi) - cdf(lo - 1));
+        }
+        return weight;
+    }
     let mut weight = 0u64;
     for &(key, n) in &pair01.p.0 {
         let (ah, ax) = unpack_key(key);
