@@ -332,7 +332,8 @@ struct PreparedTerm {
     shapes: Vec<(Shape, u64 /* weight */, (u8, u8) /* hcp 窓 */)>,   // x 窓は K=2 のとき鍵に畳む
     cum: Vec<u64>, total: u64,
     term: DnfTerm,                         // residual / custom の検査に使う元の項
-    alpha: Option<f64>,                    // 棄却リテラルの推定受理率 (厳密なら None)
+    alpha: Option<f64>,                    // 棄却リテラルの推定受理率 (厳密なら None; 0 は保存しない、§8.3 参照)
+    s: f64,                                 // 1 − (1 − α)^max_tries (厳密なら 1.0); log_prob の正規化に使う (§8.3)
 }
 impl PreparedTerm {
     fn prepare(term: DnfTerm, pool: Hand, fixed: Hand, opts: &SampleOptions) -> PreparedTerm;
@@ -387,14 +388,21 @@ impl PreparedTerm {
 
 ### 8.3 `log_prob` の式 (residual 棄却込み)
 
-項 `i` の内部で棄却 (受理率 `α_i`) がある場合、密度は
+`log_prob` は `sample` が実際に返す分布、すなわち `max_tries` 回以内に受理して `Some` を返したという条件付きの密度を表す (呼び出し側が `None` で引き直す場合、その引き直しはこの条件付けと一致する)。項 `i` を選んだ後、その項の中で `max_tries` 回まで引き直して一度も受理できない確率があるので、項ごとの「一度は受理できる確率」
 
 ```
-P(h) = (1 / C) · Σ_{i ∋ h} 1 / α_i
-log_prob(h) = ln( Σ_{i ∋ h} 1 / α_i ) − ln C
+s_i = 1 − (1 − α_i)^max_tries   (棄却が要る項)
+s_i = 1                          (厳密な項)
 ```
 
-厳密な項では `α_i = 1`。それ以外は `prepare` の burn-in (`n = 256`) で推定し、返却された `tries` から呼び出し側が精緻化できる。`is_exact()` が `false` なら L4 は ESS を近似値として報告する。
+を使って
+
+```
+P(h) = (1 / z) · Σ_{i ∋ h} s_i / α_i,   z = Σ_i c_i · s_i
+log_prob(h) = ln( Σ_{i ∋ h} s_i / α_i ) − ln z
+```
+
+とする。厳密な項では `α_i = s_i = 1` なので `z = C = Σ c_i` に一致し、旧来の式に戻る。`α_i` は棄却が要る項について `prepare` の burn-in (`n = 256`) で推定し、返却された `tries` から呼び出し側が精緻化できる。`s_i` を掛けずに `Σ 1/α_i` と `C` だけを使うと (`max_tries → ∞` を仮定したことになり)、`α_i · max_tries` が小さい項の分だけ `log_prob` が実際の分布からずれる — その項は `sample` が `None` を返す頻度が高く、実際に返されるサンプルへの寄与は `s_i` 倍にしかならないため。`is_exact()` が `false` なら L4 は ESS を近似値として報告する。
 
 ### 8.4 確定カードの合成 (D3)
 

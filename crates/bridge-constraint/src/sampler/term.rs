@@ -34,6 +34,13 @@ pub(crate) struct PreparedTerm {
     /// Estimated acceptance rate of the literals the exact scheme could not capture (`None` when
     /// every literal was captured exactly, i.e. every draw is guaranteed to satisfy the term).
     pub(crate) alpha: Option<f64>,
+    /// Probability that drawing from this term with up to `opts.max_tries` retries produces
+    /// *some* accepted hand: `1 − (1 − alpha)^max_tries` when `alpha.is_some()`, `1.0` for an
+    /// exact term (every draw is accepted, so retries never matter). Used as the weight
+    /// `Sampler` gives this term in `log_prob`'s normalising constant, since a term whose
+    /// `alpha·max_tries` is small enough to often exhaust its retries contributes less to the
+    /// distribution `sample` actually returns than its raw `1/alpha` would suggest.
+    pub(crate) s: f64,
     /// The source term (for the full `atom ∧ custom ∧ residual` check).
     pub(crate) term: DnfTerm,
     /// `Some` for the unconstrained fast path; `None` for the general path.
@@ -505,6 +512,7 @@ impl PreparedTerm {
             return PreparedTerm {
                 total,
                 alpha: None,
+                s: 1.0,
                 term,
                 any: Some(AnyTerm { cards, fixed, m }),
                 general: None,
@@ -615,6 +623,7 @@ impl PreparedTerm {
         let mut prepared = PreparedTerm {
             total,
             alpha: None,
+            s: 1.0,
             term,
             any: None,
             general: Some(GeneralTerm {
@@ -628,7 +637,7 @@ impl PreparedTerm {
         };
 
         if needs_full_check {
-            prepared.alpha = Some(if total == 0 {
+            let alpha = if total == 0 {
                 // The exact superset is already empty, so this term never contributes a sample
                 // (`Sampler::sample` only ever picks a term with `total > 0`, and
                 // `Sampler::log_prob` skips terms with `term.total == 0` before looking at
@@ -653,7 +662,15 @@ impl PreparedTerm {
                 // zero. `Sampler::any_definitely_satisfiable` deliberately does not read `alpha`
                 // at all, for the same reason (see its doc comment).
                 (f64::from(hits) + 0.5) / (f64::from(burn_in) + 1.0)
-            });
+            };
+            // `s`: the probability that up to `opts.max_tries` retries within this term produce
+            // *some* accepted hand. `sample_deals`-style callers redraw on `None`, so the
+            // distribution `Sampler::sample` actually returns is conditioned on success; `log_prob`
+            // must weight each term by `s`, not treat every term as if `max_tries` were infinite
+            // (see `PreparedTerm::s`'s doc comment).
+            let max_tries = f64::from(opts.max_tries.max(1));
+            prepared.s = 1.0 - (1.0 - alpha).powf(max_tries);
+            prepared.alpha = Some(alpha);
         }
 
         prepared
