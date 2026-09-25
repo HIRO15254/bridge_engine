@@ -101,8 +101,8 @@ pub fn sample_deals(ctx: &SampleContext<'_>, proposal: &dyn Proposal, n: usize, 
 
 1. `ctx.known` の不変条件（互いに素、各 ≤ 13）と `Σ_s needed(s) == pool().len()` を確認し（違反は `SampleError::Prepare`）、`prepared = proposal.prepare(ctx)?`。ハード制約 `play_constraints` と既知カードだけで配牌が存在しない（ある席の `play_constraints[s]` が `known[s]` を固定して `count() == 0`）なら `prepare` は `Err(SampleError::EmptySupport)` を返し、試行は行わない。ある席の解釈代替がすべて落ちた場合は `SampleWarning::EmptySupport { seat }` を記録してその席を `ANY` にフォールバックし（尤度が補正する）、サンプリングは続ける。
 2. スロット `i = 0, 1, 2, …` を **`n` 個ずつのチャンク** で処理する。スロット `i` は `rng = rng_for(opts.seed, i)` だけを使い、最大 `max_attempts_per_sample` 回 `propose` を試し、得られた `deal` に `log_prob` を呼ぶ。`(deal, ln π)` に対し §3 の `ln L` を計算し、有限なら `WeightedDeal { deal, log_weight: ln L − ln π }` をスロットの結果とする。`−∞` は棄却として数え、次の試行に進む。
-3. チャンク境界で `produced ≥ n` または `attempts ≥ n × max_attempt_factor` なら停止する。判定がチャンク境界にあるので、結果はスレッド数に依らない。
-4. スロット順に最初の `n` 件を採用する。
+3. 各チャンクの `n` 件のスロット結果を **スロット順に** たたみ込み、`deals.len()` が `n` に達した時点でそのチャンクの残りのスロットは `attempts` にも `deals` にも加えない（採用されない配牌の試行回数で `attempts`/`acceptance_rate` を水増ししないため）。次のチャンクを起動するかどうかの判定（`produced ≥ n` または `attempts ≥ n × max_attempt_factor` なら停止）はチャンク境界で行うが、この判定はチャンク単位の集計値 `produced`/`attempts` を見るだけで、どのスロットがそのチャンクの「余剰」かはスロット順（スレッド数に依らない）だけで決まるので、結果は依然としてスレッド数に依らない。
+4. スロット順に最初の `n` 件を採用する（手順3により `deals.len()` は `n` を超えない）。
 5. §3.2 の式で `ess` を計算し、`SampleReport` を組み立てる。`tracing::info!(requested, produced, attempts, acceptance_rate, ess, ess_ratio, log_weight_max, elapsed_us)` を **常時 INFO** で出す（仕様 §9: ESS 報告は性能問題の一次診断情報）。
 
 ---
