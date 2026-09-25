@@ -56,8 +56,12 @@ impl KnownCards {
     }
 
     /// Adds every card each seat has played so far.
-    pub fn with_play(self, history: &PlayHistory) -> KnownCards {
-        todo!("phase 5")
+    pub fn with_play(mut self, history: &PlayHistory) -> KnownCards {
+        for seat in Seat::ALL {
+            let i = seat.index() as usize;
+            self.known[i] = self.known[i].union(history.played_by(seat));
+        }
+        self
     }
 
     /// The cards whose owner is unknown.
