@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use bridge_constraint::HandConstraint;
-use bridge_core::{Auction, Call, Hand, Seat, Vulnerability};
+use bridge_core::{Auction, Bid, Call, Hand, Seat, Strain, Suit, Vulnerability};
 use bridge_system::{
     CompileOptions, LintCode, LookupKey, NodeId, RelVul, Severity, Side, SystemIR,
 };
@@ -335,6 +335,170 @@ fn opening_candidates(
     };
     let lookup = ir.index.resolve(&key);
     ir.index.children(lookup.end, key.opener_pos, key.vul)
+}
+
+/// `1of(strain)`, for readable expected-call literals in table-driven tests.
+fn bid(level: u8, strain: Strain) -> Call {
+    Call::Bid(Bid::new(level, strain).expect("valid bid"))
+}
+
+/// The single highest-`{prio:N}` candidate among `candidates` that `hand` satisfies (matching
+/// the priority-argmax `choose_bid` itself uses), or `None` if `hand` opens nothing.
+fn best_opening(ir: &SystemIR, candidates: &[(Call, NodeId)], hand: Hand) -> Option<Call> {
+    let mut best: Option<(Call, i16)> = None;
+    for &(call, node_id) in candidates {
+        let node = ir.node(node_id);
+        if !node.constraint.satisfies(hand) {
+            continue;
+        }
+        if best.is_none_or(|(_, p)| node.priority > p) {
+            best = Some((call, node.priority));
+        }
+    }
+    best.map(|(call, _)| call)
+}
+
+/// Task brief 4(a) / `NOTES.md` #1: opening choice by suit length, table-driven over
+/// representative shapes -- 6-5 and 5-6 majors (open the longer), 5-5 majors (open the
+/// higher-ranking), 4-4 and 3-3 minors (the two named booklet ties), 4=4=3=2 and 4=4=2=3 (the
+/// blanket "always 1D with 4432, regardless of which minor holds the doubleton" exception), and
+/// uneven non-4432 minor lengths in both directions, including a 6-1 extreme. Each hand's HCP is
+/// incidental (any value in the 12-21 opening range); only the shape decides the call.
+#[test]
+fn sayc_opening_choice_by_suit_length() {
+    let (ir, _) = compile_sayc("openings-only.bml");
+    let seat = Seat::North;
+    let vul = Vulnerability::None;
+    let candidates = opening_candidates(&ir, seat, vul);
+
+    let cases: &[(&str, &str, &str, &str, &str, Call)] = &[
+        // (label, clubs, diamonds, hearts, spades, expected opening)
+        (
+            "6 hearts, 5 spades: longer major wins (hearts)",
+            "4",
+            "4",
+            "AKQJ32",
+            "AKQ32",
+            bid(1, Strain::Hearts),
+        ),
+        (
+            "5 hearts, 6 spades: longer major wins (spades)",
+            "4",
+            "4",
+            "AKQ32",
+            "AKQJ32",
+            bid(1, Strain::Spades),
+        ),
+        (
+            "5-5 majors: higher-ranking wins (spades)",
+            "",
+            "432",
+            "AKQ32",
+            "AKQ32",
+            bid(1, Strain::Spades),
+        ),
+        (
+            // Majors 4-1 (not 3-2, so the overall shape is 4441, not the balanced 4432 that
+            // would otherwise send this to 1NT/2NT first): a plain 4-4 minor tie still opens 1D.
+            "4-4 minors tie: 1D",
+            "AK32",
+            "AKQ2",
+            "J432",
+            "4",
+            bid(1, Strain::Diamonds),
+        ),
+        (
+            // With minors tied at 3-3, both majors summing to 7 while staying under 5 (so
+            // neither one opens on its own) forces a 4-3 major split, i.e. the overall shape is
+            // unavoidably the balanced 4333 -- kept clear of 1NT/2NT's own ranges (12-14 hcp
+            // here) so this exercises only the 3-3 minor tie, not a notrump/strong-2C priority
+            // race.
+            "3-3 minors tie: 1C",
+            "QJ2",
+            "KQ2",
+            "432",
+            "AJ32",
+            bid(1, Strain::Clubs),
+        ),
+        (
+            // 3+!d/2=!c, below 1D's own 4+ length branches: the `4432` positional token is what
+            // extends "open the longer minor" down to this 3-2 split. 12 hcp, kept clear of
+            // 1NT's 15-17 (a balanced hand in that range opens notrump instead, which is correct
+            // -- this row only matters outside it).
+            "4=4=3=2 (3 diamonds, 2 clubs): 1D",
+            "32",
+            "Q32",
+            "J432",
+            "AKQ2",
+            bid(1, Strain::Diamonds),
+        ),
+        (
+            // Not the `4432` positional pattern (that's specifically 3+!d/2=!c): here clubs is
+            // the *longer* minor (3 vs. 2), so the ordinary length comparison opens 1C, exactly
+            // as it would for any other longer-clubs shape.
+            "4=4=2=3 (doubleton diamonds): longer clubs, 1C",
+            "Q32",
+            "32",
+            "J432",
+            "AKQ2",
+            bid(1, Strain::Clubs),
+        ),
+        (
+            "5 clubs, 2 diamonds (non-4432, longer clubs): 1C",
+            "AK432",
+            "32",
+            "K32",
+            "A32",
+            bid(1, Strain::Clubs),
+        ),
+        (
+            "2 clubs, 5 diamonds (non-4432, longer diamonds): 1D",
+            "32",
+            "AK432",
+            "K32",
+            "A32",
+            bid(1, Strain::Diamonds),
+        ),
+        (
+            "6 clubs, 1 diamond: 1C",
+            "AKQ432",
+            "4",
+            "K32",
+            "A32",
+            bid(1, Strain::Clubs),
+        ),
+        (
+            "1 club, 6 diamonds: 1D",
+            "4",
+            "AKQ432",
+            "K32",
+            "A32",
+            bid(1, Strain::Diamonds),
+        ),
+    ];
+
+    for &(label, c, d, h, s, expected) in cases {
+        let hnd = common::hand(c, d, h, s);
+        assert_eq!(
+            hnd.holding(Suit::Clubs).ranks().len()
+                + hnd.holding(Suit::Diamonds).ranks().len()
+                + hnd.holding(Suit::Hearts).ranks().len()
+                + hnd.holding(Suit::Spades).ranks().len(),
+            13,
+            "{label}: test fixture hand does not have 13 cards"
+        );
+        let hcp = bridge_eval::hcp(hnd);
+        assert!(
+            (12..=21).contains(&hcp),
+            "{label}: test fixture hand has {hcp} hcp, outside the 12-21 opening range"
+        );
+        let opened = best_opening(&ir, &candidates, hnd);
+        assert_eq!(
+            opened,
+            Some(expected),
+            "{label}: expected {expected:?}, got {opened:?} ({hnd:?}, {hcp} hcp)"
+        );
+    }
 }
 
 /// Opening coverage sanity (task brief, not `docs/design/12-roadmap.md`'s own 3.10 harness): over

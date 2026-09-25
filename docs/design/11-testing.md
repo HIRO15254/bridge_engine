@@ -320,7 +320,7 @@ jobs:
 | フェーズ完了時の重いテスト | `BRIDGE_CORPUS_DIR=corpus/data cargo test --release --workspace -- --ignored` (整合性 10^6、ESS、コーパス、DDS 差分、ナチュラル推定測定) |
 | ベンチ | `cargo bench --workspace` (`hcp` < 10 ns、手サンプル ≥ 10^5/s、配牌 ≥ 10^4/s、`interpret` < 10 μs、BML コンパイル < 1 s) |
 | 1 クレートのベンチ | `cargo bench -p bridge-constraint -- sampler` |
-| カバレッジレポート (フェーズ 4) | `cargo xtask coverage --system systems/sayc.bml --corpus corpus/data/pbn` |
+| カバレッジレポート (フェーズ 4) | `cargo xtask coverage --system systems/sayc/sayc.bml --corpus corpus/data/pbn` |
 | fuzz | `cargo +nightly fuzz run pbn_parse_lenient -- -max_total_time=600` (`crates/bridge-format/fuzz/`) |
 | スナップショット更新 | `cargo insta review` (`cargo install cargo-insta`) |
 | バインディング参照の再生成 | `cargo xtask dds regen-bindings` (libclang が必要) |
