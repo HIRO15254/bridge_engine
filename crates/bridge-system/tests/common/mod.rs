@@ -1,9 +1,13 @@
-//! Shared test helpers: where the vendored/fixture BML files live.
+//! Shared test helpers: where the vendored/fixture BML files live, and builders for auctions
+//! and hands from short text specs, so test bodies read as bidding sequences and PBN-style
+//! holdings.
 #![allow(dead_code)]
 
 pub mod bss;
 
 use std::path::PathBuf;
+
+use bridge_core::{Auction, Call, Hand, Holding, Rank, Seat, Vulnerability};
 
 /// `BRIDGE_SYSTEMS_DIR`, or `<crate>/../../systems`.
 pub fn systems_dir() -> PathBuf {
@@ -31,14 +35,16 @@ pub fn bml_files(dir: &std::path::Path) -> Vec<PathBuf> {
     out
 }
 
-/// Compiles `path`, guarded against the panic that `compile_description`'s `todo!()` (still
-/// unimplemented on this branch, owned by another lane) raises for any row with a non-empty
-/// description -- which is every row in every real `.bml` file today. Returns `None` (a "blocked"
-/// file, not a test failure) on that panic or on any other I/O problem; the panic hook is
-/// silenced for the duration so the expected panic does not spam stderr.
+/// Compiles `path`, guarded against the panic that a still-`todo!()` helper on another lane's
+/// branch (not yet merged here) would raise. Returns `None` (a "blocked" file, not a test
+/// failure) only when the panic payload looks like a `todo!()`/`unimplemented!()` message; any
+/// other panic -- a real bug in expansion, the trie or lints -- is re-raised via
+/// `resume_unwind` so it still fails the test. The panic hook is silenced for the duration so an
+/// expected "blocked" panic does not spam stderr.
 ///
-/// Every test that calls this becomes a real, unguarded assertion the moment `compile_description`
-/// lands: nothing about the comparison logic downstream of this function depends on the panic.
+/// Every test that calls this becomes a real, unguarded assertion the moment the last `todo!()`
+/// on the compile path lands: nothing about the comparison logic downstream of this function
+/// depends on the panic.
 pub fn compile_guarded(
     path: &std::path::Path,
     opts: &bridge_system::CompileOptions,
@@ -55,5 +61,72 @@ pub fn compile_guarded(
         )
     }));
     std::panic::set_hook(prev_hook);
-    result.ok().map(|(ir, _lints)| ir)
+    match result {
+        Ok((ir, _lints)) => Some(ir),
+        Err(payload) => {
+            if panic_looks_like_todo(&payload) {
+                None
+            } else {
+                std::panic::resume_unwind(payload);
+            }
+        }
+    }
+}
+
+/// True when a caught panic payload's message contains the boilerplate `todo!()`/
+/// `unimplemented!()` wording, as opposed to a genuine assertion or logic-error message.
+fn panic_looks_like_todo(payload: &(dyn std::any::Any + Send)) -> bool {
+    let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+        *s
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.as_str()
+    } else {
+        return false;
+    };
+    msg.contains("not yet implemented") || msg.contains("not implemented")
+}
+
+/// Builds an auction from a dealer, a vulnerability and a space-separated list of calls
+/// (`"1S P 2S P"`, `"P P 1NT P"`, `"X"`, `"XX"`, …), as accepted by `Call`'s `FromStr`.
+pub fn auction(dealer: Seat, vul: Vulnerability, calls: &str) -> Auction {
+    let calls: Vec<Call> = calls
+        .split_whitespace()
+        .map(|c| c.parse().unwrap_or_else(|_| panic!("bad call {c:?}")))
+        .collect();
+    Auction::from_calls(dealer, vul, calls).expect("legal auction")
+}
+
+/// Builds a 13-card hand from four suit holdings (clubs, diamonds, hearts, spades), each a
+/// string of rank characters (`"AKQJT98765432"`, case-insensitive, any subset, any order).
+pub fn hand(clubs: &str, diamonds: &str, hearts: &str, spades: &str) -> Hand {
+    Hand::from_holdings(
+        holding(clubs),
+        holding(diamonds),
+        holding(hearts),
+        holding(spades),
+    )
+}
+
+/// Parses one suit's ranks (see [`hand`]).
+pub fn holding(ranks: &str) -> Holding {
+    ranks.chars().fold(Holding::EMPTY, |h, c| h.with(rank(c)))
+}
+
+fn rank(c: char) -> Rank {
+    match c.to_ascii_uppercase() {
+        'A' => Rank::Ace,
+        'K' => Rank::King,
+        'Q' => Rank::Queen,
+        'J' => Rank::Jack,
+        'T' => Rank::Ten,
+        '9' => Rank::Nine,
+        '8' => Rank::Eight,
+        '7' => Rank::Seven,
+        '6' => Rank::Six,
+        '5' => Rank::Five,
+        '4' => Rank::Four,
+        '3' => Rank::Three,
+        '2' => Rank::Two,
+        other => panic!("not a rank: {other:?}"),
+    }
 }
