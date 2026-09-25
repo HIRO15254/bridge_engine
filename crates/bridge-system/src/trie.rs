@@ -115,7 +115,7 @@ pub enum Resolution {
 /// [`AuctionTrie::insert`] only ever needs [`Edge::Call`]; the expansion stage (which must also
 /// insert wildcard opponents' steps such as `(D)` or `(2C+)`) uses
 /// [`AuctionTrie::insert_path`] directly.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Edge {
     /// A concrete call.
     Call(Call),
@@ -170,6 +170,14 @@ impl AuctionTrie {
     }
 
     /// Walks the trie; about 30 ns per call.
+    ///
+    /// At each depth an exact edge for the call always wins over a wildcard ([`Edge::Class`])
+    /// edge, and among wildcard edges the first inserted one whose class matches wins. The walk
+    /// never backtracks (`docs/design/06-system.md` §6.2): when the exact subtree has no
+    /// continuation for a later call, the lookup stops there even if a wildcard sibling's
+    /// subtree would have matched the rest (e.g. with both `1C-(1S)-` and `1C-(suit)-2C`
+    /// defined, `1C (1S) 2C` stops after `(1S)`). An author who wants the wildcard's subtree
+    /// under the exact interference too writes it there (or `#PASTE`s it).
     pub fn resolve(&self, key: &LookupKey<'_>) -> Lookup {
         let root = Self::root_id(key.we_opened);
         let mut cur = root;

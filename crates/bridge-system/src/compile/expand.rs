@@ -31,7 +31,7 @@ use crate::{
     ast::{BidTable, BmlNode, CallToken, Description, SeatCond, Span, VulCond},
     compile::desc::{compile_description, context::RowContext},
     natural::Role,
-    pattern::{Binding, CallPattern, Level, Side, SidedPattern, StrainSet, Var},
+    pattern::{Binding, CallPattern, Level, OppClass, Side, SidedPattern, StrainSet, Var},
     trie::Edge,
 };
 
@@ -126,12 +126,16 @@ struct Frame {
     path: Vec<SidedPattern>,
     /// `path`'s 1:1 concrete-call counterpart (a `Call::Pass` filler at a wildcard step).
     resolved: Vec<Call>,
-    /// The concrete auction, dealer fixed at North; implicit passes and the wildcard filler are
-    /// both real entries here, so `auction.calls().len()` always matches the trie depth.
+    /// The concrete auction, dealer fixed at North, implicit passes included -- but only up to
+    /// the first wildcard step: a [`CallPattern::Class`] step has no concrete call, so nothing
+    /// is pushed for it (`docs/design/06-system.md` §4.2 point 3, "`auction` を変えずに") and the
+    /// auction is frozen from there on. Below a wildcard, legality and the last bid are read
+    /// from `edges` instead ([`Frame::is_legal`], [`Frame::last_bid`]).
     auction: Auction,
-    /// The trie path in lock-step with `auction`: a concrete [`Edge::Call`] everywhere except a
-    /// wildcard step, which is [`Edge::Class`] (its `auction`/`resolved` entry is a `Pass`
-    /// filler, never meant to be read as "they passed").
+    /// The trie path: one entry per call of the synthetic auction (implicit passes included), a
+    /// concrete [`Edge::Call`] everywhere except a wildcard step, which is [`Edge::Class`].
+    /// `edges.len()` is always the trie depth, and entry `i` was made by synthetic seat
+    /// `North + i`.
     edges: Vec<Edge>,
     /// Variable bindings live for this path only.
     env: Binding,
@@ -162,7 +166,151 @@ impl Frame {
 
     /// The synthetic seat that will make the next call.
     fn next_seat(&self) -> Seat {
-        Seat::North.offset((self.auction.calls().len() % 4) as u8)
+        Seat::North.offset((self.edges.len() % 4) as u8)
+    }
+
+    /// The last *known* bid of the path (a wildcard step's unknown call is not one).
+    fn last_bid(&self) -> Option<Bid> {
+        if !self.under_wildcard {
+            return self.auction.last_bid().map(|(_, b)| b);
+        }
+        self.edges.iter().rev().find_map(|e| match e {
+            Edge::Call(Call::Bid(b)) => Some(*b),
+            _ => None,
+        })
+    }
+
+    /// Whether `call` can be the next call. Exact on the concrete auction; below a wildcard,
+    /// "legal for at least one call the wildcard(s) could stand for" ([`relaxed_is_legal`]).
+    fn is_legal(&self, call: Call) -> bool {
+        if self.under_wildcard {
+            relaxed_is_legal(&self.edges, call)
+        } else {
+            self.auction.is_legal(call)
+        }
+    }
+
+    /// Whether some call of `class` can be the next call.
+    fn class_is_possible(&self, class: OppClass) -> bool {
+        (0..=37u8)
+            .filter_map(Call::from_index)
+            .any(|call| class.matches(call) && self.is_legal(call))
+    }
+
+    /// Appends a concrete call, which the caller has checked with [`Frame::is_legal`].
+    fn push_call(&mut self, call: Call) {
+        if !self.under_wildcard {
+            self.auction.push(call).expect("checked is_legal");
+        }
+        self.edges.push(Edge::Call(call));
+        if let Call::Bid(b) = call {
+            self.used = self.used.with(b.strain());
+        }
+    }
+
+    /// Appends a wildcard step (checked with [`Frame::class_is_possible`]); the auction is
+    /// frozen from here on.
+    fn push_class(&mut self, class: OppClass) {
+        self.edges.push(Edge::Class(class));
+        self.under_wildcard = true;
+    }
+
+    /// The concrete calls of the path, with a `Pass` filler at every wildcard step (what
+    /// [`Node::calls`] stores).
+    fn calls(&self) -> Vec<Call> {
+        self.edges
+            .iter()
+            .map(|e| match e {
+                Edge::Call(call) => *call,
+                Edge::Class(_) => Call::Pass,
+            })
+            .collect()
+    }
+}
+
+/// The synthetic seat that made `edges[i]`.
+fn seat_of_step(i: usize) -> Seat {
+    Seat::North.offset((i % 4) as u8)
+}
+
+/// Whether a step is certainly a `Pass`.
+fn is_certainly_pass(edge: &Edge) -> bool {
+    matches!(edge, Edge::Call(Call::Pass) | Edge::Class(OppClass::Pass))
+}
+
+/// Whether a step is certainly *not* a `Pass`.
+fn is_certainly_not_pass(edge: &Edge) -> bool {
+    match edge {
+        Edge::Call(call) => *call != Call::Pass,
+        Edge::Class(class) => !class.matches(Call::Pass),
+    }
+}
+
+/// Whether a wildcard class admits some bid.
+fn class_admits_a_bid(class: OppClass) -> bool {
+    !matches!(class, OppClass::Double | OppClass::Pass)
+}
+
+/// Legality of `call` after `edges`, some of which are wildcard steps standing for an unknown
+/// call of their class (`docs/design/06-system.md` §4.2 point 3). The rule is "legal for at
+/// least one assignment the wildcards could take", checked conservatively per call kind:
+///
+/// - the auction only counts as complete when it certainly is (three certain passes after a
+///   certain non-pass, or four certain passes);
+/// - a bid must be higher than the last *known* bid and, after an `AnyBidAtLevel(l)` wildcard,
+///   at least at level `l`;
+/// - a Double needs the last possibly-non-pass step to be an opponent's bid, or an opponent's
+///   wildcard that admits a bid; a Redouble likewise an opponent's Double, or an opponent's
+///   `(any)`/Double-class wildcard.
+///
+/// Without any wildcard this agrees exactly with [`Auction::is_legal`].
+fn relaxed_is_legal(edges: &[Edge], call: Call) -> bool {
+    let n = edges.len();
+    let complete = n >= 4
+        && edges[n - 3..].iter().all(is_certainly_pass)
+        && (is_certainly_not_pass(&edges[n - 4]) || (n == 4 && is_certainly_pass(&edges[0])));
+    if complete {
+        return false;
+    }
+    let me = seat_of_step(n);
+    let last_live = edges
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, e)| !is_certainly_pass(e));
+    match call {
+        Call::Pass => true,
+        Call::Bid(b) => {
+            let mut last_known: Option<Bid> = None;
+            let mut min_level = 1u8;
+            for edge in edges {
+                match edge {
+                    Edge::Call(Call::Bid(known)) => {
+                        last_known = Some(*known);
+                        min_level = 1;
+                    }
+                    Edge::Class(OppClass::AnyBidAtLevel(level)) => {
+                        min_level = min_level.max(*level);
+                    }
+                    _ => {}
+                }
+            }
+            last_known.is_none_or(|last| b > last) && b.level() >= min_level
+        }
+        Call::Double => last_live.is_some_and(|(i, e)| {
+            seat_of_step(i).side() != me.side()
+                && match e {
+                    Edge::Call(c) => c.bid().is_some(),
+                    Edge::Class(class) => class_admits_a_bid(*class),
+                }
+        }),
+        Call::Redouble => last_live.is_some_and(|(i, e)| {
+            seat_of_step(i).side() != me.side()
+                && match e {
+                    Edge::Call(c) => *c == Call::Double,
+                    Edge::Class(class) => class.matches(Call::Double),
+                }
+        }),
     }
 }
 
@@ -538,7 +686,7 @@ fn expand_history(
         indent: 0,
         span: tok.span.clone(),
     };
-    let mut claimed = Vec::new();
+    let mut claimed = Claimed::default();
     let outcomes = expand_row(
         &synthetic,
         true,
@@ -577,12 +725,19 @@ fn expand_history(
 /// recursing into its own children and, when `parent` is given, linking each row's node as one of
 /// `parent`'s [`Node::children`].
 ///
-/// `bids_processed` (bss.py's own name for this) tracks every concrete call already produced by
-/// an *earlier row of this same list*, exact or pattern alike: a later row whose candidate
+/// `bids_processed` (bss.py's own name for this) tracks every trie edge already produced by an
+/// *earlier row of this same list*, exact or pattern alike: a later row whose candidate
 /// collides with one is a genuine redefinition of the same position (`first definition wins`,
 /// already reported by [`build_or_reuse_node`]/[`handle_duplicate`]), so its subtree is not
 /// merged into the earlier row's node -- unlike a history token's collision with a *different*
-/// table's prefix, which is exactly what re-tracing means to merge.
+/// table's prefix, which is exactly what re-tracing means to merge. Keyed by [`Edge`], not by
+/// the concrete call, so a wildcard step never collides with a real `Pass` (or with another
+/// wildcard class).
+///
+/// A *pattern* row never even builds a node for a candidate an earlier sibling already
+/// produced ([`Claimed`]): an exact row shadows it with [`LintCode::ShadowedByExact`], and an
+/// earlier pattern row (the `1M …` then catch-all `1X …` idiom) silently, as bss.py's
+/// `bid not in bids_processed` does.
 #[allow(clippy::too_many_arguments)]
 fn expand_children(
     rows: &[BmlNode],
@@ -595,8 +750,8 @@ fn expand_children(
     parent: Option<NodeId>,
     ex: &mut Expansion,
 ) {
-    let mut claimed: Vec<Call> = Vec::new();
-    let mut bids_processed: std::collections::HashSet<Call> = std::collections::HashSet::new();
+    let mut claimed = Claimed::default();
+    let mut bids_processed: std::collections::HashSet<Edge> = std::collections::HashSet::new();
 
     for row in rows.iter().filter(|r| is_exact_row(r)) {
         for (node_id, next) in expand_row(
@@ -611,11 +766,11 @@ fn expand_children(
             frame,
             ex,
         ) {
-            let call = *next
-                .resolved
+            let edge = *next
+                .edges
                 .last()
-                .expect("expand_row pushed this row's call");
-            if !bids_processed.insert(call) {
+                .expect("expand_row pushed this row's edge");
+            if !bids_processed.insert(edge) {
                 continue; // this sibling list already produced `call`; skip the subtree.
             }
             if let Some(p) = parent {
@@ -649,11 +804,11 @@ fn expand_children(
             frame,
             ex,
         ) {
-            let call = *next
-                .resolved
+            let edge = *next
+                .edges
                 .last()
-                .expect("expand_row pushed this row's call");
-            if !bids_processed.insert(call) {
+                .expect("expand_row pushed this row's edge");
+            if !bids_processed.insert(edge) {
                 continue; // this sibling list already produced `call`; skip the subtree.
             }
             if let Some(p) = parent {
@@ -676,6 +831,16 @@ fn expand_children(
     }
 }
 
+/// The trie edges a sibling list has already produced, split by the kind of row that produced
+/// them (see [`expand_children`]).
+#[derive(Default)]
+struct Claimed {
+    /// By exact rows (processed first).
+    exact: Vec<Edge>,
+    /// By earlier pattern rows.
+    pattern: Vec<Edge>,
+}
+
 fn is_exact_row(row: &BmlNode) -> bool {
     matches!(row.calls[0].pattern, CallPattern::Exact(_))
 }
@@ -694,7 +859,7 @@ fn is_exact_row(row: &BmlNode) -> bool {
 fn expand_row(
     row: &BmlNode,
     is_exact_row: bool,
-    claimed_by_exact: &mut Vec<Call>,
+    claimed: &mut Claimed,
     we_opened: bool,
     seat: SeatCond,
     vul: VulCond,
@@ -730,7 +895,7 @@ fn expand_row(
         }
     };
 
-    let last_bid = frame.auction.last_bid().map(|(_, b)| b);
+    let last_bid = frame.last_bid();
     let candidates = generate_candidates(
         &tok.pattern,
         &frame.env,
@@ -783,17 +948,16 @@ fn expand_row(
         let mut next = frame.clone();
 
         if needs_implicit_pass(next.path.last().map(|p| p.side), side) {
-            let opp_pass = Call::Pass;
-            if next.auction.push(opp_pass).is_err() {
+            if !next.is_legal(Call::Pass) {
                 continue; // the auction is already complete: nothing legal follows.
             }
-            next.edges.push(Edge::Call(opp_pass));
+            next.push_call(Call::Pass);
         }
 
         let seat_now = next.next_seat();
         let concrete_call = match cand.edge {
             Edge::Call(call) => {
-                if !next.auction.is_legal(call) {
+                if !next.is_legal(call) {
                     ex.lints.push(
                         Lint::error(
                             LintCode::IllegalCall,
@@ -804,29 +968,28 @@ fn expand_row(
                     );
                     continue;
                 }
-                next.auction.push(call).expect("checked is_legal");
-                next.edges.push(Edge::Call(call));
-                if let Call::Bid(b) = call {
-                    next.used = next.used.with(b.strain());
-                }
+                next.push_call(call);
                 call
             }
             Edge::Class(class) => {
-                // No concrete call; auction/used stay put (a `Pass` filler keeps `auction`'s
-                // depth matching the trie's), per §4.2 point 3.
-                let filler = Call::Pass;
-                if next.auction.push(filler).is_err() {
+                // No concrete call: `auction`/`used` stay put (§4.2 point 3) and only the trie
+                // path records the wildcard. `resolved`/`Node::calls` carry a `Pass` filler.
+                if !next.class_is_possible(class) {
                     continue;
                 }
-                next.edges.push(Edge::Class(class));
-                next.under_wildcard = true;
-                filler
+                next.push_class(class);
+                Call::Pass
             }
         };
 
         if is_exact_row {
-            claimed_by_exact.push(concrete_call);
-        } else if claimed_by_exact.contains(&concrete_call) {
+            claimed.exact.push(cand.edge);
+        } else if claimed.pattern.contains(&cand.edge) {
+            // An earlier *pattern* sibling already produced this call (`1M …` then a catch-all
+            // `1X …`): skipped silently, like bss.py's `bid not in bids_processed`, before any
+            // node is built, so no spurious DuplicatePath is reported.
+            continue;
+        } else if claimed.exact.contains(&cand.edge) {
             ex.lints.push(
                 Lint::info(
                     LintCode::ShadowedByExact,
@@ -880,6 +1043,12 @@ fn expand_row(
         next.last_by_seat[seat_now.index() as usize] = Some(node_id);
         ex.rows[row_id.0 as usize].expansions.push(node_id);
         out.push((node_id, next));
+    }
+    if !is_exact_row {
+        claimed.pattern.extend(
+            out.iter()
+                .map(|(_, next)| *next.edges.last().expect("pushed")),
+        );
     }
     out
 }
@@ -941,19 +1110,23 @@ fn report_empty_candidates(
 /// backwards. Unlike "the last bid by anyone" (which can be our own or our partner's bid, e.g.
 /// `1N-(P)-2C` has no bid from *them* yet even though `1N` is the auction's last bid), this is
 /// always genuinely the opponents' bid, for a row on either [`Side`].
-fn opponents_last_bid(auction: &Auction, seat_now: Seat) -> Option<Bid> {
+///
+/// Read from the trie path (`edges[i]` made by synthetic seat `North + i`): an opponents'
+/// wildcard step that could be a bid makes their last bid unknown (`None`).
+fn opponents_last_bid(edges: &[Edge], seat_now: Seat) -> Option<Bid> {
     let their_side = seat_now.side().other();
-    auction
-        .calls()
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(i, call)| {
-            their_side
-                .contains(auction.seat_at(i))
-                .then(|| call.bid())
-                .flatten()
-        })
+    for (i, edge) in edges.iter().enumerate().rev() {
+        if !their_side.contains(seat_of_step(i)) {
+            continue;
+        }
+        match edge {
+            Edge::Call(Call::Bid(b)) => return Some(*b),
+            Edge::Call(_) => {}
+            Edge::Class(class) if class_admits_a_bid(*class) => return None,
+            Edge::Class(_) => {}
+        }
+    }
+    None
 }
 
 /// Builds the [`Node`] for one candidate and inserts it into the trie; on a collision with an
@@ -999,7 +1172,7 @@ fn build_or_reuse_node(
         }
     }
 
-    let calls = next_frame.auction.calls().to_vec();
+    let calls = next_frame.calls();
     let level = call.bid().map_or(0, |b| b.level());
     let hash = hash_suit(&next_frame.path, &next_frame.resolved);
 
@@ -1012,7 +1185,7 @@ fn build_or_reuse_node(
         next_frame.last_by_seat[seat_now.index() as usize].map(|id| &ex.nodes[id.0 as usize]);
     let partner_last = next_frame.last_by_seat[seat_now.partner().index() as usize]
         .map(|id| &ex.nodes[id.0 as usize]);
-    let their_last_bid = opponents_last_bid(&next_frame.auction, seat_now);
+    let their_last_bid = opponents_last_bid(&next_frame.edges, seat_now);
     let bid_suit = call.bid().and_then(|b| b.strain().suit());
     // Partner's call only agrees `bid_suit` when it actually shows length there: a bare
     // same-strain call is not enough on its own (`docs/design/06-system.md` §7.5's
@@ -1122,24 +1295,13 @@ fn build_or_reuse_node(
         );
     }
 
-    let has_wildcard = next_frame.edges.iter().any(|e| matches!(e, Edge::Class(_)));
-    let insert_result = if has_wildcard {
-        ex.trie.insert_path(
-            we_opened_of(next_frame),
-            &next_frame.edges,
-            seat,
-            vul,
-            node_id,
-        )
-    } else {
-        ex.trie.insert(
-            we_opened_of(next_frame),
-            next_frame.auction.calls(),
-            seat,
-            vul,
-            node_id,
-        )
-    };
+    let insert_result = ex.trie.insert_path(
+        we_opened_of(next_frame),
+        &next_frame.edges,
+        seat,
+        vul,
+        node_id,
+    );
 
     match insert_result {
         Ok(()) => Some(node_id),
@@ -1490,31 +1652,92 @@ mod tests {
         // `1N-(P)-2C`: dealer North bids 1N, East (Them) passes, South (Us) bids 2C. `Them`'s
         // only call is a pass, so there is no bid from them yet, not the auction's last bid
         // (1N, which is ours).
-        let auction = Auction::from_calls(
-            Seat::North,
-            Vulnerability::None,
-            [Call::Bid(Bid::new(1, Strain::NoTrump).unwrap()), Call::Pass],
-        )
-        .unwrap();
-        assert_eq!(opponents_last_bid(&auction, Seat::South), None);
+        let edges = [
+            Edge::Call(Call::Bid(Bid::new(1, Strain::NoTrump).unwrap())),
+            Edge::Call(Call::Pass),
+        ];
+        assert_eq!(opponents_last_bid(&edges, Seat::South), None);
     }
 
     #[test]
     fn opponents_last_bid_finds_the_opponents_own_bid() {
         // 1C-(1H)-1S: South's row context should see East's 1H as their_last_bid.
-        let auction = Auction::from_calls(
-            Seat::North,
-            Vulnerability::None,
-            [
-                Call::Bid(Bid::new(1, Strain::Clubs).unwrap()),
-                Call::Bid(Bid::new(1, Strain::Hearts).unwrap()),
-            ],
-        )
-        .unwrap();
+        let edges = [
+            Edge::Call(Call::Bid(Bid::new(1, Strain::Clubs).unwrap())),
+            Edge::Call(Call::Bid(Bid::new(1, Strain::Hearts).unwrap())),
+        ];
         assert_eq!(
-            opponents_last_bid(&auction, Seat::South),
+            opponents_last_bid(&edges, Seat::South),
             Some(Bid::new(1, Strain::Hearts).unwrap())
         );
+    }
+
+    #[test]
+    fn opponents_last_bid_is_unknown_behind_a_bidding_wildcard() {
+        // 1C-(1H)-P-(suit): the opponents' wildcard hides whatever they bid after 1H.
+        let edges = [
+            Edge::Call(Call::Bid(Bid::new(1, Strain::Clubs).unwrap())),
+            Edge::Call(Call::Bid(Bid::new(1, Strain::Hearts).unwrap())),
+            Edge::Call(Call::Pass),
+            Edge::Class(OppClass::AnySuitBid),
+        ];
+        assert_eq!(opponents_last_bid(&edges, Seat::North), None);
+    }
+
+    #[test]
+    fn relaxed_legality_matches_auction_without_wildcards() {
+        let bid = |l, s| Call::Bid(Bid::new(l, s).unwrap());
+        let sequences: [&[Call]; 5] = [
+            &[],
+            &[bid(1, Strain::Clubs)],
+            &[bid(1, Strain::Clubs), Call::Double],
+            &[bid(1, Strain::Clubs), Call::Pass, Call::Pass],
+            &[Call::Pass, Call::Pass, Call::Pass],
+        ];
+        for calls in sequences {
+            let auction =
+                Auction::from_calls(Seat::North, Vulnerability::None, calls.iter().copied())
+                    .unwrap();
+            let edges: Vec<Edge> = calls.iter().copied().map(Edge::Call).collect();
+            for call in (0..=37u8).filter_map(Call::from_index) {
+                assert_eq!(
+                    relaxed_is_legal(&edges, call),
+                    auction.is_legal(call),
+                    "{calls:?} then {call:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn relaxed_legality_below_a_wildcard() {
+        let c1 = Edge::Call(Call::Bid(Bid::new(1, Strain::Clubs).unwrap()));
+        let suit = Edge::Class(OppClass::AnySuitBid);
+        let pass = Edge::Call(Call::Pass);
+        // 1C (suit) X: doubling their unknown suit bid.
+        assert!(relaxed_is_legal(&[c1, suit], Call::Double));
+        // 1C (suit) P (P) X: reopening double of the same unknown bid.
+        assert!(relaxed_is_legal(&[c1, suit, pass, pass], Call::Double));
+        // 1C (suit) P (P) P: three certain passes after a certainly non-pass wildcard end it.
+        assert!(!relaxed_is_legal(&[c1, suit, pass, pass, pass], Call::Pass));
+        // 1C (P-class) X: doubling partner's bid is still illegal.
+        assert!(!relaxed_is_legal(
+            &[c1, Edge::Class(OppClass::Pass)],
+            Call::Double
+        ));
+        // 1C (any) XX: the wildcard may be a Double.
+        assert!(relaxed_is_legal(
+            &[c1, Edge::Class(OppClass::AnyCall)],
+            Call::Redouble
+        ));
+        // A bid must still beat the last known bid.
+        assert!(!relaxed_is_legal(
+            &[
+                Edge::Call(Call::Bid(Bid::new(1, Strain::Diamonds).unwrap())),
+                suit
+            ],
+            Call::Bid(Bid::new(1, Strain::Clubs).unwrap())
+        ));
     }
 
     // -- Full-table expansion scenarios (built as AST literals, bypassing the parser, so each
@@ -2008,11 +2231,19 @@ mod tests {
         let child = &ex.nodes[node_2h.children[0].0 as usize];
         assert_eq!(child.description, "a");
 
-        // The conflicting redefinition is still reported.
+        // The later pattern row is skipped before any node is built, silently (bss.py's
+        // `bid not in bids_processed`): no DuplicatePath, and "second" has no expansion.
         assert!(
-            ex.lints.iter().any(|l| l.code == LintCode::DuplicatePath
-                && l.severity == crate::lint::Severity::Warning)
+            ex.lints.iter().all(|l| l.code != LintCode::DuplicatePath),
+            "{:?}",
+            ex.lints
         );
+        let second = ex
+            .rows
+            .iter()
+            .find(|r| r.description_raw == "second")
+            .expect("row exists");
+        assert!(second.expansions.is_empty());
     }
 
     #[test]

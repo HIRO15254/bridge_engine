@@ -371,8 +371,8 @@ impl Binding {
    - `Var{level, v}`: `env.get(v)` が `Some` → `[(level, strain)]`; `v ∈ {oM, om}` で `M`/`m` が未束縛 → `Lint::UnboundOther` (行をスキップ); それ以外は `env.candidates(v, used)` (領域 `M`: H,S; `m`: C,D; `X/Y/Z`: C,D,H,S を (a) `used` に無いストレイン、(c) 束縛済みのものに対して `X<Y<Z` でフィルタ) をさらに (b) `auction` の最終ビッドより上でフィルタし、各候補で `env.bind(v, strain)` を部分木の間だけ使う。候補なし → `Lint::VariableNoCandidate` (Info。Python は「Could not find a bid」をログする)。
    - `Step(n)` → `auction` の最終ビッド + n (ストレイン順 C<D<H<S<N をまたぐ)。最終ビッドが無い → `Lint::StepWithoutAnchor`。
    - `AnyOf(ps)` → 上記の和 (順序どおり)。
-   - `Class(k)` → 具体コールを持たない単一のワイルドカード辺。部分木は `used`/`auction` を変えずに展開する (コールが未知のため)。したがってワイルドカードの下では `Step` と新規変数を禁止する (Lint)。
-4. 各候補 `c` について: 同じ兄弟リストが既に `c` を生成していれば (Exact 優先規則) `Lint::ShadowedByExact` (Info) でスキップ; `auction.is_legal(c)` を検査し、違反は `Lint::IllegalCall` (Error) で部分木を捨てる; `r.side` が直前のコールの側と同じなら先に暗黙パスを挿入 (§4.3); 説明文の変数 (`\bM\b`, `(\d+)M\b`, `oM`, `m`, `om`, `X/Y/Z`, `#`) を置換して `description` を作る; この具体経路の文脈で説明文をコンパイル (§7); `Node` を生成; `AuctionTrie::insert(we_opened, &calls, seat, vul, node)` でトライへ挿入; `Err(existing)` (同一条件のエントリが既にある) なら最初のものを残し `Lint::DuplicatePath` (両方の説明が非空で異なれば Warning。最初のエントリの説明が空なら Python と同様に *埋める*)。
+   - `Class(k)` → 具体コールを持たない単一のワイルドカード辺。部分木は `used`/`auction` を変えずに展開する (コールが未知のため)。したがってワイルドカードの下では `Step` と新規変数を禁止する (Lint)。ワイルドカードより下の合法性は「ワイルドカードが表しうるコールの少なくとも 1 つについて合法」で判定する (緩和した合法性: ビッドは既知の最終ビッドより上、ダブルは直前の非パス候補が相手のビッドまたはビッドを含むクラス、リダブルは相手のダブルまたはダブルを含むクラス、オークション終了は確実な場合のみ)。`Node.calls` と `resolved` ではワイルドカード位置に `Pass` の埋め草を置くが、兄弟の重複判定 (Exact 優先・`bids_processed`) はコールではなくトライ辺 (`Edge`) で行うので、ワイルドカードが実際の `(P)` 行や別クラスの兄弟と衝突することはない。
+4. 各候補 `c` について: 同じ兄弟リストの Exact 行が既に `c` を生成していれば (Exact 優先規則) `Lint::ShadowedByExact` (Info) でスキップ; パターン行の候補が先行する *パターン* 兄弟の生成済みコールと一致すれば、`bss.py` の `bid not in bids_processed` と同じく Lint なしで (ノードを作る前に) スキップ (`1M …` の後の包括的な `1X …` の慣用); `auction.is_legal(c)` を検査し、違反は `Lint::IllegalCall` (Error) で部分木を捨てる; `r.side` が直前のコールの側と同じなら先に暗黙パスを挿入 (§4.3); 説明文の変数 (`\bM\b`, `(\d+)M\b`, `oM`, `m`, `om`, `X/Y/Z`, `#`) を置換して `description` を作る; この具体経路の文脈で説明文をコンパイル (§7); `Node` を生成; `AuctionTrie::insert(we_opened, &calls, seat, vul, node)` でトライへ挿入; `Err(existing)` (同一条件のエントリが既にある) なら最初のものを残し `Lint::DuplicatePath` (両方の説明が非空で異なれば Warning。最初のエントリの説明が空なら Python と同様に *埋める*)。
 5. 更新した状態で子へ再帰する。戻るときに変数の束縛を解き、`used`/`auction` を復元する。
 
 **オラクル**: `systems/vendor/data/bml-test/` に取得した `example{1..6}.bml` を展開し、生成した具体系列の集合 (席・vul・`we_opened` 込み) が対応する `.bss` と完全一致することを統合テストで確認する。`.bss` の系列表記 (`001CP1DP1HP2C`: 先頭 2 桁が席と vul、`*` 接頭辞が相手オープン、以降がコール列) からの復号は `tests/bss.rs` の補助関数に閉じ込める。
@@ -636,7 +636,7 @@ pub enum Resolution {
 `resolve` の手順:
 
 1. `root = if key.we_opened { 0 } else { 1 }`、`cur = root`、`d = 0`。
-2. `key.calls[d]` について `cur.exact` を二分探索。見つかれば次へ; 無ければ `cur.classes` の中で述語が成り立つ最初の辺を取る (`via_class += 1`); どちらも無ければ停止。
+2. `key.calls[d]` について `cur.exact` を二分探索。見つかれば次へ; 無ければ `cur.classes` の中で述語が成り立つ最初の辺を取る (`via_class += 1`); どちらも無ければ停止。 後戻りはしない: Exact 辺が存在すればその部分木に入り、後続のコールがそこで見つからなくても、ワイルドカード辺の部分木を試し直すことはない (Exact が常に勝つ)。
 3. 進んだ先の `entries` から `(key.opener_pos, key.vul)` に一致する最大特定度のエントリを選び `by_depth.push(Some(node))`。エントリが無い (暗黙パスのノード、または行の無い辺) なら `None`。
 4. 深さ `d` のコールが我々側で、かつエントリが `None` かつ暗黙パスでもなければ、`matched_depth` はそこで止まる (次節)。
 5. `end` は最後に到達したトライノード。

@@ -103,7 +103,10 @@ pub struct Node {
     /// Pattern path (shared with the row).
     pub path: Arc<[SidedPattern]>,
     /// Concrete calls from the opening bid up to and including this call, implicit passes
-    /// included.
+    /// included. An opponents' wildcard step (`(any)`/`(bid)`/`(suit)`, a trie
+    /// [`Edge::Class`](crate::trie::Edge::Class)) has no concrete call and is stored as a `Pass`
+    /// filler here (and as [`Node::call`] of the wildcard's own node); the trie path, not this
+    /// vector, is what identifies such a position.
     pub calls: Vec<Call>,
     /// This node's call.
     pub call: Call,
