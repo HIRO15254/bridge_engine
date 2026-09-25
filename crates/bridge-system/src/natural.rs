@@ -242,8 +242,16 @@ pub struct CallContext {
     /// The suit and level of `owner`'s own first [`Call::Bid`] so far, if any. Unlike
     /// `our_suits` (side-level: opener's and responder's suits combined), this identifies
     /// specifically the suit `owner` opened, needed to check a reverse's first-suit length
-    /// exactly rather than against the whole side's suits.
+    /// exactly rather than against the whole side's suits. Notrump bids are skipped: this is
+    /// only ever a *suit*, so after e.g. `1NT-P-2D-P-2H` it holds `(Hearts, 2)`, the transfer
+    /// completion, not the 1NT opening -- see `opener_first_bid` for the latter.
     pub opener_first_suit: Option<(Suit, u8)>,
+    /// `owner`'s own first [`Call::Bid`] so far, whatever the strain (including notrump),
+    /// unlike `opener_first_suit` which skips notrump. Needed by rules (`rebid_own`) that must
+    /// know the level/strength of the *opening bid itself*, since after a notrump opening or a
+    /// strong 2C, `opener_first_suit` instead names a later suit bid (a transfer completion, or
+    /// nothing at all for 2C).
+    pub opener_first_bid: Option<Bid>,
 }
 
 /// Classifies call `index` of `auction` from the point of view of its caller.
@@ -263,6 +271,7 @@ pub fn classify(auction: &Auction, index: usize, owner: Seat) -> CallContext {
 
     let role = classify_role(auction, history, index, owner);
     let opener_first_suit = owner_first_suit(auction, history, owner);
+    let opener_first_bid = owner_first_bid(auction, history, owner);
     let kind = classify_kind(
         auction,
         history,
@@ -321,6 +330,7 @@ pub fn classify(auction: &Auction, index: usize, owner: Seat) -> CallContext {
         last_bid,
         forcing_situation: false,
         opener_first_suit,
+        opener_first_bid,
     }
 }
 
@@ -389,6 +399,20 @@ fn owner_first_suit(auction: &Auction, history: &[Call], owner: Seat) -> Option<
             Call::Bid(b) => b.strain().suit().map(|s| (s, b.level())),
             _ => None,
         })
+}
+
+/// `owner`'s first [`Call::Bid`] in `history`, whatever the strain -- unlike `owner_first_suit`,
+/// a notrump opening is not skipped. Needed to recover the level/strain of the actual opening
+/// bid when `owner_first_suit` instead names a later suit (a transfer completion after 1NT/2NT,
+/// or nothing at all after a strong 2C, since 2C itself is recorded by `owner_first_suit` too --
+/// callers that need to tell a 2C opening apart from a weak two must match on `owner_first_bid`'s
+/// strain, not merely its level).
+fn owner_first_bid(auction: &Auction, history: &[Call], owner: Seat) -> Option<Bid> {
+    history
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| auction.seat_at(*i) == owner)
+        .find_map(|(_, c)| c.bid())
 }
 
 /// The lowest level at which `strain` may legally be bid over `last_bid`.
@@ -1121,6 +1145,42 @@ fn rule_resp_nt(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     })
 }
 
+/// The HCP range implied by the *original* opening bid, for rules (`rebid_own`) that need to
+/// know what kind of opening is being rebid rather than always assuming the 1-level range: a
+/// weak two, a preempt or a strong 2C is a fundamentally different hand.
+///
+/// Takes `opener_first_bid` (the owner's first [`Call::Bid`] of any strain), not
+/// `opener_first_suit`: the latter skips notrump, so after `1NT-P-2D-P-2H` (a transfer
+/// completion) it names `(Hearts, 2)`, which is not the opening at all. Matching on that level
+/// alone would misjudge a later rebid of the transfer suit as a weak two.
+///
+/// Found by the hold-out measurement (D8 measurement 1, `crates/bridge-bidding/tests/
+/// natural_metrics.rs`): `rule_rebid_own` used to compare every own-suit rebid against
+/// `opening_hcp` (12..=21) unconditionally, even when the opening itself was a weak two or a
+/// preempt. `weak_two` and `opening_hcp` are disjoint ranges, so every weak-two rebid-own node
+/// measured recall and precision of exactly 0, not merely low -- the constraint the generic
+/// engine inferred could never be satisfied by the same hand that satisfied the real, weak
+/// range at all. See `rebid_own_after_weak_two_uses_weak_two_hcp` below.
+fn opening_level_hcp(p: &NaturalParams, opener_first_bid: Option<Bid>) -> RangeInclusive<u8> {
+    match opener_first_bid {
+        // A strong 2C opening: checked before the generic level-2 suit case below, since 2C is
+        // itself a suit bid and would otherwise match it.
+        Some(bid) if bid.level() == 2 && bid.strain() == Strain::Clubs => p.strong_two_c..=37,
+        // A weak two (2D/2H/2S): any other suit at level 2.
+        Some(bid) if bid.level() == 2 && bid.strain().suit().is_some() => p.weak_two.1.clone(),
+        // A suit preempt at the 3-5 level.
+        Some(bid) if (3..=5).contains(&bid.level()) && bid.strain().suit().is_some() => p
+            .preempt
+            .iter()
+            .find(|(lvl, _, _)| *lvl == bid.level())
+            .map(|(_, _, hcp)| hcp.clone())
+            .unwrap_or_else(|| p.opening_hcp.clone()),
+        // A 1-level opening (suit or NT), a notrump opening at any level, or anything else this
+        // table does not special-case: the 1-level range is still the closest available default.
+        _ => p.opening_hcp.clone(),
+    }
+}
+
 fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     if ctx.role != Role::Opener {
         return None;
@@ -1138,7 +1198,7 @@ fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     let hcp = if jump >= 1 {
         p.rebid.jump_rebid.clone()
     } else {
-        p.opening_hcp.clone()
+        opening_level_hcp(p, ctx.opener_first_bid)
     };
     let constraint =
         HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_suit_len(suit, 6..=13));
@@ -1306,7 +1366,160 @@ impl Default for NaturalInference {
 
 #[cfg(test)]
 mod tests {
+    use bridge_core::Vulnerability;
+
     use super::*;
+
+    /// Regression for the hold-out measurement's finding (see `opening_level_hcp`'s doc comment):
+    /// rebidding one's own suit after a *weak two* opening must be judged against `weak_two`'s
+    /// HCP range, not `opening_hcp` (12..=21), which is disjoint from it.
+    #[test]
+    fn rebid_own_after_weak_two_uses_weak_two_hcp() {
+        let engine = NaturalInference::default();
+        // 2H (weak two) - P - 2NT (feature ask) - P - 3H (opener rebids own suit, no jump).
+        let auction = Auction::from_calls(
+            Seat::North,
+            Vulnerability::None,
+            [
+                Call::Bid(Bid::new(2, Strain::Hearts).unwrap()),
+                Call::Pass,
+                Call::Bid(Bid::new(2, Strain::NoTrump).unwrap()),
+                Call::Pass,
+                Call::Bid(Bid::new(3, Strain::Hearts).unwrap()),
+            ],
+        )
+        .unwrap();
+        let ctx = classify(&auction, 4, Seat::North);
+        assert_eq!(ctx.role, Role::Opener);
+        assert!(matches!(
+            ctx.kind,
+            CallKind::Bid {
+                rebid_own: true,
+                jump: 0,
+                ..
+            }
+        ));
+
+        let inf = engine.infer(&ctx);
+        assert_eq!(inf.rule, "rebid_own");
+        let params = NaturalParams::default();
+        assert_eq!(inf.constraint.hcp_range(), params.weak_two.1);
+        assert_ne!(inf.constraint.hcp_range(), params.opening_hcp);
+    }
+
+    /// Same shape, but after a preempt: the 3-level table's hcp applies, not `opening_hcp`
+    /// either.
+    #[test]
+    fn rebid_own_after_preempt_uses_preempt_hcp() {
+        let engine = NaturalInference::default();
+        // 3H (preempt) - P - 3NT (asking) - P - 4H (opener rebids own suit, no jump).
+        let auction = Auction::from_calls(
+            Seat::North,
+            Vulnerability::None,
+            [
+                Call::Bid(Bid::new(3, Strain::Hearts).unwrap()),
+                Call::Pass,
+                Call::Bid(Bid::new(3, Strain::NoTrump).unwrap()),
+                Call::Pass,
+                Call::Bid(Bid::new(4, Strain::Hearts).unwrap()),
+            ],
+        )
+        .unwrap();
+        let ctx = classify(&auction, 4, Seat::North);
+        let inf = engine.infer(&ctx);
+        assert_eq!(inf.rule, "rebid_own");
+        let params = NaturalParams::default();
+        let (_, _, expected_hcp) = params
+            .preempt
+            .iter()
+            .find(|(level, _, _)| *level == 3)
+            .expect("NaturalParams::default() has a 3-level preempt entry");
+        assert_eq!(inf.constraint.hcp_range(), *expected_hcp);
+    }
+
+    /// Regression: a rebid of the suit reached via a Jacoby transfer completion must be judged
+    /// against the 1NT opening's own strength (`opening_hcp`, since the notrump tiers are not in
+    /// this table), not against `weak_two` -- `opener_first_suit` names the completion (`2H` at
+    /// level 2), which used to be mistaken for a weak-two opening by level alone (see
+    /// `opening_level_hcp`'s doc comment).
+    #[test]
+    fn rebid_own_after_nt_transfer_completion_uses_opening_hcp() {
+        let engine = NaturalInference::default();
+        // 1NT - P - 2D (transfer) - P - 2H (completion) - P - 3NT (asking) - P - 4H (opener
+        // rebids the transfer suit, no jump).
+        let auction = Auction::from_calls(
+            Seat::North,
+            Vulnerability::None,
+            [
+                Call::Bid(Bid::new(1, Strain::NoTrump).unwrap()),
+                Call::Pass,
+                Call::Bid(Bid::new(2, Strain::Diamonds).unwrap()),
+                Call::Pass,
+                Call::Bid(Bid::new(2, Strain::Hearts).unwrap()),
+                Call::Pass,
+                Call::Bid(Bid::new(3, Strain::NoTrump).unwrap()),
+                Call::Pass,
+                Call::Bid(Bid::new(4, Strain::Hearts).unwrap()),
+            ],
+        )
+        .unwrap();
+        let ctx = classify(&auction, 8, Seat::North);
+        assert_eq!(ctx.role, Role::Opener);
+        assert_eq!(ctx.opener_first_suit, Some((Suit::Hearts, 2)));
+        assert!(matches!(
+            ctx.kind,
+            CallKind::Bid {
+                rebid_own: true,
+                jump: 0,
+                ..
+            }
+        ));
+
+        let inf = engine.infer(&ctx);
+        assert_eq!(inf.rule, "rebid_own");
+        let params = NaturalParams::default();
+        assert_eq!(inf.constraint.hcp_range(), params.opening_hcp);
+        assert_ne!(inf.constraint.hcp_range(), params.weak_two.1);
+    }
+
+    /// Regression: a rebid of opener's own suit after a strong, artificial 2C opening must be
+    /// judged against `strong_two_c`, not `weak_two` -- `owner_first_suit` records `(Clubs, 2)`
+    /// for the 2C opening itself (it is a suit bid), which used to be mistaken for a weak-two
+    /// opening by level alone (see `opening_level_hcp`'s doc comment).
+    #[test]
+    fn rebid_own_after_strong_2c_uses_strong_two_c_hcp() {
+        let engine = NaturalInference::default();
+        // 2C (strong) - P - 2D (waiting) - P - 3C (opener rebids own suit, no jump).
+        let auction = Auction::from_calls(
+            Seat::North,
+            Vulnerability::None,
+            [
+                Call::Bid(Bid::new(2, Strain::Clubs).unwrap()),
+                Call::Pass,
+                Call::Bid(Bid::new(2, Strain::Diamonds).unwrap()),
+                Call::Pass,
+                Call::Bid(Bid::new(3, Strain::Clubs).unwrap()),
+            ],
+        )
+        .unwrap();
+        let ctx = classify(&auction, 4, Seat::North);
+        assert_eq!(ctx.role, Role::Opener);
+        assert_eq!(ctx.opener_first_suit, Some((Suit::Clubs, 2)));
+        assert!(matches!(
+            ctx.kind,
+            CallKind::Bid {
+                rebid_own: true,
+                jump: 0,
+                ..
+            }
+        ));
+
+        let inf = engine.infer(&ctx);
+        assert_eq!(inf.rule, "rebid_own");
+        let params = NaturalParams::default();
+        assert_eq!(inf.constraint.hcp_range(), params.strong_two_c..=37);
+        assert_ne!(inf.constraint.hcp_range(), params.weak_two.1);
+    }
 
     /// `NaturalParams::default()` matches the SAYC-like values in `docs/design/06-system.md`
     /// §8.1.
