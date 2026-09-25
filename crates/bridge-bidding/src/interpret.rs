@@ -311,6 +311,12 @@ pub(crate) fn complement_of(sys: &SystemIR, siblings: &[(Call, NodeId)]) -> Hand
 
 /// Applies the ε-mixture (07-bidding.md §4.1 step 7, §4.2): scales every alternative by `1 − ε`
 /// and appends the defensive `(ANY, ε, Fallback)` branch, unless `opts.strict`.
+///
+/// Step A's alternatives normally sum to 1. Only a lenient (`Partial`) resolution may sum to
+/// less: the `ρ^subst` decay of §4.1 step 5.2 is kept, not normalised away, and the missing mass
+/// `1 − Σw` also goes to the `Fallback` branch, so the weights still sum to 1 and a resolution
+/// that needed more substitutions carries less confidence. With `opts.strict` there is no
+/// `Fallback` branch to receive it, so the alternatives are renormalised instead.
 fn apply_epsilon_mixture(
     alts: &mut Vec<(HandConstraint, f32, CallExplanation)>,
     kind: ResolutionKind,
@@ -318,7 +324,16 @@ fn apply_epsilon_mixture(
     call: Call,
     opts: &InterpretOptions,
 ) {
+    let total: f32 = alts.iter().map(|(_, w, _)| *w).sum();
+    let deficit = if total > 0.0 && total < 1.0 - 1e-6 {
+        1.0 - total
+    } else {
+        0.0
+    };
     if opts.strict {
+        if deficit > 0.0 {
+            normalize_alts(alts);
+        }
         return;
     }
     let eps = match kind {
@@ -327,7 +342,9 @@ fn apply_epsilon_mixture(
         ResolutionKind::Natural => opts.eps_natural,
         ResolutionKind::Fallback => 0.0,
     };
-    if eps <= 0.0 {
+    let eps = eps.max(0.0);
+    let fallback = eps + (1.0 - eps) * deficit;
+    if fallback <= 0.0 {
         return;
     }
     for (_, w, _) in alts.iter_mut() {
@@ -335,7 +352,7 @@ fn apply_epsilon_mixture(
     }
     alts.push((
         HandConstraint::ANY,
-        eps,
+        fallback,
         CallExplanation {
             call_index,
             call,
@@ -362,6 +379,12 @@ pub(crate) fn partner_context(
     let Some(last) = per_call_so_far.iter().rev().find(|ci| ci.seat == partner) else {
         return (None, false);
     };
+    // An opponent's bid, double or redouble after partner's forcing call releases the obligation
+    // to bid: a pass there is a normal action, not the contradictory `pass_forcing`.
+    let intervened = per_call_so_far
+        .iter()
+        .filter(|ci| ci.call_index > last.call_index)
+        .any(|ci| ci.seat.side() != s.side() && ci.call != Call::Pass);
     // Skip the `Fallback` branch the ε-mixture appended (07-bidding.md §4.2): it is always
     // present after `apply_epsilon_mixture` and would otherwise win `max_by` whenever partner's
     // call is `Partial`/`Natural` with enough real alternatives that each falls under
@@ -376,6 +399,7 @@ pub(crate) fn partner_context(
         return (None, false);
     };
     let forcing = match ex.node {
+        Some(_) if intervened => false,
         Some(node_id) => {
             let partner_sys = &table.systems[partner.index() as usize];
             let flags = &partner_sys.node(node_id).flags;
@@ -474,6 +498,23 @@ fn step_a_leading_pass(
             natural_alternative(table, auction, s, j, per_call_so_far),
         );
     }
+    // An explicit opening `Pass` row states what the pass shows: use it, exactly as for any other
+    // listed call (and as `choose_bid` offers it), instead of complementing it together with the
+    // opening bids.
+    if let Some(&(_, pass_node)) = legal.iter().find(|(c, _)| *c == Call::Pass) {
+        let mut alts = Vec::new();
+        expand_node_branches(
+            sys,
+            pass_node,
+            j,
+            Call::Pass,
+            ResolutionKind::Exact,
+            1.0,
+            &mut alts,
+        );
+        normalize_alts(&mut alts);
+        return (ResolutionKind::Exact, alts);
+    }
     let complement = complement_of(sys, &legal);
     (
         ResolutionKind::Exact,
@@ -517,6 +558,10 @@ fn step_a_call(
     };
     let lookup = sys.index.resolve(&key);
     let mut d = lookup.matched_depth;
+    // Set when our call landed on an implicit-pass trie node: its implicit-pass complement was
+    // already computed (or found empty) at the parent position below, and §4.1 step 5.1 must not
+    // run again at `lookup.end`, which is the position *after* our pass.
+    let mut on_implicit_node = false;
 
     if d == n_k {
         if let Some(node_id) = lookup.by_depth[n_k - 1] {
@@ -567,17 +612,19 @@ fn step_a_call(
                 }
             }
         }
-        // Defensive: no row at this depth and no legal system siblings to complement either
-        // (07-bidding.md does not spell out this case). Treat it like a one-short partial match
-        // so the lenient/natural machinery below still applies instead of panicking.
+        // No row at this depth and no legal system siblings to complement either (07-bidding.md
+        // §4.1 step 4). Treat it like a one-short partial match so the lenient/natural machinery
+        // below still applies, but skip step 5.1: its complement would be taken at `lookup.end`,
+        // whose children are the calls *after* our pass (e.g. the opponents' next call).
         d = n_k - 1;
+        on_implicit_node = true;
     }
 
     *divergence = Some(divergence.map_or(j, |m| m.min(j)));
 
     // 5.1: implicit pass. Only applies when the *current* call is the one that failed to match
     // (07-bidding.md §4.1 step 5, "d < n_k − 1 の場合...手順5.1を飛ばす").
-    if d == n_k - 1 && call == Call::Pass {
+    if d == n_k - 1 && call == Call::Pass && !on_implicit_node {
         let siblings = sys.index.children(lookup.end, key.opener_pos, key.vul);
         let legal_siblings: Vec<(Call, NodeId)> = siblings
             .into_iter()
@@ -619,6 +666,11 @@ fn step_a_call(
         }
     }
     if !weighted.is_empty() {
+        // Keep `ρ^subst` (07-bidding.md §4.1 step 5.2): normalise only when several attempts
+        // together exceed 1; otherwise `apply_epsilon_mixture` hands the missing mass to the
+        // `Fallback` branch.
+        let total: f32 = weighted.iter().map(|(_, w)| *w).sum();
+        let scale = if total > 1.0 { 1.0 / total } else { 1.0 };
         let mut alts = Vec::new();
         for (node_id, w) in weighted {
             expand_node_branches(
@@ -627,11 +679,10 @@ fn step_a_call(
                 j,
                 call,
                 ResolutionKind::Partial { matched_depth: d },
-                w,
+                w * scale,
                 &mut alts,
             );
         }
-        normalize_alts(&mut alts);
         return (ResolutionKind::Partial { matched_depth: d }, alts);
     }
 
