@@ -270,8 +270,8 @@ mod backend {
         Solutions, Target, convert, sys,
     };
 
-    /// The `free_slots`/`batch_waiting` state behind `Runtime`'s single `Mutex` (see
-    /// `SlotPool` below for why both live under one lock).
+    /// The `free`/`batch_waiting` state behind `SlotPool`'s single `Mutex` (see `SlotPool`
+    /// below for why both live under one lock).
     struct SlotState {
         /// Thread-index slots not currently held by a `solve_board`/`analyse_play` call.
         free: Vec<c_int>,
