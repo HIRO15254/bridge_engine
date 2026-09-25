@@ -13,14 +13,13 @@
 //! they can be rules rather than learned models.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
-// Phase 0 skeleton: the public surface is final, bodies are `todo!()`.
-#![allow(dead_code, unused_variables)]
 
 mod agreements;
 mod hard;
 mod interpret;
 mod leads;
 mod signals;
+mod vocab;
 
 pub use agreements::{
     DiscardTable, FirstDiscard, HonorLeads, LeadStyle, LeadTable, PlayAgreements, Polarity,
@@ -29,3 +28,5 @@ pub use agreements::{
 pub use bridge_constraint::{HandConstraint, KnownCards};
 pub use hard::hard_constraints;
 pub use interpret::{PlayEvent, PlayInterpretation, PlayWarning, interpret_play};
+pub use leads::lead_constraints;
+pub use signals::{SignalContext, SignalEvent, SignalKind, signal_constraints};

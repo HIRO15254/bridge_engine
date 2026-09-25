@@ -204,6 +204,7 @@ dependencies = [
  "bridge-core",
  "serde",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
