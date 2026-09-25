@@ -169,6 +169,15 @@ fn prepare_and_check_warn(c: &HandConstraint) -> bool {
     let fired = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let subscriber = WarnRecorder(fired.clone());
     let _ = tracing::subscriber::with_default(subscriber, || {
+        // `tracing`'s per-callsite `Interest` cache is process-global: if some other test's
+        // thread reaches the `tracing::warn!` in `Sampler::prepare` first while no subscriber
+        // is active, that callsite gets cached as "never interested" for the rest of the
+        // process, and `with_default` alone cannot undo that (it only changes the default
+        // dispatcher on this thread, not the cache). Rebuilding the cache here, with our
+        // `WarnRecorder` (which is always "interested") as the active dispatcher, forces every
+        // callsite to be re-queried against it, so this test does not depend on which other
+        // tests in this binary happened to run first.
+        tracing::callsite::rebuild_interest_cache();
         Sampler::prepare(c, Hand::FULL, Hand::EMPTY, &SampleOptions::default())
     });
     fired.load(std::sync::atomic::Ordering::SeqCst)
