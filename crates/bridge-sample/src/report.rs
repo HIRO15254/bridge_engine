@@ -39,6 +39,14 @@ impl Default for SampleOptions {
 }
 
 /// Diagnostics of one sampling run (also emitted at `INFO`).
+///
+/// Every weight is normalised away by [`log_sum_exp`](crate::log_sum_exp) (via `ess`, `ess_ratio`
+/// and the normalised weights each deal's `log_weight` implies), so any
+/// `d`-independent constant factor of the proposal density `π` cancels: the rejection-sampling
+/// acceptance normaliser `α` of a proposal that rejects some draws (accepted `d` has density
+/// `π(d) / α`, but `α` does not depend on `d`), the uniform prior over deals consistent with the
+/// known cards, and `UniformProposal`'s constant `log_prob` term are all such factors (09-sample.md
+/// §3.2). Only the part of `Proposal::log_prob` that actually varies with `d` needs to be correct.
 #[derive(Clone, PartialEq, Debug)]
 pub struct SampleReport {
     /// Requested deals.

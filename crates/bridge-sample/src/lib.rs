@@ -60,10 +60,11 @@ pub enum SampleError {
 /// `09-sample.md`).
 ///
 /// Not yet checked here (tracked as an open issue): whether a seat's hard play constraint, or
-/// its interpretation alternatives, admit any hand at all given the known cards. That check
-/// needs `bridge_constraint::Sampler`, which is still `todo!()`; until then, an unsatisfiable
-/// seat simply never contributes a finite-weight deal, which surfaces as `Truncated`/`LowEss`
-/// rather than as `SampleError::EmptySupport` or `SampleWarning::EmptySupport`.
+/// its interpretation alternatives, admit any hand at all given the known cards.
+/// `bridge_constraint::Sampler` now supports exactly this check (`Sampler::prepare(...).
+/// count() == 0`), but `sample_deals` does not yet call it; until it does, an unsatisfiable seat
+/// simply never contributes a finite-weight deal, which surfaces as `Truncated`/`LowEss` rather
+/// than as `SampleError::EmptySupport` or `SampleWarning::EmptySupport`.
 pub fn sample_deals(
     ctx: &SampleContext<'_>,
     proposal: &dyn Proposal,
