@@ -34,9 +34,8 @@ pub fn replay(
 
     while !auction.is_complete() && auction.calls().len() < MAX_CALLS {
         let seat = auction.next_seat();
-        let system = &table.systems[seat.index() as usize];
         let hand = deal.hand(seat);
-        let call = match choose_bid(system, hand, &auction, ctx) {
+        let call = match choose_bid(table, hand, &auction, ctx) {
             BidChoice::Chosen(chosen) => {
                 diagnostics.extend(chosen.diagnostics.iter().copied());
                 chosen.call

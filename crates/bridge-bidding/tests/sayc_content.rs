@@ -32,8 +32,7 @@ fn michaels_outranks_plain_overcall() {
     // plain `1S` overcall (4+ spades, 8-16 hcp).
     let a = common::auction(Seat::North, Vulnerability::None, &[bid(1, Strain::Hearts)]);
     let h = common::hand("AJ432", "3", "32", "AJ432");
-    let system = &table.systems[Seat::East.index() as usize];
-    let choice = choose_bid(system, h, &a, &ctx);
+    let choice = choose_bid(&table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Hearts)),
@@ -51,8 +50,7 @@ fn unusual_notrump_outranks_plain_overcall() {
     // `1H` overcall (4+, 8-16 hcp).
     let a = common::auction(Seat::North, Vulnerability::None, &[bid(1, Strain::Clubs)]);
     let h = common::hand("3", "AJ432", "AJ432", "32");
-    let system = &table.systems[Seat::East.index() as usize];
-    let choice = choose_bid(system, h, &a, &ctx);
+    let choice = choose_bid(&table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::NoTrump)),
@@ -71,8 +69,7 @@ fn weak_jump_overcall_outranks_plain_overcall() {
     // (6=, 5-11 hcp).
     let a = common::auction(Seat::North, Vulnerability::None, &[bid(1, Strain::Hearts)]);
     let h = common::hand("32", "32", "432", "AJ9432");
-    let system = &table.systems[Seat::East.index() as usize];
-    let choice = choose_bid(system, h, &a, &ctx);
+    let choice = choose_bid(&table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Spades)),
@@ -94,8 +91,7 @@ fn takeout_double_advance_follows_shape_not_cheapest_suit() {
         &[bid(1, Strain::Clubs), DBL, PASS],
     );
     let h = common::hand("5432", "", "AJ32", "Q9432");
-    let system = &table.systems[Seat::South.index() as usize];
-    let choice = choose_bid(system, h, &a, &ctx);
+    let choice = choose_bid(&table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(1, Strain::Hearts)),
@@ -118,8 +114,7 @@ fn takeout_double_advance_invitational_jump_outranks_other_minimum_suits() {
     // 5 spades, invitational values (11 hcp), and an incidental 4-card heart holding that also
     // fits the plain minimum `1H`.
     let h = common::hand("32", "32", "K432", "AKJ32");
-    let system = &table.systems[Seat::South.index() as usize];
-    let choice = choose_bid(system, h, &a, &ctx);
+    let choice = choose_bid(&table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Spades)),
@@ -139,8 +134,7 @@ fn takeout_double_advance_of_1s_double_is_covered() {
         &[bid(1, Strain::Spades), DBL, PASS],
     );
     let h = common::hand("432", "AJ32", "Q432", "32");
-    let system = &table.systems[Seat::South.index() as usize];
-    let choice = choose_bid(system, h, &a, &ctx);
+    let choice = choose_bid(&table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Diamonds)),
@@ -166,8 +160,7 @@ fn natural_response_after_1nt_is_overcalled_is_on_system() {
         &[bid(1, Strain::NoTrump), bid(2, Strain::Diamonds)],
     );
     let h = common::hand("32", "32", "432", "AKQ432");
-    let system = &table.systems[Seat::South.index() as usize];
-    let choice = choose_bid(system, h, &a, &ctx);
+    let choice = choose_bid(&table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Spades)),
@@ -182,7 +175,7 @@ fn natural_response_after_1nt_is_overcalled_is_on_system() {
         &[bid(1, Strain::NoTrump), bid(2, Strain::Spades)],
     );
     let h2 = common::hand("AKQ432", "32", "432", "32");
-    let choice2 = choose_bid(system, h2, &a2, &ctx);
+    let choice2 = choose_bid(&table, h2, &a2, &ctx);
     assert_eq!(
         choice2.call(),
         Some(bid(3, Strain::Clubs)),
@@ -204,8 +197,7 @@ fn stayman_after_double_of_1nt_requires_a_major() {
     );
     // 8 hcp, balanced, no four-card major: must not ask Stayman.
     let h = common::hand("QJ32", "KQ32", "32", "432");
-    let system = &table.systems[Seat::South.index() as usize];
-    let choice = choose_bid(system, h, &a, &ctx);
+    let choice = choose_bid(&table, h, &a, &ctx);
     assert_ne!(
         choice.call(),
         Some(bid(2, Strain::Clubs)),
@@ -226,8 +218,7 @@ fn stayman_opposite_1nt_overcall_requires_a_major() {
     );
     // 8 hcp, balanced, no four-card major: must not ask Stayman opposite partner's 1NT overcall.
     let h = common::hand("QJ32", "KQ32", "32", "432");
-    let system = &table.systems[Seat::North.index() as usize];
-    let choice = choose_bid(system, h, &a, &ctx);
+    let choice = choose_bid(&table, h, &a, &ctx);
     assert_ne!(
         choice.call(),
         Some(bid(2, Strain::Clubs)),
@@ -251,8 +242,7 @@ fn balancing_suit_overcall_outranks_double() {
     // 9 hcp, 4 hearts (only): a real balancing overcall, not merely a takeout double's own 8+
     // hcp.
     let h = common::hand("432", "432", "AJ32", "KJ2");
-    let system = &table.systems[Seat::North.index() as usize];
-    let choice = choose_bid(system, h, &a, &ctx);
+    let choice = choose_bid(&table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(1, Strain::Hearts)),
@@ -274,8 +264,7 @@ fn balancing_jump_overcall_is_preemptive_not_full_strength() {
     // 14 hcp, 5 hearts: too strong for the preemptive jump; must overcall calmly at the one
     // level.
     let h = common::hand("32", "32", "AKQ32", "AJ32");
-    let system = &table.systems[Seat::North.index() as usize];
-    let choice = choose_bid(system, h, &a, &ctx);
+    let choice = choose_bid(&table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(1, Strain::Hearts)),
@@ -296,8 +285,7 @@ fn weak_two_response_new_suit_above_opening_is_at_two_level() {
         &[bid(2, Strain::Diamonds), PASS],
     );
     let h = common::hand("32", "32", "AKQ32", "K432");
-    let system = &table.systems[Seat::South.index() as usize];
-    let choice = choose_bid(system, h, &a, &ctx);
+    let choice = choose_bid(&table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Hearts)),
@@ -318,8 +306,7 @@ fn negative_double_leaves_a_call_for_a_plain_four_card_major() {
     );
     // 8 hcp, exactly 4 hearts, 3 spades: no fit for the negative double (needs both majors).
     let h = common::hand("432", "432", "AJ32", "K32");
-    let system = &table.systems[Seat::South.index() as usize];
-    let choice = choose_bid(system, h, &a, &ctx);
+    let choice = choose_bid(&table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(1, Strain::Hearts)),
@@ -342,8 +329,7 @@ fn notrump_overcall_outranks_plain_overcall() {
         &[bid(1, Strain::Diamonds)],
     );
     let h = common::hand("K32", "AQJ", "KQ32", "432");
-    let system = &table.systems[Seat::East.index() as usize];
-    let choice = choose_bid(system, h, &a, &ctx);
+    let choice = choose_bid(&table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(1, Strain::NoTrump)),

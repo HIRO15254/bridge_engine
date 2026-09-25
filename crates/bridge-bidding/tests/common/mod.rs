@@ -628,38 +628,46 @@ pub fn compile_sayc(name: &str) -> bridge_bidding::Table {
 
 /// Builds one random position against a compiled SAYC [`Table`](bridge_bidding::Table): a random
 /// deal, dealer and vulnerability, then a random-depth prefix (0..12 calls, stopping early if the
-/// auction completes) replayed with [`choose_bid`](bridge_bidding::choose_bid) itself, so the
-/// prefix is always on-system whenever the system covers it. Shared by the phase 3.10/3.12
-/// harnesses (`tests/consistency.rs`, `tests/policy.rs`, `tests/reproduction.rs`), which all need
-/// the exact same generator to compare against.
+/// auction completes) advanced with the same procedure as [`bridge_bidding::replay`]
+/// (`11-testing.md` §2 step 1): each seat's call is [`choose_bid`](bridge_bidding::choose_bid)'s
+/// choice for its own hand, and a `NoCandidate` becomes `Pass`. Shared by the phase 3.10/3.12
+/// harnesses (`tests/consistency.rs`, `tests/policy.rs`), which all need the exact same generator
+/// to compare against.
 ///
-/// A `NoCandidate` during prefix-building stops the prefix right there, instead of fabricating a
-/// bare `Call::Pass` substitute (an earlier version of this helper did the latter): a coverage
-/// gap has no system-consistent continuation to speak of, so treating one as "nothing more to
-/// add" leaves the resulting position for the *outer* test loop to draw and score as its own
-/// `NoCandidate`/`Gap::NoCandidate` position (already handled, uncounted as a violation) rather
-/// than silently baking an unconstrained `Pass` into the auction *history* -- which a later seat's
-/// own calls then get AND-combined with by `Interpretation::satisfied_by`. That combination is
-/// exactly what produced 4 "unexplained" `sayc_forward_consistency_1e6` violations (all with
-/// `root_cause_kinds == [Exact]`, never `Natural`) before this fix: prefix-building hit
-/// `NoCandidate` for a real 16-HCP hand after a transfer-completion sequence with no SAYC row above
-/// 7 HCP (`1N-2H(TRF, 5+s)-2S-...`), substituted `Pass`, and a later call by the *same* seat was
-/// then checked against that position's own *explicit* `Pass` row ("0-7 hcp", `kind: Exact`, a
-/// real SAYC-defined node the fabricated call collided with) -- which the 16-HCP hand fails, a
-/// contradiction manufactured by the substitution itself, not by `sayc.bml` or by `choose_bid`/
-/// `interpret` (confirmed by hand: `choose_bid` genuinely returns `NoCandidate` at that exact
-/// position for that hand, tried against every sibling row, all `Rejected::Unsatisfied`).
+/// See [`random_sayc_position_with_gaps`] for the variant that also reports which prefix calls
+/// were such forced passes.
 pub fn random_sayc_position(
     rng: &mut impl Rng,
     table: &bridge_bidding::Table,
     ctx: &bridge_bidding::BidContext<'_>,
 ) -> (Deal, Auction) {
+    let (deal, auction, _) = random_sayc_position_with_gaps(rng, table, ctx);
+    (deal, auction)
+}
+
+/// [`random_sayc_position`], also returning the indices (into `auction.calls()`) of every prefix
+/// call that was a forced `Pass` substituted for a `NoCandidate` -- the same `gaps` list
+/// [`bridge_bidding::replay`] records. A forced `Pass` is not a system-chosen call: `interpret`
+/// reads it with whatever the system says a `Pass` shows at that position, which the hand that
+/// had no candidate may well not satisfy. A later consistency failure whose root cause is one of
+/// these indices is therefore *gap-induced* (a coverage hole in the system, to be closed by SAYC
+/// content), and the harness counts it separately from genuine `choose_bid`/`interpret`
+/// disagreements rather than excusing it silently.
+///
+/// Consumes the RNG exactly like [`random_sayc_position`], so both draw the same positions for the
+/// same seed.
+pub fn random_sayc_position_with_gaps(
+    rng: &mut impl Rng,
+    table: &bridge_bidding::Table,
+    ctx: &bridge_bidding::BidContext<'_>,
+) -> (Deal, Auction, Vec<usize>) {
     use bridge_bidding::{BidChoice, choose_bid};
 
     let deal = random_deal(rng);
     let dealer = Seat::from_index((rng.next_u32() % 4) as u8);
     let vul = Vulnerability::from_index((rng.next_u32() % 4) as u8);
     let mut auction = Auction::new(dealer, vul);
+    let mut forced_passes = Vec::new();
     let depth = rng.next_u32() % 12;
     for _ in 0..depth {
         if auction.is_complete() {
@@ -667,12 +675,14 @@ pub fn random_sayc_position(
         }
         let seat = auction.next_seat();
         let hand = deal.hand(seat);
-        let system = &table.systems[seat.index() as usize];
-        let call = match choose_bid(system, hand, &auction, ctx) {
+        let call = match choose_bid(table, hand, &auction, ctx) {
             BidChoice::Chosen(c) => c.call,
-            BidChoice::NoCandidate(_) => break,
+            BidChoice::NoCandidate(_) => {
+                forced_passes.push(auction.len());
+                Call::Pass
+            }
         };
         auction = auction.with(call).expect("choose_bid returns a legal call");
     }
-    (deal, auction)
+    (deal, auction, forced_passes)
 }

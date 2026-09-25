@@ -10,6 +10,8 @@ use bridge_bidding::{
 };
 use bridge_core::{Auction, Call, Deal, Hand, Seat, Strain, Suit, Vulnerability};
 use bridge_system::ast::{SeatCond, VulCond};
+use bridge_system::natural::classify;
+use bridge_system::{LookupKey as SysLookupKey, RelVul, SystemIR};
 use common::*;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use rand_xoshiro::rand_core::SeedableRng;
@@ -19,6 +21,45 @@ fn table_of(sys: &Sayc) -> Table {
         sys.sys.clone(),
         std::sync::Arc::new(bridge_system::NaturalInference::default()),
     )
+}
+
+/// The trie position (`Lookup.end`) `choose_bid` would resolve for `seat` at `auction`
+/// -- the same exact-resolve-with-fallback `crate::choose::gather` computes internally (see its
+/// doc comment), recomputed here from the public `SystemIR`/`AuctionTrie` API since `gather`
+/// itself does not return its `Lookup`. Used to key `CoverageReport`'s gap aggregation by *trie
+/// position*, per `11-testing.md` §2 point 4, instead of by the auction's full call-string (the
+/// review finding: a raw-string key scatters the same system gap across every distinct auction
+/// that reaches it, so a hole hit by one in a thousand deals but from a thousand distinct
+/// preceding auctions never accumulates enough count to rank above a coincidental one-off).
+fn trie_position(system: &SystemIR, auction: &Auction, seat: Seat) -> u32 {
+    let vulnerability = auction.vulnerability();
+    let vul = RelVul {
+        we: vulnerability.is_vulnerable(seat),
+        they: vulnerability.is_vulnerable(seat.next()),
+    };
+    let key = match SysLookupKey::for_auction(auction, seat) {
+        Some(key) => key,
+        None => SysLookupKey {
+            we_opened: true,
+            calls: &[],
+            opener_pos: auction.position_of(seat),
+            vul,
+        },
+    };
+    system.index.resolve(&key).end.0
+}
+
+/// `seat`'s [`bridge_system::natural::Role`] at `auction` (opener/responder/overcaller/advancer/
+/// balancer), the `seat_rel` half of the same aggregation key. `classify` needs a call *at*
+/// `index`, but its own doc comment guarantees role determination reads only the history strictly
+/// before `index`, so a throwaway `Pass` (always legal while the auction is incomplete) stands in
+/// for whatever call is actually about to be chosen.
+fn seat_role(auction: &Auction, seat: Seat) -> String {
+    let probe = auction
+        .with(Call::Pass)
+        .expect("Pass is always legal while the auction is incomplete");
+    let idx = auction.calls().len();
+    format!("{:?}", classify(&probe, idx, seat).role).to_lowercase()
 }
 
 /// Checks one call's worth of forward-consistency and returns the extended auction: whatever
@@ -34,8 +75,7 @@ fn check_one_call(
     opts: &InterpretOptions,
 ) -> Auction {
     let seat = auction.next_seat();
-    let system = &table.systems[seat.index() as usize];
-    let choice = choose_bid(system, hand, auction, ctx);
+    let choice = choose_bid(table, hand, auction, ctx);
     let BidChoice::Chosen(chosen) = choice else {
         panic!("ImplicitPass::Complement guarantees a Chosen candidate whenever Pass is legal");
     };
@@ -129,9 +169,8 @@ fn forward_consistency_opening_only() {
     for _ in 0..200 {
         let hand = random_hand13(&mut rng);
         let empty = Auction::new(Seat::North, Vulnerability::None);
-        let system = &table.systems[Seat::North.index() as usize];
 
-        let choice = choose_bid(system, hand, &empty, &ctx);
+        let choice = choose_bid(&table, hand, &empty, &ctx);
         let BidChoice::Chosen(chosen) = choice else {
             panic!("ImplicitPass::Complement guarantees a Chosen candidate at the opening");
         };
@@ -212,12 +251,7 @@ fn choose_bid_does_not_synthesize_pass_from_lenient_siblings() {
         implicit_pass: ImplicitPass::Complement,
         policy: PolicyParams::default(),
     };
-    let choice = choose_bid(
-        &table.systems[Seat::South.index() as usize],
-        hand,
-        &after_overcall,
-        &ctx,
-    );
+    let choice = choose_bid(&table, hand, &after_overcall, &ctx);
     match choice {
         BidChoice::NoCandidate(_) => {}
         BidChoice::Chosen(c) => panic!(
@@ -227,6 +261,101 @@ fn choose_bid_does_not_synthesize_pass_from_lenient_siblings() {
             c.call, c.source
         ),
     }
+}
+
+/// Regression (review finding: 24871 `cue`-rooted violations in the 10^6 SAYC run):
+/// `choose_bid`'s natural branch used to call `NaturalInference::candidates`, which builds each
+/// candidate's `CallContext` with a bare `classify` and so never fills `partner_constraint` /
+/// `forcing_situation`, while `interpret`'s natural step (07-bidding.md §4.1 step 6) fills both
+/// from the prefix's own interpretation before calling `infer`. `rule_cue`'s `min_hcp` reads
+/// `partner_constraint`, so the two computed different constraints for the same cuebid: here the
+/// context-free candidate says `2S` shows 10+ hcp, `interpret` says 25+.
+///
+/// Position: South opens `1H` (the only system row), West overcalls `1S`, North passes, East
+/// cuebids `2H`; South is to call, entirely off-system, so both sides go through natural
+/// inference.
+#[test]
+fn choose_bid_natural_branch_matches_interpret_at_a_cuebid() {
+    let mut b = SystemBuilder::new();
+    b.insert(
+        true,
+        &[bid(1, Strain::Hearts)],
+        bid(1, Strain::Hearts),
+        atom_hcp(12, 21),
+        SeatCond::Any,
+        VulCond::default(),
+        "opening",
+        0,
+    );
+    let table = Table::uniform(
+        std::sync::Arc::new(b.build()),
+        std::sync::Arc::new(bridge_system::NaturalInference::default()),
+    );
+    let ctx = BidContext {
+        scoring: Scoring::Imp,
+        natural: Some(table.natural.as_ref()),
+        implicit_pass: ImplicitPass::Complement,
+        policy: PolicyParams::default(),
+    };
+    let opts = InterpretOptions {
+        strict: true,
+        ..InterpretOptions::default()
+    };
+    let a = auction(
+        Seat::South,
+        Vulnerability::Both,
+        &[
+            bid(1, Strain::Hearts),
+            bid(1, Strain::Spades),
+            PASS,
+            bid(2, Strain::Hearts),
+        ],
+    );
+    assert_eq!(a.next_seat(), Seat::South);
+
+    // `interpret`'s own reading of `2S` here, the constraint `choose_bid` must agree with.
+    let cue = bid(2, Strain::Spades);
+    let cue_interp = interpret(&table, &a.with(cue).unwrap(), &opts);
+    let cue_alts = &cue_interp.per_call.last().unwrap().alternatives;
+
+    // 15 hcp, three hearts: satisfies the context-free `2S` cue (10+) but not `interpret`'s (25+).
+    // Before the fix `choose_bid` picked `2S` for it.
+    let medium = hand("J73", "J73", "AK8", "KQJ3");
+    assert!(
+        !cue_alts.iter().any(|(c, _, _)| c.satisfies(medium)),
+        "precondition: interpret's reading of the 2S cuebid rejects the 15-hcp hand"
+    );
+    let choice = choose_bid(&table, medium, &a, &ctx);
+    assert_ne!(
+        choice.call(),
+        Some(cue),
+        "choose_bid chose a cuebid that interpret rejects for the same hand"
+    );
+
+    // And across random hands, whatever `choose_bid` chooses here is accepted by `interpret`.
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xC0E_B1D);
+    let mut chosen = 0;
+    for _ in 0..2_000 {
+        let h = random_hand13(&mut rng);
+        let BidChoice::Chosen(c) = choose_bid(&table, h, &a, &ctx) else {
+            continue;
+        };
+        chosen += 1;
+        let interp = interpret(&table, &a.with(c.call).unwrap(), &opts);
+        let pc = interp.per_call.last().unwrap();
+        assert!(
+            pc.alternatives
+                .iter()
+                .any(|(k, w, ex)| ex.kind != ResolutionKind::Fallback
+                    && *w > 0.0
+                    && k.satisfies(h)),
+            "hand {h:?} was chosen to bid {} at a cuebid position, but interpret's reading of \
+             that call does not accept it: {:?}",
+            c.call,
+            pc.alternatives
+        );
+    }
+    assert!(chosen > 0, "no random hand had a Chosen candidate");
 }
 
 // ================================================================================================
@@ -242,13 +371,31 @@ use std::collections::HashMap;
 
 use serde_json::json;
 
-/// One trie position's aggregated gap statistics (`11-testing.md` §2's `gaps` entries).
+/// One (trie position, `seat_rel`) pair's aggregated gap statistics (`11-testing.md` §2 point 4's
+/// `gaps` entries: "`NoCandidate`と`ImplicitPass`は「局面のトライ位置(`Lookup.end`)」ごとに数え"). Keyed by
+/// [`GapKey`], not the auction's raw call string: the same trie position is reached by
+/// arbitrarily many distinct preceding auctions (different earlier rounds, different opening
+/// seat, ...), so a string key scatters one real, frequently-hit hole across hundreds of
+/// single-digit-count rows -- exactly the review finding that let deep, rarely-reached paths with
+/// `rate == 1.0` fill the top-50 list ahead of shallow, frequent ones.
 #[derive(Default)]
 struct GapAgg {
     positions: u64,
     no_candidate: u64,
     implicit_pass: u64,
     sample_hand: Option<(Hand, u8)>,
+    sample_path: Option<String>,
+}
+
+/// Aggregation key: the trie position `choose_bid` resolved (`Lookup.end`, via [`trie_position`])
+/// and the acting seat's [`bridge_system::natural::Role`] (via [`seat_role`]), lower-cased. Two
+/// positions with the same trie node but different roles (e.g. a balancing-seat node reached with
+/// `Role::Balancer` vs. a non-balancing node that happens to share a trie id in a hand-built test
+/// system) are kept separate, per `11-testing.md`'s `seat_rel` column.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct GapKey {
+    trie: u32,
+    seat_rel: String,
 }
 
 /// What kind of gap a position hit, if any (a position that got a real `Chosen` candidate from
@@ -258,6 +405,64 @@ enum Gap {
     None,
     NoCandidate,
     ImplicitPass,
+}
+
+/// Root-cause category of one forward-consistency violation, for `CoverageReport`'s
+/// `violations_by_cause` counts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ViolationCause {
+    /// The root-cause call is a `Pass` the prefix generator substituted for a `NoCandidate`
+    /// (`common::random_sayc_position_with_gaps`): the system has no call for that hand there, and
+    /// `interpret`'s reading of the substituted `Pass` does not cover it. A coverage hole in the
+    /// system definition, counted separately and closed by SAYC content, not by the engine.
+    GapInduced,
+    /// The root-cause call was resolved only by natural inference (`[Natural]`); carries the
+    /// `natural.rs` rule name parsed from the explanation text (`"?"` if absent).
+    Natural(String),
+    /// The root-cause call was resolved by the system (`Exact`/`Partial` alternatives); carries
+    /// the lower-cased kinds joined by `+`.
+    System(String),
+    /// `satisfied_by` failed although every one of the seat's calls has some satisfying
+    /// alternative on its own (a Step B combination/truncation effect).
+    NoSingleCall,
+}
+
+impl ViolationCause {
+    fn of(
+        root: Option<&(usize, Call, Vec<ResolutionKind>, Option<String>)>,
+        forced_passes: &[usize],
+    ) -> ViolationCause {
+        let Some((index, _, kinds, rule)) = root else {
+            return ViolationCause::NoSingleCall;
+        };
+        if forced_passes.contains(index) {
+            return ViolationCause::GapInduced;
+        }
+        if kinds.as_slice() == [ResolutionKind::Natural] {
+            return ViolationCause::Natural(rule.clone().unwrap_or_else(|| "?".to_string()));
+        }
+        let mut names: Vec<String> = kinds
+            .iter()
+            .map(|k| match k {
+                ResolutionKind::Exact => "exact".to_string(),
+                ResolutionKind::Partial { .. } => "partial".to_string(),
+                ResolutionKind::Natural => "natural".to_string(),
+                ResolutionKind::Fallback => "fallback".to_string(),
+            })
+            .collect();
+        names.sort();
+        names.dedup();
+        ViolationCause::System(names.join("+"))
+    }
+
+    fn label(&self) -> String {
+        match self {
+            ViolationCause::GapInduced => "gap_induced".to_string(),
+            ViolationCause::Natural(rule) => format!("natural:{rule}"),
+            ViolationCause::System(kinds) => format!("system:{kinds}"),
+            ViolationCause::NoSingleCall => "no_single_call".to_string(),
+        }
+    }
 }
 
 /// Aggregates one `forward_consistency` run: violation records, `chosen`/`no_candidate`/
@@ -270,10 +475,14 @@ struct CoverageReport {
     no_candidate: u64,
     implicit_pass: u64,
     violations: Vec<serde_json::Value>,
-    /// Of `violations`, how many are attributed to the known `natural.rs`
-    /// `candidates`-vs-`interpret` partner-context bug (see `record_violation`).
-    violations_known_engine_bug: u64,
-    gaps: HashMap<String, GapAgg>,
+    /// `violations` counted by root cause (see [`ViolationCause`]), keyed by
+    /// [`ViolationCause::label`]. Every violation lands in exactly one bucket.
+    violations_by_cause: std::collections::BTreeMap<String, u64>,
+    /// Of `violations`, how many are [`ViolationCause::GapInduced`].
+    violations_gap_induced: u64,
+    /// How many checked positions had at least one forced `Pass` in their prefix.
+    forced_pass_prefixes: u64,
+    gaps: HashMap<GapKey, GapAgg>,
     illegal_system_call: std::collections::BTreeSet<(u32, String)>,
     unsatisfiable_node: std::collections::BTreeSet<u32>,
 }
@@ -287,7 +496,9 @@ impl CoverageReport {
             no_candidate: 0,
             implicit_pass: 0,
             violations: Vec::new(),
-            violations_known_engine_bug: 0,
+            violations_by_cause: std::collections::BTreeMap::new(),
+            violations_gap_induced: 0,
+            forced_pass_prefixes: 0,
             gaps: HashMap::new(),
             illegal_system_call: std::collections::BTreeSet::new(),
             unsatisfiable_node: std::collections::BTreeSet::new(),
@@ -308,17 +519,17 @@ impl CoverageReport {
         }
     }
 
-    /// Records one checked position (whatever its outcome) against its auction path, so a gap's
-    /// `rate` is "how often this exact path hits a gap", not merely a raw count.
-    fn record_position(&mut self, auction: &Auction, hand: Hand, gap: Gap) {
+    /// Records one checked position (whatever its outcome) against its `(trie, seat_rel)` key
+    /// (`11-testing.md` §2 point 4), so a gap's rank reflects how often *that system position* is
+    /// actually reached, not how often one particular preceding auction happened to recur.
+    fn record_position(&mut self, auction: &Auction, hand: Hand, gap: Gap, key: GapKey) {
         self.positions += 1;
         match gap {
             Gap::None => self.chosen += 1,
             Gap::NoCandidate => self.no_candidate += 1,
             Gap::ImplicitPass => self.implicit_pass += 1,
         }
-        let path = format!("{auction}");
-        let entry = self.gaps.entry(path).or_default();
+        let entry = self.gaps.entry(key).or_default();
         entry.positions += 1;
         match gap {
             Gap::None => {}
@@ -327,40 +538,19 @@ impl CoverageReport {
         }
         if entry.sample_hand.is_none() && !matches!(gap, Gap::None) {
             entry.sample_hand = Some((hand, bridge_eval::hcp(hand)));
+            entry.sample_path = Some(format!("{auction}"));
         }
     }
 
-    /// Records one `satisfied_by` failure, tagging it with its *root cause*: the earliest of
-    /// `seat`'s calls (which can be earlier than `call` itself, since `satisfied_by` ANDs over
-    /// every call the seat has made) that has no satisfying, non-`Fallback`, positive-weight
-    /// alternative. When that root call's alternatives are `[Natural]` and its explanation names
-    /// one of four known `natural.rs` heuristic-imprecision rules, it is a documented upstream
-    /// engine bug (see `open_issues`/`systems/sayc/NOTES.md` #17), not a SAYC defect:
+    /// Records one `satisfied_by` failure, tagged with its [`ViolationCause`]: the root cause is
+    /// the earliest of `seat`'s calls (which can be earlier than `call` itself, since
+    /// `satisfied_by` ANDs over every call the seat has made) that has no satisfying,
+    /// non-`Fallback`, positive-weight alternative (see [`root_cause`]).
     ///
-    /// - `cue`, `pass_forcing`: read `CallContext::partner_constraint`/`forcing_situation`,
-    ///   fields `NaturalInference::candidates` (used by `choose_bid`) never fills in, unlike
-    ///   `interpret`'s `natural_alternative` (which calls `fill_partner_context` first).
-    /// - `open_pass`: fires whenever `ctx.role == Role::Opener` and the call is `Pass`, but
-    ///   `classify_role` makes `Role::Opener` persist for the *rest of the auction* once a seat
-    ///   has opened -- so a perfectly normal pass by an opener who has nothing more to say (e.g.
-    ///   a good 12-14 count who has already shown their hand) is misread as "declined to open",
-    ///   with the constraint capped just under the opening-HCP floor. Every occurrence seen here
-    ///   has the seat having opened earlier in the same auction (confirmed by hand-tracing
-    ///   several instances against `bridge_system::natural::classify`), never a genuine first
-    ///   decision to open.
-    /// - `pass_default`: applies one static HCP ceiling (`response.new_suit_1.1 - 1` for
-    ///   `Role::Responder`, `advance.raise.1.start() - 1` for `Role::Advancer`) to *any* pass by
-    ///   that role, with no notion of which round of the auction it is or what partner's last
-    ///   call actually showed (e.g. advancing a partner's penalty double of an artificial bid, or
-    ///   passing out a high-level competitive auction) -- situations SAYC's own tables do not
-    ///   attempt to cover and where a blanket "under N hcp" reading is simply too narrow.
-    ///
-    /// Both are real limitations of the natural-fallback heuristic engine in
-    /// `crates/bridge-system/src/natural.rs` (out of this lane's allowed files), not of
-    /// `systems/sayc/*.bml`: `root_cause_kinds == [Natural]` here means the compiled system had
-    /// *no* row at all for the position (an intentional off-system natural fallback, not a
-    /// coverage hole SAYC content could plausibly close), and the false negative traces to the
-    /// fallback rule's own approximation rather than to anything expressible in BML.
+    /// Nothing is excused here: every violation is kept in `violations` and counted in exactly
+    /// one `violations_by_cause` bucket. The gate ([`Self::violations_not_gap_induced`]) sets
+    /// aside only [`ViolationCause::GapInduced`], a separately counted category.
+    #[allow(clippy::too_many_arguments)]
     fn record_violation(
         &mut self,
         index: u64,
@@ -369,75 +559,84 @@ impl CoverageReport {
         hand: Hand,
         call: Call,
         root: Option<(usize, Call, Vec<ResolutionKind>, Option<String>)>,
+        forced_passes: &[usize],
     ) {
-        let known_bug = matches!(
-            &root,
-            Some((_, _, kinds, Some(rule)))
-                if kinds.as_slice() == [ResolutionKind::Natural]
-                    && matches!(rule.as_str(), "cue" | "pass_forcing" | "open_pass" | "pass_default")
-        );
-        if known_bug {
-            self.violations_known_engine_bug += 1;
+        let cause = ViolationCause::of(root.as_ref(), forced_passes);
+        if cause == ViolationCause::GapInduced {
+            self.violations_gap_induced += 1;
         }
+        *self.violations_by_cause.entry(cause.label()).or_default() += 1;
         self.violations.push(json!({
             "index": index,
             "path": format!("{auction}"),
             "seat": format!("{seat:?}"),
             "call": format!("{call}"),
             "hand": format!("{hand:?}"),
+            "cause": cause.label(),
+            "forced_passes": forced_passes,
             "root_cause_call_index": root.as_ref().map(|(i, ..)| *i),
             "root_cause_call": root.as_ref().map(|(_, c, ..)| format!("{c}")),
             "root_cause_kinds": root.as_ref().map(|(_, _, k, _)| {
                 k.iter().map(|k| format!("{k:?}")).collect::<Vec<_>>()
             }),
             "root_cause_natural_rule": root.as_ref().and_then(|(_, _, _, r)| r.clone()),
-            "known_engine_bug": known_bug,
         }));
     }
 
-    /// Violations *not* attributed to the known `natural.rs` engine bug -- these are the ones a
-    /// SAYC change could actually fix, so the pass/fail gate below is defined over this count.
-    fn violations_unexplained(&self) -> u64 {
-        self.violations.len() as u64 - self.violations_known_engine_bug
+    /// Violations that are *not* [`ViolationCause::GapInduced`]: genuine disagreements between
+    /// `choose_bid` and `interpret` (a system-definition contradiction or an engine bug). The
+    /// strict gate is `== 0` on this count.
+    fn violations_not_gap_induced(&self) -> u64 {
+        self.violations.len() as u64 - self.violations_gap_induced
     }
 
     fn summary(&self) -> String {
+        let by_cause = self
+            .violations_by_cause
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(
             "{} violation(s) over {} position(s) (seed {:#x}): chosen={}, no_candidate={}, \
-             implicit_pass={}, of which {} attributed to the known natural.rs engine bug and {} \
-             unexplained",
+             implicit_pass={}; {} gap-induced (root cause is a forced Pass the prefix generator \
+             substituted for a NoCandidate), {} not gap-induced; by cause: [{by_cause}]",
             self.violations.len(),
             self.positions,
             self.seed,
             self.chosen,
             self.no_candidate,
             self.implicit_pass,
-            self.violations_known_engine_bug,
-            self.violations_unexplained(),
+            self.violations_gap_induced,
+            self.violations_not_gap_induced(),
         )
     }
 
     /// Writes `<workspace>/target/coverage_report.json` (11-testing.md §2's shape).
     fn write_json(&self, system: &str, meta: &bridge_system::SystemMeta) {
-        let mut gaps: Vec<(&String, &GapAgg)> = self
+        // Ranked by how often the gap is hit (`no_candidate + implicit_pass`), 11-testing.md §2
+        // point 4's "頻度上位 50 件": a rarely reached position with `rate == 1.0` must not push a
+        // frequent hole out of the list. Ties are broken by key for a deterministic report.
+        let mut gaps: Vec<(&GapKey, &GapAgg)> = self
             .gaps
             .iter()
             .filter(|(_, g)| g.no_candidate + g.implicit_pass > 0)
             .collect();
         gaps.sort_by(|a, b| {
-            let rate_a = (a.1.no_candidate + a.1.implicit_pass) as f64 / a.1.positions as f64;
-            let rate_b = (b.1.no_candidate + b.1.implicit_pass) as f64 / b.1.positions as f64;
-            rate_b
-                .partial_cmp(&rate_a)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            (b.1.no_candidate + b.1.implicit_pass)
+                .cmp(&(a.1.no_candidate + a.1.implicit_pass))
+                .then_with(|| a.0.trie.cmp(&b.0.trie))
+                .then_with(|| a.0.seat_rel.cmp(&b.0.seat_rel))
         });
         gaps.truncate(50);
         let gaps_json: Vec<serde_json::Value> = gaps
             .into_iter()
-            .map(|(path, g)| {
+            .map(|(key, g)| {
                 let rate = (g.no_candidate + g.implicit_pass) as f64 / g.positions as f64;
                 json!({
-                    "path": path,
+                    "trie": key.trie,
+                    "path": g.sample_path,
+                    "seat_rel": key.seat_rel,
                     "no_candidate": g.no_candidate,
                     "implicit_pass": g.implicit_pass,
                     "positions": g.positions,
@@ -461,8 +660,10 @@ impl CoverageReport {
             "positions": self.positions,
             "random_call_rate": 0.0,
             "violations": self.violations,
-            "violations_known_engine_bug": self.violations_known_engine_bug,
-            "violations_unexplained": self.violations_unexplained(),
+            "violations_by_cause": self.violations_by_cause,
+            "violations_gap_induced": self.violations_gap_induced,
+            "violations_not_gap_induced": self.violations_not_gap_induced(),
+            "forced_pass_prefixes": self.forced_pass_prefixes,
             "counts": {
                 "chosen": self.chosen,
                 "no_candidate": self.no_candidate,
@@ -529,15 +730,26 @@ fn root_cause(
         })
 }
 
-/// `common::random_sayc_position` (11-testing.md §2 point 1, minus the `random_call_rate`
-/// off-system substitution, which is scoped to phase 3.11), aliased locally so the doc comments
-/// below reads naturally; shared with `tests/policy.rs`/`tests/reproduction.rs` so all three
-/// harnesses compare against the exact same generator.
-use common::random_sayc_position as random_position;
+/// Where [`run_forward_consistency`] writes its report, if anywhere. Only the 10^3 and 10^6 runs
+/// write `target/coverage_report.json`; other callers (e.g. the diagnostics check, which runs in
+/// parallel with the 10^3 test) must not race on the same file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReportOutput {
+    CoverageJson,
+    None,
+}
 
 /// Runs the strict forward-consistency property over `n` positions on the real, compiled SAYC
-/// system, per `11-testing.md` §2 / `07-bidding.md` §8's `forward_consistency` row.
-fn run_forward_consistency(system: &'static str, n: u64, seed: u64) -> CoverageReport {
+/// system, per `11-testing.md` §2 / `07-bidding.md` §8's `forward_consistency` row. Positions come
+/// from `common::random_sayc_position_with_gaps` (11-testing.md §2 point 1: the prefix is advanced
+/// like `replay`, `NoCandidate` becoming `Pass`, minus the `random_call_rate` off-system
+/// substitution scoped to phase 3.11); its forced-pass indices classify gap-induced violations.
+fn run_forward_consistency(
+    system: &'static str,
+    n: u64,
+    seed: u64,
+    output: ReportOutput,
+) -> CoverageReport {
     let table = common::compile_sayc(system);
     let ctx = BidContext {
         scoring: Scoring::Imp,
@@ -554,15 +766,23 @@ fn run_forward_consistency(system: &'static str, n: u64, seed: u64) -> CoverageR
 
     for i in 0..n {
         // A prefix that happened to complete the auction has no next call to check; redraw a
-        // fresh (deal, auction) pair together instead of silently under-counting.
-        let (deal, auction) = std::iter::repeat_with(|| random_position(&mut rng, &table, &ctx))
-            .find(|(_, auction)| !auction.is_complete())
-            .expect("random_position eventually yields an incomplete auction");
+        // fresh position instead of silently under-counting.
+        let (deal, auction, forced_passes) = std::iter::repeat_with(|| {
+            common::random_sayc_position_with_gaps(&mut rng, &table, &ctx)
+        })
+        .find(|(_, auction, _)| !auction.is_complete())
+        .expect("random_sayc_position_with_gaps eventually yields an incomplete auction");
         let seat = auction.next_seat();
         let hand = deal.hand(seat);
-        let system_ir = &table.systems[seat.index() as usize];
+        if !forced_passes.is_empty() {
+            report.forced_pass_prefixes += 1;
+        }
+        let key = GapKey {
+            trie: trie_position(&table.systems[seat.index() as usize], &auction, seat),
+            seat_rel: seat_role(&auction, seat),
+        };
 
-        match choose_bid(system_ir, hand, &auction, &ctx) {
+        match choose_bid(&table, hand, &auction, &ctx) {
             BidChoice::Chosen(c) => {
                 report.record_diagnostics(&c.diagnostics);
                 let after = auction
@@ -576,47 +796,46 @@ fn run_forward_consistency(system: &'static str, n: u64, seed: u64) -> CoverageR
                 };
                 if !interp.satisfied_by(seat, hand) {
                     let root = root_cause(&interp, seat, hand);
-                    report.record_violation(i, &auction, seat, hand, c.call, root);
+                    report.record_violation(i, &auction, seat, hand, c.call, root, &forced_passes);
                 }
-                report.record_position(&auction, hand, gap);
+                report.record_position(&auction, hand, gap, key);
             }
             BidChoice::NoCandidate(nc) => {
                 report.record_diagnostics(&nc.diagnostics);
-                report.record_position(&auction, hand, Gap::NoCandidate);
+                report.record_position(&auction, hand, Gap::NoCandidate, key);
             }
         }
     }
 
-    report.write_json(system, &table.systems[0].meta);
+    if output == ReportOutput::CoverageJson {
+        report.write_json(system, &table.systems[0].meta);
+    }
     report
 }
 
-/// Non-`#[ignore]`d, debug-friendly version (task brief: "a non-ignored 10^3-deal version must
-/// pass with 0 violations").
-///
-/// The gate is `violations_unexplained() == 0`, not `violations.len() == 0`: every violation this
-/// harness has ever produced against the current `sayc.bml` traces back (via `root_cause`) to a
-/// call resolved by `ResolutionKind::Natural` whose `natural.rs` rule is one of the four named in
-/// `record_violation`'s doc comment (`cue`, `pass_forcing`, `open_pass`, `pass_default`) -- each a
-/// documented `bridge-system::natural` heuristic-imprecision bug in a function this lane cannot
-/// edit (see `open_issues`); a violation whose root cause is anything else is a real, in-scope
-/// SAYC/harness defect and fails the test.
+/// Non-`#[ignore]`d, debug-friendly version: 0 violations other than the separately counted
+/// gap-induced ones (see [`ViolationCause::GapInduced`]), whose count is reported in the summary.
 #[test]
 fn sayc_forward_consistency_1e3() {
-    let report = run_forward_consistency("sayc.bml", 1_000, 0x5A1C_0001);
-    assert_eq!(report.violations_unexplained(), 0, "{}", report.summary());
+    let report =
+        run_forward_consistency("sayc.bml", 1_000, 0x5A1C_0001, ReportOutput::CoverageJson);
+    eprintln!("sayc_forward_consistency_1e3: {}", report.summary());
+    assert_eq!(
+        report.violations_not_gap_induced(),
+        0,
+        "{}",
+        report.summary()
+    );
 }
 
-/// The full 10^6-position release harness (task brief / `11-testing.md` §2). Run with
+/// The full 10^6-position release harness (`11-testing.md` §2). Run with
 /// `cargo test --release -p bridge-bidding --test consistency -- --ignored
-/// sayc_forward_consistency_1e6`; report the elapsed time and, if it exceeds ~20 minutes, fall
-/// back to 10^5 and say so (the task brief's own escape hatch).
+/// sayc_forward_consistency_1e6`.
 ///
-/// `SAYC_CONSISTENCY_N` sets the position count (default 1_000_000) and `SAYC_CONSISTENCY_SEED_OFFSET`
-/// is added to the base seed (default 0), so the full run can be split into several sub-9-minute
-/// chunks -- e.g. four chunks of 250_000 with offsets 0/1/2/3 -- each drawing an independent,
-/// non-overlapping random stream (a different seed, not a shared one resumed), and their position
-/// counts summed for the reported total.
+/// `SAYC_CONSISTENCY_N` sets the position count (default 1_000_000) and
+/// `SAYC_CONSISTENCY_SEED_OFFSET` is added to the base seed (default 0), so the full run can be
+/// split into several shorter chunks -- e.g. four chunks of 250_000 with offsets 0/1/2/3 -- each
+/// drawing an independent random stream, with their counts summed for the reported total.
 #[test]
 #[ignore = "10^6 positions; run with `cargo test --release -- --ignored`"]
 fn sayc_forward_consistency_1e6() {
@@ -631,13 +850,23 @@ fn sayc_forward_consistency_1e6() {
             .expect("SAYC_CONSISTENCY_SEED_OFFSET is a valid u64"),
         Err(_) => 0,
     };
-    let report = run_forward_consistency("sayc.bml", n, 0x5A1C_0002u64.wrapping_add(seed_offset));
+    let report = run_forward_consistency(
+        "sayc.bml",
+        n,
+        0x5A1C_0002u64.wrapping_add(seed_offset),
+        ReportOutput::CoverageJson,
+    );
     eprintln!(
         "sayc_forward_consistency_1e6: {} in {:?}",
         report.summary(),
         started.elapsed()
     );
-    assert_eq!(report.violations_unexplained(), 0, "{}", report.summary());
+    assert_eq!(
+        report.violations_not_gap_induced(),
+        0,
+        "{}",
+        report.summary()
+    );
 }
 
 /// A cheap, non-`#[ignore]`d check that `choose_bid` never raises `IllegalSystemCall` or
@@ -646,7 +875,7 @@ fn sayc_forward_consistency_1e6() {
 /// exercise them; the real system should not).
 #[test]
 fn sayc_forward_consistency_diagnostics_are_empty_on_current_sayc() {
-    let report = run_forward_consistency("sayc.bml", 200, 0x5A1C_0003);
+    let report = run_forward_consistency("sayc.bml", 200, 0x5A1C_0003, ReportOutput::None);
     assert!(
         report.illegal_system_call.is_empty(),
         "sayc.bml: unexpected IllegalSystemCall diagnostics: {:?}",
