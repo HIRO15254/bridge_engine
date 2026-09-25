@@ -408,7 +408,12 @@ struct BucketSummary {
 struct HoldOutReport {
     buckets: Vec<BucketSummary>,
     groups: Vec<GroupStat>,
-    /// The worst 40 by recall (excluding expected misses), for spot-checking.
+    /// Every evaluated node (§8.5: "ノード別一覧"), for diffing a run against a later one
+    /// (e.g. before/after a `NaturalParams` sweep in phase 4) node by node. A few hundred rows,
+    /// small enough to keep in full rather than only the worst ones below.
+    nodes: Vec<NodeMetric>,
+    /// The worst 40 by recall (excluding expected misses), for a quick spot-check without
+    /// scanning all of `nodes`.
     worst_recall_nodes: Vec<NodeMetric>,
 }
 
@@ -568,6 +573,7 @@ fn run_holdout(sources: &[CompiledSource]) -> HoldOutReport {
     HoldOutReport {
         buckets,
         groups,
+        nodes: metrics,
         worst_recall_nodes,
     }
 }
@@ -849,6 +855,15 @@ fn natural_inference_metrics() {
             .collect::<Vec<_>>()
             .join(", ")
     );
+    // `systems/sayc/sayc.bml` is checked into the repo, not optional vendored data: unlike a
+    // missing jdh8/gjp file, it compiling with an `Error`-severity lint (so `compile_if_clean`
+    // drops it) is this lane's own regression, not an absent fixture. Catch it here rather than
+    // silently reporting an empty, all-zero JSON (a real failure this measurement harness must
+    // not hide -- see the reviewer finding on this test's missing assertions).
+    assert!(
+        sources.iter().any(|s| s.origin == "sayc"),
+        "systems/sayc/sayc.bml must compile with zero Error-severity lints"
+    );
 
     let hold_out = run_holdout(&sources);
     for b in &hold_out.buckets {
@@ -862,6 +877,15 @@ fn natural_inference_metrics() {
             b.files.len()
         );
     }
+    let sayc_bucket =
+        hold_out.buckets.iter().find(|b| b.bucket == "sayc").expect(
+            "compiled_sources() checked above to include sayc, so run_holdout must bucket it",
+        );
+    assert!(
+        sayc_bucket.n_evaluated > 0,
+        "hold-out measurement 1 evaluated 0 sayc nodes: sayc.bml has no eligible (non-artificial, \
+         non-alertable) nodes at all, or every one turned out system-unsatisfiable"
+    );
     for g in &hold_out.groups {
         eprintln!(
             "  {}/{}/{}: n={} recall_mean={:.3} precision_mean={:.3} log_vol_ratio_mean={:.2}",
@@ -875,6 +899,11 @@ fn natural_inference_metrics() {
         reproduction.n_decision_points,
         reproduction.n_candidates_tested,
         reproduction.overall_agreement_rate
+    );
+    assert!(
+        reproduction.n_candidates_tested > 0,
+        "reproduction measurement 2 tested 0 candidates: sayc.bml's non-opening decision points \
+         must exercise NaturalInference::candidates"
     );
 
     let corpus = run_corpus(&root);

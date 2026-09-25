@@ -161,10 +161,10 @@ fn reproduction_rate() {
 | # | 測定 | 手順 | 出力 |
 | --- | --- | --- | --- |
 | 1 | 隠しノード比較 | 実システム (`sayc.bml`、コンパイルできた jdh8/gjp ファイル) の非人工ノードを 1 つずつ隠し、`classify` + `infer` の制約と元ノードの制約を比べる。各ノードで 1,000 手を元制約からサンプルし recall、推定制約からサンプルし precision、体積比 (`count()` の比) を出す | `Role × CallKind` 別の recall / precision / 体積比の平均と分位点 (`sayc.bml` は自作なので `vendor` (jdh8+gjp) とは別枠) |
-| 2 | 再現率 | 各決定点 (測定 1 と同じノード集合、オープニング自身を除く) で `NaturalInference::candidates` が返す各コールの制約から手をサンプルし、`choose_bid` (システム外の `SystemIR` を渡すので `ctx.natural` = `natural.candidates` が答える) で再生して元のコールと一致する率 | 規則別の一致率 |
+| 2 | 再現率 | 各決定点 (測定 1 と同じノード集合、先手番のオープニング (空プレフィックス) を除く -- `choose_bid` のルート局面は `ctx.natural` に落ちる前に厳密な「経路なし」解決を返すため) で `NaturalInference::candidates` が返す各コールの制約から手をサンプルし、`choose_bid` (システム外の `SystemIR` を渡すので `ctx.natural` = `natural.candidates` が答える) で再生して元のコールと一致する率 | 規則別の一致率 |
 | 3 | コーパス充足 | コーパス実手 (PBN + LIN) の各コールについて `infer` の制約が満たされる率と制約体積のパレート (体積が小さく充足率が高いほど良い) | 規則別の (充足率, log 体積) 点列 |
 
-閾値は設けない (数値が出ることがフェーズ 3 の完了条件)。フェーズ 4 で値を見て `NaturalParams` を調整する。2026-09-25 に一度実行した結果 (`target/natural_metrics.json`) は次の通り: 実際にコンパイルできた実システムは `sayc.bml` と gjp の一部ファイル (jdh8 の `blue`/`wj`/`defense` と大半の gjp ファイルは現時点でエラー付きコンパイルのため対象外、`06-system.md` §8.5 の「コンパイルできたファイルのみ」という条件通り); 隠しノード比較は sayc で 389 ノード、vendor (gjp) で 132 ノードを評価し、`Role × CallKind` ごとの recall/precision/体積比は概ね 0.0〜1.0 に散らばる (ノード数が少ない群は分散が大きい); 再現率は 486 決定点・6,411 候補で全体一致率 0.339; コーパス充足は 27 ファイル・724 局・8,169 コールを走査した。この測定で `rule_rebid_own` (`06-system.md` §8.3) がウィーク・ツー/プリエンプト後の自己スート・リビッドを常に `opening_hcp` (12–21) と比べていた実装漏れが見つかり、`crates/bridge-system/src/natural.rs` で修正済み (§8.3 の注記、および下の「実装後の訂正」参照)。
+閾値は設けない (数値が出ることがフェーズ 3 の完了条件)。フェーズ 4 で値を見て `NaturalParams` を調整する。2026-09-25 に実行した結果 (`target/natural_metrics.json`) は次の通り: 実際にコンパイルできた実システムは `sayc.bml` と gjp の一部ファイル (jdh8 の `blue`/`wj`/`defense` と大半の gjp ファイルは現時点でエラー付きコンパイルのため対象外 -- `compile_if_clean` が「エラー lint 0 のファイルだけを測定対象にする」という、このレーン独自の基準を採っている); 隠しノード比較は sayc で 389 ノード、vendor (gjp) で 132 ノードを評価した。recall/precision はいずれも 0〜1 の範囲に収まるが、`Role × CallKind` ごとの log2 体積比の平均はノード数の少ない群ほどばらつきが大きく、sayc/Opener/Bid_Reverse の −5.50 から vendor/Responder/Bid_Cue の +16.86 まで広く散らばる (体積比が大きいほど推定制約が実際より緩い)。再現率は 486 決定点・6,411 候補で全体一致率 0.340、コーパス充足は 27 ファイル・724 局・8,169 コールを走査した。この測定で `rule_rebid_own` がウィーク・ツー/プリエンプト/ストロング 2C 後の自己スート・リビッドを常に `opening_hcp` (12–21) と比べていた実装漏れが見つかり、`crates/bridge-system/src/natural.rs` で修正済み (詳細は `06-system.md` §8.3 の該当注記を参照)。
 
 ## 7. DDS 差分テスト (`bridge-dds`)
 
