@@ -157,7 +157,7 @@
 | R11 | DNF の項が重なると `ConstraintProposal::log_prob` が全成分を数えるためコストが増える | D4 の排他的連鎖で否定由来の項は素。利用者の `Or` だけが重なりうる |
 | R12 | `HandConstraint` に `PartialEq` が無いため Step B の重複除去はノード id でしか行えず、構造的に等しい代替が二重に残る | K=8 で有界。`(node, kind)` 列のキーで除去 |
 | R13 | `ImplicitPass::Complement` の Pass が緩すぎる、または兄弟が全域を覆って充足不能 | `coverage_report.json` で `ImplicitPass` を本当の穴と分けて数える |
-| R14 | `cargo publish` 時に git-ignored の `vendor/` が同梱されない | フェーズ 5.5 で `include` 指定か公開前取得の必須化を決める (未決) |
+| R14 | `cargo publish` 時に git-ignored の `vendor/` が同梱されない | フェーズ 5.5 で解決済み: `crates/bridge-dds/Cargo.toml` の `include` で抽出済みソース (`vendor/dds-2.9.0/{src,include}/**`, `LICENSE`) のみを明示的に同梱 (`vendor/*.tar.gz`/`SHA256SUMS` は除外)。詳細は `crates/bridge-dds/VENDOR.md` |
 | R15 | DDS3 への移行 | ラッパーの公開面をレガシー名と同一に保ち、`vendor/` と `build.rs` の差し替えだけで済ませる |
 
 ## 11. 未決
@@ -165,7 +165,6 @@
 - 未決: フェーズ 6 の上位 3 リード命中率の閾値 X。
 - 未決: `two-over-one.bml` の着手時期 (フェーズ 4.5、任意)。
 - 未決: フェーズ 5.8 (軟情報) をフェーズ 6 の後ろに回すか。
-- 未決: `cargo publish` での `vendor/` 同梱 (R14、フェーズ 5.5)。
 
 ## 実績
 

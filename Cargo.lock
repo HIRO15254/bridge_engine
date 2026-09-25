@@ -173,6 +173,7 @@ dependencies = [
  "bridge-core",
  "cc",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
