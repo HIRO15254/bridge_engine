@@ -8,7 +8,7 @@ mod common;
 use bridge_core::{Auction, Bid, Call, Card, Hand, Rank, Seat, Strain, Suit, Vulnerability};
 use bridge_lead::{LeadOptions, LeadQuery, LeadScoring, advise};
 use bridge_sample::UniformProposal;
-use common::{FakeDd, empty_table};
+use common::{DealDependentFakeDd, FakeDd, empty_table};
 
 /// Spades A-K-Q-J-T (an unbroken top run of 5), plus 8 cards elsewhere that never touch an ace,
 /// so [`common::FakeDd`] scores all of them 0: hearts 6-4-2, diamonds 7-5-3, clubs 4-2.
@@ -201,6 +201,255 @@ fn scoring_by_set_probability_ranks_the_setting_group_first() {
     };
     let advice = advise(&table, &query, &UniformProposal, &FakeDd, &opts).unwrap();
     assert_eq!(advice.leads[0].card, Card::new(Suit::Spades, Rank::Ace));
+}
+
+/// Unlike [`same_seed_gives_identical_advice`] (whose [`FakeDd`] scores are constant across every
+/// sample, so no aggregation-order bug could possibly change the result), this uses
+/// [`DealDependentFakeDd`], whose score reads the sampled deal's other hands. A bug that mismatched
+/// a score to the wrong card, or that made the result depend on iteration order, would show up
+/// here even though it could not in the constant-score version (review finding).
+#[test]
+fn same_seed_gives_identical_advice_with_deal_dependent_scores() {
+    let table = empty_table();
+    let auction = three_nt_by_north();
+    let query = LeadQuery {
+        auction: &auction,
+        leader_hand: hand_with_a_spade_run(),
+    };
+    let opts = small_options(5);
+
+    let a = advise(
+        &table,
+        &query,
+        &UniformProposal,
+        &DealDependentFakeDd,
+        &opts,
+    )
+    .unwrap();
+    let b = advise(
+        &table,
+        &query,
+        &UniformProposal,
+        &DealDependentFakeDd,
+        &opts,
+    )
+    .unwrap();
+
+    assert_eq!(a.leads.len(), b.leads.len());
+    assert!(!a.leads.is_empty());
+    for (la, lb) in a.leads.iter().zip(&b.leads) {
+        assert_eq!(la.card, lb.card);
+        assert_eq!(la.equivalents, lb.equivalents);
+        assert_eq!(la.rank, lb.rank);
+        assert_eq!(la.mean_defence_tricks, lb.mean_defence_tricks);
+        assert_eq!(la.std_error, lb.std_error);
+        assert_eq!(la.set_probability, lb.set_probability);
+    }
+}
+
+/// Cross-checks `advise`'s top card's `mean_defence_tricks` against an independent, hand-rolled
+/// reconstruction of the same weighted average computed directly from `sample_deals` and
+/// [`DealDependentFakeDd`], reproducing `advise`'s own context-building steps
+/// (`docs/design/14-lead.md` §3 steps 3-7) rather than calling into `bridge_lead`'s internals.
+/// This is the "sequential reference" the review asked for: it does not depend on
+/// `bridge_lead::aggregate` at all, so it can catch a bug in that module that a
+/// same-seed-twice comparison (which only proves `advise` is a pure function of its inputs)
+/// cannot.
+#[test]
+fn advise_matches_an_independently_hand_computed_reference() {
+    use bridge::dd::DoubleDummy;
+    use bridge_bidding::{BidContext, ImplicitPass, PolicyParams, Scoring, interpret};
+    use bridge_constraint::{HandConstraint, KnownCards};
+    use bridge_sample::{
+        BiddingLikelihood, SampleContext, SampleOptions, WeightedDeal, sample_deals,
+    };
+
+    let table = empty_table();
+    let auction = three_nt_by_north();
+    let leader_hand = hand_with_a_spade_run();
+    let leader = Seat::East;
+    let query = LeadQuery {
+        auction: &auction,
+        leader_hand,
+    };
+    let opts = small_options(6);
+
+    let advice = advise(
+        &table,
+        &query,
+        &UniformProposal,
+        &DealDependentFakeDd,
+        &opts,
+    )
+    .unwrap();
+    let top = advice.leads.first().expect("at least one lead group");
+
+    // Reproduce `bridge_lead::advise`'s own context-building (`crates/bridge-lead/src/lib.rs`),
+    // independently of any of its helper functions.
+    let known = KnownCards::from_viewer(leader, leader_hand);
+    let interpretation = interpret(&table, &auction, &opts.interpret);
+    let play_constraints = [
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+    ];
+    let bid_ctx = BidContext {
+        scoring: Scoring::Imp,
+        natural: None,
+        implicit_pass: ImplicitPass::Complement,
+        policy: PolicyParams::default(),
+    };
+    let bidding = BiddingLikelihood {
+        table: &table,
+        auction: &auction,
+        ctx: &bid_ctx,
+    };
+    let ctx = SampleContext {
+        known,
+        interpretation: &interpretation,
+        play_constraints: &play_constraints,
+        play_soft: None,
+        bidding: Some(bidding),
+    };
+    let sample_opts = SampleOptions {
+        seed: opts.seed,
+        ..opts.sample
+    };
+    let (deals, _report) = sample_deals(&ctx, &UniformProposal, opts.samples, &sample_opts)
+        .expect("sampling succeeds with the same inputs `advise` used");
+    let weights = WeightedDeal::normalized_weights(&deals);
+
+    let mut mean = 0.0f64;
+    for (w, weighted) in weights.iter().zip(&deals) {
+        let scores = DealDependentFakeDd
+            .lead_scores(&weighted.deal, Strain::NoTrump, leader)
+            .unwrap();
+        let score = scores
+            .iter()
+            .find(|(c, _)| *c == top.card)
+            .map(|&(_, s)| s)
+            .expect("lead_scores covers every leader card");
+        mean += w * f64::from(score);
+    }
+
+    assert!(
+        (mean - top.mean_defence_tricks).abs() < 1e-9,
+        "hand-computed mean {mean} vs advise()'s {}",
+        top.mean_defence_tricks
+    );
+}
+
+/// 1-level contracts: the defence needs `8 - 1 = 7` tricks to defeat it. A leader holding an
+/// unbroken top run of exactly 7 in one suit (and nothing that touches an ace elsewhere) should
+/// have that run's [`bridge_lead::LeadScore::set_probability`] at exactly 1.0 under [`FakeDd`],
+/// whose score is precisely that run's length (review finding: the existing threshold tests only
+/// ever exercised level 3).
+#[test]
+fn set_probability_threshold_is_correct_at_the_one_level() {
+    let mut hand = Hand::EMPTY;
+    for rank in [
+        Rank::Ace,
+        Rank::King,
+        Rank::Queen,
+        Rank::Jack,
+        Rank::Ten,
+        Rank::Nine,
+        Rank::Eight,
+    ] {
+        hand = hand.with(Card::new(Suit::Spades, rank));
+    }
+    for rank in [Rank::Six, Rank::Five, Rank::Four, Rank::Three, Rank::Two] {
+        hand = hand.with(Card::new(Suit::Hearts, rank));
+    }
+    hand = hand.with(Card::new(Suit::Diamonds, Rank::Two));
+    assert_eq!(hand.len(), 13);
+
+    let table = empty_table();
+    let auction = Auction::from_calls(
+        Seat::North,
+        Vulnerability::None,
+        [
+            Call::Bid(Bid::new(1, Strain::Clubs).unwrap()),
+            Call::Pass,
+            Call::Pass,
+            Call::Pass,
+        ],
+    )
+    .expect("1C opening, three passes, is a legal complete auction");
+    let query = LeadQuery {
+        auction: &auction,
+        leader_hand: hand,
+    };
+    let opts = small_options(2);
+    let advice = advise(&table, &query, &UniformProposal, &FakeDd, &opts).unwrap();
+
+    let run = &advice.leads[0];
+    assert_eq!(run.card, Card::new(Suit::Spades, Rank::Ace));
+    assert!((run.mean_defence_tricks - 7.0).abs() < 1e-9);
+    assert!(
+        (run.set_probability - 1.0).abs() < 1e-9,
+        "a run of exactly 7 meets the level-1 threshold of 7, p = {}",
+        run.set_probability
+    );
+
+    let rest = &advice.leads[1];
+    assert!((rest.set_probability - 0.0).abs() < 1e-9);
+}
+
+/// 7-level contracts: the defence needs `8 - 7 = 1` trick to defeat it. A leader holding a run of
+/// exactly 1 (a lone ace) should have that card's `set_probability` at exactly 1.0.
+#[test]
+fn set_probability_threshold_is_correct_at_the_grand_slam_level() {
+    let mut hand = Hand::EMPTY.with(Card::new(Suit::Spades, Rank::Ace));
+    for rank in [
+        Rank::King,
+        Rank::Queen,
+        Rank::Jack,
+        Rank::Ten,
+        Rank::Nine,
+        Rank::Eight,
+        Rank::Seven,
+        Rank::Six,
+        Rank::Five,
+        Rank::Four,
+        Rank::Three,
+        Rank::Two,
+    ] {
+        hand = hand.with(Card::new(Suit::Hearts, rank));
+    }
+    assert_eq!(hand.len(), 13);
+
+    let table = empty_table();
+    let auction = Auction::from_calls(
+        Seat::North,
+        Vulnerability::None,
+        [
+            Call::Bid(Bid::new(7, Strain::NoTrump).unwrap()),
+            Call::Pass,
+            Call::Pass,
+            Call::Pass,
+        ],
+    )
+    .expect("7NT opening, three passes, is a legal complete auction");
+    let query = LeadQuery {
+        auction: &auction,
+        leader_hand: hand,
+    };
+    let opts = small_options(2);
+    let advice = advise(&table, &query, &UniformProposal, &FakeDd, &opts).unwrap();
+
+    let ace = &advice.leads[0];
+    assert_eq!(ace.card, Card::new(Suit::Spades, Rank::Ace));
+    assert!((ace.mean_defence_tricks - 1.0).abs() < 1e-9);
+    assert!(
+        (ace.set_probability - 1.0).abs() < 1e-9,
+        "a lone ace meets the level-7 threshold of 1, p = {}",
+        ace.set_probability
+    );
+
+    let rest = &advice.leads[1];
+    assert!((rest.set_probability - 0.0).abs() < 1e-9);
 }
 
 #[test]

@@ -11,7 +11,9 @@
 //!
 //! Environment variables: `LEAD_SAMPLES` (default 100, samples per board for the real harness),
 //! `LEAD_UNIFORM=1` (use [`UniformProposal`] instead of [`ConstraintProposal`] for the main
-//! evaluation, not just the baseline).
+//! evaluation, not just baseline (a)), `BRIDGE_CORPUS_DIR` and `BRIDGE_SYSTEMS_DIR` (both follow
+//! `crates/bridge-format/tests/common/mod.rs` / `systems/README.md`'s convention: an explicit
+//! directory, or else relative to `CARGO_MANIFEST_DIR`).
 #![cfg(feature = "dds")]
 
 mod common;
@@ -22,22 +24,42 @@ use std::time::Instant;
 use bridge::system::lexer::FsLoader;
 use bridge::system::{CompileOptions, NaturalInference};
 use bridge_bidding::{Interpretation, Table};
+use bridge_constraint::{HandConstraint, KnownCards};
 use bridge_core::{Auction, Card, Contract, Deal};
 use bridge_format::pbn;
-use bridge_lead::{LeadOptions, LeadQuery, advise};
-use bridge_sample::{
-    ConstraintProposal, KnownCards, Proposal, SampleContext, SampleOptions, UniformProposal,
-    sample_deals,
-};
+use bridge_lead::{LeadAdvice, LeadOptions, LeadQuery, LeadScore, advise, advise_with_context};
+use bridge_sample::{ConstraintProposal, Proposal, SampleContext, UniformProposal};
+
+/// Cargo runs an integration test's binary with the *package* root (`crates/bridge-lead`) as its
+/// working directory, not the workspace root — so every workspace-relative path in this file
+/// (the corpus, the system, `target/lead_report.json`) is resolved explicitly against the
+/// workspace root rather than a bare relative path (which would silently resolve under
+/// `crates/bridge-lead/` instead; `crates/bridge-system/tests/desc_recognition_report.rs` follows
+/// the same convention).
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("crates/bridge-lead is two levels under the workspace root")
+        .to_path_buf()
+}
 
 /// `BRIDGE_CORPUS_DIR`, or `<workspace>/corpus/data`; `None` when the directory is absent
 /// (`crates/bridge-format/tests/common/mod.rs`'s convention).
 fn corpus_dir() -> Option<PathBuf> {
     let dir = match std::env::var_os("BRIDGE_CORPUS_DIR") {
         Some(dir) => PathBuf::from(dir),
-        None => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/data"),
+        None => workspace_root().join("corpus/data"),
     };
     if dir.is_dir() { Some(dir) } else { None }
+}
+
+/// `BRIDGE_SYSTEMS_DIR`, or `<workspace>/systems` (`systems/README.md`'s convention).
+fn systems_dir() -> PathBuf {
+    match std::env::var_os("BRIDGE_SYSTEMS_DIR") {
+        Some(dir) => PathBuf::from(dir),
+        None => workspace_root().join("systems"),
+    }
 }
 
 fn pbn_files(dir: &Path) -> Vec<PathBuf> {
@@ -105,8 +127,8 @@ fn select_boards(corpus_dir: &Path, limit: usize) -> Vec<Board> {
     boards
 }
 
-/// The real deal's DD lead scores, the maximum among them, and the (single, by construction)
-/// distinct-score class of cards achieving it: the DD-optimal leads.
+/// The real deal's DD lead scores, the maximum among them, and the (possibly several) cards
+/// achieving it: the DD-optimal leads.
 struct Truth {
     all_scores: Vec<(Card, u8)>,
     max: u8,
@@ -132,6 +154,16 @@ fn dd_truth(dd: &dyn bridge::dd::DoubleDummy, board: &Board) -> Result<Truth, br
     })
 }
 
+/// Number of distinct score values among `scores` (the DD-equivalence classes on the real deal).
+/// Used only to separate "trivial" boards (every lead scores the same, so every baseline and
+/// every advisor trivially hits) from boards where the choice of lead actually matters.
+fn distinct_classes(scores: &[(Card, u8)]) -> u64 {
+    let mut values: Vec<u8> = scores.iter().map(|&(_, s)| s).collect();
+    values.sort_unstable();
+    values.dedup();
+    values.len() as u64
+}
+
 /// `C(n, k)` for the small values this harness needs (`n <= 13`).
 fn binomial(n: u64, k: u64) -> u64 {
     if k > n {
@@ -145,50 +177,57 @@ fn binomial(n: u64, k: u64) -> u64 {
     result
 }
 
-/// Baseline (b): the expected top-3 hit rate of picking 3 of the leader's cards uniformly at
-/// random without replacement, given `classes` distinct DD-equivalence classes on the real deal
-/// (grouping by identical score) of which `truth_classes` achieve the maximum. Hypergeometric:
-/// `P(at least one truth class among 3 picks) = 1 - C(classes - truth_classes, 3) / C(classes, 3)`.
-fn random_choice_baseline(classes: u64, truth_classes: u64) -> f64 {
-    let total = binomial(classes, 3);
+/// Baseline (b): the expected top-`k` hit rate of picking `k` of the leader's 13 cards uniformly
+/// at random without replacement, given that `m` of those 13 cards are DD-optimal on the real
+/// deal. Hypergeometric: `P(at least one optimal card among k picks) = 1 - C(13 - m, k) / C(13,
+/// k)`. This is over the leader's *cards* (`13 choose k`), not over distinct DD-score *values* —
+/// with touching honours routinely sharing a score, the number of cards achieving the maximum is
+/// usually well above 1, so this baseline is informative rather than trivially 1.0 (review
+/// finding: the previous version picked among score-value classes, which this corpus never has
+/// more than 3 of, making the baseline exactly 1.0 on every board).
+fn random_choice_baseline(m: u64, k: u64) -> f64 {
+    let total = binomial(13, k);
     if total == 0 {
-        return 1.0; // fewer than 3 classes: any 3 picks cover every class.
+        return 1.0;
     }
-    let miss = binomial(classes - truth_classes, 3);
+    let miss = binomial(13u64.saturating_sub(m), k);
     1.0 - (miss as f64 / total as f64)
 }
 
-/// Number of distinct score values among `scores` (the DD-equivalence classes on the real deal).
-fn distinct_classes(scores: &[(Card, u8)]) -> u64 {
-    let mut values: Vec<u8> = scores.iter().map(|&(_, s)| s).collect();
-    values.sort_unstable();
-    values.dedup();
-    values.len() as u64
+/// The vacuous interpretation: no seat has any resolved alternative, so
+/// [`bridge_sample::sequence_log_likelihood`] would find nothing to weight by, and — paired with
+/// `bidding: None` in [`SampleContext`] — sampling ignores the auction and calls entirely, other
+/// than to have already derived the contract and leader from it. Equivalent to "no bidding
+/// information", i.e. baseline (a).
+fn vacuous_interpretation() -> Interpretation {
+    Interpretation {
+        seats: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+        per_call: Vec::new(),
+        divergence: None,
+    }
 }
 
-/// Baseline (a): no bidding information at all. Samples uniformly (ignoring the auction beyond
-/// deriving the contract/leader) and ranks the leader's cards by plain (unweighted, since the
-/// vacuous interpretation's likelihood is 1 everywhere) mean defence tricks. This deliberately
-/// does not call [`bridge_lead::advise`] (which always interprets the real auction): the point
-/// of this baseline is to measure what bidding information is worth, so it must not use any.
-fn baseline_a_top3(
+/// Baseline (a): no bidding information. Samples uniformly (ignoring the auction beyond deriving
+/// the contract/leader) and ranks with the exact same pipeline `advise` uses
+/// (`bridge_lead::advise_with_context`, `#[doc(hidden)]`) so its top-3 is comparable to the
+/// advisor's: equivalence groups, not bare cards, and a hit credits the whole group
+/// (review finding: re-implementing the ranking without grouping inflated the measured value of
+/// bidding information, since a touching-honour sequence like AKQ is one DD class but would count
+/// as 3 separate "hits" worth of baseline coverage).
+fn baseline_a(
     dd: &dyn bridge::dd::DoubleDummy,
     board: &Board,
     samples: usize,
     seed: u64,
-) -> Result<Vec<Card>, String> {
+) -> Result<LeadAdvice, String> {
     let leader = board.contract.leader();
     let known = KnownCards::from_viewer(leader, board.deal.hand(leader));
-    let vacuous = Interpretation {
-        seats: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
-        per_call: Vec::new(),
-        divergence: None,
-    };
+    let vacuous = vacuous_interpretation();
     let play_constraints = [
-        bridge_constraint::HandConstraint::ANY,
-        bridge_constraint::HandConstraint::ANY,
-        bridge_constraint::HandConstraint::ANY,
-        bridge_constraint::HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
     ];
     let ctx = SampleContext {
         known,
@@ -197,42 +236,43 @@ fn baseline_a_top3(
         play_soft: None,
         bidding: None,
     };
-    let opts = SampleOptions {
+    let vulnerable = board
+        .auction
+        .vulnerability()
+        .is_vulnerable(board.contract.declarer);
+    let opts = LeadOptions {
+        samples,
         seed,
-        ..SampleOptions::default()
+        top_k: 3,
+        ..LeadOptions::default()
     };
-    let (deals, _report) =
-        sample_deals(&ctx, &UniformProposal, samples, &opts).map_err(|e| e.to_string())?;
-
-    let cards: Vec<Card> = board.deal.hand(leader).cards().collect();
-    let mut totals: Vec<(Card, f64)> = cards.iter().map(|&c| (c, 0.0)).collect();
-    let strain = board.contract.bid.strain();
-    for weighted in &deals {
-        let scores = dd
-            .lead_scores(&weighted.deal, strain, leader)
-            .map_err(|e| e.to_string())?;
-        for (card, total) in totals.iter_mut() {
-            let score = scores
-                .iter()
-                .find(|(c, _)| c == card)
-                .map(|&(_, s)| s)
-                .unwrap_or(0);
-            *total += f64::from(score);
-        }
-    }
-    totals.sort_by(|a, b| b.1.total_cmp(&a.1));
-    Ok(totals.into_iter().take(3).map(|(c, _)| c).collect())
+    advise_with_context(
+        &ctx,
+        board.contract,
+        vulnerable,
+        &UniformProposal,
+        dd,
+        &opts,
+    )
+    .map_err(|e| e.to_string())
 }
 
-fn compile_table(system_path: &str) -> Result<Table, String> {
-    let source =
-        std::fs::read_to_string(system_path).map_err(|e| format!("reading {system_path}: {e}"))?;
+fn compile_table(system_path: &Path) -> Result<Table, String> {
+    let source = std::fs::read_to_string(system_path)
+        .map_err(|e| format!("reading {}: {e}", system_path.display()))?;
+    let path_str = system_path.to_string_lossy();
     let (ir, _lints) =
-        bridge::system::compile(system_path, &source, &FsLoader, &CompileOptions::default());
+        bridge::system::compile(&path_str, &source, &FsLoader, &CompileOptions::default());
     Ok(Table::uniform(
         std::sync::Arc::new(ir),
         std::sync::Arc::new(NaturalInference::default()),
     ))
+}
+
+/// Whether `lead` (its representative card, or one of its equivalents) contains one of `truth`'s
+/// DD-optimal cards. Shared by the main advisor's hit check and baseline (a)'s.
+fn hits_truth(lead: &LeadScore, truth: &Truth) -> bool {
+    truth.cards.contains(&lead.card) || lead.equivalents.iter().any(|c| truth.cards.contains(c))
 }
 
 #[test]
@@ -256,11 +296,12 @@ fn corpus_eval() {
     let boards = select_boards(&dir, 100);
     assert!(!boards.is_empty(), "no eligible boards found under {dir:?}");
 
-    // `systems/sayc/sayc.bml` does not exist as a compiled root yet on this lane's base and
-    // `bridge_system::compile` is `todo!()`; both are expected to be true until the `system` and
-    // `sample` lanes land (crate root doc). This call is reached only when the corpus and DDS
+    let system_path = systems_dir().join("sayc.bml");
+    // `bridge_system::compile` is `todo!()` on this lane's base and `systems/sayc.bml` may not
+    // exist as a compiled root yet (crate root doc); both are expected to be true until the
+    // `system` and `sample` lanes land. This call is reached only when the corpus and DDS
     // preconditions above are both satisfied, and is expected to panic until then.
-    let table = compile_table("systems/sayc/sayc.bml").expect("system compiles");
+    let table = compile_table(&system_path).expect("system compiles");
 
     let uniform = UniformProposal;
     let constraint = ConstraintProposal::default();
@@ -268,19 +309,29 @@ fn corpus_eval() {
 
     let mut top1_hits = 0usize;
     let mut top3_hits = 0usize;
+    let mut top1_hits_nontrivial = 0usize;
+    let mut top3_hits_nontrivial = 0usize;
+    let mut nontrivial_boards = 0usize;
     let mut tricks_lost: Vec<f64> = Vec::new();
+    let mut estimation_error: Vec<f64> = Vec::new();
     let mut ess_ratios: Vec<f64> = Vec::new();
     let mut per_board_seconds: Vec<f64> = Vec::new();
+    let mut baseline_a_top1_hits = 0usize;
     let mut baseline_a_top3_hits = 0usize;
+    let mut baseline_b_top1_rates: Vec<f64> = Vec::new();
     let mut baseline_b_top3_rates: Vec<f64> = Vec::new();
 
     for board in &boards {
         let start = Instant::now();
 
         let truth = dd_truth(dd.as_ref(), board).expect("DD solve on the real deal");
-        let classes = distinct_classes(&truth.all_scores);
-        // The set of cards scoring the maximum is one distinct-score class by construction.
-        baseline_b_top3_rates.push(random_choice_baseline(classes, 1));
+        let m = truth.cards.len() as u64;
+        baseline_b_top1_rates.push(random_choice_baseline(m, 1));
+        baseline_b_top3_rates.push(random_choice_baseline(m, 3));
+        let nontrivial = distinct_classes(&truth.all_scores) >= 2;
+        if nontrivial {
+            nontrivial_boards += 1;
+        }
 
         let query = LeadQuery {
             auction: &board.auction,
@@ -297,25 +348,46 @@ fn corpus_eval() {
             Err(e) => panic!("advise should succeed on {}: {e}", board.label),
         };
 
-        let hits_truth = |lead: &bridge_lead::LeadScore| {
-            truth.cards.contains(&lead.card)
-                || lead.equivalents.iter().any(|c| truth.cards.contains(c))
-        };
-        if advice.leads.first().is_some_and(hits_truth) {
+        let top1_hit = advice.leads.first().is_some_and(|l| hits_truth(l, &truth));
+        let top3_hit = advice.leads.iter().any(|l| hits_truth(l, &truth));
+        if top1_hit {
             top1_hits += 1;
         }
-        if advice.leads.iter().any(hits_truth) {
+        if top3_hit {
             top3_hits += 1;
         }
+        if nontrivial {
+            if top1_hit {
+                top1_hits_nontrivial += 1;
+            }
+            if top3_hit {
+                top3_hits_nontrivial += 1;
+            }
+        }
+        // The loss from the *choice actually made*: the chosen card's score on the real deal
+        // (not the advisor's own sample-estimated mean, which measures estimation bias, not the
+        // consequence of the choice — review finding). `all_scores` covers every one of the
+        // leader's 13 cards (the `DoubleDummy` contract `aggregate.rs::scores_by_card` also
+        // relies on), so the lookup cannot miss.
         if let Some(top1) = advice.leads.first() {
-            tricks_lost.push(f64::from(truth.max) - top1.mean_defence_tricks);
+            let real = truth
+                .all_scores
+                .iter()
+                .find(|(c, _)| *c == top1.card)
+                .map(|&(_, s)| s)
+                .expect("all_scores covers every one of the leader's 13 cards");
+            tricks_lost.push(f64::from(truth.max - real));
+            estimation_error.push((top1.mean_defence_tricks - f64::from(real)).abs());
         }
         ess_ratios.push(advice.sample_report.ess_ratio);
         per_board_seconds.push(start.elapsed().as_secs_f64());
 
-        match baseline_a_top3(dd.as_ref(), board, samples, 0) {
-            Ok(top3) => {
-                if top3.iter().any(|c| truth.cards.contains(c)) {
+        match baseline_a(dd.as_ref(), board, samples, 0) {
+            Ok(advice) => {
+                if advice.leads.first().is_some_and(|l| hits_truth(l, &truth)) {
+                    baseline_a_top1_hits += 1;
+                }
+                if advice.leads.iter().any(|l| hits_truth(l, &truth)) {
                     baseline_a_top3_hits += 1;
                 }
             }
@@ -324,22 +396,30 @@ fn corpus_eval() {
     }
 
     let n = boards.len() as f64;
+    let nontrivial_n = (nontrivial_boards as f64).max(1.0);
     let report = serde_json::json!({
         "boards": boards.len(),
+        "nontrivial_boards": nontrivial_boards,
         "samples_per_board": samples,
         "proposal": if use_uniform { "uniform" } else { "constraint" },
         "hit_rate_top1": top1_hits as f64 / n,
         "hit_rate_top3": top3_hits as f64 / n,
-        "mean_tricks_lost_top1": tricks_lost.iter().sum::<f64>() / tricks_lost.len().max(1) as f64,
-        "mean_ess_ratio": ess_ratios.iter().sum::<f64>() / ess_ratios.len().max(1) as f64,
-        "mean_seconds_per_board": per_board_seconds.iter().sum::<f64>() / n,
+        "hit_rate_top1_nontrivial": top1_hits_nontrivial as f64 / nontrivial_n,
+        "hit_rate_top3_nontrivial": top3_hits_nontrivial as f64 / nontrivial_n,
+        "mean_tricks_lost_top1": tricks_lost.iter().fold(0.0, |a, b| a + b) / tricks_lost.len().max(1) as f64,
+        "mean_estimation_error_top1": estimation_error.iter().fold(0.0, |a, b| a + b) / estimation_error.len().max(1) as f64,
+        "mean_ess_ratio": ess_ratios.iter().fold(0.0, |a, b| a + b) / n,
+        "mean_seconds_per_board": per_board_seconds.iter().fold(0.0, |a, b| a + b) / n,
+        "baseline_no_bidding_hit_rate_top1": baseline_a_top1_hits as f64 / n,
         "baseline_no_bidding_hit_rate_top3": baseline_a_top3_hits as f64 / n,
-        "baseline_random_hit_rate_top3": baseline_b_top3_rates.iter().sum::<f64>() / n,
+        "baseline_random_hit_rate_top1": baseline_b_top1_rates.iter().fold(0.0, |a, b| a + b) / n,
+        "baseline_random_hit_rate_top3": baseline_b_top3_rates.iter().fold(0.0, |a, b| a + b) / n,
     });
 
-    std::fs::create_dir_all("target").ok();
+    let target_dir = workspace_root().join("target");
+    std::fs::create_dir_all(&target_dir).ok();
     std::fs::write(
-        "target/lead_report.json",
+        target_dir.join("lead_report.json"),
         serde_json::to_string_pretty(&report).unwrap(),
     )
     .expect("writing target/lead_report.json");

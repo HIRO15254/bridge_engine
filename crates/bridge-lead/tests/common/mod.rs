@@ -82,6 +82,40 @@ fn fake_score(hand: Hand, card: Card) -> u8 {
     }
 }
 
+/// A [`DoubleDummy`] fake that, unlike [`FakeDd`], also reads the other three hands: it scores
+/// each of the leader's cards by how many cards the leader's partner (dummy, on this contract)
+/// holds in that card's suit. This makes the score genuinely deal-dependent (different on every
+/// sample), so a real aggregation bug — a score matched to the wrong card, an accidental
+/// dependence on deal iteration order — could actually change the computed statistics, which
+/// [`FakeDd`]'s deal-independent scores cannot exercise (`docs/design/14-lead.md` §4).
+pub struct DealDependentFakeDd;
+
+impl DoubleDummy for DealDependentFakeDd {
+    fn dd_table(&self, _deal: &Deal) -> Result<DdTable, DdError> {
+        unimplemented!("bridge-lead's tests only ever call lead_scores")
+    }
+
+    fn lead_scores(
+        &self,
+        deal: &Deal,
+        _trump: Strain,
+        leader: Seat,
+    ) -> Result<Vec<(Card, u8)>, DdError> {
+        let partner_hand = deal.hand(leader.partner());
+        Ok(deal
+            .hand(leader)
+            .cards()
+            .map(|card| {
+                let score = partner_hand
+                    .cards()
+                    .filter(|c| c.suit() == card.suit())
+                    .count();
+                (card, score as u8)
+            })
+            .collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

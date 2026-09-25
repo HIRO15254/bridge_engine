@@ -45,7 +45,7 @@ pub struct LeadQuery<'a> {
 }
 
 pub struct LeadScore {
-    pub card: Card,                  // グループの代表 (スート内でランクが最も高いカード)
+    pub card: Card,                  // グループの代表 (グループ内でランクが最も高いカード。グループはスートをまたぐことがある)
     pub equivalents: Vec<Card>,      // 全サンプルで card と守備トリック数が一致したカード
     pub mean_defence_tricks: f64,
     pub std_error: f64,
@@ -95,7 +95,7 @@ pub fn advise(
    - `var(c) = Σ_i w_i · (score_i(c) − mean(c))²` (正規化重みでの重み付き分散)
    - `std_error(c) = sqrt(var(c) / ess)` (`ess = report.ess`。全カード共通の重みなので `ess` も共通)
    - `set_probability(c) = Σ_i w_i · [score_i(c) >= threshold]`, `threshold = 8 − contract.bid.level()` (守備側が契約を落とすのに必要なトリック数: デクレアラーに必要な `6 + level` に対し `13 − (6 + level) + 1 = 8 − level`)
-8. **同値グループ化**: カード `c1`, `c2` が全サンプルで `score_i(c1) == score_i(c2)` (`i` を通じて完全一致するベクトル) ならグループに束ねる。代表はグループ内でランクが最も高いカード (エースが最高)、`equivalents` は代表を除いた残りをランク降順で並べる。「全サンプルで一致」は DDS 自身の `equals` (1 配牌内の同値、facade は捨てている) より厳しい条件で、複数配牌にわたる頑健な同値だけを拾う。
+8. **同値グループ化**: カード `c1`, `c2` が全サンプルで `score_i(c1) == score_i(c2)` (`i` を通じて完全一致するベクトル) ならグループに束ねる。代表はグループ内でランクが最も高いカード (エースが最高、スートは問わない。同点はカードのインデックス順で解消)、`equivalents` は代表を除いた残りをランク降順で並べる。「全サンプルで一致」は DDS 自身の `equals` (1 配牌内でのタッチする名誉札などの同値) を出発点とする条件で、facade はコミット `7bbae2a` 以降この `equals` を展開して返す (以前は捨てていた) ので、本クレートはそれを 1 配牌内の下限として、複数配牌にわたって頑健な同値だけを拾う。
 9. **順位付けと切り詰め**: グループを `opts.scoring` に従って並べ替え (同点はカードのインデックス昇順で決定的に解消)、`rank` を 1 から振り、`opts.top_k` 個に切り詰める。
 10. `LeadAdvice { contract, declarer, leader, leads, samples_used: report.produced, ess: report.ess, sample_report: report }` を返す。
 
@@ -107,11 +107,12 @@ pub fn advise(
 
 - **単体テスト** (`tests/`、非 `#[ignore]`、本レーンで実行できるもの): 契約/リーダー導出、エラー系 (未完了、パスアウト、手の枚数違い)、集計の数式 (手計算値との一致)、同値グループ化、決定性 (同じ seed で同一の `LeadAdvice`、`parallel` feature 有無で同一)。DDS を使わないダミーの `DoubleDummy` 実装 (`tests/common/mod.rs` の `FakeDd`: リーダーの手だけから決まる決定的なルールで守備トリック数を返す。配牌の残り 39 枚に依存しないので、期待値が厳密に手計算できる) を使う。オークションとシステムは `bridge-system` を dev-dependency にして `bridge-bidding/tests/common/mod.rs` と同じ手法 (`SystemBuilder` 相当) で手組みする — `bridge_system::compile` は本レーンの基点でまだ `todo!()` である。
 - **DDS smoke テスト** (`--features dds`、非 `#[ignore]`、少数サンプル): 固定の配牌とオークションで `bridge::dd::dds()` を呼び、実際に解ける (`None` ならスキップ、ベンダリング済みなら solve する) ことを確認する。
-- **コーパス評価ハーネス** (`tests/corpus_eval.rs`、`#[ignore]`、`--features dds`): `corpus/data/pbn` から「完了したオークション・完全な配牌・パスアウトでない契約」を持つボードを決定的に (ファイル順 + 固定シード) 100 件選び、各ボードで:
-  - `truth`: 実際の配牌に対する `dd.lead_scores` の最大値を達成するカード集合。
-  - `advice`: `systems/sayc` を `bridge_system::compile` (facade 経由 `bridge::system::compile`) でコンパイルし、`bridge_sample::ConstraintProposal` を使った `advise(...)` (サンプル数は環境変数 `LEAD_SAMPLES`、既定 100)。`bridge_system::compile` と `ConstraintProposal` は他レーンの担当で本レーン基点では `todo!()` なので、このテストは **今はコンパイルだけを保証し、実行はしない** (`#[ignore]` に加え、実装が揃うまでは統合担当が回す)。環境変数 `LEAD_UNIFORM=1` で `UniformProposal` + 尤度なし (`bidding: None`, 解釈は `ANY` 相当) のベースライン (a) に切り替えられる。
-  - `hit`: 上位 3 (グループの `equivalents` を含めて数える) に `truth` の要素が 1 つでも入っているか。
-  - 出力 `target/lead_report.json`: 上位 1/3 命中率、上位 1 の選択が最適から失う平均 DD トリック数、平均 ESS 比、ボードあたりの時間、ベースライン (a) 無ビディング情報 (`UniformProposal`、解釈なし) と (b) ランダム選択 (リーダーの手の DD 同値クラス数から期待される命中率、`truth` 自身を使って計算できる) の 2 つ。
+- **コーパス評価ハーネス** (`tests/corpus_eval.rs`、`#[ignore]`、`--features dds`): `corpus/data/pbn` 以下を再帰的に探索したファイルをパス順にソートし、その順で「完了したオークション・完全な配牌・パスアウトでない契約」を持つボードを先頭から 100 件選ぶ (決定的だがシードは使わない。現状のコーパスでは 1 ファイル分に収まるため、複数イベントにまたがる層化抽出は未決事項に残す)。各ボードで:
+  - `truth`: 実際の配牌に対する `dd.lead_scores` の全 13 枚のスコアと、その最大値を達成するカード集合。
+  - `advice`: `systems/sayc.bml` (`BRIDGE_SYSTEMS_DIR` 環境変数、既定はワークスペース直下の `systems/`) を `bridge_system::compile` (facade 経由 `bridge::system::compile`) でコンパイルし、`bridge_sample::ConstraintProposal` を使った `advise(...)` (サンプル数は環境変数 `LEAD_SAMPLES`、既定 100)。`bridge_system::compile` と `ConstraintProposal` は他レーンの担当で本レーン基点では `todo!()` なので、このテストは **今はコンパイルだけを保証し、実行はしない** (`#[ignore]` に加え、実装が揃うまでは統合担当が回す)。環境変数 `LEAD_UNIFORM=1` は本評価 (`advice`) のサンプリングだけを `ConstraintProposal` から `UniformProposal` に差し替える (ビディング尤度による重み付けはそのまま残る)。ベースライン (a) はこのフラグと無関係に、`advise` と同じ集計パイプライン (`advise_with_context`、`#[doc(hidden)]`) を `UniformProposal` かつ `bidding: None` (解釈は空、`ANY` 相当) で呼んで毎回別途計算する。
+  - `hit`: 上位 3 (グループの `equivalents` を含めて数える) に `truth` の要素が 1 つでも入っているか。同じ判定関数 (`hits_truth`) をベースライン (a) にも使う。
+  - `tricks_lost`: 上位 1 のカードが**実際の配牌**で達成する守備トリック数 (`truth.all_scores` から引く) と `truth.max` の差。サンプルにわたる推定平均 (`mean_defence_tricks`) ではなく、選んだカードの実測値を使う (推定バイアスではなく選択の結果を測るため)。`mean_estimation_error_top1` として `|mean_defence_tricks − 実測値|` も別途報告する。
+  - 出力 `target/lead_report.json` (ワークスペース直下の `target/`、`CARGO_MANIFEST_DIR` からの相対ではない): 上位 1/3 命中率 (全ボードと、DD 同値クラスが 2 つ以上ある「非自明」ボードに絞った版の両方)、上位 1 の選択が最適から失う実測の平均 DD トリック数、平均推定誤差、平均 ESS 比、ボードあたりの時間、ベースライン (a) 無ビディング情報 (`UniformProposal`、解釈なし、`advise` と同じグループ化と命中判定) と (b) ランダム選択 (リーダーの**カード**13 枚から `k` 枚を無作為に選んだときに最適カードを 1 枚以上含む超幾何確率 `1 − C(13−m, k) / C(13, k)`、`m` は `truth` の最適カード枚数。DD 同値クラスの個数ではない — このコーパスは 1 ボードあたり最大 3 クラスしかなく、クラス単位で 3 つ選べば常に 1.0 になってしまうため) の 2 つ。
 
 ## 5. 未決事項
 

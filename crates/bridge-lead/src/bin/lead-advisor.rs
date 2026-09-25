@@ -8,7 +8,8 @@
 //!              [--samples N] [--seed N] [--system PATH] [--uniform]
 //! ```
 //!
-//! `--system` defaults to `systems/sayc/sayc.bml`; `--uniform` swaps
+//! `--system` defaults to `systems/sayc.bml` (relative to the current directory, i.e. run from
+//! the workspace root, matching `systems/README.md`'s own examples); `--uniform` swaps
 //! [`bridge_sample::ConstraintProposal`] (the default) for [`bridge_sample::UniformProposal`].
 //! Both proposals still need a compiled system, because [`bridge_bidding::interpret`] and the
 //! bidding-likelihood importance weights read it regardless of which proposal draws the deals;
@@ -26,7 +27,7 @@ use bridge_format::pbn;
 use bridge_lead::{LeadAdvice, LeadError, LeadOptions, LeadQuery};
 use bridge_sample::{ConstraintProposal, Proposal, UniformProposal};
 
-const DEFAULT_SYSTEM: &str = "systems/sayc/sayc.bml";
+const DEFAULT_SYSTEM: &str = "systems/sayc.bml";
 
 struct Args {
     pbn_file: Option<String>,

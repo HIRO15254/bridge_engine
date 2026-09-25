@@ -53,22 +53,29 @@ fn scores_by_card(cards: &[Card], per_deal: &[Vec<(Card, u8)>]) -> Vec<CardScore
         .collect()
 }
 
+/// Sums `terms`, folding from `0.0` (not `-0.0`) so that summing zero or all-zero terms reports
+/// a positive zero. `Iterator::sum::<f64>()` folds from `-0.0` (`f64`'s additive identity under
+/// IEEE 754, chosen so `-0.0 + (-0.0) == -0.0`), so an empty or all-zero sum comes out as `-0.0`;
+/// that is invisible in arithmetic but reads badly in output (e.g. the CLI printing `p=-0.00`) and
+/// serialises as `-0.0` in JSON. Every human-visible statistic in this module goes through this
+/// instead of `.sum()`.
+fn positive_sum(terms: impl Iterator<Item = f64>) -> f64 {
+    terms.fold(0.0, |acc, x| acc + x)
+}
+
 /// Weighted mean and standard error of `scores` under `weights` (which must sum to 1, e.g.
 /// [`bridge_sample::WeightedDeal::normalized_weights`]) and the deal set's effective sample size.
 /// The standard error of a weighted mean under self-normalised importance weights is
 /// `sqrt(weighted variance / ESS)` (`14-lead.md` §3 step 7); `ess <= 0.0` (no samples carried any
 /// weight) reports a standard error of `0.0` rather than dividing by zero or producing `NaN`.
 fn mean_and_std_error(scores: &[u8], weights: &[f64], ess: f64) -> (f64, f64) {
-    let mean: f64 = weights
-        .iter()
-        .zip(scores)
-        .map(|(&w, &s)| w * f64::from(s))
-        .sum();
-    let variance: f64 = weights
-        .iter()
-        .zip(scores)
-        .map(|(&w, &s)| w * (f64::from(s) - mean).powi(2))
-        .sum();
+    let mean = positive_sum(weights.iter().zip(scores).map(|(&w, &s)| w * f64::from(s)));
+    let variance = positive_sum(
+        weights
+            .iter()
+            .zip(scores)
+            .map(|(&w, &s)| w * (f64::from(s) - mean).powi(2)),
+    );
     let std_error = if ess > 0.0 {
         (variance / ess).sqrt()
     } else {
@@ -79,12 +86,13 @@ fn mean_and_std_error(scores: &[u8], weights: &[f64], ess: f64) -> (f64, f64) {
 
 /// `P(score >= threshold)` under `weights`.
 fn set_probability(scores: &[u8], weights: &[f64], threshold: u8) -> f64 {
-    weights
-        .iter()
-        .zip(scores)
-        .filter(|&(_, &s)| s >= threshold)
-        .map(|(&w, _)| w)
-        .sum()
+    positive_sum(
+        weights
+            .iter()
+            .zip(scores)
+            .filter(|&(_, &s)| s >= threshold)
+            .map(|(&w, _)| w),
+    )
 }
 
 /// A group of cards that scored identically (defence tricks) in every sample.
@@ -130,13 +138,10 @@ fn group_equivalents(
             let equivalents: Vec<Card> = cluster[1..].iter().map(|cs| cs.card).collect();
             let (mean, std_error) = mean_and_std_error(&vector, weights, ess);
             let set_probability = set_probability(&vector, weights, threshold);
-            let mean_declarer_score: f64 = weights
-                .iter()
-                .zip(&vector)
-                .map(|(&w, &defence_tricks)| {
+            let mean_declarer_score =
+                positive_sum(weights.iter().zip(&vector).map(|(&w, &defence_tricks)| {
                     w * f64::from(declarer_score(contract, vulnerable, 13 - defence_tricks))
-                })
-                .sum();
+                }));
             Group {
                 card,
                 equivalents,

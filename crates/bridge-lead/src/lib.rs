@@ -26,7 +26,7 @@ mod scoring;
 
 use bridge_bidding::{BidContext, ImplicitPass, PolicyParams, Scoring, interpret};
 use bridge_constraint::{HandConstraint, KnownCards};
-use bridge_core::{Card, Seat, Strain};
+use bridge_core::{Card, Contract, Seat, Strain};
 use bridge_sample::{BiddingLikelihood, SampleContext, WeightedDeal, sample_deals};
 
 pub use advice::{LeadAdvice, LeadScore};
@@ -57,6 +57,16 @@ pub enum LeadError {
     /// Deal sampling failed.
     #[error("sampling failed: {0}")]
     Sample(#[from] bridge_sample::SampleError),
+    /// Sampling completed without error but produced zero deals: either `opts.samples == 0`, or
+    /// every proposal attempt was rejected (plausible with `ConstraintProposal` when the leader's
+    /// own hand contradicts the auction's interpretation). Without at least one deal there is
+    /// nothing to aggregate, so `advise` reports this rather than fabricating advice from an empty
+    /// sample (`14-lead.md` §3 step 5).
+    #[error("sampling produced no deals")]
+    NoSamples {
+        /// The (empty) sample report, for diagnostics.
+        report: bridge_sample::SampleReport,
+    },
     /// A double-dummy query failed.
     #[error("double-dummy solver failed: {0}")]
     Dd(#[from] DdError),
@@ -94,12 +104,7 @@ pub fn advise(
 
     let declarer = contract.declarer;
     let leader = contract.leader();
-    let trump = contract.bid.strain();
     let vulnerable = auction.vulnerability().is_vulnerable(declarer);
-    // Tricks the defence needs to defeat the contract: declarer needs `6 + level`, and there are
-    // 13 tricks in total, so the defence needs `13 - (6 + level) + 1 = 8 - level`
-    // (`docs/design/14-lead.md` §3 step 7).
-    let threshold = 8 - contract.bid.level();
 
     let known = KnownCards::from_viewer(leader, query.leader_hand);
     let interpretation = interpret(table, auction, &opts.interpret);
@@ -137,15 +142,53 @@ pub fn advise(
         bidding: Some(bidding),
     };
 
+    advise_with_context(&ctx, contract, vulnerable, proposal, dd, opts)
+}
+
+/// The shared tail of [`advise`]: sampling, double-dummy scoring and aggregation, given an
+/// already-built [`SampleContext`].
+///
+/// `#[doc(hidden)]`, not part of the crate's public contract: it exists so a caller that needs to
+/// compare against `advise` on equal footing — e.g. the corpus-evaluation harness's "no bidding
+/// information" baseline (`14-lead.md` §4) — can reuse the exact same sampling-to-ranking
+/// pipeline (including equivalence grouping) with its own [`SampleContext`] (typically the
+/// vacuous interpretation and `bidding: None`) instead of re-implementing it.
+///
+/// `contract` and `vulnerable` are not derivable from `ctx` alone (a [`SampleContext`] does not
+/// carry the auction when `bidding` is `None`), so the caller supplies them; `leader` and `trump`
+/// are then derived from `contract` exactly as [`advise`] derives them, and the leader's known
+/// hand (hence the cards ranked) comes from `ctx.known`.
+#[doc(hidden)]
+pub fn advise_with_context(
+    ctx: &SampleContext<'_>,
+    contract: Contract,
+    vulnerable: bool,
+    proposal: &dyn Proposal,
+    dd: &dyn DoubleDummy,
+    opts: &LeadOptions,
+) -> Result<LeadAdvice, LeadError> {
+    let declarer = contract.declarer;
+    let leader = contract.leader();
+    let trump = contract.bid.strain();
+    // Tricks the defence needs to defeat the contract: declarer needs `6 + level`, and there are
+    // 13 tricks in total, so the defence needs `13 - (6 + level) + 1 = 8 - level`
+    // (`docs/design/14-lead.md` §3 step 7).
+    let threshold = 8 - contract.bid.level();
+
     let sample_opts = SampleOptions {
         seed: opts.seed,
         ..opts.sample
     };
-    let (deals, sample_report) = sample_deals(&ctx, proposal, opts.samples, &sample_opts)?;
+    let (deals, sample_report) = sample_deals(ctx, proposal, opts.samples, &sample_opts)?;
+    if sample_report.produced == 0 {
+        return Err(LeadError::NoSamples {
+            report: sample_report,
+        });
+    }
 
     let per_deal = lead_scores_for_all(dd, &deals, trump, leader)?;
 
-    let cards: Vec<Card> = query.leader_hand.cards().collect();
+    let cards: Vec<Card> = ctx.known.known[leader.index() as usize].cards().collect();
     let weights = WeightedDeal::normalized_weights(&deals);
     let leads = aggregate::aggregate(
         &cards,
