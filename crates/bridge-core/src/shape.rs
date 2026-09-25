@@ -611,26 +611,116 @@ impl ShapeSet {
 
     /// Minimum over members of the sum of `MIN_HCP` per suit (a lower bound on the HCP any
     /// member hand must hold). `0` for the empty set.
+    ///
+    /// A thin wrapper over [`ShapeSet::hcp_bounds`]; prefer that when both bounds are needed (the
+    /// common case), since it walks the bitset once instead of twice.
     pub fn min_hcp(self) -> u8 {
-        self.indices()
-            .map(|i| hcp_bound(SHAPES[i], &MIN_HCP))
-            .min()
-            .unwrap_or(0)
+        self.hcp_bounds().0
     }
 
     /// Maximum over members of the sum of `MAX_HCP` per suit (an upper bound on the HCP any
     /// member hand can hold). `0` for the empty set.
+    ///
+    /// A thin wrapper over [`ShapeSet::hcp_bounds`]; prefer that when both bounds are needed (the
+    /// common case), since it walks the bitset once instead of twice.
     pub fn max_hcp(self) -> u8 {
-        self.indices()
-            .map(|i| hcp_bound(SHAPES[i], &MAX_HCP))
-            .max()
-            .unwrap_or(0)
+        self.hcp_bounds().1
+    }
+
+    /// `(min_hcp, max_hcp)`, computed together in one pass: the lower bound any member hand must
+    /// hold, and the upper bound any member hand can hold, over `MIN_HCP`/`MAX_HCP` per suit.
+    /// `(0, 0)` for the empty set.
+    ///
+    /// Looks up `BYTE_MIN_HCP`/`BYTE_MAX_HCP` (private per-byte lookup tables) once per nonzero
+    /// byte of the bitset (at most 72 lookups each) rather than walking every member shape (up to
+    /// 560): both compute the same `min`/`max` over `hcp_bound(member, MIN_HCP/MAX_HCP)`, but the
+    /// byte tables turn that walk into a lookup keyed on the byte's *value*, independent of how
+    /// many shapes it names. This is the `summary_satisfiable`/`Summary::and` hot path
+    /// (07-bidding.md §4.4.2's `interpret < 10 µs` budget), where `shapes` is often hundreds of
+    /// members and both bounds are always wanted together.
+    pub fn hcp_bounds(self) -> (u8, u8) {
+        let mut min = u8::MAX;
+        let mut max = 0u8;
+        for (w, &word) in self.0.iter().enumerate() {
+            let mut byte_pos = w * 8;
+            let mut rest = word;
+            while rest != 0 {
+                let byte = (rest & 0xFF) as usize;
+                if byte != 0 {
+                    let lo = BYTE_MIN_HCP[byte_pos][byte];
+                    let hi = BYTE_MAX_HCP[byte_pos][byte];
+                    if lo < min {
+                        min = lo;
+                    }
+                    if hi > max {
+                        max = hi;
+                    }
+                }
+                rest >>= 8;
+                byte_pos += 1;
+            }
+        }
+        (if min == u8::MAX { 0 } else { min }, max)
     }
 }
 
 /// Sum over the four suits of `table[len]`.
-fn hcp_bound(shape: Shape, table: &[u8; 14]) -> u8 {
-    shape.lens().iter().map(|&l| table[l as usize]).sum()
+const fn hcp_bound(shape: Shape, table: &[u8; 14]) -> u8 {
+    let l = shape.lens();
+    table[l[0] as usize] + table[l[1] as usize] + table[l[2] as usize] + table[l[3] as usize]
+}
+
+/// Number of bytes across a [`ShapeSet`]'s nine `u64` words (`9 * 8`); also the row count of
+/// [`BYTE_MIN_HCP`]/[`BYTE_MAX_HCP`].
+const SHAPE_SET_BYTES: usize = 72;
+
+/// `BYTE_MIN_HCP[byte_pos][byte_value]` is the minimum `hcp_bound(SHAPES[i], MIN_HCP)` over every
+/// shape index `i = byte_pos * 8 + bit` named by a set bit of `byte_value`, or `u8::MAX` (never a
+/// real bound, since the maximum possible HCP total is 37) when `byte_value` names no shape at
+/// all. Built once at compile time so [`ShapeSet::min_hcp`] can look bounds up per nonzero byte
+/// instead of walking every member shape.
+static BYTE_MIN_HCP: [[u8; 256]; SHAPE_SET_BYTES] = build_byte_hcp_table(&MIN_HCP, true);
+/// Same as [`BYTE_MIN_HCP`], but the maximum `hcp_bound(SHAPES[i], MAX_HCP)` (`0`, itself never a
+/// real bound past the empty set, when `byte_value` names no shape).
+static BYTE_MAX_HCP: [[u8; 256]; SHAPE_SET_BYTES] = build_byte_hcp_table(&MAX_HCP, false);
+
+/// Builds one of [`BYTE_MIN_HCP`]/[`BYTE_MAX_HCP`]: for every byte position `0..72` (a `u64` word
+/// index times 8 plus a byte-within-word index) and every possible byte value `0..256`, the
+/// `min`/`max` (`want_min`) of `hcp_bound(SHAPES[byte_pos * 8 + bit], table)` over the bits set in
+/// `byte_value`. Bit positions `>= 560` (the top bits of the ninth word) never correspond to a
+/// real shape and are skipped, which is why `ShapeSet`'s invariant that those bits are always zero
+/// matters: a byte value that set one could not be produced by any real `ShapeSet` anyway.
+const fn build_byte_hcp_table(table: &[u8; 14], want_min: bool) -> [[u8; 256]; SHAPE_SET_BYTES] {
+    let none = if want_min { u8::MAX } else { 0 };
+    let mut out = [[none; 256]; SHAPE_SET_BYTES];
+    let mut byte_pos = 0usize;
+    while byte_pos < SHAPE_SET_BYTES {
+        let mut value = 1usize; // value 0 keeps the `none` sentinel already in place.
+        while value < 256 {
+            let mut acc = none;
+            let mut any = false;
+            let mut bit = 0usize;
+            while bit < 8 {
+                if (value >> bit) & 1 == 1 {
+                    let idx = byte_pos * 8 + bit;
+                    if idx < 560 {
+                        let bound = hcp_bound(SHAPES[idx], table);
+                        if !any {
+                            acc = bound;
+                            any = true;
+                        } else if (want_min && bound < acc) || (!want_min && bound > acc) {
+                            acc = bound;
+                        }
+                    }
+                }
+                bit += 1;
+            }
+            out[byte_pos][value] = acc;
+            value += 1;
+        }
+        byte_pos += 1;
+    }
+    out
 }
 
 /// Iterator over the members of a [`ShapeSet`] in index order.

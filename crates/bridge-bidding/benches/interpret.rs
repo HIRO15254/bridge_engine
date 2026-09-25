@@ -1,11 +1,18 @@
 //! Criterion benches for `interpret` (target: under 10 µs for a 12-call auction) and
 //! `sequence_log_likelihood`.
 //!
-//! Two systems: `bench_system` (bare HCP atoms only, so every node's `shapes()` is exactly
-//! `ShapeSet::ALL`) and `bench_system_realistic` (each node also names its own suit's length).
-//! `summary_satisfiable`'s `shapes == ShapeSet::ALL` shortcut means the bare-HCP system alone
-//! cannot exercise the `ShapeSet::min_hcp`/`max_hcp` walk in Step B's cross-product pre-check —
-//! nearly every real system node restricts at least one suit's length, so both are benched.
+//! Two hand-built systems: `bench_system` (bare HCP atoms only, so every node's `shapes()` is
+//! exactly `ShapeSet::ALL`) and `bench_system_realistic` (each node also names its own suit's
+//! length). `summary_satisfiable`'s `shapes == ShapeSet::ALL` shortcut means the bare-HCP system
+//! alone cannot exercise the `ShapeSet::hcp_bounds` per-byte table lookups in Step B's
+//! cross-product pre-check — nearly every real system node restricts at least one suit's length,
+//! so both are benched.
+//!
+//! Two more benches (`bench_interpret_sayc_1nt`/`_competitive`) interpret real auctions against
+//! the actual compiled SAYC system (`systems/sayc/sayc.bml`), rather than a hand-built stand-in:
+//! `1NT-P-2C-P-2H-P-3NT-P-P-P` (a natural, non-competitive auction) and
+//! `1S-(2H)-X-(P)-3S-(P)-P-P` (a competitive one, with a negative double and a raise under
+//! interference).
 
 use std::sync::Arc;
 
@@ -33,7 +40,8 @@ fn atom_hcp(lo: u8, hi: u8) -> HandConstraint {
 /// `suit` has length `>=lo`, HCP in `hcp_lo..=hcp_hi`: a *realistic* node constraint (an opening
 /// bid or raise always says something about its own suit), unlike `atom_hcp`'s bare-HCP atom
 /// whose `shapes()` is exactly `ShapeSet::ALL` — the one case `summary_satisfiable`/`Summary::of`
-/// can skip the `ShapeSet::min_hcp`/`max_hcp` walk on for free. See `bench_system_realistic`.
+/// can skip the `ShapeSet::hcp_bounds` per-byte table lookups on for free. See
+/// `bench_system_realistic`.
 fn atom_suit_hcp(suit: Suit, lo: u8, hcp_lo: u8, hcp_hi: u8) -> HandConstraint {
     HandConstraint::Atom(
         Atom::ANY
@@ -316,11 +324,162 @@ fn bench_sequence_log_likelihood_realistic(c: &mut Criterion) {
     });
 }
 
+/// The `systems` directory (`<crate>/../../systems`, or `BRIDGE_SYSTEMS_DIR` if set), matching
+/// `bridge-system`'s and `bridge-bidding`'s own integration tests (`tests/common/mod.rs`'s
+/// `systems_dir`).
+fn systems_dir() -> std::path::PathBuf {
+    match std::env::var_os("BRIDGE_SYSTEMS_DIR") {
+        Some(dir) => std::path::PathBuf::from(dir),
+        None => std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../systems"),
+    }
+}
+
+/// Compiles the real SAYC system (`systems/sayc/sayc.bml`, root file, pulling in every other
+/// `systems/sayc/*.bml` via `#INCLUDE`) once, for the SAYC benches below: a compiled system with
+/// real per-node suit-length and shape constraints (unlike `bench_system_realistic`'s
+/// hand-written "own suit, `>=4`" nodes), the actual case 07-bidding.md §4.4.2's budget is written
+/// for. `coverage_samples: 0` skips the coverage lints (irrelevant to timing `interpret`, and
+/// otherwise the slowest part of compiling); errors would still show up as `Lint`s of
+/// `Severity::Error`, asserted empty so a broken bench never silently benches a half-compiled
+/// system.
+fn compile_sayc() -> SystemIR {
+    let path = systems_dir().join("sayc").join("sayc.bml");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+    let opts = bridge_system::CompileOptions {
+        coverage_samples: 0,
+        ..bridge_system::CompileOptions::default()
+    };
+    let (ir, lints) = bridge_system::compile(
+        &path.to_string_lossy(),
+        &text,
+        &bridge_system::lexer::FsLoader,
+        &opts,
+    );
+    let errors: Vec<_> = lints
+        .iter()
+        .filter(|l| l.severity == bridge_system::Severity::Error)
+        .collect();
+    assert!(errors.is_empty(), "systems/sayc/sayc.bml: {errors:?}");
+    ir
+}
+
+/// `1NT-P-2C-P-2H-P-3NT-P-P-P`: opening 1NT, Stayman, a heart fit found and raised, natural game
+/// close-out (module doc's non-competitive SAYC example).
+fn bench_auction_sayc_1nt() -> Auction {
+    Auction::from_calls(
+        Seat::North,
+        Vulnerability::None,
+        vec![
+            bid(1, Strain::NoTrump),
+            Call::Pass,
+            bid(2, Strain::Clubs),
+            Call::Pass,
+            bid(2, Strain::Hearts),
+            Call::Pass,
+            bid(3, Strain::NoTrump),
+            Call::Pass,
+            Call::Pass,
+            Call::Pass,
+        ],
+    )
+    .unwrap()
+}
+
+/// `1S-(2H)-X-(P)-3S-(P)-P-P`: opening 1 spade, a heart overcall, a negative double, and a
+/// competitive raise to game (module doc's competitive SAYC example) -- exercises Step A's
+/// `Natural` fallback (the double and everything after it, per the probe behind this bench, are
+/// resolved by `bridge_system::natural::classify`/`infer`, not the compiled trie) alongside Step
+/// B's cross product over a real system.
+fn bench_auction_sayc_competitive() -> Auction {
+    Auction::from_calls(
+        Seat::North,
+        Vulnerability::None,
+        vec![
+            bid(1, Strain::Spades),
+            bid(2, Strain::Hearts),
+            Call::Double,
+            Call::Pass,
+            bid(3, Strain::Spades),
+            Call::Pass,
+            Call::Pass,
+            Call::Pass,
+        ],
+    )
+    .unwrap()
+}
+
+fn bench_interpret_sayc_1nt(c: &mut Criterion) {
+    let system = Arc::new(compile_sayc());
+    let natural = Arc::new(bridge_system::NaturalInference::default());
+    let table = Table::uniform(system, natural);
+    let auction = bench_auction_sayc_1nt();
+    let opts = InterpretOptions::default();
+
+    c.bench_function("interpret/sayc-1nt-auction", |b| {
+        b.iter(|| std::hint::black_box(interpret(&table, &auction, &opts)))
+    });
+}
+
+fn bench_interpret_sayc_competitive(c: &mut Criterion) {
+    let system = Arc::new(compile_sayc());
+    let natural = Arc::new(bridge_system::NaturalInference::default());
+    let table = Table::uniform(system, natural);
+    let auction = bench_auction_sayc_competitive();
+    let opts = InterpretOptions::default();
+
+    c.bench_function("interpret/sayc-competitive-auction", |b| {
+        b.iter(|| std::hint::black_box(interpret(&table, &auction, &opts)))
+    });
+}
+
+/// `1C-P-1H-P-1S-P-2NT-P-3NT-P-P-P`: a full 12-call, non-competitive auction against the real
+/// compiled SAYC system (opening 1C, two one-over-one responses, an opener's rebid, and a close
+/// to game) -- unlike `bench_interpret_sayc_1nt`/`_competitive` (10 and 8 calls respectively),
+/// this is the actual auction length 11-testing.md §9 and 07-bidding.md §4.6 budget
+/// (`interpret < 10 µs`) is written against.
+fn bench_auction_sayc_12_call() -> Auction {
+    Auction::from_calls(
+        Seat::North,
+        Vulnerability::None,
+        vec![
+            bid(1, Strain::Clubs),
+            Call::Pass,
+            bid(1, Strain::Hearts),
+            Call::Pass,
+            bid(1, Strain::Spades),
+            Call::Pass,
+            bid(2, Strain::NoTrump),
+            Call::Pass,
+            bid(3, Strain::NoTrump),
+            Call::Pass,
+            Call::Pass,
+            Call::Pass,
+        ],
+    )
+    .unwrap()
+}
+
+fn bench_interpret_sayc_12_call(c: &mut Criterion) {
+    let system = Arc::new(compile_sayc());
+    let natural = Arc::new(bridge_system::NaturalInference::default());
+    let table = Table::uniform(system, natural);
+    let auction = bench_auction_sayc_12_call();
+    let opts = InterpretOptions::default();
+
+    c.bench_function("interpret/sayc-12-call-auction", |b| {
+        b.iter(|| std::hint::black_box(interpret(&table, &auction, &opts)))
+    });
+}
+
 criterion_group!(
     benches,
     bench_interpret,
     bench_sequence_log_likelihood,
     bench_interpret_realistic,
-    bench_sequence_log_likelihood_realistic
+    bench_sequence_log_likelihood_realistic,
+    bench_interpret_sayc_1nt,
+    bench_interpret_sayc_competitive,
+    bench_interpret_sayc_12_call
 );
 criterion_main!(benches);
