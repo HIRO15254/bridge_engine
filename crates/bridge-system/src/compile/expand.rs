@@ -76,7 +76,42 @@ pub(crate) fn expand_file(
         }
         expand_table(table, meta, opts, &mut ex);
     }
+    demote_illegal_call_for_bindings_that_succeeded(&mut ex);
     ex
+}
+
+/// An exact row nested under a variable-bound ancestor (a history token, or a `Var`/`Strains`
+/// pattern higher in the tree) is expanded once per binding the ancestor can take, and the row's
+/// own call can be illegal for some of those bindings while sufficient for others (`docs/design/
+/// 06-system.md` §4.2 point 3's example: under `1C-(1X)-`, the child row `1H` is only illegal
+/// when `X` is bound to `H` or `S`; for `X = C`/`D` the same row is a perfectly legal, intended
+/// bid). `expand_row` cannot tell the two cases apart at the point it discovers one binding is
+/// illegal -- it does not yet know whether a sibling binding of the same ancestor will later
+/// succeed for this row -- so it always records the finding, and this pass demotes it after the
+/// fact once every binding has been tried: a row that has at least one successful expansion
+/// anywhere in the file had its `IllegalCall` correctly authored (the author meant the *reachable*
+/// bindings), so the illegal ones are downgraded to `Info` the way `bss.py` silently drops them,
+/// keeping `Error` only for a row that never expands under any binding.
+fn demote_illegal_call_for_bindings_that_succeeded(ex: &mut Expansion) {
+    let rows_with_a_success: std::collections::HashSet<RowId> = ex
+        .rows
+        .iter()
+        .filter(|row| !row.expansions.is_empty())
+        .map(|row| row.id)
+        .collect();
+    for lint in &mut ex.lints {
+        if lint.code != LintCode::IllegalCall {
+            continue;
+        }
+        let Some(row_id) = lint.row else { continue };
+        if rows_with_a_success.contains(&row_id) {
+            lint.severity = crate::Severity::Info;
+            lint.message = format!(
+                "{} (legal for at least one other binding of this row; dropped)",
+                lint.message
+            );
+        }
+    }
 }
 
 /// The state threaded down one path of the expansion tree.
@@ -1697,6 +1732,134 @@ mod tests {
             2,
             "one 2C expansion per 1M candidate, same row"
         );
+    }
+
+    // Regression for the real-file triage (roadmap 3.2-3.4, class a/c):
+    // `docs/design/06-system.md` §4.2 point 3's own example, built directly as AST literals:
+    // `1C-(1X)-1H` (jdh8/blue/1C.bml). `X` (`Var::X`) excludes clubs (already used by our own
+    // `1C`), so it has three candidates D/H/S, all sufficient bids over `1C` themselves. The
+    // child row `1H` is then only a *legal* continuation when `X = D` (`H` outranks `D` at the
+    // same level); over `X = H` it repeats the same call (insufficient) and over `X = S` it is a
+    // lower strain at the same level (also insufficient) -- both illegal.
+    #[test]
+    fn illegal_call_is_demoted_to_info_when_a_sibling_binding_of_the_same_row_succeeds() {
+        let their_x = test_row(
+            vec![tok(
+                Side::Them,
+                CallPattern::Var {
+                    level: Level::At(1),
+                    var: Var::X,
+                },
+                "1X",
+            )],
+            "",
+            vec![test_row(
+                vec![exact_tok(
+                    Side::Us,
+                    Call::Bid(Bid::new(1, Strain::Hearts).unwrap()),
+                    "1H",
+                )],
+                "F, 4=!h",
+                Vec::new(),
+            )],
+        );
+        let table = test_table(
+            SeatCond::Any,
+            vec![exact_tok(
+                Side::Us,
+                Call::Bid(Bid::new(1, Strain::Clubs).unwrap()),
+                "1C",
+            )],
+            vec![their_x],
+        );
+
+        let ex = expand(&[&table]);
+
+        let child_row = ex
+            .rows
+            .iter()
+            .find(|r| r.description_raw == "F, 4=!h")
+            .expect("the 1H row");
+        assert_eq!(
+            child_row.expansions.len(),
+            1,
+            "only X = D makes 1H a sufficient (legal) bid"
+        );
+
+        let illegal_lints: Vec<&Lint> = ex
+            .lints
+            .iter()
+            .filter(|l| l.code == LintCode::IllegalCall && l.row == Some(child_row.id))
+            .collect();
+        assert_eq!(
+            illegal_lints.len(),
+            2,
+            "X = H and X = S both make 1H illegal"
+        );
+        for lint in illegal_lints {
+            assert_eq!(
+                lint.severity,
+                crate::Severity::Info,
+                "demoted: a sibling binding (X = D) of this same row did succeed"
+            );
+        }
+    }
+
+    // Same family, opposite outcome: when a row is illegal under *every* binding of its
+    // variable-bound ancestor, `IllegalCall` must stay `Error` (nothing to demote it against).
+    // The child here re-bids `1C`, our own opening's own strain: `X` never binds to clubs (already
+    // used), so every one of its three candidates (D/H/S) outranks clubs at the same level, making
+    // a bare `1C` repeat insufficient regardless of which one X took.
+    #[test]
+    fn illegal_call_stays_an_error_when_no_binding_of_the_row_ever_succeeds() {
+        let their_x = test_row(
+            vec![tok(
+                Side::Them,
+                CallPattern::Var {
+                    level: Level::At(1),
+                    var: Var::X,
+                },
+                "1X",
+            )],
+            "",
+            vec![test_row(
+                vec![exact_tok(
+                    Side::Us,
+                    Call::Bid(Bid::new(1, Strain::Clubs).unwrap()),
+                    "1C",
+                )],
+                "never legal",
+                Vec::new(),
+            )],
+        );
+        let table = test_table(
+            SeatCond::Any,
+            vec![exact_tok(
+                Side::Us,
+                Call::Bid(Bid::new(1, Strain::Clubs).unwrap()),
+                "1C",
+            )],
+            vec![their_x],
+        );
+
+        let ex = expand(&[&table]);
+
+        let child_row = ex
+            .rows
+            .iter()
+            .find(|r| r.description_raw == "never legal")
+            .expect("the re-bid 1C row");
+        assert_eq!(child_row.expansions.len(), 0);
+
+        let illegal_lints: Vec<&Lint> = ex
+            .lints
+            .iter()
+            .filter(|l| l.code == LintCode::IllegalCall && l.row == Some(child_row.id))
+            .collect();
+        assert_eq!(illegal_lints.len(), 3, "all of X = D/H/S make 1C illegal");
+        for lint in illegal_lints {
+            assert_eq!(lint.severity, crate::Severity::Error);
+        }
     }
 
     #[test]

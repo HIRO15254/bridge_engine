@@ -815,8 +815,9 @@ atom        = token (§7.4) | freetext ;
 | `S/T` | `hcp.start = slam_total − partner_max` | `Context` |
 | `QUANT` (NT の後) | `hcp = (gf_total − partner_max + 1)..=(slam_total − partner_min)` (1N 15-17 の後の 4N は `9..=16`; 明示の範囲があれば交差) | `Context` |
 | `NAT` | `NaturalInference::infer(classify(path 相当のオークション, own index, owner))` の制約を採用し、明示の断片と交差する (衝突は明示が勝つ)。信頼度は使わない | `NaturalDefault` |
+| (全 `StrengthWord` 共通) | 同じ説明文の中に明示の `Hcp`/`Points` 断片が 1 つでもあれば、`GF`/`INV`/`MIN`/`MAX`/`weak`/`PRE`/`STR`/`S/T`/`QUANT` など全ての `StrengthWord` が Pass 2 で作る HCP の Atom は採用せず `Atom::ANY` にする (`NAT` 用の「衝突は明示が勝つ」を全語に一般化したもの。例: jdh8 `3C = INV, 7+!c, 4--7 HCP` は著者自身の `4--7 HCP` を残し、`INV` の文脈由来レンジは捨てる)。`Forcing`/`flags` など HCP 以外への効果 (`GF` の `Forcing::ToGame` 等) はそのまま残る | `Context` (Atom は破棄) |
 | `#`, `Own`, `AnyMajor/AnyMinor`, `Agreed`, `Theirs` | 具体スート、または群上の `Or`。`#` は経路を自分のコールから遡り、最初の `Var`/`Strains`/`AnyOf` コール (相手の `(2HS)` も含む) のスート (`RowContext.hash_suit`)。`Strains` で複数なら `Or` | `Context` |
-| `support` / `fit` / `SUPP` / レイズ行 | `agreed = agreed_suit` かパートナーの最後のスートビッド; `support_min = max(3, 8 − partner_len_min)` (`partner_len_min` は `partner_last.constraint.suit_len(agreed).start`、不明なら 3); `suit_len[agreed] ≥ support_min`。`call.strain == agreed` のレイズ行は、文が無くても `meta.natural.implicit_raise_support` (既定 true) なら `Support(3)` を付ける (`assumed`) | `Context` |
+| `support` / `fit` / `SUPP` / レイズ行 | `agreed = agreed_suit` かパートナーの最後のスートビッド (`flags.artificial` なコール、例えば puppet やステップレスポンスは対象外。人工コールは実際のスートを示さないので、それをそのまま合意スートに使うと `SPL` の明示のショートネス断片と衝突しうる); `support_min = max(3, 8 − partner_len_min)` (`partner_len_min` は `partner_last.constraint.suit_len(agreed).start`、不明なら 3); `suit_len[agreed] ≥ support_min`。`call.strain == agreed` のレイズ行は、文が無くても `meta.natural.implicit_raise_support` (既定 true) なら `Support(3)` を付ける (`assumed`) | `Context` |
 | `SPL` | `suit_len[short] ≤ 1` ∧ `suit_len[agreed] ≥ conventions.splinter_support` ∧ `GF` の式 | `Context` |
 | `TRF` | §7.4 の行のとおり。`flags.transfer_to` | `Context` |
 | `UNT` / 2 スート型の `unbid` | `unbid = 全スート − our_suits − their_suits` の下位 2 つに `≥ 5` (定数); 2 スート型は同じ集合上で長さ割当の `Or` | `Context` |
@@ -1046,7 +1047,7 @@ impl LintSummary { pub fn of(lints: &[Lint]) -> LintSummary; }
 | parse | `IndentationMismatch` | Warning | 祖先に一致しないインデント |
 | parse | `NonStandardToken` | Info (誤った `{w:X}` は Warning) | 拡張トークン・注釈の使用 |
 | parse | `ColumnZeroContinuation` | Info | 末尾記号なし履歴行の後の列 0 行を履歴の子として扱った (§1.4 の 2) |
-| expansion | `IllegalCall` | Error | 展開結果が `Auction::is_legal` に反する (部分木を捨てる) |
+| expansion | `IllegalCall` | Error (下記の全展開失敗時のみ。それ以外は Info に降格) | 展開結果が `Auction::is_legal` に反する (部分木を捨てる) |
 | expansion | `UnboundOther` | Error | `oM`/`om` の相方が未束縛 (行をスキップ) |
 | expansion | `VariableNoCandidate` | Info | 変数の候補が空 |
 | expansion | `StepWithoutAnchor` | Error | `step` の基準ビッドが無い |
@@ -1074,7 +1075,7 @@ parse / expansion の Lint は各段階が発生時に出す。`lint.rs` は完�
 
 1. **充足可能性**: 全ノードで `constraint.is_satisfiable()` (DNF に非空の `Atom` が無い)。偽なら `UnsatisfiableConstraint` (Error)。ノードは残してフラグを付け、L3 は `Diagnostic::UnsatisfiableNode` として飛ばす。
 2. **自分の履歴との整合**: ノードの `side` と同じ側の祖先ノード (`path` 上) の制約を `And` して `is_satisfiable()`。偽なら `ContradictsOwnHistory` (Warning。例: `1N 15-17` の後のリビッドが `18+` を示す)。
-3. **不正コール**: 展開中の `Auction::is_legal` 違反は `IllegalCall` (Error) で部分木を捨てる (§4.2)。ここでは残っていないことを確認するだけ。
+3. **不正コール**: 展開中の `Auction::is_legal` 違反は `IllegalCall` で部分木を捨てる (§4.2)。ここでは残っていないことを確認するだけ。変数束縛された祖先 (履歴トークンや `Var`/`Strains` パターン) の下にある exact 行は束縛ごとに 1 回ずつ展開されるので、同じ行が「ある束縛では違法、別の束縛では合法」になりうる (jdh8/blue/1C.bml の `1C-(1X)-` 下の `1H = F, 4=!h` は `X = H/S` でのみ違法)。全展開が完了した後、その行がどれか 1 つの束縛で成功していれば当該 `IllegalCall` は Info に降格し (`bss.py` が黙って落とすのと同じ扱い)、どの束縛でも一度も成功しなかった行だけが Error のまま残る (`compile::expand::demote_illegal_call_for_bindings_that_succeeded`)。
 4. **重複と条件の同点**: 同じトライノードに同一条件で説明の異なる非空エントリが 2 つ → `DuplicatePath` (Warning、先勝ち)。照合時に同じ特定度で両方一致しうる条件 → `ConditionTie` (Info)。
 5. **認識率**: §7.7 の閾値判定で `LowRecognition` (非空かつ `ratio < threshold`。`constraint_bearing == false` の純コンベンション行は Info)、付随して `EmptyDescription` / `UnrecognizedFragment` / `SoftConstraint` / `AssumedContext` / `DnfTruncated`。
 6. **兄弟の曖昧さ** (同じ親、同じ側、同じ条件): DNF の Atom 上の記号的検査。`A ⊆ B` は A の各 Atom が B のいずれかの Atom に含まれること (`hcp` / `shapes` / `suit_len` は区間・ビット集合の包含、`cards` / `eval` は集合比較)。先の兄弟に含まれる後の兄弟は `SiblingSubset` (Warning。`priority` が異なれば Info)。Atom 対の交差が非空なら `SiblingOverlap` (Info。ナチュラル系では非常に多いので Info のみ)。DNF の項数上限 256 を超える場合は検査を省略し Info を出す。

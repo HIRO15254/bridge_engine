@@ -131,6 +131,43 @@ fn their_suit(ctx: &RowContext<'_>) -> Option<Suit> {
     ctx.their_last_bid.and_then(|bid| bid.strain().suit())
 }
 
+/// The trump suit a support/fit/splinter fragment agrees on: `ctx.agreed_suit` when the
+/// expansion loop (`compile::expand`) already tracked one (an earlier support/fit call, or this
+/// call repeating partner's own suit), or else partner's most recent *natural* suit bid
+/// (`docs/design/06-system.md` §7.5's `support`/`fit`/`SUPP`/raise row: "`agreed = agreed_suit`
+/// かパートナーの最後のスートビッド" -- with nothing else established, a raise or splinter
+/// defaults to agreeing whatever suit partner bid last). Without this fallback, a splinter made
+/// right after partner's *first* suit call -- the common case, since a splinter is itself usually
+/// the very next thing said about trumps -- would find `ctx.agreed_suit` still `None` and treat
+/// its own call's suit as both the shown shortness *and*, wrongly, the only length reference
+/// available, with no `suit_len[agreed]` conjunct to keep the two apart.
+///
+/// Partner's last call only counts when it is not [`crate::NodeFlags::artificial`]: an artificial
+/// relay/ask (a puppet, a forcing "(R)" step-response call, …) names no suit its bidder actually
+/// holds, so treating it as the agreed trump would fabricate a length requirement in a suit the
+/// description may separately, and correctly, describe as short (`jdh8/common/2NT-UNT.bml`'s `2N-
+/// 3H- 3N = !SPL, 0--1!h`, where `3H` is a bare relay: without this guard, `SPL` would agree
+/// hearts from `3H` and then contradict the row's own explicit `0--1!h`).
+///
+/// This module does not also fall back to this player's *own* previous suit (e.g. the opener's
+/// own suit after a Jacoby-style `1M-2N-` raise, where partner's `2N` names no suit itself): the
+/// trie shares one [`crate::Node`] per concrete auction position across every table that retraces
+/// it (`compile::expand`'s module doc), so `own_prev`/`partner_last` reflect whichever table's
+/// traversal happened to compile that position *first* -- a different, unrelated table can
+/// retrace the identical call sequence with a same-suit `own_prev` that is not artificial (its own
+/// history has a genuine natural meaning there), and folding that in here would agree the wrong
+/// suit for a row that only makes sense under the first table's own context. Left as a known gap
+/// (`docs/design/06-system.md`'s open issues): `SPL`/`Support` under a partner call that names no
+/// suit (an NT raise) stay `assumed` rather than resolved.
+fn agreed_suit_or_partner_last(ctx: &RowContext<'_>) -> Option<Suit> {
+    ctx.agreed_suit.or_else(|| {
+        ctx.partner_last
+            .filter(|node| !node.flags.artificial)
+            .and_then(|node| node.call.bid())
+            .and_then(|bid| bid.strain().suit())
+    })
+}
+
 /// Resolves a [`SuitRef`] and a length range into a [`ShapeSet`] literal, with the provenance
 /// that reflects whether resolving the reference needed path context and whether that context
 /// was actually available (`AnyMajor`/`AnyMinor` fold both candidate suits into one `ShapeSet`
@@ -423,7 +460,7 @@ fn resolve_splinter(mini: bool, ctx: &RowContext<'_>, meta: &SystemMeta) -> (Ato
         None => assumed = true,
     }
 
-    match ctx.agreed_suit {
+    match agreed_suit_or_partner_last(ctx) {
         Some(agreed) => {
             atom = atom.intersect(&Atom {
                 shapes: ShapeSet::from_suit_len(agreed, meta.conventions.splinter_support, 13),
@@ -556,7 +593,7 @@ fn resolve_one(token: &Token, ctx: &RowContext<'_>, meta: &SystemMeta) -> (Atom,
                 prov,
             )
         }
-        Token::Support(min_len) => match ctx.agreed_suit {
+        Token::Support(min_len) => match agreed_suit_or_partner_last(ctx) {
             Some(suit) => (
                 Atom {
                     shapes: ShapeSet::from_suit_len(suit, *min_len, 13),
@@ -862,6 +899,56 @@ mod tests {
         let (atoms, _) = resolve(&[token], &ctx, &meta);
         // inv_total 22..=24, partner_min 12: [10, 12] (same formula as bare `INV`).
         assert_eq!(atoms[0].hcp, 10..=12);
+    }
+
+    // Regression for the real-file triage (roadmap 3.2-3.4, class a): a splinter made right after
+    // partner's own first suit call (the common case) used to be `assumed`-only for the support
+    // suit, since `ctx.agreed_suit` is only set once the expansion loop has already tracked an
+    // earlier support/fit call. `agreed_suit_or_partner_last` falls back to partner's last natural
+    // suit bid so this ordinary case resolves like a real support requirement instead.
+    #[test]
+    fn splinter_falls_back_to_partners_last_natural_suit_when_no_agreed_suit() {
+        let binding = Binding::default();
+        let call = Call::Bid(Bid::new(4, Strain::Clubs).unwrap());
+        let mut ctx = base_ctx(&binding, call, Role::Opener);
+        let mut partner = node_with_hcp(12..=14);
+        partner.call = Call::Bid(Bid::new(1, Strain::Hearts).unwrap());
+        ctx.partner_last = Some(&partner);
+        // `ctx.agreed_suit` deliberately left `None`: nothing upstream has agreed a trump yet.
+        let meta = SystemMeta::default();
+        let token = recognize_one("SPL");
+        let (atoms, provs) = resolve(&[token], &ctx, &meta);
+        assert_eq!(
+            atoms[0].shapes,
+            ShapeSet::from_suit_len(Suit::Clubs, 0, 1).intersect(ShapeSet::from_suit_len(
+                Suit::Hearts,
+                meta.conventions.splinter_support,
+                13
+            ))
+        );
+        assert_eq!(provs[0].source, Source::Context);
+    }
+
+    // Same family: an artificial call (a puppet, a forcing relay) names no suit its bidder
+    // actually holds, so it must not be treated as agreeing that suit -- a row that separately,
+    // and correctly, describes shortness there (jdh8's `2N-3H-3N = !SPL, 0--1!h`) would otherwise
+    // be forced to also support the very suit it denies.
+    #[test]
+    fn splinter_ignores_partners_artificial_last_call() {
+        let binding = Binding::default();
+        let call = Call::Bid(Bid::new(4, Strain::Clubs).unwrap());
+        let mut ctx = base_ctx(&binding, call, Role::Opener);
+        let mut partner = node_with_hcp(12..=14);
+        partner.call = Call::Bid(Bid::new(3, Strain::Hearts).unwrap());
+        partner.flags.artificial = true;
+        ctx.partner_last = Some(&partner);
+        let meta = SystemMeta::default();
+        let token = recognize_one("SPL");
+        let (atoms, provs) = resolve(&[token], &ctx, &meta);
+        // No `suit_len[agreed]` conjunct at all (just the own-suit shortness): the artificial 3H
+        // is not agreeing hearts.
+        assert_eq!(atoms[0].shapes, ShapeSet::from_suit_len(Suit::Clubs, 0, 1));
+        assert!(provs[0].assumed);
     }
 
     #[test]

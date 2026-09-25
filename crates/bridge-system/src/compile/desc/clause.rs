@@ -192,7 +192,20 @@ pub fn fragment(input: &mut &str) -> ModalResult<Fragment> {
     }
 
     let consumed_prefix = start_text.len() - s.len();
-    let kind = if let Some((token, len)) = tokens::recognize(s) {
+    let kind = if let Some(len) = consume_see_reference(s) {
+        // A cross-reference to another auction/opening (`see 1!c-1!d-2!d-2NT`, `see the 2M
+        // opening`), which `docs/design/06-system.md` §7.4 classifies as wholly `v2`/unrecognised
+        // prose, not a hand description at all. Handled before the normal word-by-word
+        // `consume_unrecognized` run: that one stops the instant it sees a recognisable
+        // sub-fragment ahead, which is exactly wrong here -- the auction-notation shorthand after
+        // "see" is built from the same suit-length tokens as a real constraint (`1!c`, `2!d`, …)
+        // joined by the very same bare-hyphen "and" `peek_connective` uses for `5!h-4!s`, so
+        // without this special case the reference's own step numbers get chained into a literal,
+        // usually self-contradictory, `SuitLen` conjunction (two different exact lengths for the
+        // same suit) instead of being ignored.
+        *input = &start_text[consumed_prefix + len..];
+        FragmentKind::Unrecognized(s[..len].trim_end_matches(' ').to_string())
+    } else if let Some((token, len)) = tokens::recognize(s) {
         let end = consumed_prefix + len;
         *input = &start_text[end..];
         FragmentKind::Token(token)
@@ -211,6 +224,30 @@ pub fn fragment(input: &mut &str) -> ModalResult<Fragment> {
         hedged,
         kind,
     })
+}
+
+/// Recognises the start of a `see`/cross-reference aside (`see 1!c-1!d-2!d-2NT`, `see the 2M
+/// opening`) and, if found, returns the byte length to consume as one opaque `Unrecognized`
+/// fragment: from `see` up to the next clause-level separator (`,`/`;`/`.`) or `or`/`/`, or the
+/// end of the line. Unlike [`consume_unrecognized`], this does not stop early just because a
+/// sub-span happens to look like a recognisable token -- that is the whole point (see this
+/// function's call site in [`fragment`]).
+fn consume_see_reference(s: &str) -> Option<usize> {
+    let rest = strip_ci_word(s, "see")?;
+    let mut i = s.len() - rest.len();
+    loop {
+        let tail = &s[i..];
+        if tail.is_empty()
+            || matches!(
+                peek_connective(tail),
+                Connective::Clause(_) | Connective::Or(_)
+            )
+        {
+            break;
+        }
+        i += tail.chars().next().expect("not empty").len_utf8();
+    }
+    Some(i)
 }
 
 /// Consumes unrecognised text word by word, stopping as soon as a new word is recognised or a
@@ -591,6 +628,51 @@ mod tests {
             frags[0].kind,
             FragmentKind::Token(Token::SuitLen(SuitRef::Hash, 5..=13))
         );
+    }
+
+    // Regression for the real-file triage (roadmap 3.2-3.4, class a): a `see <auction>`
+    // cross-reference (gjp's `2D.bml`: "same meaning and development as after 2!d-2!h-3X") is
+    // built from the same bare-hyphen-joined suit-length tokens (`1!c`, `2!d`, …) a real
+    // constraint uses. Before `consume_see_reference`, `fragment` recognised each step as its own
+    // `SuitLen` token and `peek_connective` joined them with its `5!h-4!s` "and" rule, producing a
+    // literal (and usually self-contradictory: two different exact lengths for the same suit)
+    // `SuitLen` conjunction instead of leaving the reference opaque.
+    #[test]
+    fn see_reference_is_kept_opaque_not_parsed_as_suit_lengths() {
+        let (frags, clause) = fragments_of("see 1♣-1♦-2♦-2NT");
+        assert_eq!(
+            frags.len(),
+            1,
+            "the whole cross-reference must stay one fragment, not one per step"
+        );
+        assert!(matches!(clause, Clause::Leaf(0)));
+        match &frags[0].kind {
+            FragmentKind::Unrecognized(text) => assert_eq!(text, "see 1♣-1♦-2♦-2NT"),
+            other => panic!("expected Unrecognized, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn see_reference_stops_at_the_next_clause_separator() {
+        let (frags, clause) = fragments_of("see 1♣-1♦-2♦-2NT, 12-14 hcp");
+        assert_eq!(frags.len(), 2);
+        assert!(matches!(clause, Clause::And(ref v) if v.len() == 2));
+        match &frags[0].kind {
+            FragmentKind::Unrecognized(text) => assert_eq!(text, "see 1♣-1♦-2♦-2NT"),
+            other => panic!("expected Unrecognized, got {other:?}"),
+        }
+        assert_eq!(frags[1].kind, FragmentKind::Token(Token::Hcp(12..=14)));
+    }
+
+    #[test]
+    fn see_the_opening_reference_is_also_kept_opaque() {
+        let (frags, clause) = fragments_of("see the 2♥ opening");
+        assert_eq!(frags.len(), 1);
+        assert!(matches!(clause, Clause::Leaf(0)));
+        match &frags[0].kind {
+            FragmentKind::Unrecognized(text) => assert_eq!(text, "see the 2♥ opening"),
+            other => panic!("expected Unrecognized, got {other:?}"),
+        }
     }
 
     fn normalize_test(s: &str) -> String {

@@ -73,6 +73,36 @@ pub fn compile_description(text: &str, ctx: &RowContext<'_>, meta: &SystemMeta) 
         })
         .collect();
     let (atoms, provs) = context::resolve(&pass1_tokens, ctx, meta);
+    // Pass 2 can resolve a context-dependent strength word (`INV`, `MIN`, `S/T`, …) to an HCP
+    // range that contradicts a number the author wrote out explicitly in the same description
+    // (`docs/design/06-system.md` §7.5's "衝突は明示が勝つ" rule, generalized from `NAT` to every
+    // `Strength` word): e.g. jdh8's `3C = INV, 7+!c, 4--7 HCP` states its own 4--7 HCP range, so
+    // `INV`'s context-derived range must not be ANDed against it (that would make the row
+    // unsatisfiable whenever the two disagree). An explicit `Hcp`/`Points` fragment anywhere in
+    // the description means every `Strength` word's HCP contribution is dropped (treated as
+    // `Atom::ANY`, which `build` already elides): the explicit number is what the author meant to
+    // constrain the hand by, and the strength word's own atom would only ever narrow or
+    // contradict it. This does not touch a `Strength` word's other effects (`NodeFlags` from
+    // `derive_flags`, e.g. `GF` still implies `Forcing::ToGame`), only the HCP atom this pass
+    // would otherwise have produced from it.
+    let has_explicit_number = pass1_tokens
+        .iter()
+        .any(|t| matches!(t, Token::Hcp(_) | Token::Points(_)));
+    let atoms: Vec<Atom> = if has_explicit_number {
+        pass1_tokens
+            .iter()
+            .zip(atoms)
+            .map(|(tok, atom)| {
+                if matches!(tok, Token::Strength(_)) {
+                    Atom::ANY
+                } else {
+                    atom
+                }
+            })
+            .collect()
+    } else {
+        atoms
+    };
 
     let mut resolved: Vec<Option<(Atom, Provenance)>> = vec![None; fragments.len()];
     for ((&idx, atom), mut prov) in token_indices.iter().zip(atoms).zip(provs) {
@@ -603,6 +633,29 @@ mod tests {
         let compiled = compile_description("5+!c {w:0.6} or 4+!h {w:0.4} {prio:2}", &c, &meta);
         assert_eq!(compiled.priority, 2);
         assert_eq!(compiled.branch_weights, Some(vec![0.6, 0.4]));
+    }
+
+    // Regression for the real-file triage (roadmap 3.2-3.4, class a): jdh8's `3C = INV, 7+!c,
+    // 4--7 HCP` states its own HCP range, but with an assumed opening partner (12..=21, since
+    // there is no `partner_last` here) `INV`'s context-derived range is 22-12=10 .. 24-12=12 --
+    // disjoint from the author's own 4-7, so ANDing both (as Pass 2 used to) made the whole row
+    // `Unsatisfiable`. The explicit number must win: `INV`'s HCP atom is dropped, not intersected.
+    #[test]
+    fn explicit_hcp_wins_over_a_conflicting_context_strength_word() {
+        let binding = Binding::default();
+        let c = ctx(&binding, Call::Pass, Role::Responder);
+        let meta = SystemMeta::default();
+        let compiled = compile_description("INV, 7+!c, 4-7 hcp", &c, &meta);
+        assert_eq!(compiled.constraint.hcp_range(), 4..=7);
+        assert!(
+            compiled.constraint.is_satisfiable(),
+            "explicit range must win, not be ANDed with INV's contradicting context range"
+        );
+
+        // Sanity: without the explicit HCP fragment, INV's context range is exactly the
+        // conflicting 10..=12 this test relies on, so the fix is actually exercised above.
+        let inv_only = compile_description("INV", &c, &meta);
+        assert_eq!(inv_only.constraint.hcp_range(), 10..=12);
     }
 
     #[test]
