@@ -144,14 +144,10 @@ fn first_discard_signal(event: SignalEvent, discards: &DiscardTable) -> Vec<(Han
         FirstDiscard::Attitude => attitude_discard(u, r, discards.polarity, w),
         FirstDiscard::OddEven => {
             if vocab::numeric(r) % 2 == 1 {
-                if discards.polarity == Polarity::Unknown {
-                    return Vec::new();
-                }
-                let count = match discards.polarity {
-                    Polarity::UpsideDown => 0..=0,
-                    _ => 1..=4,
-                };
-                vocab::branch(vocab::atom(vec![vocab::req(vocab::honors(u), count)]), w)
+                // Unlike `Attitude` discards, the odd-rank rule has no polarity dependency in
+                // the design (08-play.md §7.4): it fires unconditionally, independent of
+                // `discards.polarity` (including `Polarity::Unknown`).
+                vocab::branch(vocab::atom(vec![vocab::req(vocab::honors(u), 1..=4)]), w)
             } else {
                 lavinthal_discard(r, trump, led, w)
             }

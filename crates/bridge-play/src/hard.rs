@@ -71,6 +71,15 @@ pub fn hard_constraints(
     // 13 cards of that suit (a revoke, or a bad record). Every seat's own total across suits is
     // its own played-card count, which `PlayHistory` already bounds at 13 (at most 13 completed
     // tricks), so no analogous per-seat check is needed.
+    //
+    // `PlayWarning::Inconsistent` is defensive: `PlayHistory::play` (via `check`) rejects any
+    // already-played card unconditionally, so every suit's 13 physical cards can be distributed
+    // across the 4 seats' play counts at most once each, and `sum` above can never exceed 13 for
+    // a history built through the safe `PlayHistory` API. The branch is kept for untrusted or
+    // parsed input that builds a `PlayHistory` outside that API's checks (e.g. a future BML
+    // record loader that replays a possibly-corrupt log), where two seats' recorded plays could
+    // disagree about who held a card. No test can trigger it today without an unchecked
+    // `PlayHistory` constructor, which `bridge-core` does not currently expose.
     for suit in Suit::ALL {
         let ui = suit.index() as usize;
         let sum: u16 = Seat::ALL

@@ -174,26 +174,20 @@ fn discard_attitude_low_denies_honor() {
     assert_branch(&alts, 0.6, "AKQ.32.9743.AKQJ", "AKQ.32.K973.AKQJ");
 }
 
+/// `OddEven`'s odd-rank rule fires unconditionally (design doc §7.4 states no polarity
+/// dependency for it, unlike `Attitude` discards): `Standard`, `UpsideDown` and even `Unknown`
+/// polarity all show honour on an odd-rank discard.
 #[test]
-fn discard_odd_even_odd_shows_honor() {
-    let d = discards(FirstDiscard::OddEven, Polarity::Standard);
-    let alts = signal_constraints(
-        discard_event(Strain::Spades, Suit::Hearts, "D7"), // odd rank
-        &SignalTable::default(),
-        &d,
-    );
-    assert_branch(&alts, 0.6, "AKQ.32.K973.AKQJ", "AKQ.32.9743.AKQJ");
-}
-
-#[test]
-fn discard_odd_even_upside_down_flips_the_odd_branch() {
-    let d = discards(FirstDiscard::OddEven, Polarity::UpsideDown);
-    let alts = signal_constraints(
-        discard_event(Strain::Spades, Suit::Hearts, "D7"),
-        &SignalTable::default(),
-        &d,
-    );
-    assert_branch(&alts, 0.6, "AKQ.32.9743.AKQJ", "AKQ.32.K973.AKQJ");
+fn discard_odd_even_odd_shows_honor_regardless_of_polarity() {
+    for polarity in [Polarity::Standard, Polarity::UpsideDown, Polarity::Unknown] {
+        let d = discards(FirstDiscard::OddEven, polarity);
+        let alts = signal_constraints(
+            discard_event(Strain::Spades, Suit::Hearts, "D7"), // odd rank
+            &SignalTable::default(),
+            &d,
+        );
+        assert_branch(&alts, 0.6, "AKQ.32.K973.AKQJ", "AKQ.32.9743.AKQJ");
+    }
 }
 
 /// Trump spades, suit led hearts: the two side suits are clubs (low) and diamonds (high).
