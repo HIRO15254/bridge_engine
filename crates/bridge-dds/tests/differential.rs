@@ -6,7 +6,7 @@
 //! document it):
 //! ```text
 //! PBN <dealer> <vul> <trump> <first> "<deal string>"
-//! FUT <n> <n suits> <n ranks> <n equals> <n scores>      (SolveBoard reference; not checked here)
+//! FUT <n> <n suits> <n ranks> <n equals> <n scores>      SolveBoard reference (checked below)
 //! TABLE <20 ints>                                         resTable[strain][hand], DDS order
 //! PAR "<NS score>" "<EW score>" "<NS contracts>" "<EW contracts>"   (legacy Par(); not checked)
 //! PAR2 "<score>" "<contract>"...                          legacy DealerPar() text; score only
@@ -27,7 +27,10 @@
 use std::path::{Path, PathBuf};
 
 use bridge_core::{Card, Deal, PlayHistory, Rank, Seat, Suit, Vulnerability};
-use bridge_dds::{analyse_play, calc_dd_table, convert, dealer_par};
+use bridge_dds::{
+    CardScore, DdTable, Mode, Position, Solutions, Target, analyse_play, calc_dd_table,
+    calc_dd_tables, convert, dealer_par, solve_all_boards, solve_board, sys,
+};
 
 /// `BRIDGE_CORPUS_DIR`, or `<workspace>/corpus/data`; `None` when the directory is absent
 /// (matches the convention in `bridge-format/tests/common/mod.rs`).
@@ -51,6 +54,7 @@ struct Record {
     trump: bridge_core::Strain,
     leader: Seat,
     deal: Deal,
+    fut: Vec<CardScore>,
     table: [[i32; 4]; 5],
     par_score: i32,
     play: Vec<Card>,
@@ -105,6 +109,58 @@ fn parse_table_line(line: &str) -> [[i32; 4]; 5] {
         }
     }
     table
+}
+
+/// `FUT <n> <n suits> <n ranks> <n equals> <n scores>`: the same `(suit, rank, equals, score)`
+/// layout as `sys::futureTricks`, so this is exactly what `solve_board(Target::Max,
+/// Solutions::AllRanked, Mode::Auto)` returns for `(trump, first)` on lead with an empty trick.
+fn parse_fut_line(line: &str) -> Vec<CardScore> {
+    let nums = ints_after_tag(line);
+    assert!(!nums.is_empty(), "FUT line {line:?}");
+    let n = nums[0] as usize;
+    assert_eq!(nums.len(), 1 + 4 * n, "FUT line {line:?}");
+    let suits = &nums[1..1 + n];
+    let ranks = &nums[1 + n..1 + 2 * n];
+    let equals = &nums[1 + 2 * n..1 + 3 * n];
+    let scores = &nums[1 + 3 * n..1 + 4 * n];
+    (0..n)
+        .map(|i| CardScore {
+            card: convert::card_from_dds(suits[i] as i32, ranks[i] as i32),
+            equals: convert::holding_from_dds(equals[i] as u32),
+            score: scores[i] as u8,
+        })
+        .collect()
+}
+
+/// A `Vec<CardScore>` as a sorted, comparable key: `solve_board`'s own return order need not
+/// match the reference file's (both are internal DDS search orders, not part of the documented
+/// contract), so equality is checked as a set instead.
+fn sorted_keys(cards: &[CardScore]) -> Vec<(u8, u8, u16, u8)> {
+    let mut keys: Vec<(u8, u8, u16, u8)> = cards
+        .iter()
+        .map(|c| {
+            (
+                c.card.suit().index(),
+                c.card.rank().index(),
+                c.equals.bits(),
+                c.score,
+            )
+        })
+        .collect();
+    keys.sort_unstable();
+    keys
+}
+
+/// Whether `table` (from `calc_dd_table`/`calc_dd_tables`) matches a record's parsed `TABLE`
+/// line.
+fn table_matches(table: &DdTable, expected: &[[i32; 4]; 5]) -> bool {
+    (0..5).all(|s| {
+        let strain = convert::strain_from_dds(s as i32);
+        (0..4).all(|h| {
+            let seat = Seat::from_index(h as u8);
+            i32::from(table.tricks(strain, seat)) == expected[s][h]
+        })
+    })
 }
 
 fn parse_par2_score(line: &str) -> i32 {
@@ -172,6 +228,7 @@ fn parse_records(path: &Path) -> Vec<Record> {
             trump: convert::strain_from_dds(trump),
             leader: Seat::from_index(first as u8),
             deal,
+            fut: parse_fut_line(rec_lines[1]),
             table: parse_table_line(rec_lines[2]),
             par_score: parse_par2_score(rec_lines[4]),
             play: parse_play_line(rec_lines[5]),
@@ -181,20 +238,13 @@ fn parse_records(path: &Path) -> Vec<Record> {
     records
 }
 
-/// Runs the three checks (`TABLE`, `TRACE`, `PAR2` score) over `records`, returning
-/// `(table_matches, trace_matches, par_matches)`.
-fn check_all(records: &[Record]) -> (usize, usize, usize) {
-    let (mut table_ok, mut trace_ok, mut par_ok) = (0, 0, 0);
+/// Runs the checks (`TABLE`, `FUT`, `TRACE`, `PAR2` score) over `records`, returning
+/// `(table_matches, fut_matches, trace_matches, par_matches)`.
+fn check_all(records: &[Record]) -> (usize, usize, usize, usize) {
+    let (mut table_ok, mut fut_ok, mut trace_ok, mut par_ok) = (0, 0, 0, 0);
     for rec in records {
         let table = calc_dd_table(&rec.deal).expect("calc_dd_table should not fail");
-        let matches = (0..5).all(|s| {
-            let strain = convert::strain_from_dds(s as i32);
-            (0..4).all(|h| {
-                let seat = Seat::from_index(h as u8);
-                i32::from(table.tricks(strain, seat)) == rec.table[s][h]
-            })
-        });
-        if matches {
+        if table_matches(&table, &rec.table) {
             table_ok += 1;
         } else {
             eprintln!(
@@ -203,6 +253,21 @@ fn check_all(records: &[Record]) -> (usize, usize, usize) {
                 rec.table,
                 table.as_array()
             );
+        }
+
+        let pos = Position {
+            deal: &rec.deal,
+            trump: rec.trump,
+            leader: rec.leader,
+            trick: &[],
+        };
+        match solve_board(&pos, Target::Max, Solutions::AllRanked, Mode::Auto) {
+            Ok(ft) if sorted_keys(&ft.cards) == sorted_keys(&rec.fut) => fut_ok += 1,
+            Ok(ft) => eprintln!(
+                "FUT mismatch for {} trump={:?} leader={:?}: expected {:?}, got {:?}",
+                rec.deal, rec.trump, rec.leader, rec.fut, ft.cards
+            ),
+            Err(e) => eprintln!("solve_board failed for {}: {e}", rec.deal),
         }
 
         match dealer_par(&table, rec.dealer, rec.vul) {
@@ -242,13 +307,92 @@ fn check_all(records: &[Record]) -> (usize, usize, usize) {
             Err(e) => eprintln!("analyse_play failed for {}: {e}", rec.deal),
         }
     }
-    (table_ok, trace_ok, par_ok)
+    (table_ok, fut_ok, trace_ok, par_ok)
 }
 
-/// The required differential test: `calc_dd_table` against every `TABLE` line, `analyse_play`
-/// against every `PLAY`/`TRACE` pair, and `dealer_par`'s score against every `PAR2` score, for
-/// all 100 deals of `hands/list100.txt`. Not `#[ignore]`d: this file is small (100 deals) and
-/// this is the primary correctness gate for the wrapper (docs/design/12-roadmap.md 5.6).
+/// Exercises the two *batched* entry points (`calc_dd_tables`, `solve_all_boards`) against the
+/// same reference data `check_all` checks one board at a time, so a regression in their
+/// chunking (`sys::MAXNOOFTABLES` / `sys::MAXNOOFBOARDS`) or in the `Mutex`-serialised path is
+/// caught even though every individual `TABLE`/`FUT` line already matches `calc_dd_table`/
+/// `solve_board`.
+///
+/// `records` is checked as given (the caller picks how many, and `list100_matches_upstream`
+/// deliberately passes a small prefix to keep the non-`#[ignore]`d test fast): `calc_dd_tables`
+/// is called once over all of it (crossing `MAXNOOFTABLES` whenever `records.len()` exceeds it),
+/// and the position list for `solve_all_boards` is cycled just past `MAXNOOFBOARDS` so that call
+/// always has to split into more than one chunk and reassemble the results in order, however
+/// short `records` is. Returns `(calc_dd_tables matches, solve_all_boards matches,
+/// solve_all_boards total)`.
+fn check_batch(records: &[Record]) -> (usize, usize, usize) {
+    assert!(!records.is_empty());
+    let deals: Vec<Deal> = records.iter().map(|rec| rec.deal).collect();
+
+    let tables = calc_dd_tables(&deals).expect("calc_dd_tables should not fail");
+    assert_eq!(tables.len(), records.len());
+    let mut table_ok = 0;
+    for (rec, table) in records.iter().zip(&tables) {
+        if table_matches(table, &rec.table) {
+            table_ok += 1;
+        } else {
+            eprintln!(
+                "calc_dd_tables mismatch for {}: expected {:?}, got {:?}",
+                rec.deal,
+                rec.table,
+                table.as_array()
+            );
+        }
+    }
+
+    // Cycle just past the MAXNOOFBOARDS chunk boundary (never more than one extra lap), so
+    // `solve_all_boards` always has to split into more than one chunk.
+    let target_len = (sys::MAXNOOFBOARDS + 1).max(records.len());
+    let positions: Vec<_> = records
+        .iter()
+        .cycle()
+        .take(target_len)
+        .map(|rec| {
+            (
+                Position {
+                    deal: &rec.deal,
+                    trump: rec.trump,
+                    leader: rec.leader,
+                    trick: &[],
+                },
+                Target::Max,
+                Solutions::AllRanked,
+                Mode::Auto,
+            )
+        })
+        .collect();
+    assert!(
+        positions.len() > sys::MAXNOOFBOARDS,
+        "test bug: {} positions does not exceed MAXNOOFBOARDS ({})",
+        positions.len(),
+        sys::MAXNOOFBOARDS
+    );
+
+    let solved = solve_all_boards(&positions).expect("solve_all_boards should not fail");
+    assert_eq!(solved.len(), positions.len());
+    let mut solve_all_ok = 0;
+    for (i, ft) in solved.iter().enumerate() {
+        let rec = &records[i % records.len()];
+        if sorted_keys(&ft.cards) == sorted_keys(&rec.fut) {
+            solve_all_ok += 1;
+        } else {
+            eprintln!(
+                "solve_all_boards mismatch for {} (position {i}): expected {:?}, got {:?}",
+                rec.deal, rec.fut, ft.cards
+            );
+        }
+    }
+    (table_ok, solve_all_ok, solved.len())
+}
+
+/// The required differential test: `calc_dd_table`/`calc_dd_tables` against every `TABLE` line,
+/// `solve_board`/`solve_all_boards` against every `FUT` line, `analyse_play` against every
+/// `PLAY`/`TRACE` pair, and `dealer_par`'s score against every `PAR2` score, for all 100 deals
+/// of `hands/list100.txt`. Not `#[ignore]`d: this file is small (100 deals) and this is the
+/// primary correctness gate for the wrapper (docs/design/12-roadmap.md 5.6).
 #[test]
 fn list100_matches_upstream() {
     let Some(dir) = corpus_dir() else { return };
@@ -261,13 +405,33 @@ fn list100_matches_upstream() {
     let total = records.len();
     assert!(total > 0, "empty {}", path.display());
 
-    let (table_ok, trace_ok, par_ok) = check_all(&records);
+    let (table_ok, fut_ok, trace_ok, par_ok) = check_all(&records);
     eprintln!(
-        "list100: TABLE {table_ok}/{total}, TRACE {trace_ok}/{total}, PAR2 score {par_ok}/{total}"
+        "list100: TABLE {table_ok}/{total}, FUT {fut_ok}/{total}, TRACE {trace_ok}/{total}, \
+         PAR2 score {par_ok}/{total}"
     );
     assert_eq!(table_ok, total, "calc_dd_table vs TABLE");
+    assert_eq!(fut_ok, total, "solve_board vs FUT");
     assert_eq!(trace_ok, total, "analyse_play vs TRACE");
     assert_eq!(par_ok, total, "dealer_par score vs PAR2");
+
+    // A prefix well past `MAXNOOFTABLES` (40) is enough to make `check_batch` cross both
+    // `calc_dd_tables`' and `solve_all_boards`' chunk boundaries (docs/design/10-dds.md §7.1);
+    // checking only this many keeps this non-`#[ignore]`d test fast, while
+    // `masterdd_matches_upstream` below runs `check_batch` over the whole corpus.
+    let batch_records = &records[..total.min(45)];
+    let (batch_table_ok, batch_fut_ok, batch_total) = check_batch(batch_records);
+    eprintln!(
+        "list100: calc_dd_tables {batch_table_ok}/{}, solve_all_boards matches \
+         {batch_fut_ok}/{batch_total}",
+        batch_records.len()
+    );
+    assert_eq!(
+        batch_table_ok,
+        batch_records.len(),
+        "calc_dd_tables vs TABLE"
+    );
+    assert_eq!(batch_fut_ok, batch_total, "solve_all_boards vs FUT");
 }
 
 /// The full corpus (83,691 deals): slow (tens of minutes), so `#[ignore]`.
@@ -285,11 +449,20 @@ fn masterdd_matches_upstream() {
     let total = records.len();
     assert!(total > 0, "empty {}", path.display());
 
-    let (table_ok, trace_ok, par_ok) = check_all(&records);
+    let (table_ok, fut_ok, trace_ok, par_ok) = check_all(&records);
     eprintln!(
-        "masterDD: TABLE {table_ok}/{total}, TRACE {trace_ok}/{total}, PAR2 score {par_ok}/{total}"
+        "masterDD: TABLE {table_ok}/{total}, FUT {fut_ok}/{total}, TRACE {trace_ok}/{total}, \
+         PAR2 score {par_ok}/{total}"
     );
     assert_eq!(table_ok, total, "calc_dd_table vs TABLE");
+    assert_eq!(fut_ok, total, "solve_board vs FUT");
     assert_eq!(trace_ok, total, "analyse_play vs TRACE");
     assert_eq!(par_ok, total, "dealer_par score vs PAR2");
+
+    let (batch_table_ok, batch_fut_ok, batch_total) = check_batch(&records);
+    eprintln!(
+        "masterDD: calc_dd_tables {batch_table_ok}/{total}, solve_all_boards matches {batch_fut_ok}/{batch_total}"
+    );
+    assert_eq!(batch_table_ok, total, "calc_dd_tables vs TABLE");
+    assert_eq!(batch_fut_ok, batch_total, "solve_all_boards vs FUT");
 }
