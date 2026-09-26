@@ -326,3 +326,32 @@ comments in the `.bml` files.
     exactly the complementary case (`4=!s` in the double, `5+!s` in the
     direct bid, so a 4-card holding always has a call and a 5+ one always has
     the other), so no equivalent gap exists.
+
+## Lane sayc-comp (openings, responses, rebids, competition)
+
+Notes added while completing these five files against the replay-based consistency harness
+and its coverage report (`crates/bridge-bidding/tests/consistency.rs`). They are numbered
+`C1`, `C2`, ... so they cannot collide with notes other lanes append above.
+
+C1. **Opener's rebid tables are exhaustive after a forcing response (`rebids.bml`).** A new
+    suit by responder is forcing, and a two-over-one promises another bid, so opener may not
+    pass. The old tables stopped at 18 hcp (a 19--21 opener had no call and was passed by the
+    implicit pass) and left some 12-hcp and 16--18 hcp shapes uncovered. Every table after a
+    one-level new suit or a two-over-one now splits opener's 12--21 range into the booklet's
+    three bands (12--15 / 16--18 / 19--21) and ranks the calls in the booklet's order of
+    preference: support for responder's major, a one-level major of opener's own, a balanced
+    notrump rebid, a reverse, then a rebid of the opening suit or a non-reverse new suit. The
+    19--21 band jumps: to game in a fit or in a six-card major, a jump shift with a second
+    suit, or 3NT (the 19--21 hand with a long minor and no other call). A balanced 15--17
+    opens 1NT and a balanced 20--21 opens 2NT, so those two bands never reach these tables,
+    which is what makes the split exhaustive. After a two-over-one response, opener's 2NT is
+    the balanced minimum (12--14) and 3NT the balanced 18--19; the booklet gives no numbers for
+    these two, and this split follows from the 2/1's own 10+ (12--14 opposite 10+ is only
+    invitational, 18--19 opposite 10+ is game). The plain rebid of the opening suit
+    (`2H = 12--15 hcp` after 1!h-2!c, and so on) is the minimum "nothing else to show" call;
+    every 1-of-a-major opener has 5+ cards in it, so it needs no length of its own.
+    Also: the limit raise is 10--12 (was 10--11, which left 12-hcp hands with 3-card support
+    and no Jacoby 2NT with no call), the 3NT response to 1M ranks above the 2/1 new suits (it
+    was unreachable behind them), 2C over 1!s also covers the one 13+ shape with 3-card
+    spade support and no other call (3=4=3=3), and 1!s-2!c-2!h-3!s (game-forcing jump
+    preference) ranks above the fourth-suit 3!d that used to hide it.

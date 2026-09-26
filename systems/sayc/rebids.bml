@@ -2,7 +2,7 @@
 
 Booklet section "SUBSEQUENT BIDDING BY RESPONDER" and the rebid-strength framework
 under "RESPONSES AND LATER BIDDING AFTER A 1H OR A 1S OPENING": a minimum opener
-(13--15) rebids notrump at the lowest level, raises responder's suit at the
+(12--15) rebids notrump at the lowest level, raises responder's suit at the
 lowest level, or bids a new suit without reversing; a medium opener (16--18)
 jump-raises, jump-rebids its own suit, or reverses (there is no reverse available
 in the 1!h-1!s auction itself, since spades already belongs to responder); a
@@ -13,19 +13,97 @@ suit is artificial and forcing; a new suit after a 1NT rebid is non-forcing
 level after a two-over-one response is game forcing, and a plain 2-level new-suit
 response promises another bid unless opener's rebid is already at game.
 
-** After 1!h-1!s
+A new suit by responder is forcing, so each table after a new-suit response is
+written to give *every* hand opener can hold a call (NOTES.md #C1): the rows are
+split by strength band (12--15 / 16--18 / 19--21) and ranked by the booklet's own
+order of preference -- support for responder's major first, then a major of
+opener's own at the one level, then a balanced notrump rebid, then a reverse,
+then a rebid of the opening suit or a new suit that is not a reverse. A
+balanced 15--17 opens 1NT and a balanced 20--21 opens 2NT, so those two bands
+never reach these tables.
+
+** After a one-level response
 
 1H-1S-
-1N = 12--14 hcp, bal
-2H = 12--15 hcp, 5+!h
-2S = 12--15 hcp, 3+!s
-2C = 13--18 hcp, 4+!c
-2D = 13--18 hcp, 4+!d
-2N = 18--19 hcp, bal
-3H = 16--18 hcp, 6+!h
-3S = 16--18 hcp, 4+!s
-3C = 19--21 hcp, 5+!c
-3D = 19--21 hcp, 5+!d
+2S = {prio:4} 12--15 hcp, 4+!s
+3S = {prio:4} 16--18 hcp, 4+!s
+4S = {prio:4} 19--21 hcp, 4+!s
+2H = {prio:3} 12--15 hcp, 6+!h
+3H = {prio:3} 16--18 hcp, 6+!h
+4H = {prio:3} 19--21 hcp, 6+!h
+1N = {prio:2} 12--14 hcp, bal
+2N = {prio:2} 18--19 hcp, bal
+2C = 12--18 hcp, 4+!c
+2D = 12--18 hcp, 4+!d
+3C = 19--21 hcp, 4+!c
+3D = 19--21 hcp, 4+!d
+
+1C-1D-
+1H = {prio:4} 12--18 hcp, 4+!h
+1S = {prio:4} 12--18 hcp, 4+!s, not 4+!h
+2H = {prio:4} 19--21 hcp, 4+!h
+2S = {prio:4} 19--21 hcp, 4+!s, not 4+!h
+1N = {prio:3} 12--14 hcp, bal
+2N = {prio:3} 18--19 hcp, bal
+2D = {prio:2} 12--15 hcp, 4+!d
+3D = {prio:2} 16--18 hcp, 4+!d
+2C = 12--15 hcp, 5+!c
+3C = 16--18 hcp, 6+!c
+3N = 19--21 hcp
+
+1C-1H-
+2H = {prio:4} 12--15 hcp, 4+!h
+3H = {prio:4} 16--18 hcp, 4+!h
+4H = {prio:4} 19--21 hcp, 4+!h
+1S = {prio:3} 12--18 hcp, 4+!s
+2S = {prio:3} 19--21 hcp, 4+!s
+1N = {prio:2} 12--14 hcp, bal
+2N = {prio:2} 18--19 hcp, bal
+2D = {prio:1} 16--21 hcp, 4+!d
+2C = 12--15 hcp, 5+!c
+3C = 16--18 hcp, 6+!c
+3N = 19--21 hcp
+
+1C-1S-
+2S = {prio:4} 12--15 hcp, 4+!s
+3S = {prio:4} 16--18 hcp, 4+!s
+4S = {prio:4} 19--21 hcp, 4+!s
+1N = {prio:2} 12--14 hcp, bal
+2N = {prio:2} 18--19 hcp, bal
+2D = {prio:1} 16--21 hcp, 4+!d
+2H = {prio:1} 16--21 hcp, 4+!h
+2C = 12--15 hcp, 5+!c
+3C = 16--18 hcp, 6+!c
+3N = 19--21 hcp
+
+1D-1H-
+2H = {prio:4} 12--15 hcp, 4+!h
+3H = {prio:4} 16--18 hcp, 4+!h
+4H = {prio:4} 19--21 hcp, 4+!h
+1S = {prio:3} 12--18 hcp, 4+!s
+2S = {prio:3} 19--21 hcp, 4+!s
+1N = {prio:2} 12--14 hcp, bal
+2N = {prio:2} 18--19 hcp, bal
+2C = 12--18 hcp, 4+!c
+3C = 19--21 hcp, 4+!c
+2D = 12--15 hcp, 5+!d
+3D = 16--18 hcp, 6+!d
+3N = 19--21 hcp
+
+1D-1S-
+2S = {prio:4} 12--15 hcp, 4+!s
+3S = {prio:4} 16--18 hcp, 4+!s
+4S = {prio:4} 19--21 hcp, 4+!s
+1N = {prio:2} 12--14 hcp, bal
+2N = {prio:2} 18--19 hcp, bal
+2H = {prio:1} 16--21 hcp, 4+!h
+2C = 12--18 hcp, 4+!c
+3C = 19--21 hcp, 4+!c
+2D = 12--15 hcp, 5+!d
+3D = 16--18 hcp, 6+!d
+3N = 19--21 hcp
+
+** Responder's second call after a one-level response
 
 1H-1S-2C-
 P = 6--9 hcp, not 3+!h, not 5+!s
@@ -42,48 +120,6 @@ P = 6--9 hcp, not 3+!h, not 5+!s
 3C = F, 13+ hcp, 5+!c
 3D = F, 13+ hcp, 5+!d
 
-** After 1!s-2!c
-
-1S-2C-
-2D = 13--18 hcp, 4+!d
-2H = 13--18 hcp, 4+!h
-2N = 18--19 hcp, bal
-2S = 12--15 hcp, 6+!s
-3C = 12--15 hcp, 3+!c
-3S = 16--18 hcp, 6+!s
-
-1S-2C-2H-
-2N = 10--11 hcp, not 3+!c, not 3+!h
-3C = 10--11 hcp, 3+!c
-3H = 10--11 hcp, 3+!h
-2S = 11--12 hcp, 2=!s
-3D = F
-3S = {prio:-1} F
-
-** After a minor-suit response to a minor opening
-
-1C-1D-
-1H = 13--18 hcp, 4+!h
-1S = 13--18 hcp, 4+!s
-1N = 12--14 hcp, bal
-2C = 12--15 hcp, 5+!c
-2D = 12--15 hcp, 4+!d
-2N = 18--19 hcp, bal
-3C = 16--18 hcp, 6+!c
-3D = 16--18 hcp, 4+!d
-
-** After a major-suit response to a minor opening
-
-1C-1H-
-1S = 13--18 hcp, 4+!s
-1N = 12--14 hcp, bal
-2C = 12--15 hcp, 5+!c
-2D = 13--18 hcp, 4+!d
-2H = 12--15 hcp, 3+!h
-2N = 18--19 hcp, bal
-3C = 16--18 hcp, 6+!c
-3H = 16--18 hcp, 4+!h
-
 A reverse or a jump shift after opener's 1NT rebid is a game force (the
 booklet's own example is 1!c-1!h-1NT-2!s or 3!d).
 
@@ -91,11 +127,159 @@ booklet's own example is 1!c-1!h-1NT-2!s or 3!d).
 2S = F, 4+!s
 3D = F, 4+!d
 
-1D-1H-
-1S = 13--18 hcp, 4+!s
-1N = 12--14 hcp, bal
-2D = 12--15 hcp, 5+!d
-2H = 12--15 hcp, 3+!h
-2N = 18--19 hcp, bal
+** After a two-over-one response
+
+A two-over-one response promises another bid, so opener's rebid only has to
+describe the hand: a new suit (a reverse included) is 4+ cards and forcing, a
+raise of responder's suit is 4+ cards (3+ for a 2!h response, which shows five),
+2NT is a minimum balanced hand and 3NT a balanced 18--19, a jump rebid of the
+opening suit shows six cards and extra values, and a plain rebid of the opening
+suit is the minimum with nothing else to show (NOTES.md #C1).
+
+1H-2C-
+3C = {prio:3} 12--21 hcp, 4+!c
+2S = {prio:2} 16--21 hcp, 4+!s
+2D = {prio:2} 12--21 hcp, 4+!d
+2N = {prio:1} 12--14 hcp, bal
+3N = {prio:1} 18--19 hcp, bal
+3H = {prio:1} 16--21 hcp, 6+!h
+2H = 12--15 hcp
+
+1H-2D-
+3D = {prio:3} 12--21 hcp, 4+!d
+2S = {prio:2} 16--21 hcp, 4+!s
+3C = {prio:2} 12--21 hcp, 4+!c
+2N = {prio:1} 12--14 hcp, bal
+3N = {prio:1} 18--19 hcp, bal
+3H = {prio:1} 16--21 hcp, 6+!h
+2H = 12--15 hcp
+
+1S-2C-
+3C = {prio:3} 12--21 hcp, 4+!c
+2H = {prio:2} 12--21 hcp, 4+!h
+2D = {prio:2} 12--21 hcp, 4+!d
+2N = {prio:1} 12--14 hcp, bal
+3N = {prio:1} 18--19 hcp, bal
+3S = {prio:1} 16--21 hcp, 6+!s
+2S = 12--15 hcp
+
+1S-2D-
+3D = {prio:3} 12--21 hcp, 4+!d
+2H = {prio:2} 12--21 hcp, 4+!h
+3C = {prio:2} 12--21 hcp, 4+!c
+2N = {prio:1} 12--14 hcp, bal
+3N = {prio:1} 18--19 hcp, bal
+3S = {prio:1} 16--21 hcp, 6+!s
+2S = 12--15 hcp
+
+1S-2H-
+3H = {prio:3} 12--21 hcp, 3+!h
+3C = {prio:2} 12--21 hcp, 4+!c
+3D = {prio:2} 12--21 hcp, 4+!d
+2N = {prio:1} 12--14 hcp, bal
+3N = {prio:1} 18--19 hcp, bal
+3S = {prio:1} 16--21 hcp, 6+!s
+2S = 12--15 hcp
+
+1D-2C-
+3C = {prio:3} 12--21 hcp, 4+!c
+2H = {prio:2} 16--21 hcp, 4+!h
+2S = {prio:2} 16--21 hcp, 4+!s
+2N = {prio:1} 12--14 hcp, bal
+3N = {prio:1} 18--19 hcp, bal
+3D = {prio:1} 16--21 hcp, 6+!d
+2D = 12--15 hcp
+
+1S-2C-2H-
+3S = {prio:2} F, 13+ hcp, 3+!s
+3H = {prio:2} 10--12 hcp, 4+!h
+2S = {prio:1} 10--12 hcp, 2+!s
+3C = {prio:1} 10--12 hcp, 6+!c
+2N = 10--12 hcp, not 4+!h
+3D = {prio:-1} F, 13+ hcp
+
+** After a raise or a notrump response
+
+After a single raise of a major, opener passes a minimum, invites with a
+medium hand and bids game with a maximum; after a limit raise, opener passes a
+bare minimum and otherwise bids game. After the Jacoby 2NT raise, opener shows a
+singleton or void at the three level, a good second five-card suit at the four
+level, and otherwise describes strength: 3 of the major is 18+, 3NT is 15--17 and
+4 of the major is a minimum. After a non-forcing 1NT response, opener passes a
+balanced minimum and otherwise rebids naturally, a reverse or a jump shift
+showing extra values.
+
+1H-2H-
+3H = 16--18 hcp
+4H = 19--21 hcp
+
+1S-2S-
+3S = 16--18 hcp
+4S = 19--21 hcp
+
+1H-3H-
+4H = 14+ hcp
+
+1S-3S-
+4S = 14+ hcp
+
+1H-2N-
+3C = {prio:3} 0--1!c
+3D = {prio:3} 0--1!d
+3S = {prio:3} 0--1!s
+4C = {prio:2} 5+!c
+4D = {prio:2} 5+!d
+4S = {prio:2} 5+!s
+3H = 18+ hcp
+3N = 15--17 hcp
+4H = 12--14 hcp
+
+1S-2N-
+3C = {prio:3} 0--1!c
+3D = {prio:3} 0--1!d
+3H = {prio:3} 0--1!h
+4C = {prio:2} 5+!c
+4D = {prio:2} 5+!d
+4H = {prio:2} 5+!h
+3S = 18+ hcp
+3N = 15--17 hcp
+4S = 12--14 hcp
+
+1H-1N-
+2S = {prio:2} 16--21 hcp, 4+!s
+3H = {prio:1} 16--18 hcp, 6+!h
+4H = {prio:1} 19--21 hcp, 6+!h
+2N = {prio:1} 18--19 hcp, bal
+2C = 12--18 hcp, 4+!c, not bal
+2D = 12--18 hcp, 4+!d, not bal
+3C = 19--21 hcp, 4+!c
+3D = 19--21 hcp, 4+!d
+2H = 12--15 hcp, 6+!h
+
+1S-1N-
+3S = {prio:1} 16--18 hcp, 6+!s
+4S = {prio:1} 19--21 hcp, 6+!s
+2N = {prio:1} 18--19 hcp, bal
+2H = 12--18 hcp, 4+!h
+2C = 12--18 hcp, 4+!c, not bal
+2D = 12--18 hcp, 4+!d, not bal
+3H = 19--21 hcp, 4+!h
+3C = 19--21 hcp, 4+!c
+3D = 19--21 hcp, 4+!d
+2S = 12--15 hcp, 6+!s
+
+1C-1N-
+2N = {prio:1} 18--19 hcp, bal
+2D = {prio:1} 12--18 hcp, 4+!d, not bal
+2H = 16--21 hcp, 4+!h
+2S = 16--21 hcp, 4+!s
+2C = 12--15 hcp, 6+!c
+3C = 16--18 hcp, 6+!c
+
+1D-1N-
+2N = {prio:1} 18--19 hcp, bal
+2C = {prio:1} 12--18 hcp, 4+!c, not bal
+2H = 16--21 hcp, 4+!h
+2S = 16--21 hcp, 4+!s
+2D = 12--15 hcp, 6+!d
 3D = 16--18 hcp, 6+!d
-3H = 16--18 hcp, 4+!h

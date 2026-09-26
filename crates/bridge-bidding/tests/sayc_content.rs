@@ -337,3 +337,102 @@ fn notrump_overcall_outranks_plain_overcall() {
          overcall: {choice:?}"
     );
 }
+
+/// Lane `sayc-comp` (phase 3 SAYC completion: openings, responses, rebids and competition). Each
+/// case is a constructed hand at one auction position with the call SAYC makes there; every case
+/// was previously mis-bid, left without a system call (`NoCandidate`), or passed by an implicit
+/// pass where the booklet requires a call. Auctions are written dealer-North, none vulnerable,
+/// calls separated by spaces; hands are `S.H.D.C`.
+mod sayc_comp {
+    use super::*;
+    use bridge_core::{Auction, Call, Hand};
+
+    /// Asserts every `(auction, hand, expected call)` case against the compiled SAYC system.
+    fn check(cases: &[(&str, &str, &str)]) {
+        let table = common::compile_sayc("sayc.bml");
+        let ctx = ctx(&table);
+        let mut failures = Vec::new();
+        for &(calls, hand, expected) in cases {
+            let mut a = Auction::new(Seat::North, Vulnerability::None);
+            for c in calls.split_whitespace() {
+                let c: Call = c.parse().expect("valid call");
+                a = a.with(c).expect("legal call");
+            }
+            let h: Hand = hand.parse().expect("valid hand");
+            let expected: Call = expected.parse().expect("valid call");
+            let choice = choose_bid(&table, h, &a, &ctx);
+            if choice.call() != Some(expected) {
+                failures.push(format!(
+                    "  [{calls}] {hand}: expected {expected}, got {:?}",
+                    choice.call().map(|c| c.to_string())
+                ));
+            }
+        }
+        assert!(failures.is_empty(), "wrong calls:\n{}", failures.join("\n"));
+    }
+
+    /// Opener's rebid after a forcing one-level response: every strength band has a call, so a
+    /// maximum opener no longer passes a forcing new suit (the old tables stopped at 18 hcp).
+    #[test]
+    fn opener_rebid_after_one_level_response_covers_every_band() {
+        check(&[
+            // 19 hcp with four-card support: jump to game in responder's major.
+            ("1H P 1S P", "AKQ98.AKQ875..J6", "4S"),
+            // 20 hcp, six hearts, no fit: jump to game in the opening suit.
+            ("1H P 1S P", "3.AKQJT4.AQ9.A54", "4H"),
+            // 19 hcp with both majors after 1C-1D: jump shift into the lower major.
+            ("1C P 1D P", "AQ62.AKT8.5.AQT6", "2H"),
+            // 21 hcp with long clubs and no major: 3NT.
+            ("1C P 1D P", "KQ2.AT.AJ.AKT943", "3NT"),
+            // 21 hcp with six diamonds after 1D-1H: 3NT.
+            ("1D P 1H P", "K96.A.AKT542.AK6", "3NT"),
+            // 12 hcp 1C opener with four hearts and 5 clubs after 1C-1S: rebid clubs, 2H would be
+            // a reverse.
+            ("1C P 1S P", "Q6.AQJ5.J9.Q8752", "2C"),
+        ]);
+    }
+
+    /// Opener's rebid after a two-over-one response (which promises another bid): a raise with
+    /// four-card support, a new suit, 2NT with a balanced minimum, or the minimum rebid of the
+    /// opening suit; none of these hands may pass.
+    #[test]
+    fn opener_rebid_after_two_over_one_is_never_pass() {
+        check(&[
+            ("1S P 2C P", "AJT82.KT9.Q.AQ62", "3C"),
+            ("1S P 2C P", "QJ972.AK73.Q3.52", "2H"),
+            ("1S P 2C P", "AK862.AT7.Q97.J2", "2NT"),
+            // 14 hcp with four spades after 1H-2C: 2S would be a reverse, so rebid hearts.
+            ("1H P 2C P", "KJ63.K8762.AK.T3", "2H"),
+            ("1H P 2C P", "A74.AQT73.AJ62.8", "2D"),
+            ("1D P 2C P", "AQ3.K2.KJ54.Q983", "3C"),
+        ]);
+    }
+
+    /// dropped.json #19: rows that could never be chosen because an earlier-ranked sibling
+    /// covered them -- 1M-3NT behind the 2/1 new suits, and the game-forcing jump preference
+    /// 1S-2C-2H-3S behind the fourth-suit 3D. Also the limit raise covers 12 hcp, so a 12-count
+    /// with a fit no longer falls into the gap between the limit raise and Jacoby 2NT, and a
+    /// 3=4=3=3 13-count with three spades has the 2C response.
+    #[test]
+    fn response_rows_shadowed_by_siblings_are_reachable() {
+        check(&[
+            ("1H P", "AQ3.K2.KJ54.Q983", "3NT"),
+            ("1S P", "K2.AQ3.KJ54.Q983", "3NT"),
+            ("1S P", "KT98432.AJ3..A73", "3S"),
+            ("1S P", "K32.AQ32.K32.Q32", "2C"),
+            ("1S P 2C P 2H P", "KJ3.T2.A32.KQ432", "3S"),
+        ]);
+    }
+
+    /// Jacoby 2NT: opener shows shortness at the three level, otherwise strength (3M 18+, 3NT
+    /// 15--17, 4M minimum).
+    #[test]
+    fn jacoby_2nt_rebids() {
+        check(&[
+            ("1H P 2NT P", "K32.AQJ75.K32.32", "4H"),
+            ("1H P 2NT P", "K3.AQJ75.K32.Q32", "3NT"),
+            ("1H P 2NT P", "K32.AQJ75.AK32.3", "3C"),
+            ("1H P 2NT P", "AK3.AQJ75.K32.Q2", "3H"),
+        ]);
+    }
+}
