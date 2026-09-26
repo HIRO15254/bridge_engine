@@ -586,3 +586,13 @@ C6. **More positions natural inference could not answer (`competition.bml`, `reb
     cards, not three-card support), opener after the fourth suit in 1!h-1!s-2!c-2!d, and
     responder after a 3!c preempt over 1!d (the `1m-(3Y)-` table only binds suits above the
     opening, so this one is written out).
+
+C7. **Balancing over the opponents' 1NT is played like the direct seat (`competition.bml`).**
+    `(1X)-P-(P)-` binds a suit, so `(1N)-P-(P)-` had no table: the balancing overcall was
+    bid by natural inference and advancer had no table at all, which made
+    `(P)-1N-(P)-P-2!d-(P)` the most frequent `NoCandidate` position of the integration
+    10^6 consistency run (505 of 5037 positions, middling hands with a fit or game
+    values). The balancing seat now has the direct seat's penalty double and natural
+    two-level overcall, with the same advances (raise 8--11, 4M or 3NT with 12+, a
+    six-card signoff, a raise or penalty double if opener's partner competes) and an
+    `(any)` line.

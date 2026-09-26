@@ -1028,4 +1028,21 @@ mod sayc_comp {
             ("1H 1S", "AKT6.A7.652.AKQ9", "3NT"),
         ]);
     }
+
+    /// Balancing over the opponents' 1NT (`(1N)-P-(P)-`) had no table, so advancer of the
+    /// balancing two-level overcall had no call with a fit or game values: the most frequent
+    /// NoCandidate position (about 500 per 10^6) in the release consistency run.
+    #[test]
+    fn advancing_a_balancing_overcall_of_1nt() {
+        check(&[
+            // 10 hcp with three diamonds: raise to the three level.
+            ("P 1NT P P 2D P", "K62.QJ4.K873.J62", "3D"),
+            // 13 hcp with three spades: game in the major.
+            ("P 1NT P P 2S P", "K62.AJ4.K873.Q62", "4S"),
+            // 12 hcp, no fit for the minor: 3NT.
+            ("P 1NT P P 2C P", "KJ62.AJ4.K873.62", "3NT"),
+            // 4 hcp: pass.
+            ("P 1NT P P 2H P", "9652.J4.Q873.862", "P"),
+        ]);
+    }
 }
