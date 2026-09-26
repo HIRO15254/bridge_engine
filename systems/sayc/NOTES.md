@@ -355,3 +355,30 @@ C1. **Opener's rebid tables are exhaustive after a forcing response (`rebids.bml
     was unreachable behind them), 2C over 1!s also covers the one 13+ shape with 3-card
     spade support and no other call (3=4=3=3), and 1!s-2!c-2!h-3!s (game-forcing jump
     preference) ranks above the fourth-suit 3!d that used to hide it.
+
+C2. **Every common competitive position has its own table, so a hand with nothing to say
+    passes instead of having no call (`competition.bml`; `harness_review.json` #0).** When
+    the auction reaches a position the system does not list, `choose_bid` resolves it by
+    substituting the opponents' unexpected call with a pass (`resolve_lenient`, "system
+    on") and offers that position's rows; but it synthesizes the implicit pass (the
+    complement of the listed rows) only at an *exact* system position, because `interpret`
+    only reads a pass as that complement there (`docs/design/07-bidding.md` §5.2 step 3).
+    So a hand that fits none of the substituted rows got `NoCandidate`, and the replay-based
+    harness passed for it (a gap). That was the single largest source of holes: responder
+    after 1!h-(1!s), after a weak jump overcall (1!d-(2!s), 1!c-(2!h)), after a two-level
+    overcall and after a three-level preempt, and after a 1NT overcall. Each of these now has
+    a table of its own (a cuebid limit raise or better, a single raise one card lighter than
+    without interference, a preemptive jump raise, notrump with a stopper, the negative
+    double through 2!s and a penalty double above it, natural forcing new suits at 11+),
+    written with pattern variables where one table serves several suits: `1m-(1Y)-` and
+    `1m-(2Y)-` (a minor opening, any higher overcall), `1M-(2m)-` (a major opening, a lower
+    minor overcall), `1S-(3Y)-`, `1H-(3m)-`, `1m-(3Y)-` and `1X-(1N)-`; the rest are written
+    out. The booklet's own numbers are used where it gives them (negative doubles through
+    2!s, the cuebid as a limit raise or better, a jump raise as preemptive); the notrump
+    ranges (1NT 7--10, 2NT 11--12, 3NT 13--16 after an overcall; 3NT 12--16 over a preempt)
+    and the 10+ penalty double over a preempt are this file's interpolation.
+    Responses to a double of our opening gained the single raise (6--9, 3+ for a major) and
+    1NT (6--9); 2NT is now a limit raise or better *with four trumps* (it read `INV, 10+ hcp`
+    with no fit, which the equal-strength redouble always outranked, so it was never bid),
+    and the preemptive jump raise needs four trumps for a major and five or six for a minor
+    (it required a six-card suit before, which is a jump *shift*'s length, not a raise's).

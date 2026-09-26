@@ -435,4 +435,53 @@ mod sayc_comp {
             ("1H P 2NT P", "AK3.AQJ75.K32.Q2", "3H"),
         ]);
     }
+    /// harness_review.json #0: responder's actions after an overcall were missing, so the
+    /// uncontested response table was reached by substituting the overcall with a pass
+    /// (`resolve_lenient`), where a hand fitting none of its rows had no call at all. Every
+    /// overcall level now has its own table (raises, cuebid limit raise, notrump with a
+    /// stopper, negative or penalty double, natural new suits), and a hand with nothing to say
+    /// passes.
+    #[test]
+    fn responder_acts_after_an_overcall() {
+        check(&[
+            // 1H-(1S): notrump with a spade stopper, 10 hcp.
+            ("1H 1S", "KQJ875.Q9.Q9.865", "1NT"),
+            // 1H-(1S): limit raise or better via the cuebid.
+            ("1H 1S", "K3.KJ4.AQ32.8743", "2S"),
+            // 1C-(1H): 2NT with a heart stopper and 12 hcp.
+            ("1C 1H", "A8.K654.K742.Q94", "2NT"),
+            // 1D-(2S) (weak jump overcall): negative double with long hearts.
+            ("P P 1D 2S", "Q9.KQT85432.K3.J", "X"),
+            // 1C-(2H): a 5-count passes.
+            ("1C 2H", "A54.86.JT6532.94", "P"),
+            // 1D-(2C): a new major at the two level, forcing.
+            ("1D 2C", "AQ432.K2.Q32.432", "2S"),
+            // 1H-(2C): negative double without heart support.
+            ("1H 2C", "K32.A2.Q432.J432", "X"),
+            // 1S-(2H): 3NT with a heart stopper and no spade fit.
+            ("1S 2H", "Q2.K32.KJ32.A432", "3NT"),
+            // 1S-(3H): game raise with three-card support.
+            ("1S 3H", "K32.43.AQ32.K432", "4S"),
+            // 1C-(1NT): a weak hand with a long suit escapes to the two level.
+            ("1C 1NT", "QJ8742.85.T763.4", "2S"),
+            // 1C-(1NT): penalty double.
+            ("1C 1NT", "AQ87.J2.QJT3.A62", "X"),
+        ]);
+    }
+
+    /// Responses after RHO doubles our opening: a single raise (missing before), 2NT as a limit
+    /// raise or better with four trumps (it used to be `INV, 10+ hcp` with no fit, identical to
+    /// the redouble and unreachable behind it), the redouble without a fit, and a jump raise
+    /// with four trumps (it used to require six).
+    #[test]
+    fn responses_to_a_double_of_our_opening() {
+        check(&[
+            ("1H X", "K32.Q43.J432.432", "2H"),
+            ("1H X", "K32.Q432.J432.32", "3H"),
+            ("1S X", "K432.32.AQ32.K32", "2NT"),
+            ("1C X", "KJ32.Q32.K32.A32", "XX"),
+            ("1C X", "KJ32.Q2.K32.A432", "2NT"),
+            ("1S X", "Q432.2.J9432.K32", "3S"),
+        ]);
+    }
 }
