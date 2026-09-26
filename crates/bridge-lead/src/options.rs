@@ -1,6 +1,6 @@
 //! Options for [`crate::advise`].
 
-use bridge_bidding::InterpretOptions;
+use bridge_bidding::{InterpretOptions, PolicyParams};
 use bridge_sample::SampleOptions;
 
 /// How to rank the lead groups (`14-lead.md` §3).
@@ -36,7 +36,15 @@ pub struct LeadOptions {
     /// `SampleOptions { seed, ..self.sample }`, so callers set `seed` once here rather than
     /// keeping it in sync with `sample.seed` themselves.
     pub seed: u64,
+    /// The bidding policy the auction is weighted by (`docs/design/14-lead.md` §3; default
+    /// [`PolicyParams::human`]: real tables leave the system for natural calls, and the
+    /// system-only preset would read every such call as a near-impossible deviation).
+    pub policy: PolicyParams,
     /// Options for [`bridge_bidding::interpret`].
+    ///
+    /// Its `policy` and `implicit_pass` are overridden with the likelihood's own
+    /// ([`InterpretOptions::for_context`]), so the interpretation is always the mirror of the
+    /// policy the deals are weighted by; the other fields are used as given.
     pub interpret: InterpretOptions,
     /// Options for [`bridge_sample::sample_deals`] other than `seed` (attempts, thread policy).
     pub sample: SampleOptions,
@@ -51,6 +59,7 @@ impl Default for LeadOptions {
         LeadOptions {
             samples: 200,
             seed: 0,
+            policy: PolicyParams::human(),
             interpret: InterpretOptions::default(),
             sample: SampleOptions::default(),
             top_k: 3,

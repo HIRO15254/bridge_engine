@@ -24,7 +24,7 @@ mod options;
 mod query;
 mod scoring;
 
-use bridge_bidding::{BidContext, ImplicitPass, PolicyParams, Scoring, interpret};
+use bridge_bidding::{BidContext, ImplicitPass, Scoring, interpret};
 use bridge_constraint::{HandConstraint, KnownCards};
 use bridge_core::{Card, Contract, Seat, Strain};
 use bridge_sample::{BiddingLikelihood, SampleContext, WeightedDeal, sample_deals};
@@ -36,7 +36,7 @@ pub use query::LeadQuery;
 // Re-exported so a caller of `advise` does not have to add every lower crate as its own
 // dependency just to name the types in its signature.
 pub use bridge::dd::{DdError, DoubleDummy};
-pub use bridge_bidding::{InterpretOptions, Table};
+pub use bridge_bidding::{InterpretOptions, PolicyParams, Table};
 pub use bridge_sample::{Proposal, SampleOptions, UniformProposal};
 
 /// A [`advise`] call could not produce advice.
@@ -107,7 +107,6 @@ pub fn advise(
     let vulnerable = auction.vulnerability().is_vulnerable(declarer);
 
     let known = KnownCards::from_viewer(leader, query.leader_hand);
-    let interpretation = interpret(table, auction, &opts.interpret);
     // No play has happened yet, so every seat's hard constraint is unconstrained. `HandConstraint`
     // is not `Copy` (`bridge-constraint/src/constraint.rs`), hence the explicit 4-element literal
     // rather than `[HandConstraint::ANY; 4]`.
@@ -127,8 +126,17 @@ pub fn advise(
         scoring: Scoring::Imp,
         natural: None,
         implicit_pass: ImplicitPass::Complement,
-        policy: PolicyParams::default(),
+        policy: opts.policy,
     };
+    // The interpretation is the mirror of the likelihood's own policy (D19), so the proposal
+    // and the weights never disagree about which hands the auction allows.
+    let mirror = InterpretOptions::for_context(&bid_ctx);
+    let interpret_opts = InterpretOptions {
+        policy: mirror.policy,
+        implicit_pass: mirror.implicit_pass,
+        ..opts.interpret
+    };
+    let interpretation = interpret(table, auction, &interpret_opts);
     let bidding = BiddingLikelihood {
         table,
         auction,

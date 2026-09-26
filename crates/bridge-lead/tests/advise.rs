@@ -258,7 +258,7 @@ fn same_seed_gives_identical_advice_with_deal_dependent_scores() {
 #[test]
 fn advise_matches_an_independently_hand_computed_reference() {
     use bridge::dd::DoubleDummy;
-    use bridge_bidding::{BidContext, ImplicitPass, PolicyParams, Scoring, interpret};
+    use bridge_bidding::{BidContext, ImplicitPass, InterpretOptions, Scoring, interpret};
     use bridge_constraint::{HandConstraint, KnownCards};
     use bridge_sample::{
         BiddingLikelihood, SampleContext, SampleOptions, WeightedDeal, sample_deals,
@@ -287,7 +287,6 @@ fn advise_matches_an_independently_hand_computed_reference() {
     // Reproduce `bridge_lead::advise`'s own context-building (`crates/bridge-lead/src/lib.rs`),
     // independently of any of its helper functions.
     let known = KnownCards::from_viewer(leader, leader_hand);
-    let interpretation = interpret(&table, &auction, &opts.interpret);
     let play_constraints = [
         HandConstraint::ANY,
         HandConstraint::ANY,
@@ -298,8 +297,17 @@ fn advise_matches_an_independently_hand_computed_reference() {
         scoring: Scoring::Imp,
         natural: None,
         implicit_pass: ImplicitPass::Complement,
-        policy: PolicyParams::default(),
+        policy: opts.policy,
     };
+    let interpretation = interpret(
+        &table,
+        &auction,
+        &InterpretOptions {
+            policy: bid_ctx.policy,
+            implicit_pass: bid_ctx.implicit_pass,
+            ..opts.interpret
+        },
+    );
     let bidding = BiddingLikelihood {
         table: &table,
         auction: &auction,
