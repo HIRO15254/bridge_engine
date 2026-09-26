@@ -654,4 +654,21 @@ mod sayc_comp {
             ("1H P 2H 2S 3H", "K65.97.KJ75.9652", "3S"),
         ]);
     }
+
+    /// Two more positions natural inference could not answer: opener after the fourth suit in
+    /// 1H-1S-2C-2D (spade support, a diamond stopper, a fifth club, else hearts), and responder
+    /// after a 3C preempt over 1D (which the `1m-(3Y)-` table did not cover, since clubs ranks
+    /// below diamonds).
+    #[test]
+    fn fourth_suit_after_1h_1s_2c_and_responses_to_a_3c_preempt_over_1d() {
+        check(&[
+            ("1H P 1S P 2C P 2D P", "K32.AKJ52.3.QJ62", "2S"),
+            ("1H P 1S P 2C P 2D P", "32.AKJ52.K3.QJ62", "2NT"),
+            ("1H P 1S P 2C P 2D P", "32.AKJ52.3.KQJ62", "3C"),
+            ("1H P 1S P 2C P 2D P", "32.AKJ52.32.KQJ2", "2H"),
+            ("1D 3C", "KJ7.Q84.KJ72.Q83", "3NT"),
+            ("1D 3C", "AQJ84.K84.72.Q32", "3S"),
+            ("1D 3C", "84.Q84.KJ72.Q632", "3D"),
+        ]);
+    }
 }

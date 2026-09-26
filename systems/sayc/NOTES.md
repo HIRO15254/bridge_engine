@@ -465,3 +465,7 @@ C6. **More positions natural inference could not answer (`competition.bml`, `reb
     hearts otherwise, 3NT with 13+ and no major fit); and a raise of a sandwich-seat
     overcall when the opponents bid again. As before, the ranges are interpolations: the
     booklet describes none of these auctions.
+    Also: a natural two-level new suit when advancing a one-level overcall (10+, five
+    cards, not three-card support), opener after the fourth suit in 1!h-1!s-2!c-2!d, and
+    responder after a 3!c preempt over 1!d (the `1m-(3Y)-` table only binds suits above the
+    opening, so this one is written out).

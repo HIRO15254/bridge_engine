@@ -382,6 +382,13 @@ D = 10+ hcp
 3N = {prio:1} 12--16 hcp, stopper
 D = 10+ hcp
 
+1D-(3C)-
+3H = {prio:2} F, 11+ hcp, 5+!h
+3S = {prio:2} F, 11+ hcp, 5+!s
+3N = {prio:1} 12--16 hcp, stopper
+3D = {prio:1} 7--10 hcp, 4+!d
+D = 10+ hcp
+
 *** After a 1NT overcall
 
 A double of the 1NT overcall is for penalty (9+ hcp: opener's 12+ makes the
@@ -464,6 +471,15 @@ opening suit below rather than with a variable (see NOTES.md #14).
 1N = 8--11 hcp, stopper
 2N = 12--14 hcp, stopper
 3N = 15+ hcp, stopper
+
+A new suit that has to go to the two level (below the overcall's suit) is
+natural and non-forcing too, with 10+ and a five-card suit (NOTES.md #C6).
+
+(1X)-1Z-(P)-
+2Y = {prio:1} NF, 10+ hcp, 5+#, 0--2Z
+
+(1Y)-1Z-(P)-
+2X = {prio:1} NF, 10+ hcp, 5+#, 0--2Z
 
 After the cuebid, the overcaller rebids the suit with a minimum (the booklet's
 cuebid asks about the overcall's quality, and a minimum overcall has nothing

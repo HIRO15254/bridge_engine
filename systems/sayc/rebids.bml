@@ -120,6 +120,16 @@ P = 6--9 hcp, not 3+!h, not 5+!s
 3H = 10--11 hcp, 3+!h
 3S = 10--11 hcp, 5+!s
 
+After the fourth suit (forcing), opener shows three-card spade support first,
+then a diamond stopper, then a fifth club, and otherwise rebids hearts
+(NOTES.md #C6).
+
+1H-1S-2C-2D-
+2S = {prio:3} 3+!s
+2N = {prio:2} stopper in !d
+3C = {prio:1} 5+!c
+2H = 12+ hcp
+
 After opener's 1NT rebid (12--14 balanced) responder places the contract or
 invites: a rebid of responder's own suit or a preference to opener's suit is a
 signoff, 2NT and a three-level rebid or jump preference invite, a new suit at
