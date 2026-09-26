@@ -37,7 +37,7 @@ pub use query::LeadQuery;
 // dependency just to name the types in its signature.
 pub use bridge::dd::{DdError, DoubleDummy};
 pub use bridge_bidding::{InterpretOptions, PolicyParams, Table};
-pub use bridge_sample::{Proposal, SampleOptions, UniformProposal};
+pub use bridge_sample::{ConstraintProposal, Proposal, SampleOptions, UniformProposal};
 
 /// A [`advise`] call could not produce advice.
 #[derive(Debug, thiserror::Error)]
@@ -70,6 +70,20 @@ pub enum LeadError {
     /// A double-dummy query failed.
     #[error("double-dummy solver failed: {0}")]
     Dd(#[from] DdError),
+}
+
+/// The deal proposal the lead advisor uses (`docs/design/14-lead.md` §3): [`ConstraintProposal`]
+/// with residual rejection at an acceptance floor of 0.125 instead of the sampler's default 0.5.
+///
+/// Every produced deal costs a double-dummy solve, far more than a rejected attempt, so flatter
+/// weights are worth more attempts here: on the corpus evaluation (100 eval-split boards, 100
+/// samples) the median ESS is 86 at this floor, against 35 without residual rejection.
+pub fn lead_proposal() -> ConstraintProposal {
+    ConstraintProposal {
+        residual_rejection: true,
+        residual_min_acceptance: 0.125,
+        ..ConstraintProposal::default()
+    }
 }
 
 /// Advises on the opening lead for `query.auction`'s contract.

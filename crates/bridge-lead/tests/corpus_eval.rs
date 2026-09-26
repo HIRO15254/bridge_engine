@@ -28,7 +28,8 @@
 //! `LEAD_INTERPRET` (`mirror`, the default: the proposal interprets the auction with the mirror of
 //! the human preset, or of the likelihood's own policy when that is `system`; `legacy`: the phase-3
 //! interpretation, `InterpretOptions::legacy()`), `LEAD_RESIDUAL` (default `1`: the constraint
-//! proposal uses residual rejection, `09-sample.md` §6.5; `0` turns it off), `BRIDGE_CORPUS_DIR`
+//! proposal is `bridge_lead::lead_proposal()`, residual rejection at an acceptance floor of
+//! 0.125, `09-sample.md` §6.5; `0` turns rejection off), `BRIDGE_CORPUS_DIR`
 //! and `BRIDGE_SYSTEMS_DIR` (both follow `crates/bridge-format/tests/common/mod.rs` /
 //! `systems/README.md`'s convention: an explicit directory, or else relative to
 //! `CARGO_MANIFEST_DIR`).
@@ -881,7 +882,7 @@ fn corpus_eval() {
     let uniform = UniformProposal;
     let constraint = ConstraintProposal {
         residual_rejection: settings.residual,
-        ..ConstraintProposal::default()
+        ..bridge_lead::lead_proposal()
     };
     let proposal: &dyn Proposal = if settings.uniform {
         &uniform
@@ -904,6 +905,7 @@ fn corpus_eval() {
         "policy": settings.policy,
         "interpret": settings.interpret,
         "residual_rejection": settings.residual && !settings.uniform,
+        "residual_min_acceptance": constraint.residual_min_acceptance,
         "split": settings.split.name(),
         "record_version": RECORD_VERSION,
     });
