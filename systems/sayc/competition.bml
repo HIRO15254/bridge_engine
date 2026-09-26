@@ -669,33 +669,42 @@ on, a `Y` binding only reaching suits above `X` (NOTES.md #C3).
 D = 12+ hcp, 0--3X, 0--3Y
 1Z = {prio:1} 8--16 hcp, 5+#
 1N = {prio:1} 15--18 hcp, bal, stopper
+#PASTE pass-chain
 
 (1X)-P-(1Z)-
 2Y = {prio:1} 10--16 hcp, 5+#
+#PASTE pass-chain
 
 (1Y)-P-(1Z)-
 2X = {prio:1} 10--16 hcp, 5+#
+#PASTE pass-chain
 
 (1X)-P-(1N)-
 D = 15+ hcp
 2Y = 8--16 hcp, 5+#
+#PASTE pass-chain
 
 (1Y)-P-(1N)-
 2X = 8--16 hcp, 5+#
+#PASTE pass-chain
 
 (1X)-P-(2X)-
 D = 12+ hcp, 0--3X
 2Y = {prio:1} 8--16 hcp, 5+#
+#PASTE pass-chain
 
 (1Y)-P-(2X)-
 D = 12+ hcp, 0--3X, 0--3Y
 2Z = {prio:1} 10--16 hcp, 5+#
+#PASTE pass-chain
 
 (1Z)-P-(2X)-
 2Y = {prio:1} 10--16 hcp, 5+#
+#PASTE pass-chain
 
 (1X)-P-(3X)-
 D = 13+ hcp, 0--2X
+#PASTE pass-chain
 
 After a sandwich overcall, advancer raises with three-card support when opener
 or opener's partner bids again, and otherwise passes (NOTES.md #C6).
@@ -843,6 +852,7 @@ interference has made some of its calls illegal and the rest inappropriate
 (1X)-D-(any)-
 
 (1X)-P-(any)-
+#PASTE pass-chain
 
 (1X)-1Y-(P)-2X-(any)-
 
@@ -877,3 +887,4 @@ interference has made some of its calls illegal and the rest inappropriate
 (1N)-P-(P)-2X-(any)-
 
 (1N)-P-(any)-
+#PASTE pass-chain

@@ -33,6 +33,8 @@
 //! Sizing: `COVERAGE_REPLAYS`, `COVERAGE_POSITIONS`, `COVERAGE_CORPUS_LIMIT` (default: all),
 //! `COVERAGE_SEED` (replay seed, default `0xC0FE_4001`). `BRIDGE_CORPUS_DIR` and
 //! `BRIDGE_SYSTEMS_DIR` override the data locations. `COVERAGE_OUT` overrides the output path.
+//! `COVERAGE_TOP_N` (default 0) additionally lists that many first departures
+//! (`generated.first_departure_top_n`), an authoring aid.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -376,15 +378,6 @@ fn call_str(call: Call) -> String {
     }
 }
 
-fn path_label(auction: &Auction, seat: Seat, upto: usize) -> String {
-    let parts: Vec<String> = (0..upto).map(|i| token(auction, i, seat)).collect();
-    if parts.is_empty() {
-        "-".to_string()
-    } else {
-        parts.join("-")
-    }
-}
-
 fn role_of(auction: &Auction, seat: Seat) -> String {
     let probe = auction
         .with(Call::Pass)
@@ -392,7 +385,8 @@ fn role_of(auction: &Auction, seat: Seat) -> String {
     format!("{:?}", classify(&probe, auction.len(), seat).role).to_lowercase()
 }
 
-/// Aggregation key of a position: the matched part of the path (the leading passes included),
+/// Aggregation key of a position: the matched part of the path (leading passes stripped, so
+/// the key is the trie position whatever the opener's seat; the sample path shows one seat),
 /// the first unmatched call (empty when the whole prefix matched; later calls are not part of
 /// the key, see the sample path), and the acting seat's role.
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -416,7 +410,7 @@ fn pos_key(auction: &Auction, matched_depth: usize) -> PosKey {
         String::new()
     };
     PosKey {
-        matched: path_label(auction, seat, matched_abs),
+        matched: trie_path(auction, matched_depth),
         unmatched,
         role: role_of(auction, seat),
     }
@@ -624,7 +618,7 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
                 }
                 if !departed {
                     departed = true;
-                    record(&mut departures, key, label, &auction, hand);
+                    record(&mut departures, key, category, &auction, hand);
                 }
             }
             auction.push(call).expect("choose_bid returns a legal call");
@@ -663,6 +657,8 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
         "no_candidate_top50": top(&gaps, 50, 1.0),
         "first_departure_top50": top(&departures, 50, 1.0),
         "natural_completion_top50": top(&naturals, 50, 1.0),
+        // Authoring aid: `COVERAGE_TOP_N=<n>` also lists the first `n` departures.
+        "first_departure_top_n": top(&departures, env_usize("COVERAGE_TOP_N", 0), 1.0),
     })
 }
 
@@ -723,7 +719,7 @@ fn positions_report(table: &Table, ctx: &BidContext<'_>) -> Value {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
     let mut gaps: HashMap<PosKey, Agg> = HashMap::new();
     let mut on_system_gaps: HashMap<PosKey, Agg> = HashMap::new();
-    let mut by_node: HashMap<(String, String), u64> = HashMap::new();
+    let mut by_node: HashMap<(String, String), (u64, Vec<String>)> = HashMap::new();
     let mut by_trie: HashMap<(u32, String), (u64, String)> = HashMap::new();
     let (mut chosen, mut no_candidate, mut implicit_pass, mut natural) = (0u64, 0u64, 0u64, 0u64);
     for _ in 0..n {
@@ -749,9 +745,13 @@ fn positions_report(table: &Table, ctx: &BidContext<'_>) -> Value {
                     OnSystem::Off => "off_system",
                 };
                 let key = pos_key(&auction, matched);
-                *by_node
+                let e = by_node
                     .entry((trie_path(&auction, matched), key.role.clone()))
-                    .or_default() += 1;
+                    .or_default();
+                e.0 += 1;
+                if e.1.len() < 8 {
+                    e.1.push(format!("{auction} | {hand:?}"));
+                }
                 if state != OnSystem::Off {
                     record(&mut on_system_gaps, key.clone(), kind, &auction, hand);
                 }
@@ -771,13 +771,13 @@ fn positions_report(table: &Table, ctx: &BidContext<'_>) -> Value {
     let watch: Vec<Value> = PHASE3_TOPS
         .iter()
         .map(|&(matched, role)| {
-            let count = by_node
+            let (count, samples) = by_node
                 .get(&(matched.to_string(), role.to_string()))
-                .copied()
-                .unwrap_or(0);
+                .cloned()
+                .unwrap_or_default();
             json!({
                 "trie_path": matched, "role": role, "count": count,
-                "per_1e6": count as f64 * scale,
+                "per_1e6": count as f64 * scale, "samples": samples,
             })
         })
         .collect();
