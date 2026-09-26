@@ -215,6 +215,7 @@ dependencies = [
  "bridge-bidding",
  "bridge-constraint",
  "bridge-core",
+ "bridge-format",
  "bridge-play",
  "bridge-system",
  "criterion",
