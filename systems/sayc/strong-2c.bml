@@ -38,17 +38,20 @@ catch-all, since opener must bid something). NOTES.md "Notrump lane" #N4.
   3H = 5+!h
   3S = 5+!s
   3N = unlimited
+    #PASTE after-chain
 3D = F, 8+ hcp, 5+!d
   4D = 3+!d
   3H = 5+!h
   3S = 5+!s
   3N = unlimited
+    #PASTE after-chain
 2N = F, 8 hcp, bal
   3C = 5+!c
   3D = 5+!d
   3H = 5+!h
   3S = 5+!s
   3N = unlimited
+    #PASTE after-chain
 
 *** After the 2!d waiting response
 
@@ -68,87 +71,131 @@ a minor) rather than passing a forcing bid.
     3D = 0--3!s, 0--3!h
       3N = 3--8 hcp
         P = unlimited
+          #PASTE after-chain
       4N = 9--10 hcp
         P = 22 hcp
+          #PASTE after-chain
         6N = 23--24 hcp
+          #PASTE after-chain
       6N = 11+ hcp
         P = unlimited
+          #PASTE after-chain
     3H = {prio:1} 4+!h
       4H = 3--8 hcp, 4+!h
         P = unlimited
+          #PASTE after-chain
       6H = 9+ hcp, 4+!h
         P = unlimited
+          #PASTE after-chain
       3N = 3--8 hcp
         4S = 4+!s
+          #PASTE after-chain
         P = unlimited
+          #PASTE after-chain
       4N = 9--10 hcp
         P = 22 hcp
+          #PASTE after-chain
         6N = 23--24 hcp
+          #PASTE after-chain
       6N = 11+ hcp
         P = unlimited
+          #PASTE after-chain
     3S = {prio:0} 4+!s, not 4+!h
       4S = 3--8 hcp, 4+!s
         P = unlimited
+          #PASTE after-chain
       6S = 9+ hcp, 4+!s
         P = unlimited
+          #PASTE after-chain
       3N = 3--8 hcp
         P = unlimited
+          #PASTE after-chain
       4N = 9--10 hcp
         P = 22 hcp
+          #PASTE after-chain
         6N = 23--24 hcp
+          #PASTE after-chain
       6N = 11+ hcp
         P = unlimited
+          #PASTE after-chain
   3D = {prio:1} !TRF, 5+!h
     3H = unlimited
       P = 0--2 hcp
+        #PASTE after-chain
       3N = 3--8 hcp, 5=!h
         4H = 3+!h
+          #PASTE after-chain
         P = unlimited
+          #PASTE after-chain
       4H = 3--8 hcp, 6+!h
         P = unlimited
+          #PASTE after-chain
       4N = 9--10 hcp, 5=!h
         6H = 23--24 hcp, 3+!h
+          #PASTE after-chain
         6N = 23--24 hcp
+          #PASTE after-chain
         P = 22 hcp
+          #PASTE after-chain
       5H = 9--10 hcp, 6+!h
         6H = 23--24 hcp
+          #PASTE after-chain
         P = 22 hcp
+          #PASTE after-chain
       6N = 11+ hcp, 5=!h
         P = unlimited
+          #PASTE after-chain
       6H = 11+ hcp, 6+!h
         P = unlimited
+          #PASTE after-chain
   3H = {prio:1} !TRF, 5+!s
     3S = unlimited
       P = 0--2 hcp
+        #PASTE after-chain
       3N = 3--8 hcp, 5=!s
         4S = 3+!s
+          #PASTE after-chain
         P = unlimited
+          #PASTE after-chain
       4S = 3--8 hcp, 6+!s
         P = unlimited
+          #PASTE after-chain
       4N = 9--10 hcp, 5=!s
         6S = 23--24 hcp, 3+!s
+          #PASTE after-chain
         6N = 23--24 hcp
+          #PASTE after-chain
         P = 22 hcp
+          #PASTE after-chain
       5S = 9--10 hcp, 6+!s
         6S = 23--24 hcp
+          #PASTE after-chain
         P = 22 hcp
+          #PASTE after-chain
       6N = 11+ hcp, 5=!s
         P = unlimited
+          #PASTE after-chain
       6S = 11+ hcp, 6+!s
         P = unlimited
+          #PASTE after-chain
   3N = 3--8 hcp
     P = unlimited
+      #PASTE after-chain
   4N = 9--10 hcp
     P = 22 hcp
+      #PASTE after-chain
     6N = 23--24 hcp
+      #PASTE after-chain
   6N = 11+ hcp
     P = unlimited
+      #PASTE after-chain
 3N = 25+ hcp and bal or 25+ hcp and 0--4!s and 0--4!h and 0--4!d and 0--4!c
   #PASTE after-chain
 2H = F, 5+!h
   3H = F, 3+!h
     4H = unlimited
       P = unlimited
+        #PASTE after-chain
   2S = F, 8+ hcp, 5+!s
   3C = F, 8+ hcp, 5+!c
   3D = F, 8+ hcp, 5+!d
@@ -158,10 +205,12 @@ a minor) rather than passing a forcing bid.
     3D = 4+!d
     3S = 4+!s
     3N = unlimited
+      #PASTE after-chain
 2S = F, 5+!s
   3S = F, 3+!s
     4S = unlimited
       P = unlimited
+        #PASTE after-chain
   3H = F, 8+ hcp, 5+!h
   3C = F, 8+ hcp, 5+!c
   3D = F, 8+ hcp, 5+!d
@@ -171,16 +220,19 @@ a minor) rather than passing a forcing bid.
     3D = 4+!d
     3H = 4+!h
     3N = unlimited
+      #PASTE after-chain
 3C = F, 5+!c
   4C = 3+!c
   3H = 8+ hcp, 5+!h
   3S = 8+ hcp, 5+!s
   3N = unlimited
+    #PASTE after-chain
 3D = F, 5+!d
   4D = 3+!d
   3H = 8+ hcp, 5+!h
   3S = 8+ hcp, 5+!s
   3N = unlimited
+    #PASTE after-chain
 
 A raise of responder's suit after a 2/1-style continuation is not automatically
 forcing to game; for example, after 2!c-2!d-2!h-2!s, a 3!h rebid is a non-forcing
@@ -204,14 +256,17 @@ R = 8+ hcp
 
 2C-(2X)-
 P = 0--7 hcp
+  #PASTE after-chain
 D = 8+ hcp
 
 2C-(3X)-
 P = 0--7 hcp
+  #PASTE after-chain
 D = 8+ hcp
 
 2C-(bid)-
 P = 0--7 hcp
+  #PASTE after-chain
 D = 8+ hcp
 
 2C-2D-(D)-

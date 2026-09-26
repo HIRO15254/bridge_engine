@@ -34,7 +34,8 @@
 //! `COVERAGE_SEED` (replay seed, default `0xC0FE_4001`). `BRIDGE_CORPUS_DIR` and
 //! `BRIDGE_SYSTEMS_DIR` override the data locations. `COVERAGE_OUT` overrides the output path.
 //! `COVERAGE_TOP_N` (default 0) additionally lists that many first departures
-//! (`generated.first_departure_top_n`), an authoring aid.
+//! (`generated.first_departure_top_n`), and `COVERAGE_PRINT_LINTS=<code substring>` prints the
+//! matching lints to stderr; both are authoring aids.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -214,7 +215,15 @@ pub fn run(args: &[&str]) -> Result<std::process::ExitCode> {
 fn lint_report(lints: &[bridge_system::Lint]) -> Value {
     let mut by_code: BTreeMap<String, u64> = BTreeMap::new();
     let (mut error, mut warning, mut info) = (0u64, 0u64, 0u64);
+    // Authoring aid: `COVERAGE_PRINT_LINTS=<code substring>` prints the matching lints.
+    let print = std::env::var("COVERAGE_PRINT_LINTS").ok();
     for l in lints {
+        if let Some(filter) = &print {
+            let code = format!("{:?}/{:?}", l.severity, l.code);
+            if code.contains(filter.as_str()) {
+                eprintln!("lint {code} {:?}: {}", l.span, l.message);
+            }
+        }
         match l.severity {
             Severity::Error => error += 1,
             Severity::Warning => warning += 1,

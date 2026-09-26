@@ -1,0 +1,907 @@
+* Later rounds of uncontested auctions
+
+Phase 4 (NOTES.md #P5). The booklet's "SUBSEQUENT BIDDING BY RESPONDER" and the
+rebid framework in `rebids.bml` stop at opener's rebid (and, for a few
+auctions, responder's second call). These tables take the most frequent
+uncontested auctions one or two calls further, as a plain limit-bidding
+scheme: responder, who has shown 6+ (or 10+ after a two-over-one), adds
+opener's shown range and bids game with enough for 25--26 in total, invites
+with a point or two less, and otherwise stops; opener, asked by an
+invitation, accepts with the top of his range. A major fit (eight cards) plays
+in the major, everything else in notrump. A forcing new suit by responder at
+his second turn is not written (such hands bid the notrump or raise call that
+describes their strength), and neither is slam bidding: a game bid ends our
+auction. As everywhere in phase 4, every table ends with a pass chain.
+
+#CUT then-accept-14
+  (P)
+    3N = {prio:1} 13--14 hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+#ENDCUT
+
+#CUT then-accept-14-15
+  (P)
+    3N = {prio:1} 14--15 hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+#ENDCUT
+
+#CUT then-accept-major-14-15
+  (P)
+    4\F = {prio:1} 14--15 hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+#ENDCUT
+
+#CUT then-accept-major-14
+  (P)
+    4\F = {prio:1} 13--14 hcp
+      #PASTE after-chain
+    3N = 13--14 hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+#ENDCUT
+
+#CUT then-game-17
+  (P)
+    4\F = {prio:1} 17+ hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+#ENDCUT
+
+** After opener's raise of responder's suit
+
+#CUT after-raise-major
+4\M = {prio:2} 13+ hcp
+  #PASTE after-chain
+3\M = {prio:1} 11--12 hcp
+#PASTE then-accept-major-14-15 \F=\M
+#PASTE pass-chain
+#ENDCUT
+
+#CUT after-jump-major
+4\M = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+#ENDCUT
+
+#CUT after-raise-minor
+3N = {prio:2} 13+ hcp
+  #PASTE after-chain
+2N = {prio:1} 11--12 hcp
+#PASTE then-accept-14-15
+#PASTE pass-chain
+#ENDCUT
+
+#CUT after-jump-minor
+3N = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+#ENDCUT
+
+1C-1D-2D-
+#PASTE after-raise-minor
+
+1C-1D-3D-
+#PASTE after-jump-minor
+
+1C-1H-2H-
+#PASTE after-raise-major \M=H
+
+1C-1H-3H-
+#PASTE after-jump-major \M=H
+
+1C-1S-2S-
+#PASTE after-raise-major \M=S
+
+1C-1S-3S-
+#PASTE after-jump-major \M=S
+
+1D-1H-2H-
+#PASTE after-raise-major \M=H
+
+1D-1H-3H-
+#PASTE after-jump-major \M=H
+
+1D-1S-2S-
+#PASTE after-raise-major \M=S
+
+1D-1S-3S-
+#PASTE after-jump-major \M=S
+
+1H-1S-2S-
+#PASTE after-raise-major \M=S
+
+1H-1S-3S-
+#PASTE after-jump-major \M=S
+
+** After opener's new suit at the one level
+
+Responder raises the new major with four cards (2 = 6--10, 3 = 11--12 invites,
+4 = 13+), bids notrump by strength (1NT 6--10, 2NT 11--12 invites, 3NT 13+),
+rebids a six-card suit (6--10), gives preference to opener's first suit with
+four cards (6--10), and otherwise passes.
+
+#CUT after-new-suit-1
+4\Z = {prio:3} 13+ hcp, 4+!\z
+  #PASTE after-chain
+3\Z = {prio:3} 11--12 hcp, 4+!\z
+#PASTE then-accept-major-14-15 \F=\Z
+2\Z = {prio:3} 6--10 hcp, 4+!\z
+#PASTE then-game-17 \F=\Z
+3N = {prio:2} 13+ hcp
+  #PASTE after-chain
+2N = {prio:2} 11--12 hcp
+#PASTE then-accept-14-15
+2\Y = {prio:1} 6--10 hcp, 6+!\y
+  #PASTE after-chain
+2\X = 6--10 hcp, 4+!\x
+  #PASTE after-chain
+1N = 6--10 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+#ENDCUT
+
+1C-1D-1H-
+#PASTE after-new-suit-1 \Z=H \z=h \Y=D \y=d \X=C \x=c
+
+1C-1D-1S-
+#PASTE after-new-suit-1 \Z=S \z=s \Y=D \y=d \X=C \x=c
+
+1C-1H-1S-
+#PASTE after-new-suit-1 \Z=S \z=s \Y=H \y=h \X=C \x=c
+
+1D-1H-1S-
+#PASTE after-new-suit-1 \Z=S \z=s \Y=H \y=h \X=D \x=d
+
+** After opener's rebid of his own suit
+
+After a minimum rebid (12--15) responder bids game with 13+, invites with
+11--12 (2NT, or a raise with support), rebids a six-card suit with 6--10, and
+otherwise passes; after the jump rebid (16--18) responder bids game with 8+.
+
+#CUT after-own-minor
+3N = {prio:2} 13+ hcp
+  #PASTE after-chain
+3\X = {prio:1} 11--12 hcp, 3+!\x
+#PASTE then-accept-14-15
+2N = {prio:1} 11--12 hcp
+#PASTE then-accept-14-15
+2\Y = {prio:1} 6--10 hcp, 6+!\y
+  #PASTE after-chain
+#PASTE pass-chain
+#ENDCUT
+
+#CUT after-own-major
+4\X = {prio:3} 13+ hcp, 2+!\x
+  #PASTE after-chain
+3\X = {prio:3} 11--12 hcp, 2+!\x
+#PASTE then-accept-major-14-15 \F=\X
+3N = {prio:2} 13+ hcp
+  #PASTE after-chain
+2N = {prio:1} 11--12 hcp
+#PASTE then-accept-14-15
+2\Y = {prio:1} 6--10 hcp, 6+!\y
+  #PASTE after-chain
+#PASTE pass-chain
+#ENDCUT
+
+#CUT after-own-jump-major
+4\X = {prio:2} 8+ hcp, 2+!\x
+  #PASTE after-chain
+3N = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+#ENDCUT
+
+1C-1D-2C-
+#PASTE after-own-minor \X=C \x=c \Y=D \y=d
+
+1C-1D-3C-
+#PASTE after-jump-minor
+
+1C-1H-2C-
+#PASTE after-own-minor \X=C \x=c \Y=H \y=h
+
+1C-1H-3C-
+#PASTE after-jump-minor
+
+1C-1S-2C-
+#PASTE after-own-minor \X=C \x=c \Y=S \y=s
+
+1C-1S-3C-
+#PASTE after-jump-minor
+
+1D-1H-2D-
+#PASTE after-own-minor \X=D \x=d \Y=H \y=h
+
+1D-1H-3D-
+#PASTE after-jump-minor
+
+1D-1S-2D-
+#PASTE after-own-minor \X=D \x=d \Y=S \y=s
+
+1D-1S-3D-
+#PASTE after-jump-minor
+
+1H-1S-2H-
+#PASTE after-own-major \X=H \x=h \Y=S \y=s
+
+1H-1S-3H-
+#PASTE after-own-jump-major \X=H \x=h
+
+** After opener's other rebids at the one-level response
+
+Opener's lower-ranking new suit at the two level (12--18) is passed with 6--9
+and a fit for it, preferred back to opener's first suit (6--10), raised to
+game-forcing strength with notrump (2NT 11--12 invites, 3NT 13+); a reverse or
+jump shift (16+) is answered with a raise of the new suit with four cards, 2NT
+with 6--9 and 3NT with 10+; opposite the 2NT rebid (18--19) responder bids a
+six-card major at game, and otherwise 3NT.
+
+#CUT after-low-new-suit
+3N = {prio:2} 13+ hcp
+  #PASTE after-chain
+2N = {prio:1} 11--12 hcp
+#PASTE then-accept-14-15
+2\X = {prio:1} 6--10 hcp, 3+!\x
+  #PASTE after-chain
+2\Y = {prio:1} 6--10 hcp, 6+!\y
+  #PASTE after-chain
+#PASTE pass-chain
+#ENDCUT
+
+#CUT after-strong-new-suit
+3N = {prio:1} 10+ hcp
+  #PASTE after-chain
+2N = 0--9 hcp
+  #PASTE after-chain
+#ENDCUT
+
+#CUT after-strong-new-suit-3
+3N = {prio:1} any hand
+  #PASTE after-chain
+#ENDCUT
+
+#CUT after-2n-rebid
+3N = {prio:1} any hand
+  #PASTE after-chain
+#ENDCUT
+
+1C-1D-2H-
+#PASTE after-strong-new-suit
+
+1C-1D-3H-
+#PASTE after-strong-new-suit-3
+
+1C-1D-2S-
+#PASTE after-strong-new-suit
+
+1C-1D-3S-
+#PASTE after-strong-new-suit-3
+
+1C-1D-2N-
+#PASTE after-2n-rebid
+
+1C-1H-2D-
+#PASTE after-strong-new-suit
+
+1C-1H-2S-
+#PASTE after-strong-new-suit
+
+1C-1H-3S-
+#PASTE after-strong-new-suit-3
+
+1C-1H-2N-
+#PASTE after-2n-rebid
+
+1C-1H-2N-
+4H = {prio:2} 6+!h
+  #PASTE after-chain
+
+1C-1S-2D-
+#PASTE after-strong-new-suit
+
+1C-1S-2H-
+#PASTE after-strong-new-suit
+
+1C-1S-2N-
+#PASTE after-2n-rebid
+
+1C-1S-2N-
+4S = {prio:2} 6+!s
+  #PASTE after-chain
+
+1D-1H-2C-
+#PASTE after-low-new-suit \X=D \x=d \Y=H \y=h
+
+1D-1H-3C-
+#PASTE after-strong-new-suit-3
+
+1D-1H-2S-
+#PASTE after-strong-new-suit
+
+1D-1H-3S-
+#PASTE after-strong-new-suit-3
+
+1D-1H-2N-
+#PASTE after-2n-rebid
+
+1D-1H-2N-
+4H = {prio:2} 6+!h
+  #PASTE after-chain
+
+1D-1S-2C-
+#PASTE after-low-new-suit \X=D \x=d \Y=S \y=s
+
+1D-1S-3C-
+#PASTE after-strong-new-suit-3
+
+1D-1S-2H-
+#PASTE after-strong-new-suit
+
+1D-1S-2N-
+#PASTE after-2n-rebid
+
+1D-1S-2N-
+4S = {prio:2} 6+!s
+  #PASTE after-chain
+
+1H-1S-2D-
+#PASTE after-low-new-suit \X=H \x=h \Y=S \y=s
+
+1H-1S-3D-
+#PASTE after-strong-new-suit-3
+
+1H-1S-2N-
+#PASTE after-2n-rebid
+
+1H-1S-2N-
+4S = {prio:2} 6+!s
+  #PASTE after-chain
+
+** After opener's 1NT rebid
+
+Opener accepts an invitation with 13--14 (to game in responder's major with
+three-card support after a jump rebid of a six-card major, and in hearts after
+the three-card heart invitation 1!h-1!s-1NT-3!h). Every non-forcing call
+by responder ends the auction for us.
+
+1H-1S-1N-2S-
+#PASTE after-chain
+
+1H-1S-1N-2H-
+#PASTE after-chain
+
+1H-1S-1N-2C-
+#PASTE after-chain
+
+1H-1S-1N-2D-
+#PASTE after-chain
+
+1H-1S-1N-2N-
+3N = {prio:1} 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-1S-1N-3S-
+4S = {prio:1} 13--14 hcp, 2+!s
+  #PASTE after-chain
+3N = 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-1S-1N-3H-
+4H = {prio:1} 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1D-1N-2D-
+#PASTE after-chain
+
+1C-1D-1N-2C-
+#PASTE after-chain
+
+1C-1D-1N-2N-
+3N = {prio:1} 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1D-1N-3D-
+3N = {prio:1} 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1D-1N-3C-
+3N = {prio:1} 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1H-1N-2H-
+#PASTE after-chain
+
+1C-1H-1N-2C-
+#PASTE after-chain
+
+1C-1H-1N-2D-
+#PASTE after-chain
+
+1C-1H-1N-2N-
+3N = {prio:1} 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1H-1N-3H-
+4H = {prio:1} 13--14 hcp, 2+!h
+  #PASTE after-chain
+3N = 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1H-1N-3C-
+3N = {prio:1} 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1S-1N-2S-
+#PASTE after-chain
+
+1C-1S-1N-2C-
+#PASTE after-chain
+
+1C-1S-1N-2D-
+#PASTE after-chain
+
+1C-1S-1N-2H-
+#PASTE after-chain
+
+1C-1S-1N-2N-
+3N = {prio:1} 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1S-1N-3S-
+4S = {prio:1} 13--14 hcp, 2+!s
+  #PASTE after-chain
+3N = 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1S-1N-3C-
+3N = {prio:1} 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1H-1N-2H-
+#PASTE after-chain
+
+1D-1H-1N-2D-
+#PASTE after-chain
+
+1D-1H-1N-2C-
+#PASTE after-chain
+
+1D-1H-1N-2N-
+3N = {prio:1} 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1H-1N-3H-
+4H = {prio:1} 13--14 hcp, 2+!h
+  #PASTE after-chain
+3N = 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1H-1N-3D-
+3N = {prio:1} 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1S-1N-2S-
+#PASTE after-chain
+
+1D-1S-1N-2D-
+#PASTE after-chain
+
+1D-1S-1N-2C-
+#PASTE after-chain
+
+1D-1S-1N-2H-
+#PASTE after-chain
+
+1D-1S-1N-2N-
+3N = {prio:1} 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1S-1N-3S-
+4S = {prio:1} 13--14 hcp, 2+!s
+  #PASTE after-chain
+3N = 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1S-1N-3D-
+3N = {prio:1} 13--14 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+** After a two-over-one response
+
+The two-over-one response (10+) promises another bid: after opener's minimum
+rebid of his suit responder raises a major with two-card support (game with
+13+, the three-level invitation with 10--12), bids notrump by strength or
+rebids a six-card suit; after any other rebid (a new suit, a raise, a jump,
+2NT), the partnership is in a game-forcing or near-game auction and responder
+places it: game in opener's major with three-card support, otherwise 3NT
+(with 12+ opposite 2NT, passing a minimum).
+
+#CUT after-2over1-major
+4\M = {prio:3} 13+ hcp, 2+!\m
+  #PASTE after-chain
+3\M = {prio:3} 10--12 hcp, 2+!\m
+#PASTE then-accept-major-14-15 \F=\M
+3N = {prio:1} 13+ hcp
+  #PASTE after-chain
+3\Y = {prio:1} 10--12 hcp, 6+!\y
+  #PASTE after-chain
+2N = 10--12 hcp
+#PASTE then-accept-14-15
+#ENDCUT
+
+#CUT after-2over1-minor
+3N = {prio:1} 13+ hcp
+  #PASTE after-chain
+3\M = {prio:1} 10--12 hcp, 3+!\m
+#PASTE then-accept-14-15
+3\Y = {prio:1} 10--12 hcp, 6+!\y
+  #PASTE after-chain
+2N = 10--12 hcp
+#PASTE then-accept-14-15
+#ENDCUT
+
+#CUT after-2over1-gf-major
+4\M = {prio:2} 3+!\m
+  #PASTE after-chain
+3N = {prio:1} any hand
+  #PASTE after-chain
+#ENDCUT
+
+#CUT after-2over1-2n-major
+4\M = {prio:2} 12+ hcp, 3+!\m
+  #PASTE after-chain
+3N = {prio:1} 12+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+#ENDCUT
+
+#CUT after-2over1-2n-minor
+3N = {prio:1} 12+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+#ENDCUT
+
+1H-2C-2D-
+#PASTE after-2over1-gf-major \M=H \m=h
+
+1H-2C-2H-
+#PASTE after-2over1-major \M=H \m=h \Y=C \y=c
+
+1H-2C-2S-
+#PASTE after-2over1-gf-major \M=H \m=h
+
+1H-2C-2N-
+#PASTE after-2over1-2n-major \M=H \m=h
+
+1H-2C-3C-
+#PASTE after-2over1-gf-major \M=H \m=h
+
+1H-2C-3D-
+#PASTE after-2over1-gf-major \M=H \m=h
+
+1H-2C-3H-
+#PASTE after-2over1-gf-major \M=H \m=h
+
+1H-2C-3S-
+#PASTE after-2over1-gf-major \M=H \m=h
+
+1H-2D-2H-
+#PASTE after-2over1-major \M=H \m=h \Y=D \y=d
+
+1H-2D-2S-
+#PASTE after-2over1-gf-major \M=H \m=h
+
+1H-2D-2N-
+#PASTE after-2over1-2n-major \M=H \m=h
+
+1H-2D-3C-
+#PASTE after-2over1-gf-major \M=H \m=h
+
+1H-2D-3D-
+#PASTE after-2over1-gf-major \M=H \m=h
+
+1H-2D-3H-
+#PASTE after-2over1-gf-major \M=H \m=h
+
+1H-2D-3S-
+#PASTE after-2over1-gf-major \M=H \m=h
+
+1S-2C-2D-
+#PASTE after-2over1-gf-major \M=S \m=s
+
+1S-2C-2S-
+#PASTE after-2over1-major \M=S \m=s \Y=C \y=c
+
+1S-2C-2N-
+#PASTE after-2over1-2n-major \M=S \m=s
+
+1S-2C-3C-
+#PASTE after-2over1-gf-major \M=S \m=s
+
+1S-2C-3D-
+#PASTE after-2over1-gf-major \M=S \m=s
+
+1S-2C-3H-
+#PASTE after-2over1-gf-major \M=S \m=s
+
+1S-2C-3S-
+#PASTE after-2over1-gf-major \M=S \m=s
+
+1S-2D-2H-
+#PASTE after-2over1-gf-major \M=S \m=s
+
+1S-2D-2S-
+#PASTE after-2over1-major \M=S \m=s \Y=D \y=d
+
+1S-2D-2N-
+#PASTE after-2over1-2n-major \M=S \m=s
+
+1S-2D-3C-
+#PASTE after-2over1-gf-major \M=S \m=s
+
+1S-2D-3D-
+#PASTE after-2over1-gf-major \M=S \m=s
+
+1S-2D-3H-
+#PASTE after-2over1-gf-major \M=S \m=s
+
+1S-2D-3S-
+#PASTE after-2over1-gf-major \M=S \m=s
+
+1S-2H-2S-
+#PASTE after-2over1-major \M=S \m=s \Y=H \y=h
+
+1S-2H-2N-
+#PASTE after-2over1-2n-major \M=S \m=s
+
+1S-2H-3C-
+#PASTE after-2over1-gf-major \M=S \m=s
+
+1S-2H-3D-
+#PASTE after-2over1-gf-major \M=S \m=s
+
+1S-2H-3H-
+#PASTE after-2over1-gf-major \M=S \m=s
+
+1S-2H-3S-
+#PASTE after-2over1-gf-major \M=S \m=s
+
+1D-2C-2D-
+#PASTE after-2over1-minor \M=D \m=d \Y=C \y=c
+
+1D-2C-2H-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1D-2C-2S-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1D-2C-2N-
+#PASTE after-2over1-2n-minor
+
+1D-2C-3C-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1D-2C-3D-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1D-2C-3H-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1D-2C-3S-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+** After a single raise or a 1NT response
+
+After 1M-2M opener's invitation (three of the major, 16--18) is accepted with
+8--10. After the 1NT response (6--9, non-forcing) responder passes opener's
+minimum rebid of his suit, gives preference to opener's first suit over a
+lower-ranking second suit with three-card support, and bids game opposite the
+2NT rebid or a jump rebid with 8+.
+
+1H-2H-3H-
+4H = {prio:1} 8--10 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-2S-3S-
+4S = {prio:1} 8--10 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1N-2C-
+#PASTE after-chain
+
+1C-1N-2N-
+3N = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1N-3C-
+3N = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1N-2D-
+3N = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1N-3D-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1C-1N-2H-
+3N = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1N-3H-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1C-1N-2S-
+3N = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1N-3S-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1D-1N-2D-
+#PASTE after-chain
+
+1D-1N-2N-
+3N = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1N-3D-
+3N = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1N-2C-
+2D = {prio:1} 3+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1N-3C-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1D-1N-2H-
+3N = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1N-3H-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1D-1N-2S-
+3N = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1N-3S-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1H-1N-2H-
+#PASTE after-chain
+
+1H-1N-2N-
+3N = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-1N-3H-
+4H = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-1N-2C-
+2H = {prio:1} 2+!h, 0--3!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-1N-3C-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1H-1N-2D-
+2H = {prio:1} 2+!h, 0--3!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-1N-3D-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1H-1N-2S-
+3N = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-1N-3S-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1S-1N-2S-
+#PASTE after-chain
+
+1S-1N-2N-
+3N = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-1N-3S-
+4S = {prio:1} 8+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-1N-2C-
+2S = {prio:1} 2+!s, 0--3!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-1N-3C-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1S-1N-2D-
+2S = {prio:1} 2+!s, 0--3!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-1N-3D-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1S-1N-2H-
+2S = {prio:1} 2+!s, 0--3!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-1N-3H-
+3N = {prio:1} any hand
+  #PASTE after-chain
