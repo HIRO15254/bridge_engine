@@ -1004,8 +1004,10 @@ fn level_floor_limits_replay_escalation() {
 #[test]
 #[ignore = "2000 replays twice; run in release with --ignored --nocapture"]
 fn level_floor_limits_replay_escalation_2000() {
-    let mut none = bridge_system::NaturalParams::default();
-    none.level_floor = bridge_system::LevelFloor::NONE;
+    let none = bridge_system::NaturalParams {
+        level_floor: bridge_system::LevelFloor::NONE,
+        ..Default::default()
+    };
     let (hist, gaps) = level_histogram(&sayc_table(none), 2000, LEVEL_FLOOR_SEED);
     eprintln!(
         "level floor NONE: final levels [passout, 1..7] = {hist:?}, {gaps} replay(s) with gaps"
