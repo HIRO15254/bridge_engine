@@ -220,6 +220,65 @@ fn median(values: &[f64]) -> f64 {
     }
 }
 
+/// Auctions whose importance-weighted sample has an effective sample size below this floor are
+/// left out of the headline median (harness review finding 7): with `UniformProposal` and
+/// full-auction likelihood weights one deal usually carries almost all of an auction's weight
+/// (ESS about 1), so that auction's "rate" is essentially a 0/1 outcome on a single deal and says
+/// little about the system. The median over every auction is still reported, next to the ESS
+/// distribution, so the reader can see how many auctions the floored median rests on.
+const ESS_FLOOR: f64 = 30.0;
+
+/// The `p`-quantile (`0.0..=1.0`, nearest-rank on the sorted values) of `values`; `0.0` if empty.
+fn quantile(values: &[f64], p: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let rank = (p * (sorted.len() - 1) as f64).round() as usize;
+    sorted[rank.min(sorted.len() - 1)]
+}
+
+/// The ESS distribution of `records`: quantiles plus counts per bucket (`[1,2)`, `[2,5)`,
+/// `[5,10)`, `[10,30)`, `[30,100)`, `[100,inf)`; an ESS below 1 falls into the first bucket).
+fn ess_distribution(records: &[AuctionRecord]) -> serde_json::Value {
+    let ess: Vec<f64> = records.iter().map(|r| r.ess).collect();
+    let edges = [1.0, 2.0, 5.0, 10.0, 30.0, 100.0, f64::INFINITY];
+    let labels = ["<2", "2-5", "5-10", "10-30", "30-100", ">=100"];
+    let mut counts = [0usize; 6];
+    for &e in &ess {
+        let bucket = edges[1..].iter().position(|&hi| e < hi).unwrap_or(5);
+        counts[bucket] += 1;
+    }
+    let buckets: serde_json::Map<String, serde_json::Value> = labels
+        .iter()
+        .zip(counts)
+        .map(|(l, c)| ((*l).to_string(), json!(c)))
+        .collect();
+    json!({
+        "min": quantile(&ess, 0.0),
+        "p10": quantile(&ess, 0.1),
+        "p25": quantile(&ess, 0.25),
+        "median": quantile(&ess, 0.5),
+        "p75": quantile(&ess, 0.75),
+        "p90": quantile(&ess, 0.9),
+        "max": quantile(&ess, 1.0),
+        "buckets": buckets,
+    })
+}
+
+/// The headline numbers: the median rate over auctions with `ess >= ESS_FLOOR`, how many such
+/// auctions there are, and the median over every auction.
+fn floored_median(records: &[AuctionRecord]) -> (f64, usize, f64) {
+    let floored: Vec<f64> = records
+        .iter()
+        .filter(|r| r.ess >= ESS_FLOOR)
+        .map(|r| r.rate)
+        .collect();
+    let all: Vec<f64> = records.iter().map(|r| r.rate).collect();
+    (median(&floored), floored.len(), median(&all))
+}
+
 /// Groups `records` by `key`, sorted by descending group size, and computes each group's median
 /// `rate` (11-testing.md §3: "中央値・分位点").
 fn grouped_medians(
@@ -246,11 +305,15 @@ fn grouped_medians(
 
 /// Writes `<workspace>/target/reproduction_report.json` (11-testing.md §3's shape).
 fn write_json(records: &[AuctionRecord], corpus_dir: &Path) {
-    let rates: Vec<f64> = records.iter().map(|r| r.rate).collect();
+    let (median_floored, floored_count, median_all) = floored_median(records);
     let report = json!({
         "auctions": records.len(),
         "corpus_dir": corpus_dir.display().to_string(),
-        "overall_median": median(&rates),
+        "ess_floor": ESS_FLOOR,
+        "auctions_at_or_above_ess_floor": floored_count,
+        "median_ess_at_or_above_floor": median_floored,
+        "overall_median": median_all,
+        "ess_distribution": ess_distribution(records),
         "by_node": grouped_medians(records, |r| r.node_key.clone()),
         "by_resolution_kind": grouped_medians(records, |r| r.kind_key.clone()),
         "auctions_detail": records.iter().map(|r| json!({
@@ -291,7 +354,12 @@ fn sayc_reproduction_rate() {
         eprintln!("sayc_reproduction_rate: no corpus directory found; skipping");
         return;
     };
-    let auctions = corpus_auctions(&dir, 500);
+    // `SAYC_REPRO_LIMIT` caps the auction count (default 500) for a quick partial run.
+    let limit: usize = match std::env::var("SAYC_REPRO_LIMIT") {
+        Ok(v) => v.parse().expect("SAYC_REPRO_LIMIT is a valid usize"),
+        Err(_) => 500,
+    };
+    let auctions = corpus_auctions(&dir, limit);
     assert!(
         !auctions.is_empty(),
         "corpus directory {} yielded no auctions",
@@ -316,13 +384,13 @@ fn sayc_reproduction_rate() {
         .collect();
     let elapsed = started.elapsed();
 
-    let rates: Vec<f64> = records.iter().map(|r| r.rate).collect();
-    let overall_median = median(&rates);
+    let (median_floored, floored_count, median_all) = floored_median(&records);
     write_json(&records, &dir);
     eprintln!(
-        "sayc_reproduction_rate: {} auction(s), overall median reproduction rate = {:.4}, in \
-         {elapsed:?}",
+        "sayc_reproduction_rate: {} auction(s); median reproduction rate over the {floored_count} \
+         auction(s) with ESS >= {ESS_FLOOR} = {median_floored:.4}; median over all = \
+         {median_all:.4}; ESS distribution {}; in {elapsed:?}",
         records.len(),
-        overall_median,
+        ess_distribution(&records),
     );
 }
