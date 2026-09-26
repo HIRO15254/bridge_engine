@@ -16,8 +16,9 @@
 //!   index, [`is_eval`]) whose true deal replays to the recorded auction. Its size is reported
 //!   next to the rate.
 //! - **(iii) legacy**: the phase-3 definition, kept for continuity: the first 500 corpus auctions
-//!   of both splits, read with [`InterpretOptions::legacy`], plus the likelihood-weighted uniform
-//!   rate and its `any_reproduced` flag.
+//!   of both splits, read with [`InterpretOptions::legacy`] and sampled with the phase-3
+//!   rejection sampler ([`LEGACY_SAMPLER`]), plus the likelihood-weighted uniform rate and its
+//!   `any_reproduced` flag.
 //! - **(iv) per-call true-deal agreement**: on the eval split, how often `choose_bid` with the
 //!   owner's true hand makes the recorded call, split into system and natural positions.
 //!
@@ -77,8 +78,17 @@ const MAX_GENERATED_LEVEL: u8 = 5;
 const MIN_ESS: f64 = 30.0;
 /// Default kept-deal target of the rejection sampler (`SAYC_REPRO_TARGET`).
 const TARGET_ACCEPTED: usize = 1000;
-/// Default uniform-draw cap per auction of the rejection sampler (`SAYC_REPRO_MAX_DRAWS`).
-const MAX_DRAWS: usize = 200_000;
+/// Default uniform-draw cap per auction of the rejection sampler (`SAYC_REPRO_MAX_DRAWS`). A
+/// strict SAYC interpretation of a whole auction accepts about 1e-4 of uniform deals, so the
+/// phase-3 cap of 200,000 left 44 of the 100 generated auctions under 30 kept deals; a draw with
+/// its check costs about 50 ns, so 5e6 draws are a quarter of a second per auction and thread.
+const MAX_DRAWS: usize = 5_000_000;
+/// The legacy part's sampler: the phase-3 definition (1000 kept deals, at most 200,000 draws),
+/// fixed so that its numbers stay comparable across phases whatever the headline sampler is.
+const LEGACY_SAMPLER: Sampler = Sampler::StrictRejection {
+    target: 1000,
+    max_draws: 200_000,
+};
 /// Deals per auction of the weighted samplers.
 const WEIGHTED_N: usize = 1000;
 /// Default number of corpus auctions of the legacy part (`SAYC_REPRO_LIMIT`).
@@ -501,10 +511,12 @@ fn load_fixture() -> Vec<FixtureCase> {
 }
 
 /// Replays fixed-seed random deals with the system-players policy until `count` auctions pass the
-/// filter (not passed out, final level <= [`MAX_GENERATED_LEVEL`]).
-fn generate_fixture(table: &Table, count: usize) -> Vec<FixtureCase> {
+/// filter (not passed out, final level <= [`MAX_GENERATED_LEVEL`]). Also returns how many deals
+/// were skipped as `[passed out, above the level]`.
+fn generate_fixture(table: &Table, count: usize) -> (Vec<FixtureCase>, [usize; 2]) {
     let ctx = bid_ctx(table, PolicyParams::system_players());
     let mut out = Vec::new();
+    let mut skipped = [0usize; 2];
     let mut i = 0usize;
     while out.len() < count {
         assert!(i < 100_000, "could not generate {count} auctions");
@@ -514,21 +526,18 @@ fn generate_fixture(table: &Table, count: usize) -> Vec<FixtureCase> {
         let dealer = Seat::ALL[i % 4];
         let vul = Vulnerability::from_board_number(board);
         let replayed = replay(table, &deal, dealer, vul, &ctx);
-        let keep = !replayed.auction.is_passed_out()
-            && replayed
-                .auction
-                .contract()
-                .is_some_and(|c| c.bid.level() <= MAX_GENERATED_LEVEL);
-        if keep {
-            out.push(FixtureCase {
+        match replayed.auction.contract() {
+            None => skipped[0] += 1,
+            Some(c) if c.bid.level() > MAX_GENERATED_LEVEL => skipped[1] += 1,
+            Some(_) => out.push(FixtureCase {
                 id: format!("gen-{i}"),
                 deal,
                 auction: replayed.auction,
-            });
+            }),
         }
         i += 1;
     }
-    out
+    (out, skipped)
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -944,7 +953,14 @@ fn sayc_reproduction_rate() {
                 };
                 let pairs = par_map(&legacy, |i, g| {
                     let seed = auction_seed(0x5A1C_3001, i);
-                    let raw = evaluate(&sampler, &table, &system_ctx, &g.auction, &opts, seed);
+                    let raw = evaluate(
+                        &LEGACY_SAMPLER,
+                        &table,
+                        &system_ctx,
+                        &g.auction,
+                        &opts,
+                        seed,
+                    );
                     let w = evaluate(
                         &weighted,
                         &table,
@@ -961,7 +977,7 @@ fn sayc_reproduction_rate() {
                 let (raw, w): (Vec<Record>, Vec<Record>) = pairs.into_iter().unzip();
                 let weighted_rates: Vec<f64> = w.iter().filter_map(|r| r.outcome.rate).collect();
                 let any = w.iter().filter(|r| r.outcome.any_reproduced).count();
-                let mut part = part_json(&sampler, "system_players", "legacy()", &raw);
+                let mut part = part_json(&LEGACY_SAMPLER, "system_players", "legacy()", &raw);
                 part["weighted_uniform"] = json!({
                     "sampler": weighted.label(),
                     "rate_median": median(&weighted_rates),
@@ -1052,7 +1068,13 @@ fn sayc_reproduction_rate() {
 #[ignore = "regenerates tests/data/repro_generated.txt with SAYC_REPRO_WRITE_FIXTURE=1"]
 fn write_generated_fixture() {
     let table = common::compile_sayc("sayc.bml");
-    let cases = generate_fixture(&table, GENERATED_COUNT);
+    let (cases, [passed_out, too_high]) = generate_fixture(&table, GENERATED_COUNT);
+    eprintln!(
+        "generator: {} deals replayed, {passed_out} passed out and {too_high} above the {} level \
+         skipped",
+        cases.len() + passed_out + too_high,
+        MAX_GENERATED_LEVEL
+    );
     if std::env::var("SAYC_REPRO_WRITE_FIXTURE").as_deref() == Ok("1") {
         let path = fixture_path();
         std::fs::create_dir_all(path.parent().expect("fixture has a parent"))
@@ -1095,8 +1117,8 @@ fn generated_fixture_is_well_formed() {
 #[test]
 fn fixture_generator_is_deterministic() {
     let table = common::compile_sayc("sayc.bml");
-    let a = generate_fixture(&table, 3);
-    let b = generate_fixture(&table, 3);
+    let (a, _) = generate_fixture(&table, 3);
+    let (b, _) = generate_fixture(&table, 3);
     assert_eq!(a, b);
     assert!(a.iter().all(|c| !c.auction.is_passed_out()));
 }
@@ -1201,7 +1223,7 @@ fn agreement_counts_system_positions() {
     let hand: bridge_core::Hand = "AK32.KQ2.QJ3.K32".parse().expect("hand");
     assert!(is_on_system(&table, hand, &empty));
 
-    let case = &generate_fixture(&table, 1)[0];
+    let case = &generate_fixture(&table, 1).0[0];
     let [system, natural] = agreement(&table, &ctx, &case.deal, &case.auction);
     assert_eq!(system.calls + natural.calls, case.auction.len());
     assert_eq!(system.agree + natural.agree, case.auction.len());
