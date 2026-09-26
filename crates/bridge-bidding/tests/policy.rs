@@ -1,5 +1,6 @@
-//! `policy_argmax_matches_choose_bid` (07-bidding.md §6.1, §8): as `τ → 0`,
-//! `argmax_c call_distribution(c)` equals `choose_bid(...).call()`.
+//! `policy_argmax_matches_choose_bid` (07-bidding.md §6.1, §8): `argmax_c call_distribution(c)`
+//! equals `choose_bid(...).call()`. Under the phase-4 policy (docs/design/15-phase4-plan.md D18,
+//! `PolicyParams::system_players()`) this is a structural identity for any `δ < 1/2`.
 
 mod common;
 
@@ -25,9 +26,9 @@ fn table_of(sys: &Sayc) -> Table {
 // Phase 3.10: the same `policy_argmax_matches_choose_bid` property (07-bidding.md §6.1, §8), but
 // over positions from the real, compiled `systems/sayc/sayc.bml` reached by replaying `choose_bid`
 // itself (`common::random_sayc_position`, shared with `tests/consistency.rs`), rather than the
-// two hand-picked auctions against the small hand-built system above. `τ = 0.01` (near-greedy);
-// the task brief's own gate is 100% agreement, so this asserts every position, not a tolerance
-// band over a sampled fraction.
+// two hand-picked auctions against the small hand-built system above, under the
+// `system_players()` preset; the task brief's own gate is 100% agreement, so this asserts every
+// position, not a tolerance band over a sampled fraction.
 // ================================================================================================
 
 fn sayc_ctx(table: &bridge_bidding::Table) -> BidContext<'_> {
@@ -35,10 +36,7 @@ fn sayc_ctx(table: &bridge_bidding::Table) -> BidContext<'_> {
         scoring: Scoring::Imp,
         natural: Some(table.natural.as_ref()),
         implicit_pass: ImplicitPass::Complement,
-        policy: PolicyParams {
-            temperature: 0.01,
-            epsilon: 1e-3,
-        },
+        policy: PolicyParams::system_players(),
     }
 }
 
@@ -125,10 +123,7 @@ fn ctx() -> BidContext<'static> {
         scoring: Scoring::Imp,
         natural: None,
         implicit_pass: ImplicitPass::Never,
-        policy: PolicyParams {
-            temperature: 0.01,
-            epsilon: 1e-3,
-        },
+        policy: PolicyParams::system_players(),
     }
 }
 
@@ -149,11 +144,9 @@ fn check_position(table: &Table, prefix: &Auction) {
             .iter()
             .map(|(_, p)| *p)
             .fold(f32::NEG_INFINITY, f32::max);
-        // `choose_bid` breaks ties (equal system priority) via `SystemMeta::tie_break`, which
-        // `call_distribution` has no notion of (it only sums by *priority*, so tied candidates get
-        // exactly equal probability). So rather than asserting our own untie-broken argmax equals
-        // `choose_bid`'s pick, we assert the weaker, well-defined half of "argmax = choose_bid":
-        // the call `choose_bid` picks always attains the distribution's maximum probability.
+        // The call `choose_bid` picks must attain the distribution's maximum probability (under
+        // the phase-4 policy it is the unique maximum, since `call_distribution` uses the same
+        // rank order, tie-break included).
         let p_chosen = dist
             .iter()
             .find(|(c, _)| *c == expected)
@@ -192,7 +185,7 @@ fn policy_argmax_matches_choose_bid_response_to_1h() {
 /// back to summing equal scores — the test could not actually distinguish a priority-driven
 /// softmax from a uniform one (flipping the sign of priority or τ would still have passed). This
 /// system gives two candidates at the same position distinct priorities and checks that the
-/// low-temperature argmax follows `choose_bid`'s own priority order, not merely membership in the
+/// policy's argmax follows `choose_bid`'s own priority order, not merely membership in the
 /// legal-call set.
 #[test]
 fn policy_argmax_respects_distinct_priorities() {
@@ -224,10 +217,7 @@ fn policy_argmax_respects_distinct_priorities() {
         scoring: Scoring::Imp,
         natural: None,
         implicit_pass: ImplicitPass::Never,
-        policy: PolicyParams {
-            temperature: 0.01,
-            epsilon: 1e-3,
-        },
+        policy: PolicyParams::system_players(),
     };
     // `weak_hand` (0 HCP) satisfies both `atom_hcp(0, 40)` nodes, so both are legal, satisfied
     // candidates and priority alone must decide between them.

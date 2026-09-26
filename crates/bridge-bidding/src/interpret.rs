@@ -1,6 +1,10 @@
 //! `interpret`: auction → constraints.
 //!
-//! **Step A (per call).** For call `j` by seat `s`, resolve in `table.systems[s]`. `Exact`
+//! Phase 4 turns Step A into the calibrated mirror of the bidding policy
+//! ([`InterpretMode::Mirror`], docs/design/15-phase4-plan.md D19); until lane B lands, both
+//! modes run the legacy Step A described here ([`InterpretMode::Legacy`]).
+//!
+//! **Step A (per call, legacy).** For call `j` by seat `s`, resolve in `table.systems[s]`. `Exact`
 //! yields one alternative per top-level `Or` branch (weights from `branch_weights` or equal);
 //! `Partial` first tries `resolve_lenient`, then falls back to natural inference. Every
 //! alternative is scaled by `1 − ε` and a defensive branch `(ANY, ε, Fallback)` is appended, with
@@ -21,7 +25,7 @@ use bridge_system::trie::{LookupKey, RelVul, TrieId};
 use bridge_system::{CallContext, Forcing, SystemIR};
 use smallvec::SmallVec;
 
-use crate::{NodeId, Table};
+use crate::{BidContext, ImplicitPass, NodeId, PolicyParams, Table};
 
 /// Upper bound on opponents'-call substitutions passed to `resolve_lenient` (07-bidding.md §3;
 /// not an option, a fixed implementation constant).
@@ -118,8 +122,23 @@ pub struct CallInterpretation {
     pub call: Call,
     /// Resolution kind.
     pub kind: ResolutionKind,
-    /// Alternatives; weights sum to 1.
+    /// Alternatives (the "pieces" of docs/design/15-phase4-plan.md D19); weights sum to 1.
     pub alternatives: Vec<(HandConstraint, f32, CallExplanation)>,
+    /// `ln Σ raw` of the pieces' raw weights before normalisation, so that under the policy the
+    /// interpretation mirrors, `p(call | h) = exp(log_scale) · Σ_i w_i · 1[h ∈ C_i]` for every
+    /// hand `h` of the calling seat (exactly for literal-free pieces; pieces with `cards`/`eval`
+    /// literals may only over-cover, never under-cover).
+    ///
+    /// Naive; replaced in phase 4 lane B: the current (legacy) Step A does not calibrate its
+    /// weights and always records `0.0`.
+    pub log_scale: f64,
+    /// `true` when the policy never makes this call at its position for any hand (its exclusive
+    /// system region and natural region are both empty); the call is then read by its
+    /// `Fallback` pieces only.
+    ///
+    /// Naive; replaced in phase 4 lane B: the current (legacy) Step A never detects this and
+    /// always records `false`.
+    pub shadowed: bool,
 }
 
 /// The result of [`interpret`].
@@ -177,32 +196,84 @@ impl Interpretation {
     }
 }
 
-/// Options for [`interpret`].
+/// Which Step A [`interpret`] runs.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum InterpretMode {
+    /// The calibrated policy mirror (docs/design/15-phase4-plan.md D19): per call, the pieces
+    /// `X_c` (system exclusive region per branch), `N_sys` (no system candidate), `Y_c` (natural
+    /// exclusive region), `N_nat` (no natural candidate) and `ANY`, weighted from
+    /// [`InterpretOptions::policy`] so that the density of a call's pieces is its policy
+    /// probability up to the recorded [`CallInterpretation::log_scale`].
+    ///
+    /// Naive; replaced in phase 4 lane B: until lane B lands, `Mirror` runs the same legacy
+    /// Step A as [`InterpretMode::Legacy`].
+    #[default]
+    Mirror,
+    /// The phase-3 interpretation: each call's node (or lenient/natural reading) with the
+    /// `eps_exact`/`eps_partial`/`eps_natural` fallback mixture and `lenient_decay`. Kept for one
+    /// phase for before/after comparisons ([`InterpretOptions::legacy`]).
+    Legacy,
+}
+
+/// Options for [`interpret`]. Build them with [`InterpretOptions::for_context`] from the same
+/// [`BidContext`] the likelihood uses, so the interpretation and the policy cannot drift apart.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct InterpretOptions {
     /// Maximum alternatives kept per seat (default 8).
     pub max_alternatives: usize,
-    /// Fallback mass for `Exact` resolutions (default 0.02).
-    pub eps_exact: f32,
-    /// Fallback mass for `Partial` resolutions (default 0.15).
-    pub eps_partial: f32,
-    /// Fallback mass for `Natural` resolutions (default 0.30).
-    pub eps_natural: f32,
-    /// No fallback branches at all (property tests).
+    /// No fallback branches at all (property tests): only the non-`Fallback` pieces are kept.
     pub strict: bool,
-    /// Weight multiplier per opponents'-call substitution in `resolve_lenient` (default 0.5).
+    /// Which Step A runs (default [`InterpretMode::Mirror`]).
+    pub mode: InterpretMode,
+    /// The policy the mirror is calibrated to (ignored by [`InterpretMode::Legacy`]).
+    pub policy: PolicyParams,
+    /// The implicit-pass rule of the mirrored policy (ignored by [`InterpretMode::Legacy`]).
+    pub implicit_pass: ImplicitPass,
+    /// Legacy mode only: fallback mass for `Exact` resolutions (default 0.02).
+    pub eps_exact: f32,
+    /// Legacy mode only: fallback mass for `Partial` resolutions (default 0.15).
+    pub eps_partial: f32,
+    /// Legacy mode only: fallback mass for `Natural` resolutions (default 0.30).
+    pub eps_natural: f32,
+    /// Legacy mode only: weight multiplier per opponents'-call substitution in
+    /// `resolve_lenient` (default 0.5).
     pub lenient_decay: f32,
 }
 
 impl Default for InterpretOptions {
+    /// The mirror of [`PolicyParams::system_players`] with `ImplicitPass::Never`, `K = 8`, not
+    /// strict (the legacy knobs at their phase-3 defaults).
     fn default() -> InterpretOptions {
         InterpretOptions {
             max_alternatives: 8,
+            strict: false,
+            mode: InterpretMode::Mirror,
+            policy: PolicyParams::system_players(),
+            implicit_pass: ImplicitPass::Never,
             eps_exact: 0.02,
             eps_partial: 0.15,
             eps_natural: 0.30,
-            strict: false,
             lenient_decay: 0.5,
+        }
+    }
+}
+
+impl InterpretOptions {
+    /// The mirror of the policy `ctx` describes: `policy` and `implicit_pass` are taken from
+    /// `ctx`, everything else is the default.
+    pub fn for_context(ctx: &BidContext<'_>) -> InterpretOptions {
+        InterpretOptions {
+            policy: ctx.policy,
+            implicit_pass: ctx.implicit_pass,
+            ..InterpretOptions::default()
+        }
+    }
+
+    /// The phase-3 interpretation ([`InterpretMode::Legacy`]) with its default ε values.
+    pub fn legacy() -> InterpretOptions {
+        InterpretOptions {
+            mode: InterpretMode::Legacy,
+            ..InterpretOptions::default()
         }
     }
 }
@@ -738,6 +809,8 @@ fn step_a(
             call,
             kind,
             alternatives,
+            log_scale: 0.0,
+            shadowed: false,
         });
 
         prefix
@@ -1082,6 +1155,8 @@ mod tests {
             call: Call::Bid(Bid::new(1, Strain::NoTrump).unwrap()),
             kind: ResolutionKind::Exact,
             alternatives,
+            log_scale: 0.0,
+            shadowed: false,
         }];
         Interpretation {
             seats: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],

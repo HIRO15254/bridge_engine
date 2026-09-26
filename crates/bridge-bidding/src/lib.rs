@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod auction_policy;
 mod cache;
 mod choose;
 mod interpret;
@@ -19,6 +20,7 @@ mod replay;
 
 use std::sync::Arc;
 
+pub use auction_policy::AuctionPolicy;
 pub use bridge_system::{NaturalInference, NodeId, SystemIR};
 pub use cache::InterpretCache;
 pub use choose::{
@@ -26,8 +28,8 @@ pub use choose::{
     choose_bid,
 };
 pub use interpret::{
-    CallExplanation, CallInterpretation, Explanation, InterpretOptions, Interpretation,
-    ResolutionKind, interpret,
+    CallExplanation, CallInterpretation, Explanation, InterpretMode, InterpretOptions,
+    Interpretation, ResolutionKind, interpret,
 };
 pub use policy::{PolicyParams, call_distribution, sequence_log_likelihood};
 pub use replay::{Replay, replay};
@@ -79,6 +81,7 @@ pub struct BidContext<'a> {
     pub natural: Option<&'a NaturalInference>,
     /// Implicit-pass policy.
     pub implicit_pass: ImplicitPass,
-    /// Parameters of the probabilistic policy.
+    /// Parameters of the probabilistic policy (`call_distribution`, the likelihood, and the
+    /// mirror built by `InterpretOptions::for_context`).
     pub policy: PolicyParams,
 }
