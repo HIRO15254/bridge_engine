@@ -327,17 +327,11 @@ fn run_case(table: &Table, case: &Case, known_none: bool) -> Row {
         prefix.push(call).expect("legal auction");
     }
     let p_call = |j: usize, hand: Hand| -> f32 {
-        let seat = case.auction.seat_at(j);
         let call = case.auction.calls()[j];
-        bridge_bidding::call_distribution(
-            &table.systems[seat.index() as usize],
-            hand,
-            &prefixes[j],
-            &policy_ctx,
-        )
-        .iter()
-        .find(|(c, _)| *c == call)
-        .map_or(0.0, |(_, p)| *p)
+        bridge_bidding::call_distribution(table, hand, &prefixes[j], &policy_ctx)
+            .iter()
+            .find(|(c, _)| *c == call)
+            .map_or(0.0, |(_, p)| *p)
     };
 
     let true_deal_off_policy_calls = (0..case.auction.calls().len())
