@@ -195,7 +195,7 @@ impl Sampler {
 
 ### 6.1 `prepare(ctx)`
 
-1. **席ごとの代替**: `A_s = interpretation.seats[s] ⊗ play_soft[s]`（直積、重みは積、重み上位 K = 8 に切り詰め）。`play_soft` が `None` なら `interpretation.seats[s]` そのもの。各代替を `play_constraints[s]` と `and` する。`needed(s) == 0` の席（自分、ダミー）は対象外。
+1. **席ごとの代替**: `A_s = interpretation.seats[s] ⊗ play_soft[s]`（直積、重みは積。K = 8 を超える場合は重み上位 K − 1 個を残し、残りを `play_constraints[s]` だけの受け皿候補 1 個（重みは落とした分の合計）にまとめる。単純に上位 K 個へ切り詰めると、落とした積だけが覆う手（典型的には重みの低い入札解釈の全体）が目標分布では正の重みを持つのに提案密度 0 となって一度も引かれず、ESS は高いまま推定が偏るため）。`play_soft` が `None` なら `interpretation.seats[s]` そのもの。各代替を `play_constraints[s]` と `and` する。`needed(s) == 0` の席（自分、ダミー）は対象外。
 2. **Sampler の準備**: 代替 `i` について `S_{s,i} = Sampler::prepare(&C_{s,i}, pool, known[s], opts)`（`pool = known.pool()`）。`count() == 0` の代替は落とす。`is_exact() == false`（`Custom` / `residual` / スロット超過を含む）なら `SampleWarning::CustomConstraint { seat: s }`。その代替は `Sampler` 内部で棄却法（`max_tries = 256`）になる。
 3. **制約の厳しさ**: `mass_s = Σ_i w_i · S_{s,i}.count()`。席順 `σ` を `ln mass_s` 昇順（同点は席 index）に決める。制約が厳しい席から順に引く。`σ` の最後の席は残りを受け取る。全代替が落ちた席があれば `EmptySupport { seat }` を報告し、支持集合が空であることを `prepared` に記録する。
 4. **キャッシュ**: 席 `σ_1` の `Sampler` 群と成分重み `v_i = w_i · cnt_i / Σ_{j: cnt_j > 0} w_j · cnt_j` を保持する（`σ_1` のプールは固定なので再利用できる）。`cnt_i` を掛けるのは、`Interpretation::likelihood` が採点する目標（満たす代替の `w` の和、07-bidding.md §4.4）における各代替の取り分は、その代替が満たすハンド数に比例するため — `count` を掛けずに `w_i` だけで選ぶと、満たすハンドが多い代替（ε-混合の防御枝 `ANY` など）が実際の取り分より少なくしか引かれず、その代替が生む少数のハンドの重要度重みが過大になって ESS が崩れる。席 `σ_2` 以降はプールが縮むので `propose` ごとに準備し直す。

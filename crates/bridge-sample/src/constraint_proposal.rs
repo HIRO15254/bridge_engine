@@ -74,7 +74,8 @@ thread_local! {
         const { RefCell::new(Vec::new()) };
 }
 
-/// Alternatives are truncated to the `K` highest-weighted before sampling (D11, §6.1 point 1).
+/// At most `K` alternatives per seat are sampled: the `K - 1` highest-weighted plus, when more
+/// exist, a catch-all carrying the rest (D11, §6.1 point 1; see [`truncate_keeping_support`]).
 const MAX_ALTERNATIVES: usize = 8;
 
 /// Hierarchical constraint sampling.
@@ -211,7 +212,7 @@ impl ConstraintProposal {
                     .partial_cmp(&a.weight)
                     .unwrap_or(core::cmp::Ordering::Equal)
             });
-            candidates.truncate(MAX_ALTERNATIVES);
+            truncate_keeping_support(&mut candidates, hard);
 
             if candidates.len() == 1 && is_unconstrained(&candidates[0].constraint) {
                 let mass = ln_choose(pool.len(), needed);
@@ -321,6 +322,31 @@ impl ConstraintProposal {
             cached_first,
         })
     }
+}
+
+/// Cuts `candidates` (sorted by descending weight) to at most [`MAX_ALTERNATIVES`] without
+/// shrinking the proposal's support (§6.1 point 1).
+///
+/// The product `interpretation.seats[s] ⊗ play_soft[s]` can have up to 64 entries. Dropping the
+/// tail outright would leave every hand covered only by dropped products with positive target
+/// likelihood but proposal density 0: never drawn, so the estimator is biased while ESS still
+/// looks perfect. Instead the `K - 1` heaviest are kept and the rest are replaced by one
+/// catch-all candidate, the seat's `hard` constraint carrying the dropped weight. Every hand the
+/// target accepts satisfies `hard`, so it stays proposable, and `log_prob` accounts for the
+/// catch-all through the ordinary component sum.
+fn truncate_keeping_support(candidates: &mut Vec<Candidate>, hard: &HandConstraint) {
+    if candidates.len() <= MAX_ALTERNATIVES {
+        return;
+    }
+    let dropped: f64 = candidates[MAX_ALTERNATIVES - 1..]
+        .iter()
+        .map(|c| c.weight)
+        .sum();
+    candidates.truncate(MAX_ALTERNATIVES - 1);
+    candidates.push(Candidate {
+        constraint: hard.clone(),
+        weight: dropped,
+    });
 }
 
 /// `interpretation.seats[s] ⊗ play_soft[s]`, each AND-ed with `hard` (§6.1 point 1). A seat with

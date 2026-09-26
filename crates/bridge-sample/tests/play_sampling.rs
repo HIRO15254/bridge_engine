@@ -333,3 +333,125 @@ fn sampled_deals_are_consistent_with_the_play_declarer_view() {
 fn sampled_deals_are_consistent_with_the_play_defender_view() {
     check_viewer(Seat::East);
 }
+
+fn hcp(h: Hand) -> u32 {
+    h.cards().map(|c| u32::from(c.rank().hcp())).sum()
+}
+
+/// `(P(West has >= 11 HCP), number of deals with it)` under self-normalised weights.
+fn west_strong_share(
+    ctx: &SampleContext<'_>,
+    proposal: &dyn bridge_sample::Proposal,
+) -> (f64, usize) {
+    let opts = SampleOptions {
+        seed: 0x57a11,
+        threads: Threads::Single,
+        ..SampleOptions::default()
+    };
+    let (deals, _) = sample_deals(ctx, proposal, 4000, &opts).unwrap();
+    let weights = bridge_sample::WeightedDeal::normalized_weights(&deals);
+    let mut share = 0.0;
+    let mut count = 0;
+    for (wd, w) in deals.iter().zip(&weights) {
+        if hcp(wd.deal.hand(Seat::West)) >= 11 {
+            share += w;
+            count += 1;
+        }
+    }
+    (share, count)
+}
+
+/// Regression: `interpretation.seats[s] ⊗ play_soft[s]` has up to 64 products and used to be
+/// truncated to the 8 heaviest, dropping every product of West's minority (11+ HCP) bidding
+/// alternative. The proposal then never drew such hands although the target gives them 10% of
+/// the prior mass, and ESS still looked perfect. The truncation now keeps a catch-all of the
+/// seat's hard constraint carrying the dropped weight, so the estimate matches a uniform
+/// proposal's.
+#[test]
+fn truncated_play_soft_product_keeps_the_targets_support() {
+    let weak = HandConstraint::Atom(Atom {
+        shapes: ShapeSet::ALL,
+        hcp: 0..=10,
+        cards: Vec::new(),
+        eval: Vec::new(),
+    });
+    let strong = HandConstraint::Atom(Atom {
+        shapes: ShapeSet::ALL,
+        hcp: 11..=37,
+        cards: Vec::new(),
+        eval: Vec::new(),
+    });
+    let weighted = vec![(weak, 0.9f32), (strong, 0.1)];
+    let mut seats: [Vec<(HandConstraint, f32, Explanation)>; 4] = Default::default();
+    seats[idx(Seat::West)] = weighted
+        .iter()
+        .map(|(c, w)| (c.clone(), *w, explanation()))
+        .collect();
+    let alternatives = weighted
+        .into_iter()
+        .map(|(c, w)| {
+            let e = CallExplanation {
+                call_index: 0,
+                call: Call::Pass,
+                node: None,
+                kind: ResolutionKind::Exact,
+                text: String::new(),
+            };
+            (c, w, e)
+        })
+        .collect();
+    let interpretation = Interpretation {
+        seats,
+        per_call: vec![CallInterpretation {
+            call_index: 0,
+            seat: Seat::West,
+            call: Call::Pass,
+            kind: ResolutionKind::Exact,
+            alternatives,
+        }],
+        divergence: None,
+    };
+    // Eight soft branches (suit-length slices of spades plus the rest), so the product has 16
+    // entries and the 8 kept by plain truncation were all `weak` ones.
+    let mut soft: [Vec<(HandConstraint, f32)>; 4] = Default::default();
+    for len in 0..7u8 {
+        let c = HandConstraint::Atom(Atom {
+            shapes: ShapeSet::from_suit_len(Suit::Spades, len, len),
+            hcp: 0..=37,
+            cards: Vec::new(),
+            eval: Vec::new(),
+        });
+        soft[idx(Seat::West)].push((c, 0.125));
+    }
+    soft[idx(Seat::West)].push((
+        HandConstraint::Atom(Atom {
+            shapes: ShapeSet::from_suit_len(Suit::Spades, 7, 13),
+            hcp: 0..=37,
+            cards: Vec::new(),
+            eval: Vec::new(),
+        }),
+        0.125,
+    ));
+    let hard = [
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+    ];
+    let viewer = deal().hand(Seat::North);
+    let ctx = SampleContext {
+        known: KnownCards::from_viewer(Seat::North, viewer),
+        interpretation: &interpretation,
+        play_constraints: &hard,
+        play_soft: Some(&soft),
+        bidding: None,
+    };
+
+    let (share, count) = west_strong_share(&ctx, &ConstraintProposal::default());
+    let (uniform_share, _) = west_strong_share(&ctx, &bridge_sample::UniformProposal);
+    assert!(count > 0, "no deal gave West 11+ HCP");
+    assert!(
+        (share - uniform_share).abs() < 0.03,
+        "constraint {share} vs uniform {uniform_share}"
+    );
+}
