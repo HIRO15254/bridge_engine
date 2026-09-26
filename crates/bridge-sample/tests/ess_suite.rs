@@ -113,14 +113,31 @@ fn auction_text(auction: &Auction) -> String {
 }
 
 fn generated_cases(table: &Table) -> Vec<Case> {
-    let ctx = bid_ctx();
+    // With the same natural fallback `sequence_log_likelihood` scores with, so every generated
+    // call is the argmax of the very policy the importance weights use. Without it (`natural:
+    // None`), `replay` turns every `NoCandidate` gap into a pass that the likelihood's own policy
+    // (which does consult the natural fallback) scores at its ε floor for almost every hand,
+    // including the deal's own: the auction is then off-policy by construction (09-sample.md
+    // §10.2).
+    let ctx = BidContext {
+        natural: Some(table.natural.as_ref()),
+        ..bid_ctx()
+    };
     let mut out = Vec::new();
     let mut i = 0u64;
     while out.len() < GENERATED {
         let deal = random_deal(i);
         let dealer = Seat::ALL[(i % 4) as usize];
         let replayed = replay(table, &deal, dealer, Vulnerability::None, &ctx);
-        if !replayed.auction.is_passed_out() && replayed.auction.contract().is_some() {
+        // The natural fallback sometimes walks into a runaway escalation (both sides, or one
+        // partnership, bidding on round after round up to the 7 level, e.g. `1H 1S P 2H X 2NT P
+        // 3H X 3NT ... 7NT`): a `bridge-bidding` artefact, not an auction worth measuring, so
+        // slam-level contracts are skipped (09-sample.md §10.2).
+        let sensible = replayed
+            .auction
+            .contract()
+            .is_some_and(|c| c.bid.level() <= 5);
+        if !replayed.auction.is_passed_out() && sensible {
             out.push(Case {
                 label: format!("gen-{i}"),
                 source: "generated",
