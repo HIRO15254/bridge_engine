@@ -73,6 +73,27 @@ pub(crate) struct SuitTable {
     nk: usize,
     /// `counts[len]` = sparse `(key, n)` list with `n > 0`, sorted ascending by key.
     pub(crate) counts: [SparseVec; 14],
+    /// `counts` again as dense HCP rows, for a table without an additive feature (`nk ==
+    /// DENSE_NK_NO_X`, so every key is a bare HCP `0..=10`); all-empty rows otherwise. The pair
+    /// convolution of two such tables reads these directly.
+    pub(crate) hcp_rows: [HcpRow; 14],
+}
+
+/// One length's count per HCP (`0..=SUIT_HCP_MAX`), with the range `lo..=hi` holding every
+/// nonzero entry (`lo > hi` when the row is empty).
+#[derive(Clone, Copy)]
+pub(crate) struct HcpRow {
+    pub(crate) counts: [u64; SUIT_HCP_MAX + 1],
+    pub(crate) lo: usize,
+    pub(crate) hi: usize,
+}
+
+impl HcpRow {
+    const EMPTY: HcpRow = HcpRow {
+        counts: [0; SUIT_HCP_MAX + 1],
+        lo: 1,
+        hi: 0,
+    };
 }
 
 /// A sparse count vector.
@@ -222,11 +243,26 @@ impl SuitTable {
             SparseVec(v)
         });
 
+        let mut hcp_rows = [HcpRow::EMPTY; 14];
+        if nk == DENSE_NK_NO_X {
+            for (len, row) in hcp_rows.iter_mut().enumerate() {
+                for &(key, n) in &counts[len].0 {
+                    let h = usize::from(key);
+                    row.counts[h] = n;
+                    if row.lo > row.hi {
+                        row.lo = h;
+                    }
+                    row.hi = h;
+                }
+            }
+        }
+
         SuitTable {
             holdings,
             start,
             nk,
             counts,
+            hcp_rows,
         }
     }
 
@@ -372,22 +408,17 @@ impl PairMap {
             }
         } else {
             // No additive feature: every key is a bare HCP (`x = 0`, at most `SUIT_HCP_MAX`), so
-            // convolve two dense `[u64; 11]` rows instead of walking the sparse lists pairwise.
-            let dense = |counts: &SparseVec| {
-                let mut row = [0u64; SUIT_HCP_MAX + 1];
-                for &(key, n) in &counts.0 {
-                    row[usize::from(key)] = n;
-                }
-                row
-            };
-            let da = dense(&a.counts[len_a as usize]);
-            let db = dense(&b.counts[len_b as usize]);
-            for (i, &n_a) in da.iter().enumerate() {
+            // convolve the two tables' dense HCP rows over their nonzero ranges instead of walking
+            // the sparse lists pairwise.
+            let ra = &a.hcp_rows[len_a as usize];
+            let rb = &b.hcp_rows[len_b as usize];
+            for i in ra.lo..ra.hi + 1 {
+                let n_a = ra.counts[i];
                 if n_a == 0 {
                     continue;
                 }
-                for (j, &n_b) in db.iter().enumerate() {
-                    acc[i + j] += n_a * n_b;
+                for j in rb.lo..rb.hi + 1 {
+                    acc[i + j] += n_a * rb.counts[j];
                 }
             }
         }
