@@ -1229,6 +1229,7 @@ fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path) -> Value {
     let mut agree_eval = Agreement::default();
     let mut obs_tune: BTreeMap<PolicyObs, u64> = BTreeMap::new();
     let mut obs_eval: BTreeMap<PolicyObs, u64> = BTreeMap::new();
+    let print_lenient = std::env::var_os("COVERAGE_PRINT_LENIENT").is_some();
 
     for (i, (auction, deal)) in games.iter().enumerate() {
         let interp = interpret(table, auction, &opts);
@@ -1254,6 +1255,9 @@ fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path) -> Value {
             }
             if used_lenient(table, auction, pc.call_index) {
                 st.lenient_calls += 1;
+                if print_lenient {
+                    eprintln!("lenient: {auction} call {}", pc.call_index);
+                }
             }
         }
         if every_exact {

@@ -113,28 +113,37 @@ game, or ask for aces with a slam-going hand; each has a real range.
 ** Interference over a preempt
 
 After any overcall of a preempt, responder doubles for penalty with 13+ hcp
-and otherwise passes (NOTES.md "Notrump lane" #N6).
+and otherwise passes (NOTES.md "Notrump lane" #N6); the partnership then passes
+from there on, and also after the opponents double the preempt (NOTES.md #P7).
 
 3C-(bid)-
 D = 13+ hcp
+#PASTE pass-chain
 
 3D-(bid)-
 D = 13+ hcp
+#PASTE pass-chain
 
 3H-(bid)-
 D = 13+ hcp
+#PASTE pass-chain
 
 3S-(bid)-
 D = 13+ hcp
+#PASTE pass-chain
 
 4C-(bid)-
 D = 13+ hcp
+#PASTE pass-chain
 
 4D-(bid)-
 D = 13+ hcp
+#PASTE pass-chain
 
 4H-(bid)-
 D = 13+ hcp
+#PASTE pass-chain
 
 4S-(bid)-
 D = 13+ hcp
+#PASTE pass-chain

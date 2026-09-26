@@ -72,11 +72,12 @@ fn sayc_compiles_with_zero_errors_and_no_custom() {
         // this is only a "didn't regress into a hang or blow-up" sanity net, generous enough to
         // hold in both profiles, not a re-assertion of the release budget. Phase 4's tables
         // (pass chains, later rounds, competitive continuations: NOTES.md #P1-#P7) grew the
-        // compiled system from about 2.4k to 44k nodes, and a debug compile of that takes
-        // 8-15s on a loaded machine, so the net sits at 30s.
+        // compiled system from about 2.4k to 45k nodes; a debug compile of that took 15s at
+        // loadavg 21 and 46s at loadavg 27-31 (most of it `run_post_compile_checks`'
+        // satisfiability checks), so the net sits at 120s.
         assert!(
-            elapsed.as_secs_f64() < 30.0,
-            "{name}: compiling took {elapsed:?}, expected well under 30s in any profile"
+            elapsed.as_secs_f64() < 120.0,
+            "{name}: compiling took {elapsed:?}, expected well under 120s in any profile"
         );
 
         let errors: Vec<_> = ir
