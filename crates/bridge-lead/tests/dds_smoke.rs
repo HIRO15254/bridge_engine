@@ -10,6 +10,9 @@ use bridge_lead::{LeadOptions, LeadQuery, advise};
 use bridge_sample::UniformProposal;
 use common::empty_table;
 
+/// Floating-point tolerance for range checks on weighted means.
+const FP_TOL: f64 = 1e-9;
+
 fn three_nt_by_north() -> bridge_core::Auction {
     bridge_core::Auction::from_calls(
         Seat::North,
@@ -76,9 +79,19 @@ fn dds_backend_gives_one_group_for_a_single_suit_hand() {
         12,
         "all 13 clubs score identically and form one group"
     );
-    assert!(only.mean_defence_tricks >= 0.0 && only.mean_defence_tricks <= 13.0);
-    assert!(only.set_probability >= 0.0 && only.set_probability <= 1.0);
-    assert!(only.std_error >= 0.0);
+    // The statistics are self-normalised weighted means; when every sample scores the same
+    // value, the rounding of `sum(w * x) / sum(w)` can land a few ulps outside the range.
+    assert!(
+        (-FP_TOL..=13.0 + FP_TOL).contains(&only.mean_defence_tricks),
+        "mean {} outside [0, 13]",
+        only.mean_defence_tricks
+    );
+    assert!(
+        (-FP_TOL..=1.0 + FP_TOL).contains(&only.set_probability),
+        "set probability {} outside [0, 1]",
+        only.set_probability
+    );
+    assert!(only.std_error >= -FP_TOL, "std error {}", only.std_error);
 }
 
 /// A non-trivial fixed hand (an unbroken top run of 5 in one suit against 3NT): the real DDS
