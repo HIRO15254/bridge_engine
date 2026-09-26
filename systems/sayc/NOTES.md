@@ -639,3 +639,41 @@ C8. **Phase-3 recheck: rows that caught every hand, or were shadowed by a siblin
       balanced (4-4-4-1), and every 25+ hand with no five-card suit, had no rebid and
       passed the forcing 2!d. 2NT now also takes 22--24 hands with no five-card suit,
       and 3NT takes 25+ hands with no five-card suit (or balanced).
+
+## Phase 4 coverage (`cargo xtask coverage`)
+
+`cargo xtask coverage` (`xtask/src/coverage.rs`) writes `target/coverage_report.json`; the
+fields are described in its module doc. The numbers below are the rows this file is
+measured against in phase 4 (docs/design/15-phase4-plan.md, lane D; 12-roadmap tasks
+4.1-4.4). "Positions" is the forward-consistency generator (seed `0x5a1c0002`, 5% random
+calls), run here with `COVERAGE_POSITIONS=1000000`; the other sections use their defaults.
+
+P0. **Baseline, before any phase-4 SAYC change** (wip/p4-api 4b131db; release; 52.5 s,
+    loadavg 9.27 -> 10.22; positions 49.4 s of it).
+    - Lints: Error 0, Warning 1167, Info 3009. Exclusive index: 714 groups, 2270 nodes,
+      2794 branches; 238 calls and 249 branches are never chosen (shadowed) in any group
+      they appear in.
+    - Generated (1000 replays with natural completion, seed `0xC0FE4001`): all-system
+      27/1000 (0.027); 973 auctions contain a natural completion, 26 a gap. Calls: system
+      3183, system implicit pass 1602, natural 12490, gap 37. First departure from the
+      system: our own pass has no trie edge 385, the system is exhausted (no legal
+      child) 198, no rows for their opening (weak twos, preempts) 184, their call not in
+      the trie 127, their pass 79. Final contract level `[passout, 1..7]`:
+      `[14, 21, 94, 143, 79, 29, 9, 611]` (the natural escalation fixed by the level
+      floor, lane S).
+    - Positions (10^6): chosen by the system 269,948, natural 581,628, implicit pass
+      144,309, `NoCandidate` 4,115 (410 of them on-system, all at lenient matches). The
+      phase-3 tops, keyed like the phase-3 report (trie position + role): `1D-(3C)`
+      responder 27, `1D-(1H)` responder 22, `1C-(1H)` responder 15 (the roadmap's
+      36 / 31 / 25 were measured before the phase-3 rechecks).
+    - Corpus (724 auctions: 27 files, PBN then LIN; even index = tune, odd = eval):
+      all-Exact 30/724 (0.041), eval 14/362 (0.039), SAYC-compatible-opening subset
+      13/384 (0.034). Call-level system resolution (Exact or Partial): all 0.405, eval
+      0.409, subset 0.424. `resolve_lenient` used by 5 of 8169 calls (0.0006). Seats with
+      empty strict support 30; seats whose default-mode support is empty 1.
+    - True-deal policy agreement (human call == `choose_bid`'s, or the natural choice
+      off-system): system positions 2090/3485 (0.600), natural positions 2077/4684
+      (0.443); eval split 0.616 / 0.456.
+    - `(ε, δ)` MLE on the tune split (4135 calls): ε = 0.490, δ = 0.309, ln L = -9351.0
+      (-2.261 per call); at the placeholder `human()` (0.01, 0.3) ln L = -15390.1, at
+      `system_players()` -21012.9. Eval split at the MLE: -8801.9 over 4034 calls.
