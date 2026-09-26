@@ -752,7 +752,7 @@ mod sayc_comp {
             // The shutout raise 1M-4M is reachable at 6--9 hcp.
             ("1H P", "3.KJ7632.Q9432.2", "4H"),
             ("1H P", "3.KJ763.Q9432.52", "4H"),
-            ("1S P", "KJ763.3.Q9432.2", "4S"),
+            ("1S P", "KJ763.3.Q9432.32", "4S"),
             // Balancing: a five-card suit overcalls at the one level; the jump needs six.
             ("1H P P", "KJ987.32.Q32.J32", "1S"),
             ("1H P P", "KJ987.32.Q32.K32", "1S"),
