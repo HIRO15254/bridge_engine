@@ -114,18 +114,87 @@ P = 6--9 hcp, not 3+!h, not 5+!s
 3H = 10--11 hcp, 3+!h
 3S = 10--11 hcp, 5+!s
 
+After opener's 1NT rebid (12--14 balanced) responder places the contract or
+invites: a rebid of responder's own suit or a preference to opener's suit is a
+signoff, 2NT and a three-level rebid or jump preference invite, a new suit at
+the two level is natural and non-forcing unless it is a reverse (1!m-1!s-1NT-2!h
+is a weak 5-4), and a reverse or
+a jump shift is a game force (the booklet's own example is 1!c-1!h-1NT-2!s or
+3!d). With game values and nothing else to show, responder bids 3NT; with
+too little to act, responder passes (NOTES.md #C1).
+
 1H-1S-1N-
-2C = NF, 5+!c, not 13+ hcp
-2D = NF, 5+!d, not 13+ hcp
+4S = {prio:3} 13+ hcp, 6+!s
+4H = {prio:3} 13+ hcp, 3+!h
+3H = {prio:2} INV, 11--12 hcp, 3+!h
+3S = {prio:2} INV, 11--12 hcp, 6+!s
+2N = {prio:1} INV, 11--12 hcp
+2S = {prio:1} NF, 0--10 hcp, 6+!s
+2H = {prio:1} NF, 0--10 hcp, 3+!h
+2C = NF, 0--10 hcp, 5+!c
+2D = NF, 0--10 hcp, 5+!d
 3C = F, 13+ hcp, 5+!c
 3D = F, 13+ hcp, 5+!d
+3N = 13+ hcp
 
-A reverse or a jump shift after opener's 1NT rebid is a game force (the
-booklet's own example is 1!c-1!h-1NT-2!s or 3!d).
+1C-1D-1N-
+4D = {prio:3} 13+ hcp, 6+!d
+3D = {prio:2} INV, 11--12 hcp, 6+!d
+2N = {prio:1} INV, 11--12 hcp
+2D = {prio:1} NF, 0--10 hcp, 6+!d
+2C = {prio:1} NF, 0--10 hcp, 4+!c
+3C = INV, 11--12 hcp, 5+!c
+2H = F, 13+ hcp, 4+!h
+2S = F, 13+ hcp, 4+!s
+3N = 13+ hcp
 
 1C-1H-1N-
-2S = F, 4+!s
-3D = F, 4+!d
+4H = {prio:3} 13+ hcp, 6+!h
+3H = {prio:2} INV, 11--12 hcp, 6+!h
+2N = {prio:1} INV, 11--12 hcp
+2H = {prio:1} NF, 0--10 hcp, 6+!h
+2C = {prio:1} NF, 0--10 hcp, 4+!c
+3C = INV, 11--12 hcp, 5+!c
+2D = NF, 0--10 hcp, 5+!d
+2S = F, 13+ hcp, 4+!s
+3D = F, 13+ hcp, 5+!d
+3N = 13+ hcp
+
+1C-1S-1N-
+4S = {prio:3} 13+ hcp, 6+!s
+3S = {prio:2} INV, 11--12 hcp, 6+!s
+2N = {prio:1} INV, 11--12 hcp
+2S = {prio:1} NF, 0--10 hcp, 6+!s
+2C = {prio:1} NF, 0--10 hcp, 4+!c
+3C = INV, 11--12 hcp, 5+!c
+2D = NF, 0--10 hcp, 5+!d
+2H = NF, 0--10 hcp, 4+!h, 5+!s
+3D = F, 13+ hcp, 5+!d
+3N = 13+ hcp
+
+1D-1H-1N-
+4H = {prio:3} 13+ hcp, 6+!h
+3H = {prio:2} INV, 11--12 hcp, 6+!h
+2N = {prio:1} INV, 11--12 hcp
+2H = {prio:1} NF, 0--10 hcp, 6+!h
+2D = {prio:1} NF, 0--10 hcp, 4+!d
+3D = INV, 11--12 hcp, 5+!d
+2C = NF, 0--10 hcp, 5+!c
+2S = F, 13+ hcp, 4+!s
+3C = F, 13+ hcp, 5+!c
+3N = 13+ hcp
+
+1D-1S-1N-
+4S = {prio:3} 13+ hcp, 6+!s
+3S = {prio:2} INV, 11--12 hcp, 6+!s
+2N = {prio:1} INV, 11--12 hcp
+2S = {prio:1} NF, 0--10 hcp, 6+!s
+2D = {prio:1} NF, 0--10 hcp, 4+!d
+3D = INV, 11--12 hcp, 5+!d
+2C = NF, 0--10 hcp, 5+!c
+2H = NF, 0--10 hcp, 4+!h, 5+!s
+3C = F, 13+ hcp, 5+!c
+3N = 13+ hcp
 
 ** After a two-over-one response
 

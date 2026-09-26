@@ -547,4 +547,19 @@ mod sayc_comp {
             ("1D P", "J62.T64.872.KQT9", "1NT"),
         ]);
     }
+
+    /// Responder's second call after opener's 1NT rebid: the only rows were a few new suits,
+    /// so a hand with game values or an invitation passed 1NT via the implicit pass.
+    #[test]
+    fn responder_rebid_after_opener_rebids_1nt() {
+        check(&[
+            ("1C P 1H P 1NT P", "A9.AJ43.AQ2.KQ86", "3NT"),
+            ("1H P 1S P 1NT P", "AQ975.K2.A43.Q86", "3NT"),
+            ("1H P 1S P 1NT P", "KQ85.Q4.KJ32.T84", "2NT"),
+            ("1H P 1S P 1NT P", "KJ9854.Q2.K73.84", "2S"),
+            ("1C P 1S P 1NT P", "KQ854.J972.83.J5", "2H"),
+            ("1D P 1S P 1NT P", "AJ75.7.8632.JT92", "2D"),
+            ("1D P 1S P 1NT P", "AJ75.Q72.832.T92", "P"),
+        ]);
+    }
 }

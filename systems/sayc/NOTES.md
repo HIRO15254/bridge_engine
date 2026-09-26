@@ -355,6 +355,14 @@ C1. **Opener's rebid tables are exhaustive after a forcing response (`rebids.bml
     was unreachable behind them), 2C over 1!s also covers the one 13+ shape with 3-card
     spade support and no other call (3=4=3=3), and 1!s-2!c-2!h-3!s (game-forcing jump
     preference) ranks above the fourth-suit 3!d that used to hide it.
+    Responder's second call after opener's 1NT rebid (1!x-1!y-1NT) now has a full table for
+    all six one-level auctions: a weak (0--10) rebid of a six-card suit or preference to
+    opener's suit, a 5-card new suit that is not a reverse (non-forcing, including the weak
+    5-4 1!m-1!s-1NT-2!h), 2NT or a three-level rebid/jump preference as an invitation
+    (11--12), game in a six-card major or a 3-card fit for opener's major (13+), a reverse or
+    jump shift as a game force, and 3NT with 13+ and nothing else. Before, most of these
+    positions had only two or four rows, so invitational and game-going hands passed 1NT
+    through the implicit pass.
 
 C2. **Every common competitive position has its own table, so a hand with nothing to say
     passes instead of having no call (`competition.bml`; `harness_review.json` #0).** When
