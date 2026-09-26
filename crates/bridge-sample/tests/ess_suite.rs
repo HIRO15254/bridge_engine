@@ -2,8 +2,11 @@
 //! `12-roadmap.md` task 5.3, D20 of `15-phase4-plan.md`): 50 auctions, each interpreted with SAYC
 //! as the mirror of the auction's own bidding policy (`InterpretOptions::for_context`) and sampled
 //! with that policy's likelihood (`SampleContext::bidding = Some`), `n = 1000` deals per auction.
-//! Criterion (phase 5, revised): median `ConstraintProposal` ESS/n at least 0.5 overall and on the
-//! generated half; the corpus half is reported against a 0.4 target.
+//! Criteria (phase 4, `11-testing.md` §13): with residual rejection, median ESS/n at least 0.5
+//! overall and on the generated half (the corpus half is reported against a 0.4 target) with at
+//! most 2 of the 50 cases exhausting the attempt budget; median ESS per attempt of
+//! `ConstraintProposal::default()` at least 0.35. The time ratio of residual rejection to none
+//! (target at most 2x) is printed, not asserted, since it depends on the machine's load.
 //!
 //! The 50 auctions:
 //!
@@ -34,7 +37,7 @@
 //! ESS/n, ESS per attempt, the acceptance rate, whether the attempt budget ran out, and the wall
 //! time; the summary adds the medians, the acceptance minimum, the wall time per effective sample
 //! (`Σ elapsed / Σ ESS`), which decides whether residual rejection is on by default, and the
-//! machine's load average. The criterion is checked on `ConstraintProposal::default()`.
+//! machine's load average.
 //!
 //! Known cards: the opening leader's hand (declarer's left-hand opponent), as in the lead
 //! problem this sampler serves (phase 6, `14-lead.md`); the other three hands are sampled.

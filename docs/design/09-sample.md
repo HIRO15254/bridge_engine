@@ -67,7 +67,7 @@ impl WeightedDeal { pub fn normalized_weights(deals: &[WeightedDeal]) -> Vec<f64
 pub struct SampleOptions {
     pub seed: u64,
     pub max_attempts_per_sample: u32,   // 16。1 スロットあたりの試行上限
-    pub max_attempt_factor: u32,        // 50。総試行数 ≤ n × 50 で打ち切り
+    pub max_attempt_factor: u32,        // 20。試行予算: 総試行数が n × 20 に達したら打ち切り（§6.5）
     pub threads: Threads,               // Auto | Single。結果は同一
 }
 pub enum Threads { Auto, Single }
@@ -76,13 +76,17 @@ pub struct SampleReport {
     pub requested: usize, pub produced: usize, pub attempts: u64,
     pub acceptance_rate: f64,           // produced / attempts
     pub ess: f64, pub ess_ratio: f64,   // ess / requested
-    pub log_weight_max: f64, pub elapsed: Duration,
+    pub ess_per_attempt: f64,           // ess / attempts。棄却する提案の棄却分も数える比較用の指標
+    pub log_weight_max: f64,
+    pub budget_exhausted: bool,         // n 件そろう前に試行予算を使い切った
+    pub elapsed: Duration,
     pub warnings: Vec<SampleWarning>,
 }
 pub enum SampleWarning {
     CustomConstraint { seat: Seat },            // 棄却法に退化した代替がある
     LowEss { ess: f64, requested: usize },      // ess < 0.5 × requested（フェーズ 5 の完了条件と同じ閾値）
-    Truncated { produced: usize },              // 総試行上限で打ち切り
+    Truncated { produced: usize },              // n 件に届かなかった
+    BudgetExhausted { attempts: u64, produced: usize },   // 試行予算（n × max_attempt_factor）を使い切った
     EmptySupport { seat: Seat },                // その席の代替がすべて既知カードと矛盾（ANY にフォールバック）
 }
 #[derive(Clone, PartialEq, Debug, thiserror::Error)]
@@ -101,9 +105,9 @@ pub fn sample_deals(ctx: &SampleContext<'_>, proposal: &dyn Proposal, n: usize, 
 
 1. `ctx.known` の不変条件（互いに素、各 ≤ 13）と `Σ_s needed(s) == pool().len()` を確認し（違反は `SampleError::Prepare`）、`prepared = proposal.prepare(ctx)?`。ハード制約 `play_constraints` と既知カードだけで配牌が存在しない（ある席の `play_constraints[s]` が `known[s]` を固定して `count() == 0`）なら `prepare` は `Err(SampleError::EmptySupport)` を返し、試行は行わない。ある席の解釈代替がすべて落ちた場合は `SampleWarning::EmptySupport { seat }` を記録してその席を `ANY` にフォールバックし（尤度が補正する）、サンプリングは続ける。
 2. スロット `i = 0, 1, 2, …` を **`n` 個ずつのチャンク** で処理する。スロット `i` は `rng = rng_for(opts.seed, i)` だけを使い、最大 `max_attempts_per_sample` 回 `propose` を試し、得られた `deal` に `log_prob` を呼ぶ。`(deal, ln π)` に対し §3 の `ln L` を計算し、有限なら `WeightedDeal { deal, log_weight: ln L − ln π }` をスロットの結果とする。`−∞` は棄却として数え、次の試行に進む。
-3. 各チャンクの `n` 件のスロット結果を **スロット順に** たたみ込み、`deals.len()` が `n` に達した時点でそのチャンクの残りのスロットは `attempts` にも `deals` にも加えない（採用されない配牌の試行回数で `attempts`/`acceptance_rate` を水増ししないため）。次のチャンクを起動するかどうかの判定（`produced ≥ n` または `attempts ≥ n × max_attempt_factor` なら停止）はチャンク境界で行うが、この判定はチャンク単位の集計値 `produced`/`attempts` を見るだけで、どのスロットがそのチャンクの「余剰」かはスロット順（スレッド数に依らない）だけで決まるので、結果は依然としてスレッド数に依らない。
+3. 各チャンクの `n` 件のスロット結果を **スロット順に** たたみ込み、`deals.len()` が `n` に達した時点でそのチャンクの残りのスロットは `attempts` にも `deals` にも加えない（採用されない配牌の試行回数で `attempts`/`acceptance_rate` を水増ししないため）。試行予算も同じくスロット順に適用し、`attempts` が予算 `n × max_attempt_factor` に達したスロットでたたみ込みを止める（報告される `attempts` が予算を超えるのは最後のスロットの `max_attempts_per_sample` 回まで）。`produced < n` のまま予算に達したら `budget_exhausted = true` と `SampleWarning::BudgetExhausted` を報告する。次のチャンクを起動するかどうかの判定（`produced ≥ n` または `attempts ≥ n × max_attempt_factor` なら停止）はチャンク境界で行うが、この判定はチャンク単位の集計値 `produced`/`attempts` を見るだけで、どのスロットがそのチャンクの「余剰」かはスロット順（スレッド数に依らない）だけで決まるので、結果は依然としてスレッド数に依らない。
 4. スロット順に最初の `n` 件を採用する（手順3により `deals.len()` は `n` を超えない）。
-5. §3.2 の式で `ess` を計算し、`SampleReport` を組み立てる。`tracing::info!(requested, produced, attempts, acceptance_rate, ess, ess_ratio, log_weight_max, elapsed_us)` を **常時 INFO** で出す（仕様 §9: ESS 報告は性能問題の一次診断情報）。メッセージは `"deal sampling finished"`。フィールドが返り値の `SampleReport` と一致することは `tests/tracing_info.rs` が最小の `tracing::Subscriber` で確認する（5.3）。
+5. §3.2 の式で `ess` を計算し、`SampleReport` を組み立てる。`tracing::info!(requested, produced, attempts, acceptance_rate, ess, ess_ratio, ess_per_attempt, log_weight_max, budget_exhausted, elapsed_us)` を **常時 INFO** で出す（仕様 §9: ESS 報告は性能問題の一次診断情報）。メッセージは `"deal sampling finished"`。フィールドが返り値の `SampleReport` と一致することは `tests/tracing_info.rs` が最小の `tracing::Subscriber` で確認する（5.3）。
 
 ---
 
@@ -121,9 +125,9 @@ ln L(d) = ln P(auction | d)                         // ビディング尤度
 
 | 項 | `ctx.bidding` が `Some` | `None` |
 | --- | --- | --- |
-| `ln P(auction | d)` | `sequence_log_likelihood(table, d, auction, bid_ctx)`（07-bidding.md §6.2、2〜5 μs / 配牌） | `Σ_s ln interpretation.likelihood(s, h_s)`（集合所属質量） |
+| `ln P(auction | d)` | `AuctionPolicy::new(table, auction, bid_ctx).log_likelihood(d)`（07-bidding.md §6、D18。`AuctionPolicy` は `sample_deals` の冒頭で 1 回だけ作り、局面ごとの候補を前計算するので、配牌あたりは各局面の選択の再評価だけ） | `Σ_s ln interpretation.likelihood(s, h_s)`（集合所属質量） |
 
-`Some` のときは解釈の制約は提案分布の構築にだけ使われ、尤度は `choose_bid` の確率的評価（`call_distribution` の softmax、`priority / τ`、ε 床）から得る。生成器が決定的でも `priority` からソフトマックスで確率化されているので、支持集合は全合法コールに広がる。`None` のときは ε-混合の防御枝が `likelihood` に ε の質量を残し、制約外の手にも正の尤度を与える。
+`Some` のときは解釈の制約は提案分布の構築にだけ使われ、尤度は D18 の方策 `p(c|h) = (1 − ε)·[(1 − δ)·S + δ·M] + ε/n` から得る（`S` は `choose_bid` の決定的な選択、`M` はナチュラル方策の選択、`n` は合法コール数）。ε 床があるので支持集合は全合法コールに広がる。`(ε, δ)` は `BidContext::policy` のプリセットで、SAYC で生成したオークションには `PolicyParams::system_players()`（ε = 1e-3、δ = 0）、人間のオークション（コーパス、リード助言）には `PolicyParams::human()`（D20 のチューニング分割での最尤推定値、統合までは仮値 ε = 0.01、δ = 0.3）を使う。解釈は `InterpretOptions::for_context(&bid_ctx)` で同じ方策の鏡像として作る（D19）。各片の重みが方策の密度に較正されているので、件数比例の成分抽選（§6.1 点 4）がそのまま `q ∝ L` に近い提案になる。旧来の `priority / τ` のソフトマックスは `PolicyParams::legacy(τ)` として比較用にだけ残る。`None` のときは ε-混合の防御枝が `likelihood` に ε の質量を残し、制約外の手にも正の尤度を与える。
 
 ### 3.2 重み・ESS・自己正規化
 
@@ -195,10 +199,10 @@ impl Sampler {
 
 ### 6.1 `prepare(ctx)`
 
-1. **席ごとの代替**: `A_s = interpretation.seats[s] ⊗ play_soft[s]`（直積、重みは積。K = 8 を超える場合は重み上位 K − 1 個を残し、残りを `play_constraints[s]` だけの受け皿候補 1 個（重みは落とした分の合計）にまとめる。単純に上位 K 個へ切り詰めると、落とした積だけが覆う手（典型的には重みの低い入札解釈の全体）が目標分布では正の重みを持つのに提案密度 0 となって一度も引かれず、ESS は高いまま推定が偏るため）。`play_soft` が `None` なら `interpretation.seats[s]` そのもの。各代替を `play_constraints[s]` と `and` する。`needed(s) == 0` の席（自分、ダミー）は対象外。
+1. **席ごとの代替**: `A_s = interpretation.seats[s] ⊗ play_soft[s]`（直積、重みは積。K = 8 を超える場合は推定質量 `w_i · count_i`（フルプールでの件数を掛けた、その代替の抽選上の取り分）の上位 K − 1 個を残し、残りを `play_constraints[s]` だけの受け皿候補 1 個（重みは落とした分の合計）にまとめる。`w_i` だけで並べると、軽いが広い代替（質量の大半を担うことがある）を落としてしまう。単純に上位 K 個へ切り詰めると、落とした積だけが覆う手（典型的には重みの低い入札解釈の全体）が目標分布では正の重みを持つのに提案密度 0 となって一度も引かれず、ESS は高いまま推定が偏るため）。`play_soft` が `None` なら `interpretation.seats[s]` そのもの。各代替を `play_constraints[s]` と `and` する。`needed(s) == 0` の席（自分、ダミー）は対象外。
 2. **Sampler の準備**: 代替 `i` について `S_{s,i} = Sampler::prepare(&C_{s,i}, pool, known[s], opts)`（`pool = known.pool()`）。`count() == 0` の代替は落とす。`is_exact() == false`（`Custom` / `residual` / スロット超過を含む）なら `SampleWarning::CustomConstraint { seat: s }`。その代替は `Sampler` 内部で棄却法（`max_tries = 256`）になる。
 3. **制約の厳しさ**: `mass_s = Σ_i w_i · S_{s,i}.count()`。席順 `σ` を `ln mass_s` 昇順（同点は席 index）に決める。制約が厳しい席から順に引く。`σ` の最後の席は残りを受け取る。全代替が落ちた席があれば `EmptySupport { seat }` を報告し、支持集合が空であることを `prepared` に記録する。
-4. **キャッシュ**: 席 `σ_1` の `Sampler` 群と成分重み `v_i = w_i · cnt_i / Σ_{j: cnt_j > 0} w_j · cnt_j` を保持する（`σ_1` のプールは固定なので再利用できる）。`cnt_i` を掛けるのは、`Interpretation::likelihood` が採点する目標（満たす代替の `w` の和、07-bidding.md §4.4）における各代替の取り分は、その代替が満たすハンド数に比例するため — `count` を掛けずに `w_i` だけで選ぶと、満たすハンドが多い代替（ε-混合の防御枝 `ANY` など）が実際の取り分より少なくしか引かれず、その代替が生む少数のハンドの重要度重みが過大になって ESS が崩れる。席 `σ_2` 以降はプールが縮むので `propose` ごとに準備し直す。
+4. **キャッシュ**: 席 `σ_1` の `Sampler` 群と成分重み `v_i = w_i · cnt_i / Σ_{j: cnt_j > 0} w_j · cnt_j` を保持する（`σ_1` のプールは固定なので再利用できる）。`cnt_i` を掛けるのは、`Interpretation::likelihood` が採点する目標（満たす代替の `w` の和、07-bidding.md §4.4）における各代替の取り分は、その代替が満たすハンド数に比例するため — `count` を掛けずに `w_i` だけで選ぶと、満たすハンドが多い代替（ε-混合の防御枝 `ANY` など）が実際の取り分より少なくしか引かれず、その代替が生む少数のハンドの重要度重みが過大になって ESS が崩れる。席 `σ_2` 以降はプールが縮むので `propose` ごとに準備し直す（§6.4 (c)(d) の粗い要約と軽い代替の畳み込みを使う）。
 5. **無制約の検出**: 代替 `C` が `ANY`（要約が `shapes = ALL`、`hcp = 0..=37`、`cards` / `eval` 空）なら `Sampler` を作らず、組合せ的な直接配りにマークする（§6.4 (a)）。ε-混合の防御枝の積（全コール Fallback の組合せ）はこれに該当する。
 
 ### 6.2 `propose(rng)`
@@ -234,7 +238,40 @@ impl Sampler {
 | --- | --- | --- |
 | (a) 無制約席の直接配り | 相手がパスのみ等で代替が `ANY` の席は `Sampler` を作らず `C(|P_k|, needed)` から一様に引く。`log_prob = −ln C(|P_k|, needed)` | 対象席の `prepare` が 0 回 |
 | (b) 対畳み込みの到達可能シェイプ限定 | `(l0,l1)`・`(l2,l3)` 対の疎畳み込みを、制約が許すシェイプが使う対（各 ≤ 105）に限定する（05-constraint.md、設計済み） | `prepare` の定数を下げる |
-| (c) 粗い提案 | 席 2 以降を「シェイプ + HCP のみ」の粗い項（`cards` / `eval` を外した要約 `Atom`）で提案し、細部は `L` の重みで補正する | `prepare` が高速パスに乗る。ESS は下がるが有限 |
+| (c) 粗い提案 | 再 prepare される席（2 番目から最後の 1 つ前まで）を、リテラルを持たない (シェイプ, HCP) 格子上の上側近似で提案し、細部は `L` の重みで補正する（下記） | `prepare` が高速パスに乗る。ESS は下がるが有限 |
+| (d) 軽い代替の畳み込み | 同じ席で、質量の取り分が手の取り分に比べて無視できる代替を 1 つの一様成分にまとめる（下記） | 1 回の `propose` の `prepare` が主な代替の分だけになる |
+
+**(c) の要約（フェーズ 4）.** 代替がリテラルを持たないアトム、またはその平坦な `Or`（方策鏡像の排他片、07-bidding.md §4）なら、それ自体が `Sampler` の厳密で安い経路に乗るので変えない。それ以外は `bridge_constraint::grid::bounds(c).sup`（(シェイプ, HCP) 格子上で `c` を含む最小の集合）をアトムの `Or` に戻したもの（最大 8 アトム、超える分は広げてまとめる）にする。格子が 1 つの箱ならアトム 1 つ、空なら `Or([])`。フェーズ 3 までの「`shapes()` と `hcp_range()` だけの 1 アトム」と違い、`Not(より上位の兄弟)` のような木の形を格子で表せる範囲で残すので、鏡像の片が要約で潰れない。要約は常に元の代替を含む（上側近似）ので、満たせる代替を満たせなくすることはない。
+
+**(d) 軽い代替の畳み込み（`ConstraintProposal::light_threshold`、既定 1e-2）.** 方策鏡像は各席に重み 1e-5 程度の `Fallback` 片（`N_sys`、`N_nat`、他のコールの片）を数個ずつ残し、その粗い要約は主な片と大きく重なる。これらを毎回 `prepare` すると 1 回の `propose` の大半を占めていた。再 prepare される席で、代替 `j` のフルプールでの質量の取り分 `π_j = w_j · cnt_j / Σ_i w_i · cnt_i` が手の取り分 `f_j = cnt_j / C(|pool|, needed)` の `light_threshold` 倍以下なら、その代替を「軽い」とし、1 つの一様成分（残りプールから `needed` 枚を一様に配る）にまとめて、固定の抽選確率 `π_L = Σ_{軽い j} π_j` を与える。その席の密度は
+
+```text
+q(h) = (1 − π_L) · Σ_{i: 残した代替, h ∈ C_i} v_i(P_k) / cnt_i(P_k) + π_L / C(|P_k|, needed)
+```
+
+で、どんな固定の `π_L` でも厳密に計算できる。一様成分は軽い代替の手をすべて覆うので支持集合は変わらない。比 `π_j / f_j` は、その代替の手だけに落ちた配牌が `E[w²]` に足す分をおよそ上から押さえるので、既定値での ESS の損失は数 % 以内（実測では ESS スイートの中央値が 0.4295 → 0.4247、残差棄却ありで 0.9164 → 0.9228）。最も重い代替は常に残す。`propose` + `log_prob` は 1 配牌あたり Stayman で 79 → 31 μs、競り合いの 4♠ で 63 → 35 μs になった（§10.2 の続き）。
+
+### 6.5 残差棄却と試行予算（フェーズ 4）
+
+最後の席 `σ_m` は残りのカードをそのまま受け取るので、その席の尤度の因子は重みにそのまま残る（フェーズ 5.3 の分析で、最後の席が最悪の席になるのは 50 件中 26 件、§10.2）。`ConstraintProposal::residual_rejection`（既定 `true`）は、最後の席の手 `h` を確率
+
+```text
+a(h) = min(1, m(h) / T)、m(h) = Σ_{i: h ∈ C_{σ_m,i}} w_i
+```
+
+で受理し、`log_prob` に `ln a(h)` を足す。受理された配牌の密度は `π_{他の席}(d) · a(h) / P_acc` で、`P_acc` は配牌に依らないので自己正規化で消える（§3.2）。したがって **どんな固定の `T > 0` でも推定は厳密** で、`T` は分散を重みと棄却率のあいだで移すだけになる（重みには `m(h)` の代わりに `max(m(h), T)` が残る）。
+
+`T` は `prepare` で 1 回だけ、次の 3 つの最小値として決める。
+
+1. `U`: `m` の全手にわたる上界。各代替 `i` について、格子上の上側近似が `i` のものと交わる代替の重みの和をとり、その最大値（方策鏡像の互いに素な片なら `max_i w_i`）。これより上では棄却しても何も得られない。
+2. 固定の乱数列（`rng_for(0x9E51_D0A1_0000_0001, 0)`）で残差棄却なしの提案を 128 回引いたパイロットで見た `m` の最大値。これより上ではパイロットの重みはすでに平ら。`T` は文脈の決定的な関数になる。
+3. パイロットの平均受理率が `residual_min_acceptance`（既定 0.5）まで下がる `T`（対数領域の二分法）。重い代替にめったに入らない最後の席で試行予算を使い切らないため。
+
+棄却された試行は通常の棄却として数え、`SampleOptions` の試行予算（既定 `20n`）に算入し、`acceptance_rate` と `ess_per_attempt` に現れる。棄却された試行は `log_prob` と尤度を計算しないので、生成された配牌より安い。
+
+**既定値の決め方（計画の手順 6）.** 有効サンプル 1 個あたりの時間で決める。ESS スイートのチューニング集合（§10.2 の続き）で受理率の下限を掃引すると、下限 0.125 / 0.3 / 0.4 / 0.5 / 0.6 で ESS/n の中央値 0.88 / 0.78 / 0.66 / 0.60 / 0.51、サンプリング時間は棄却なしの 4.8 / 3.2 / 2.4 / 1.9 / 1.7 倍、有効サンプルあたりの時間は 2.5 / 1.9 / 1.5 / 1.3 / 1.3 倍だった（loadavg 7.7〜8.2）。2 倍以内に収まる最小の下限 0.5 を既定にした。評価用の固定ケースでは ESS/n 0.7345（生成 0.9103、コーパス 0.6400）、試行あたり 0.4222、予算切れ 0 件、サンプリング時間は棄却なしの 1.4〜1.6 倍、有効サンプルあたりの時間は 0.95〜1.12 倍（3 回、loadavg 7.0〜8.7）で、棄却なしとほぼ同じ時間で ESS/n が 0.42 から 0.73 に上がるので既定で有効にした。配牌 1 つごとに DD 解析が走るリード助言（14-lead.md）は、より低い下限 0.125（`bridge_lead::lead_proposal()`）を使う。
+
+**残した改善案.** 最後の 2 席を同時に引く（最後の席の格子制約を 1 つ前の席の提案に移す）と、棄却なしで残差の分散を消せる可能性がある。未実装。
 
 `prepare` の結果を `(代替 id, P_k)` でキャッシュする案は、プールがほぼ繰り返さないため効果が薄い（配牌をまたぐキャッシュは採らない。1 回の `propose` の中で同じ `P_k` に対する代替どうしは `Sampler::prepare_many` で表を共有する、§10.1）。`prepare` 自体が本質的に安いこと（スート単位の DP、列挙でない）が前提になる。
 
@@ -281,7 +318,7 @@ pub fn rng_for(master: u64, index: u64) -> SampleRng {
 | `lib.rs` | 再エクスポート（`bridge_constraint::KnownCards` を含む）、`SampleError`、`sample_deals`（チャンク駆動、`parallel` 分岐、tracing） |
 | `proposal.rs` | `Proposal`、`PreparedProposal`、`SampleContext`、`BiddingLikelihood` |
 | `uniform.rs` | `UniformProposal`、`ln_factorial`、`bounded`、Fisher-Yates |
-| `constraint_proposal.rs` | `ConstraintProposal { max_retries: 16 }`、§6（prepare / propose / log_prob、席順、残り席の検査） |
+| `constraint_proposal.rs` | `ConstraintProposal { max_retries: 16, residual_rejection: true, residual_min_acceptance: 0.5, light_threshold: 1e-2 }`、§6（prepare / propose / log_prob、席順、(c) の格子要約、(d) の畳み込み、§6.5 の残差棄却） |
 | `weights.rs` | `WeightedDeal`、`log_sum_exp`、`effective_sample_size`、`normalized_weights` |
 | `rng.rs` | `SampleRng`、`splitmix64`、`rng_for` |
 | `report.rs` | `SampleOptions`、`Threads`、`SampleReport`、`SampleWarning` |
@@ -296,8 +333,13 @@ pub fn rng_for(master: u64, index: u64) -> SampleRng {
 | `deterministic_across_threads` | `tests/determinism.rs` | 同じ seed、`Single` vs 7 スレッドプール | バイト一致 |
 | `log_prob_consistency` | `tests/log_prob.rs` | 小さいプール（未知 8〜12 枚）で `ConstraintProposal` から 10^5 回提案し、配牌ごとのヒストグラムを `exp(log_prob)` と χ² 比較 | 棄却されない（有意水準 0.01） |
 | `middle_seat_multi_component_and_last_seat_rejection_log_prob_consistency` | `tests/log_prob.rs` | 未知 9 枚、再 prepare される中間席が生き残る 2 成分混合（coarsen で潰れない HCP 窓）を持ち、最終席が `Sampled` で棄却もあり得る文脈での同じ χ² 比較 | `Σ exp(log_prob) ≤ 1`、最終席のみの不整合で厳密に `-inf`、棄却されない |
-| `middle_seat_merged_summaries_log_prob_consistency` | `tests/log_prob.rs` | 未知 9 枚、再 prepare される中間席に要約が一致する 2 代替 + 別の HCP 窓の代替（§10.1 (i) の併合経路）での全列挙 + χ² | `Σ exp(log_prob) = 1`、棄却されない |
-| `log_prob_matches_the_unmerged_reference` | unit（`constraint_proposal.rs`） | 実 SAYC に似た 4 席の文脈で、併合・`ANY` 直接配り・スレッドローカルキャッシュを使う `log_prob` を、要約を 1 つずつ毎回 prepare する参照実装と比較（提案配牌と一様配牌の両方） | 差 < 1e-9、支持集合一致 |
+| `middle_seat_merged_summaries_log_prob_consistency` | `tests/log_prob.rs` | 未知 9 枚、再 prepare される中間席に要約が一致する 2 代替 + 別の HCP 窓の代替（§10.1 (i) の併合経路）での全列挙 + χ²。`Σ exp(log_prob)` を提案の成功確率とし、10^5 回の提案の失敗率がそれと 5σ 以内で一致することも確認する（残差棄却がある文脈用） | 失敗率が一致、棄却されない |
+| `middle_seat_light_tier_log_prob_consistency` | `tests/log_prob.rs` | 同じ文脈で `light_threshold = ∞`（最も重い代替以外をすべて §6.4 (d) の一様成分に畳み込む） | 同上 |
+| `residual_log_prob_adds_ln_acceptance` | `tests/residual.rs` | 未知 8 枚・最後の席が `Sampled` の小さい文脈（重なる代替 / 互いに素な代替の 2 通り）を全列挙し、残差棄却ありの `log_prob` が「なし + `ln(m(h)/T)`」に等しいこと、`T` が §6.5 の上界 `U` に等しいこと | 差 < 1e-9 |
+| `residual_proposals_match_log_prob` | `tests/residual.rs` | 同じ文脈で残差棄却ありの 4000 提案の受理率と配牌ヒストグラムを `exp(log_prob)` と χ² 比較 | 棄却されない（有意水準 0.01） |
+| `weighted_estimates_are_unbiased` | `tests/residual.rs` | 同じ文脈で `sample_deals`（n = 6000、残差棄却あり / なし）の自己正規化重み付き推定（ハートとダイヤのエースの持ち主、9 区分）を厳密な事後分布と比較する Wald χ²（共分散は SNIS のデルタ法） | p > 0.01 |
+| `attempt_budget_is_honoured_and_reported` | unit（`lib.rs`） | ほとんど受理しない提案で、総試行数が予算 `20n` を 1 スロット分以内で守り、`budget_exhausted` と `BudgetExhausted` を報告すること。予算内で終わる実行はどちらも報告しない | |
+| `log_prob_matches_the_unmerged_reference` | unit（`constraint_proposal.rs`） | 実 SAYC に似た 4 席の文脈で、併合・`ANY` 直接配り・§6.4 (d) の畳み込み・§6.5 の残差棄却・スレッドローカルキャッシュを使う `log_prob` を、要約を 1 つずつ毎回 prepare する参照実装と比較（提案配牌と一様配牌の両方） | 差 < 1e-9、支持集合一致 |
 | `log_prob_ignores_another_proposals_cache_entries` | unit（`constraint_proposal.rs`） | 中間席の重みだけが違う 2 つの提案を同じスレッドで交互に使い、`a.propose` 直後の `b.log_prob` を参照実装と比較（キャッシュが提案 id で区別されることの回帰） | 差 < 1e-9 |
 | `uniform_log_prob_constant` | unit | 全提案で `log_prob` が等しく、`Σ exp(log_prob)` が全列挙で 1 | |
 | `ess_formula` | unit | 手計算の小例（等重み n 個 → ESS = n、1 個だけ重い → ESS ≈ 1） | |
@@ -305,9 +347,10 @@ pub fn rng_for(master: u64, index: u64) -> SampleRng {
 | `empty_support_early_return` | unit | 矛盾する `play_constraints` | `Err(SampleError::EmptySupport)`、試行 0 回 |
 | `seat_fallback_warns` | unit | ある席の解釈代替がすべて既知カードと矛盾 | `SampleWarning::EmptySupport { seat }`、その席は `ANY` で配られ `produced == n` |
 | `uniform_vs_constraint_ess` | `tests/ess.rs`、`#[ignore]` | 手組みの合成解釈（`bidding = None`）での比較 | 報告のみ |
-| `uniform_vs_constraint_ess_suite` | `tests/ess_suite.rs`、`#[ignore]`、release | 50 オークション（SAYC の `replay` 25 + コーパス 25）× n = 1000、実ビディング尤度、既知 = オープニングリーダーの手。`target/ess_report.json` に ESS と原因の内訳（§10.2） | `ConstraintProposal` の ESS 中央値 ≥ 0.5n（**未達**、§10.2）。`Uniform` は比較用に報告 |
+| `uniform_vs_constraint_ess_suite` | `tests/ess_suite.rs`、`#[ignore]`、release | 固定ケース `tests/data/ess_cases.txt` の 50 オークション（SAYC の `replay` 25 + コーパスの評価分割 25）× n = 1000、実ビディング尤度（生成は `system_players`、コーパスは `human`）、既知 = オープニングリーダーの手。一様・残差棄却なし・残差棄却ありの 3 通りについて ESS/n、試行あたり ESS、受理率、予算切れ、時間、loadavg を `target/ess_report.json` に出す（11-testing.md §13） | 残差棄却ありで ESS/n の中央値 ≥ 0.5（全体と生成）、予算切れ ≤ 2 件、既定の提案の試行あたり ESS ≥ 0.35（達成、§10.2 の続き）。時間比は負荷に左右されるので表示のみ |
+| `ess_fixture_parses` | `tests/ess_suite.rs` | 固定ケースが 25 + 25 件の完結したオークションと完全な配牌に読めること | |
 | `sample_deals_emits_the_info_line_with_ess` | `tests/tracing_info.rs` | 最小の `tracing::Subscriber` で INFO 行を記録 | INFO 行が 1 本出て、`ess` / `ess_ratio` / `requested` / `produced` が `SampleReport` と一致 |
-| `deals_bench` | `benches/deals.rs` | criterion、制約付き完全配牌 | ≥ 10^4 配牌 / 秒 / コア |
+| `deals_bench` | `benches/deals.rs` | criterion、制約付き完全配牌。実 SAYC の 3 ケースは鏡像の解釈と `system_players` の方策尤度で、既定（残差棄却あり）と `single_thread_plain`（なし）の両方 | ≥ 10^4 配牌 / 秒 / コア（既定で達成、§10.2 の続き） |
 
 実装順（計画 §12）: 2.8 骨格（`UniformProposal`、`WeightedDeal`、ESS、`SampleReport`、`rng_for`、`parallel` + 決定性テスト。`bridge-core` と `KnownCards` だけで書ける）→ 5.2 `ConstraintProposal`（`log_prob` χ²）→ 5.3 `sample_deals` + ビディング尤度 + tracing（ESS スイート）→ 5.4 ベンチ + プロファイル（§6.4 の (a)(b)(c) を選ぶ）。
 
@@ -447,3 +490,37 @@ pub fn rng_for(master: u64, index: u64) -> SampleRng {
 4. 同優先度の同点・複数のナチュラル候補による質量の分割（shared 25〜48%）は尤度の性質そのもので、提案側では再現できない分の重みのばらつきとして残る。
 
 `bridge-sample` 側に残る改善余地（`Fallback` の取り分、(c)、残り席）は上表のとおり合わせても 2 倍前後で、1〜2 を直さない限り完了条件には届かない。1〜3 は `bridge-bidding` の別タスクとして扱い、直したらこのスイート（`target/ess_report.json` の `policy_breakdown_*` と `constraint_all_on_policy`）で再評価する。そのときに `Fallback` の取り分（方策の ε 床への較正）を改めて評価する。
+
+**フェーズ 4 での解決（2026-09-27）.** 上の結論 1〜3 は `bridge-bidding` 側で、方策を D18（`p(c|h) = (1 − ε)·[(1 − δ)·S + δ·M] + ε/n`、`choose_bid` の決定的な選択に ε 床を足したもの。旧来の `priority / τ` のソフトマックスは退役）に置き換え、解釈をその方策の較正された鏡像（D19: 片 `X_c`・`N_sys`・`Y_c`・`N_nat`・`ANY` の重みが方策の密度そのもの）にすることで扱った。`bridge-sample` 側では §6.4 (c) の格子要約、(d) の畳み込み、§6.5 の残差棄却と試行予算、§6.1 の質量順の切り詰めを入れた。
+
+プロトタイプの比較（50 オークション、ESS/n の中央値、全体 / 生成 / コーパス、計画 15-phase4-plan.md から転記）:
+
+| 版 | ESS/n | 備考 |
+| --- | --- | --- |
+| 基準（フェーズ 3、τ = 1 のソフトマックス + 旧解釈） | 0.036 / 0.040 / 0.030 | |
+| A（コンパイル時の排他 + rank 方策 τ = 0.2、ε の較正なし） | 0.086 / 0.127 / 0.084 | |
+| C（実行時の排他 + τ = 0.1・tie_gap 5・ε 0.003・レベル下限） | 0.301 / 0.298 / 0.350 | B の提案側の変更を足すと 0.327、さらに残差棄却で 0.608（試行あたり 0.287） |
+| B（方策鏡像、τ = 1） | 0.426 / 0.503 / 0.377 | 残差棄却を足すと 0.906（試行あたり 0.371、受理率の中央値 0.52） |
+
+教訓: 排他（締まり）は必要だがそれだけでは足りない。片の重みを方策の密度に較正して初めて、件数比例の成分抽選が `q ∝ L` を与える。
+
+**最終値（このレーン、B のマージ後、評価用固定ケース、n = 1000、release）.** ケースは `tests/data/ess_cases.txt`（生成 25 は deal seed `0x5A7C_0005_0003` の `replay`、コーパス 25 は D20 の評価分割 = `corpus_auctions` の列挙で奇数番目から等間隔に。暫定版で、S と D の SAYC 変更が入った統合時に `ESS_SUITE_WRITE_FIXTURE=1` で固定し直す）。
+
+| 提案 | ESS/n（全体 / 生成 / コーパス） | 試行あたり ESS | 受理率（中央値 / 最小） | 予算切れ | ≥ 0.5 の件数 |
+| --- | --- | --- | --- | --- | --- |
+| `UniformProposal` | 0.0035 / 0.0040 / 0.0029 | 0.0035 | 1 / 1 | 0 | 0 |
+| 残差棄却なし | 0.4247 / 0.5262 / 0.4178 | 0.4235 | 1.000 / 0.920 | 0 | 23 |
+| 残差棄却あり、下限 0.5（既定） | **0.7345 / 0.9103 / 0.6400** | 0.4222 | 0.563 / 0.436 | 0 | 36 |
+| 残差棄却あり、下限 0.125（リード助言） | 0.9228 / 0.9407 / 0.8690 | 0.4137 | 0.516 / 0.093 | 0 | 47 |
+
+既定のサンプリング時間は棄却なしの 1.37〜1.60 倍、有効サンプルあたりの時間は 0.95〜1.12 倍（3 回、loadavg 7.0〜8.7）。下限 0.125 では 4.2 倍 / 2.4 倍。スイート全体は 1.4〜2.0 秒。チューニングモード（`ESS_SUITE_MODE=tune`: 別の deal seed と、コーパスのチューニング分割）での下限の掃引は §6.5 に記した。
+
+**スループット（`deals/sayc/*/single_thread`、1 反復 = 1,000 配牌、3 回の最良値）.** 鏡像の解釈と `system_players` の方策尤度（B の `AuctionPolicy` で 1 配牌 0.1〜0.2 μs）で:
+
+| ケース | 残差棄却なし | 既定（残差棄却あり） | loadavg |
+| --- | --- | --- | --- |
+| `stayman_to_3nt` | 28.8 K/秒（(d) の前は 7.1 K/秒） | 18.9 K/秒 | 7.3〜27 |
+| `competitive_raise_to_4s` | 26.0 K/秒（同 9.6 K/秒） | 11.4 K/秒 | 同 |
+| `four_seat_competitive` | 32.8 K/秒（同 14.2 K/秒） | 13.9 K/秒 | 同 |
+
+目標 10^4 配牌/秒/コアは 3 ケースとも達成。ビディング尤度は B の `AuctionPolicy` で配牌あたりほぼ 0 になり、残りは再 prepare される中間席の `Sampler::prepare` で、(d) がその大半を消した。既定の数値は残差棄却の棄却分とパイロット（128 回）を含む。負荷が高い時間帯の計測なので、統合時に静かなマシンで取り直すこと。
