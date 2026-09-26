@@ -929,3 +929,178 @@ fn natural_inference_metrics() {
     std::fs::write(target_dir.join("natural_metrics.json"), json)
         .expect("write target/natural_metrics.json");
 }
+
+// --------------------------------------------------------------------------------------------
+// Level floor (docs/design/06-system.md §8, lane-S acceptance "S, natural"): replay escalation.
+// --------------------------------------------------------------------------------------------
+
+/// SAYC compiled once, with the natural engine replaced by `params`.
+fn sayc_table(params: bridge_system::NaturalParams) -> Table {
+    let base = common::compile_sayc("sayc.bml");
+    Table {
+        natural: std::sync::Arc::new(NaturalInference::new(params)),
+        ..base
+    }
+}
+
+/// Final-contract levels `[passed out, 1..=7]` of `n` fixed-seed random deals replayed with
+/// SAYC plus natural completion (dealer rotating, vulnerability rotating), and the number of
+/// replays with a forced-pass gap.
+fn level_histogram(table: &Table, n: usize, seed: u64) -> ([usize; 8], usize) {
+    let ctx = BidContext {
+        scoring: Scoring::Imp,
+        natural: Some(table.natural.as_ref()),
+        implicit_pass: ImplicitPass::Complement,
+        policy: PolicyParams::system_players(),
+    };
+    let vuls = [
+        Vulnerability::None,
+        Vulnerability::NS,
+        Vulnerability::EW,
+        Vulnerability::Both,
+    ];
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+    let mut by_level = [0usize; 8];
+    let mut with_gaps = 0;
+    for i in 0..n {
+        let deal = common::random_deal(&mut rng);
+        let r = bridge_bidding::replay(table, &deal, Seat::ALL[i % 4], vuls[(i / 4) % 4], &ctx);
+        let level = r.auction.contract().map_or(0, |c| c.bid.level() as usize);
+        by_level[level] += 1;
+        with_gaps += usize::from(!r.gaps.is_empty());
+    }
+    (by_level, with_gaps)
+}
+
+/// The level-floor seed of the acceptance run.
+const LEVEL_FLOOR_SEED: u64 = 0x1e7e_1f10;
+
+fn assert_level_floor(n: usize) {
+    let started = std::time::Instant::now();
+    let floored = sayc_table(bridge_system::NaturalParams::default());
+    let (hist, gaps) = level_histogram(&floored, n, LEVEL_FLOOR_SEED);
+    let seven = hist[7];
+    let six_plus = hist[6] + hist[7];
+    eprintln!(
+        "level floor (default table): final levels [passout, 1..7] = {hist:?}, {gaps} replay(s) \
+         with gaps, {n} deals in {:?}",
+        started.elapsed()
+    );
+    assert!(seven * 100 <= n, "7-level contracts {seven}/{n} > 1%");
+    assert!(
+        six_plus * 100 <= 5 * n,
+        "6+-level contracts {six_plus}/{n} > 5%"
+    );
+}
+
+/// Default-suite version (200 deals).
+#[test]
+fn level_floor_limits_replay_escalation() {
+    assert_level_floor(200);
+}
+
+/// The acceptance size (2000 fixed-seed deals), with the no-floor baseline for comparison:
+/// `cargo test -p bridge-bidding --release --test natural_metrics -- --ignored level_floor`.
+#[test]
+#[ignore = "2000 replays twice; run in release with --ignored --nocapture"]
+fn level_floor_limits_replay_escalation_2000() {
+    let mut none = bridge_system::NaturalParams::default();
+    none.level_floor = bridge_system::LevelFloor::NONE;
+    let (hist, gaps) = level_histogram(&sayc_table(none), 2000, LEVEL_FLOOR_SEED);
+    eprintln!(
+        "level floor NONE: final levels [passout, 1..7] = {hist:?}, {gaps} replay(s) with gaps"
+    );
+    assert_level_floor(2000);
+}
+
+// --------------------------------------------------------------------------------------------
+// infer_batch == per-call infer at every position of generated and corpus auctions.
+// --------------------------------------------------------------------------------------------
+
+/// Checks `infer_batch` over every legal call at every position of `auction`, under the default
+/// partner context and a known partner range (which exercises the level floor).
+fn check_batch_positions(engine: &NaturalInference, auction: &Auction) -> usize {
+    use bridge_constraint::Atom;
+    use bridge_system::PartnerContext;
+
+    let partners = [
+        PartnerContext::default(),
+        PartnerContext {
+            partner_constraint: Some(HandConstraint::Atom(Atom::ANY.with_hcp(6..=10))),
+            forcing_situation: false,
+        },
+    ];
+    let mut checked = 0;
+    for j in 0..auction.len() {
+        let Ok(prefix) = Auction::from_calls(
+            auction.dealer(),
+            auction.vulnerability(),
+            auction.calls()[..j].iter().copied(),
+        ) else {
+            break;
+        };
+        let owner = prefix.next_seat();
+        let calls: Vec<Call> = prefix.legal_calls().collect();
+        for partner in &partners {
+            let batch = engine.infer_batch(&prefix, owner, partner, &calls);
+            for (got, &call) in batch.iter().zip(&calls) {
+                let next = prefix.with(call).expect("legal");
+                let mut ctx = classify(&next, prefix.len(), owner);
+                ctx.partner_constraint = partner.partner_constraint.clone();
+                ctx.forcing_situation = partner.forcing_situation;
+                let want = engine.infer(&ctx);
+                assert_eq!(got.rule, want.rule, "{prefix:?} {call}");
+                assert_eq!(got.confidence, want.confidence, "{prefix:?} {call}");
+                assert_eq!(
+                    format!("{:?}", got.constraint),
+                    format!("{:?}", want.constraint),
+                    "{prefix:?} {call}"
+                );
+                checked += 1;
+            }
+        }
+    }
+    checked
+}
+
+fn check_batch(n_generated: usize, n_corpus: usize) {
+    let table = sayc_table(bridge_system::NaturalParams::default());
+    let engine = table.natural.as_ref();
+    let ctx = BidContext {
+        scoring: Scoring::Imp,
+        natural: Some(engine),
+        implicit_pass: ImplicitPass::Complement,
+        policy: PolicyParams::system_players(),
+    };
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xba7c_4001);
+    let mut checked = 0;
+    for i in 0..n_generated {
+        let deal = common::random_deal(&mut rng);
+        let r = bridge_bidding::replay(&table, &deal, Seat::ALL[i % 4], Vulnerability::None, &ctx);
+        checked += check_batch_positions(engine, &r.auction);
+    }
+    let mut corpus = 0;
+    if let Some(dir) = corpus_dir(&workspace_root()) {
+        for (_, auction) in corpus_games(&dir).iter().take(n_corpus) {
+            checked += check_batch_positions(engine, auction);
+            corpus += 1;
+        }
+    }
+    eprintln!(
+        "infer_batch == infer: {n_generated} generated + {corpus} corpus auction(s), {checked} \
+         (position, partner, call) checks"
+    );
+}
+
+/// Default-suite version: 100 generated and 50 corpus auctions (corpus skipped when absent).
+#[test]
+fn infer_batch_matches_infer_on_generated_and_corpus_auctions() {
+    check_batch(100, 50);
+}
+
+/// The acceptance size: 1000 generated and 500 corpus auctions.
+#[test]
+#[ignore = "1000 + 500 auctions; run in release with --ignored --nocapture"]
+fn infer_batch_matches_infer_on_generated_and_corpus_auctions_full() {
+    check_batch(1000, 500);
+}
