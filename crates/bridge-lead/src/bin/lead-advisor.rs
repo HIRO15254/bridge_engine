@@ -27,7 +27,7 @@ use bridge_format::pbn;
 use bridge_lead::{LeadAdvice, LeadError, LeadOptions, LeadQuery};
 use bridge_sample::{ConstraintProposal, Proposal, UniformProposal};
 
-const DEFAULT_SYSTEM: &str = "systems/sayc.bml";
+const DEFAULT_SYSTEM: &str = "systems/sayc/sayc.bml";
 
 struct Args {
     pbn_file: Option<String>,
