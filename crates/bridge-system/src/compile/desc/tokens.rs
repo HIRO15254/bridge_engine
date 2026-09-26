@@ -401,6 +401,13 @@ fn match_length_or_metric(s: &str) -> Option<(Token, usize)> {
         }
         consumed += 1 + l2;
         let after = &rest2[l2..];
+        // `1-11-2017` (a date) or any longer `N-M-K` chain is not a range.
+        if after
+            .strip_prefix('-')
+            .is_some_and(|t| t.as_bytes().first().is_some_and(u8::is_ascii_digit))
+        {
+            return None;
+        }
         if let Some((suitref, l3)) = parse_suit_ref_ws(after) {
             return Some((Token::SuitLen(suitref, n1..=n2), consumed + l3));
         }
