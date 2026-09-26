@@ -115,7 +115,7 @@ pub enum Resolution {
 /// [`AuctionTrie::insert`] only ever needs [`Edge::Call`]; the expansion stage (which must also
 /// insert wildcard opponents' steps such as `(D)` or `(2C+)`) uses
 /// [`AuctionTrie::insert_path`] directly.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Edge {
     /// A concrete call.
     Call(Call),
@@ -170,6 +170,14 @@ impl AuctionTrie {
     }
 
     /// Walks the trie; about 30 ns per call.
+    ///
+    /// At each depth an exact edge for the call always wins over a wildcard ([`Edge::Class`])
+    /// edge, and among wildcard edges the first inserted one whose class matches wins. The walk
+    /// never backtracks (`docs/design/06-system.md` §6.2): when the exact subtree has no
+    /// continuation for a later call, the lookup stops there even if a wildcard sibling's
+    /// subtree would have matched the rest (e.g. with both `1C-(1S)-` and `1C-(suit)-2C`
+    /// defined, `1C (1S) 2C` stops after `(1S)`). An author who wants the wildcard's subtree
+    /// under the exact interference too writes it there (or `#PASTE`s it).
     pub fn resolve(&self, key: &LookupKey<'_>) -> Lookup {
         let root = Self::root_id(key.we_opened);
         let mut cur = root;
@@ -325,6 +333,39 @@ impl AuctionTrie {
             .iter()
             .find(|e| condition_covers(e.seat, e.vul, seat, vul))
             .map(|e| e.node)
+    }
+
+    /// The nodes of the entries at the trie position reached by `path` whose `(seat, vul)`
+    /// condition is *covered by* the given one (every `(opener_position, vulnerability)` that
+    /// satisfies theirs also satisfies `(seat, vul)`), excluding an identical condition. The
+    /// mirror image of [`Self::covering_entry`]: used by expansion when a general definition is
+    /// inserted *after* a more specific, empty-description placeholder for the same call
+    /// (`docs/design/06-system.md` §4.2). Read-only; a missing `path` yields nothing.
+    pub(crate) fn covered_entries(
+        &self,
+        we_opened: bool,
+        path: &[Edge],
+        seat: SeatCond,
+        vul: VulCond,
+    ) -> Vec<NodeId> {
+        let mut cur = Self::root_id(we_opened);
+        for edge in path {
+            let next = match *edge {
+                Edge::Call(call) => self.find_child_call(cur, call),
+                Edge::Class(class) => self.find_child_class(cur, class),
+            };
+            match next {
+                Some(id) => cur = id,
+                None => return Vec::new(),
+            }
+        }
+        self.nodes[cur.0 as usize]
+            .entries
+            .iter()
+            .filter(|e| !(e.seat == seat && e.vul == vul))
+            .filter(|e| condition_covers(seat, vul, e.seat, e.vul))
+            .map(|e| e.node)
+            .collect()
     }
 
     /// An existing entry at the trie position reached by `path` whose specificity equals the
@@ -495,12 +536,6 @@ impl AuctionTrie {
     }
 }
 
-/// Whether every `(opener_position, vulnerability)` satisfying `(b_seat, b_vul)` also satisfies
-/// `(a_seat, a_vul)` -- i.e. an entry under `(a_seat, a_vul)` already covers whatever
-/// `(b_seat, b_vul)` would match, so a new entry for `(b_seat, b_vul)` could only ever shadow it,
-/// never add a case it does not already handle. Checked by brute force over the finite domain
-/// (4 positions x 2 x 2 vulnerabilities): both condition types are small enums with no relation
-/// between variants worth hand-encoding.
 /// Whether some `(opener_position, vulnerability)` satisfies both `(a_seat, a_vul)` and
 /// `(b_seat, b_vul)` -- i.e. the two conditions can genuinely both match the same real auction.
 /// Brute force over the same finite domain as [`condition_covers`], for the same reason.
@@ -520,6 +555,12 @@ fn condition_overlaps(a_seat: SeatCond, a_vul: VulCond, b_seat: SeatCond, b_vul:
     false
 }
 
+/// Whether every `(opener_position, vulnerability)` satisfying `(b_seat, b_vul)` also satisfies
+/// `(a_seat, a_vul)` -- i.e. an entry under `(a_seat, a_vul)` already covers whatever
+/// `(b_seat, b_vul)` would match, so a new entry for `(b_seat, b_vul)` could only ever shadow it,
+/// never add a case it does not already handle. Checked by brute force over the finite domain
+/// (4 positions x 2 x 2 vulnerabilities): both condition types are small enums with no relation
+/// between variants worth hand-encoding.
 fn condition_covers(a_seat: SeatCond, a_vul: VulCond, b_seat: SeatCond, b_vul: VulCond) -> bool {
     for position in 1..=4u8 {
         if !b_seat.matches(position) {

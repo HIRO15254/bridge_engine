@@ -192,17 +192,15 @@ comments in the `.bml` files.
     are exactly the kind of gaps `xtask coverage` (phase 3.10) is meant to
     surface as `Fallback`/`NoCandidate` nodes rather than wrong bids.
 
-17. **`#INCLUDE` needs a blank line on both sides (`sayc.bml`,
-    `openings-only.bml`).** `#INCLUDE` is a literal textual splice (no
-    inserted blank lines, matching `bss.py`'s own behaviour); with two
-    `#INCLUDE` lines back to back, the last physical line of one included
-    file and the first physical line of the next end up in the very same
-    paragraph, and the next file's own `* Heading` line is then parsed as if
-    it were one more row of the previous file's last bidding table (an
-    unparsable `*` call token, silently dropped along with its subtree, and
-    a phantom `Row` with no real content). Every `#INCLUDE` here is followed
-    by a blank line for exactly this reason; a future new include must keep
-    that blank line.
+17. **`#INCLUDE` always starts and ends a paragraph (`sayc.bml`,
+    `openings-only.bml`).** Like `bml.py` (which substitutes
+    `'\n' + text + '\n'` for the directive), the lexer frames every
+    included file with a paragraph break on both sides, so two back-to-back
+    `#INCLUDE` lines keep the two files' paragraphs apart. (An earlier
+    version of the lexer spliced the text with no break, merging the last
+    table of one file with the next file's `* Heading`; the blank lines
+    after each `#INCLUDE` here date from that workaround and are now merely
+    cosmetic.)
 
 18. **Responder's follow-up after a Jacoby-transfer acceptance is written
     with plain numbers, not `INV` (`notrump.bml`).** After 1NT-2!d(transfer

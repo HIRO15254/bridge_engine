@@ -124,7 +124,7 @@ block           = blank | comment | include | meta | seat | vul | heading
 
 blank           = { " " } , NL ;
 comment         = "//" , { CHAR } , NL ;                         (* column 0 only *)
-include         = "#INCLUDE" , WS , PATH , NL ;
+include         = { WS } , "#" , { WS } , "INCLUDE" , { WS } , PATH , { CHAR } , NL ;   (* bml.py: ^\s*#\s*INCLUDE\s*(\S+) *)
 meta            = "#+" , KEY , ":" , [ WS ] , { CHAR } , NL ;      (* KEY = [A-Za-z_]+ ; unknown keys kept *)
 seat            = "#SEAT" , WS , ( "0"|"1"|"2"|"3"|"4"|"12"|"34" ) , NL ;
 vul             = "#VUL"  , WS , TRI , TRI , NL ;   TRI = "Y" | "N" | "0" ;
@@ -236,7 +236,7 @@ impl VulCond { pub const fn matches(self, we: bool, they: bool) -> bool; pub con
 
 各段階は全体として失敗せず、失敗を `Lint` にして続行する。全体は `compile(root_path, source, loader, opts)` (§9.4) が駆動する。
 
-1. **読込と `#INCLUDE` 解決** (`lexer::load`): ルートのテキストを受け取り、`#INCLUDE` 行を再帰的に解決 (循環ガード、深さ ≤ 16) して 1 本の `Vec<RawLine>` を作る。列 0 の `//` 行はここで落とす。存在しない include は `Lint::IncludeNotFound` (Warning) で行を落とす。循環は `Lint::IncludeCycle` (Error) で当該 include を無視する。読込は `SourceLoader` トレイト経由にし、`wasm32` でも `std::fs` 無しで include が動くようにする。
+1. **読込と `#INCLUDE` 解決** (`lexer::load`): ルートのテキストを受け取り、`#INCLUDE` 行を再帰的に解決 (循環ガード、深さ ≤ 16) して 1 本の `Vec<RawLine>` を作る。列 0 の `//` 行はここで落とす。`#INCLUDE` の認識は `bml.py` の `^\s*#\s*INCLUDE\s*(\S+)` に合わせる (行頭の空白・`#` の後の空白を許し、パスはキーワード直後の最初の語のみ)。`bml.py` は指令を `'\n' + text + '\n'` で置換するので、包含したファイルの前後には合成の空行 (段落区切り) を 1 行ずつ挿入し、連続した `#INCLUDE` でもファイル同士の段落が融合しないようにする。パスは `/` 区切りで正規化し、先頭の `/` と、取り除く実セグメントの無い先頭の `..` は保持する。ルートのパスも同じく正規化してから循環ガードに積む。存在しない include は `Lint::IncludeNotFound` (Warning) で行を落とす。循環は `Lint::IncludeCycle` (Error) で当該 include を無視する。読込は `SourceLoader` トレイト経由にし、`wasm32` でも `std::fs` 無しで include が動くようにする。
 
    ```rust
    // lexer.rs
@@ -259,7 +259,7 @@ impl VulCond { pub const fn matches(self, we: bool, they: bool) -> bool; pub con
 
 2. **段落分割** (`lexer::paragraphs`): 1 行以上の空白のみの行で区切る。
 3. **分類** (`parser::classify(&[RawLine]) -> ParagraphKind`): §1.2 の順序 (`get_content_type` と同じ)。`ParagraphKind { Heading, List, Enumeration, Seat, Vul, BidTable, Meta, Directive, Paragraph }`。不明な `#DIRECTIVE` は `Lint::UnknownDirective` (Warning) で行を除去し、段落の残りは処理する。
-4. **クリップボード展開** (`parser::clipboard::expand(paragraph, &mut Clipboard) -> (Vec<RawLine>, Vec<Lint>)`、表段落の内部、Python と同じ順): 全ての `#CUT` ブロックを取り出し、次に `#COPY` (本文は残す)、最後に `#PASTE` を展開する (テキスト置換、`Span.pasted_from` を保持)。`Clipboard { blocks: Vec<(String, Vec<RawLine>)> }` はファイル全体で大域的かつ順序依存 (include はテキスト包含なのでファイル横断でも動く)。`#PASTE` の置換は `tgt=rep` を指定順に単純置換し、貼り付け行には `#PASTE` 行のインデントを前置する。未定義名は `Lint::PasteUnknownName` (Warning)。
+4. **クリップボード展開** (`parser::clipboard::expand(paragraph, &mut Clipboard) -> (Vec<RawLine>, Vec<Lint>)`、表段落の内部、Python と同じ順): 全ての `#CUT` ブロックを取り出し、次に `#COPY` (本文は残す)、最後に `#PASTE` を展開する (テキスト置換、`Span.pasted_from` を保持)。`Clipboard { blocks: Vec<(String, Vec<RawLine>)> }` はファイル全体で大域的かつ順序依存 (include はテキスト包含なのでファイル横断でも動く)。`#PASTE` の置換は `tgt=rep` を指定順に単純置換し、貼り付け行には `#PASTE` 行のインデントを前置する。未定義名は `Lint::PasteUnknownName` (Warning)。同じ名前の再定義 (`#CUT`/`#COPY`) は Python の辞書代入と同じく **後の定義で上書き** し、以後の `#PASTE` は最新の本文を貼る。貼り付けた本文中の `#PASTE` も Python の `while True` 再走査と同じく展開する (インデントは累積)。自己参照に備えて入れ子は 16 段までとし、超えた `#PASTE` 行は `UnknownDirective` (Warning) で落とす。終端 `#ENDCUT`/`#ENDCOPY` と `#HIDE`/`#BIDTABLE` は Python の `#ENDCUT[ ]*` と同様に末尾空白を許す。終端の無い `#CUT`/`#COPY` の Lint には開始行の位置を付ける。
 5. **行パース** (winnow, `parser/call.rs`): 残った各行の `indent` を計算し、`indent > 0 && indent == prev_row.description.col` なら継続行。それ以外は `calltok` をパースし、`WS [= WS] description` を読む。
 
    ```rust
@@ -371,8 +371,8 @@ impl Binding {
    - `Var{level, v}`: `env.get(v)` が `Some` → `[(level, strain)]`; `v ∈ {oM, om}` で `M`/`m` が未束縛 → `Lint::UnboundOther` (行をスキップ); それ以外は `env.candidates(v, used)` (領域 `M`: H,S; `m`: C,D; `X/Y/Z`: C,D,H,S を (a) `used` に無いストレイン、(c) 束縛済みのものに対して `X<Y<Z` でフィルタ) をさらに (b) `auction` の最終ビッドより上でフィルタし、各候補で `env.bind(v, strain)` を部分木の間だけ使う。候補なし → `Lint::VariableNoCandidate` (Info。Python は「Could not find a bid」をログする)。
    - `Step(n)` → `auction` の最終ビッド + n (ストレイン順 C<D<H<S<N をまたぐ)。最終ビッドが無い → `Lint::StepWithoutAnchor`。
    - `AnyOf(ps)` → 上記の和 (順序どおり)。
-   - `Class(k)` → 具体コールを持たない単一のワイルドカード辺。部分木は `used`/`auction` を変えずに展開する (コールが未知のため)。したがってワイルドカードの下では `Step` と新規変数を禁止する (Lint)。
-4. 各候補 `c` について: 同じ兄弟リストが既に `c` を生成していれば (Exact 優先規則) `Lint::ShadowedByExact` (Info) でスキップ; `auction.is_legal(c)` を検査し、違反は `Lint::IllegalCall` (Error) で部分木を捨てる; `r.side` が直前のコールの側と同じなら先に暗黙パスを挿入 (§4.3); 説明文の変数 (`\bM\b`, `(\d+)M\b`, `oM`, `m`, `om`, `X/Y/Z`, `#`) を置換して `description` を作る; この具体経路の文脈で説明文をコンパイル (§7); `Node` を生成; `AuctionTrie::insert(we_opened, &calls, seat, vul, node)` でトライへ挿入; `Err(existing)` (同一条件のエントリが既にある) なら最初のものを残し `Lint::DuplicatePath` (両方の説明が非空で異なれば Warning。最初のエントリの説明が空なら Python と同様に *埋める*)。
+   - `Class(k)` → 具体コールを持たない単一のワイルドカード辺。部分木は `used`/`auction` を変えずに展開する (コールが未知のため)。したがってワイルドカードの下では `Step` と新規変数を禁止する (Lint)。ワイルドカードより下の合法性は「ワイルドカードが表しうるコールの少なくとも 1 つについて合法」で判定する (緩和した合法性: ビッドは既知の最終ビッドより上、ダブルは直前の非パス候補が相手のビッドまたはビッドを含むクラス、リダブルは相手のダブルまたはダブルを含むクラス、オークション終了は確実な場合のみ)。`Node.calls` と `resolved` ではワイルドカード位置に `Pass` の埋め草を置くが、兄弟の重複判定 (Exact 優先・`bids_processed`) はコールではなくトライ辺 (`Edge`) で行うので、ワイルドカードが実際の `(P)` 行や別クラスの兄弟と衝突することはない。
+4. 各候補 `c` について: 同じ兄弟リストの Exact 行が既に `c` を生成していれば (Exact 優先規則) `Lint::ShadowedByExact` (Info) でスキップ; パターン行の候補が先行する *パターン* 兄弟の生成済みコールと一致すれば、`bss.py` の `bid not in bids_processed` と同じく Lint なしで (ノードを作る前に) スキップ (`1M …` の後の包括的な `1X …` の慣用); `auction.is_legal(c)` を検査し、違反は `Lint::IllegalCall` (Error) で部分木を捨てる; `r.side` が直前のコールの側と同じなら先に暗黙パスを挿入 (§4.3); 説明文の変数 (`\bM\b`, `(\d+)M\b`, `oM`, `m`, `om`, `X/Y/Z`, `#`) を置換して `description` を作る; この具体経路の文脈で説明文をコンパイル (§7); `Node` を生成; `AuctionTrie::insert(we_opened, &calls, seat, vul, node)` でトライへ挿入; `Err(existing)` (同一条件のエントリが既にある) なら最初のものを残し `Lint::DuplicatePath` (両方の説明が非空で異なれば Warning。最初のエントリの説明が空なら Python と同様に *埋める*)。
 5. 更新した状態で子へ再帰する。戻るときに変数の束縛を解き、`used`/`auction` を復元する。
 
 **オラクル**: `systems/vendor/data/bml-test/` に取得した `example{1..6}.bml` を展開し、生成した具体系列の集合 (席・vul・`we_opened` 込み) が対応する `.bss` と完全一致することを統合テストで確認する。`.bss` の系列表記 (`001CP1DP1HP2C`: 先頭 2 桁が席と vul、`*` 接頭辞が相手オープン、以降がコール列) からの復号は `tests/bss.rs` の補助関数に閉じ込める。
@@ -402,6 +402,8 @@ pub struct VulCond { pub we: Tri, pub they: Tri }   // #VUL YN etc.; Tri = Yes |
 | `VulCond` | `we`/`they` の各 `Tri` が `Any` か一致 | `Any` でないフィールド数 (0..=2) |
 
 エントリの特定度 = `seat.specificity() * 3 + vul.specificity()` (0..=8)。最大の特定度を持つエントリが勝ち、同点は先定義 (コンパイル時に `ConditionTie` Lint)。
+
+履歴トークンの再トレース (`#SEAT 34` の表の `1H-` など) は説明が空の「プレースホルダ」エントリを作る。一般定義 (`1H 5+!h, …`) が先にあれば、それを覆う条件のプレースホルダは作らない。逆順 (`#INCLUDE` の順序などでプレースホルダが先) のときは、後から挿入される非空の定義が、その条件に覆われる空のプレースホルダを自分の内容で *埋める* (プレースホルダ自身の id・子・`#SEAT`/`#VUL` 条件は保持し、`DuplicatePath` Info)。これで照合結果はファイル順に依存しない。ただし埋める前に展開済みのプレースホルダの子は、`ANY` 制約の文脈でコンパイルされたままになる (既知の制限)。
 
 **照合キーの構築** (`trie.rs`。L3 が呼ぶ):
 
@@ -636,7 +638,7 @@ pub enum Resolution {
 `resolve` の手順:
 
 1. `root = if key.we_opened { 0 } else { 1 }`、`cur = root`、`d = 0`。
-2. `key.calls[d]` について `cur.exact` を二分探索。見つかれば次へ; 無ければ `cur.classes` の中で述語が成り立つ最初の辺を取る (`via_class += 1`); どちらも無ければ停止。
+2. `key.calls[d]` について `cur.exact` を二分探索。見つかれば次へ; 無ければ `cur.classes` の中で述語が成り立つ最初の辺を取る (`via_class += 1`); どちらも無ければ停止。 後戻りはしない: Exact 辺が存在すればその部分木に入り、後続のコールがそこで見つからなくても、ワイルドカード辺の部分木を試し直すことはない (Exact が常に勝つ)。
 3. 進んだ先の `entries` から `(key.opener_pos, key.vul)` に一致する最大特定度のエントリを選び `by_depth.push(Some(node))`。エントリが無い (暗黙パスのノード、または行の無い辺) なら `None`。
 4. 深さ `d` のコールが我々側で、かつエントリが `None` かつ暗黙パスでもなければ、`matched_depth` はそこで止まる (次節)。
 5. `end` は最後に到達したトライノード。
