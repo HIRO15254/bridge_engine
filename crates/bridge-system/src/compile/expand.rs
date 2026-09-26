@@ -20,6 +20,7 @@
 //! [`bridge_core::Seat::partner`] identify `own_prev`/`partner_last` (the two individuals of one
 //! side alternate seats, e.g. opener/responder) without tracking player identity by hand.
 
+use std::ops::RangeInclusive;
 use std::sync::Arc;
 
 use bridge_constraint::{DnfOptions, HandConstraint};
@@ -144,6 +145,11 @@ struct Frame {
     /// The node made by each of the table's four synthetic seats so far (dealer = North =
     /// whoever calls first in the table), indexed by [`Seat::index`].
     last_by_seat: [Option<NodeId>; 4],
+    /// Each seat's HCP range so far: the intersection of the HCP ranges of every node that seat
+    /// made on this path (`None` before its first node). Feeds `RowContext::partner_hcp` /
+    /// `own_hcp`, so a strength word is resolved against everything partner has shown, not only
+    /// partner's last call (often an artificial call that states no HCP at all).
+    hcp_by_seat: [Option<RangeInclusive<u8>>; 4],
     /// `true` once an ancestor step was a [`CallPattern::Class`] wildcard: `Step` and a *fresh*
     /// variable are forbidden below one (`docs/design/06-system.md` §4.2 point 3), since neither
     /// has a real anchor once the opponents' actual call is unknown.
@@ -160,6 +166,7 @@ impl Frame {
             env: Binding::default(),
             used: StrainSet::EMPTY,
             last_by_seat: [None; 4],
+            hcp_by_seat: [None, None, None, None],
             under_wildcard: false,
         }
     }
@@ -1041,6 +1048,18 @@ fn expand_row(
         };
 
         next.last_by_seat[seat_now.index() as usize] = Some(node_id);
+        let shown = ex.nodes[node_id.0 as usize].constraint.hcp_range();
+        let slot = &mut next.hcp_by_seat[seat_now.index() as usize];
+        *slot = Some(match slot.take() {
+            // An empty intersection (a later call contradicting an earlier one) keeps the
+            // latest call's own range.
+            Some(prev)
+                if (*prev.start()).max(*shown.start()) <= (*prev.end()).min(*shown.end()) =>
+            {
+                (*prev.start()).max(*shown.start())..=(*prev.end()).min(*shown.end())
+            }
+            _ => shown,
+        });
         ex.rows[row_id.0 as usize].expansions.push(node_id);
         out.push((node_id, next));
     }
@@ -1223,6 +1242,8 @@ fn build_or_reuse_node(
         their_last_bid,
         agreed_suit,
         role,
+        partner_hcp: next_frame.hcp_by_seat[seat_now.partner().index() as usize].clone(),
+        own_hcp: next_frame.hcp_by_seat[seat_now.index() as usize].clone(),
     };
 
     let substituted = substitute_description(&row.description.text, &next_frame.env);

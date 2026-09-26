@@ -73,6 +73,7 @@ pub fn compile_description(text: &str, ctx: &RowContext<'_>, meta: &SystemMeta) 
         })
         .collect();
     let (atoms, provs) = context::resolve(&pass1_tokens, ctx, meta);
+    let any = || HandConstraint::Atom(Atom::ANY);
     // Pass 2 can resolve a context-dependent strength word (`INV`, `MIN`, `S/T`, …) to an HCP
     // range that contradicts a number the author wrote out explicitly in the same description
     // (`docs/design/06-system.md` §7.5's "衝突は明示が勝つ" rule, generalized from `NAT` to every
@@ -88,13 +89,13 @@ pub fn compile_description(text: &str, ctx: &RowContext<'_>, meta: &SystemMeta) 
     let has_explicit_number = pass1_tokens
         .iter()
         .any(|t| matches!(t, Token::Hcp(_) | Token::Points(_)));
-    let atoms: Vec<Atom> = if has_explicit_number {
+    let atoms: Vec<HandConstraint> = if has_explicit_number {
         pass1_tokens
             .iter()
             .zip(atoms)
             .map(|(tok, atom)| {
                 if matches!(tok, Token::Strength(_)) {
-                    Atom::ANY
+                    any()
                 } else {
                     atom
                 }
@@ -102,6 +103,42 @@ pub fn compile_description(text: &str, ctx: &RowContext<'_>, meta: &SystemMeta) 
             .collect()
     } else {
         atoms
+    };
+
+    // `QUANT INV to 6NT`: the `INV` word only says that `QUANT` is an invitation (to a slam, not
+    // to game), so its game-invitational HCP range must not be ANDed against `QUANT`'s slam-invite
+    // range (the two are disjoint and the row would be unsatisfiable).
+    let has_quant = pass1_tokens
+        .iter()
+        .any(|t| matches!(t, Token::Strength(StrengthWord::Quantitative)));
+    let atoms: Vec<HandConstraint> = if has_quant {
+        pass1_tokens
+            .iter()
+            .zip(atoms)
+            .map(|(tok, atom)| match tok {
+                Token::Strength(
+                    StrengthWord::Invitational
+                    | StrengthWord::InvitationalPlus
+                    | StrengthWord::InvitationalMild
+                    | StrengthWord::InvitationalStrong,
+                ) => any(),
+                _ => atom,
+            })
+            .collect()
+    } else {
+        atoms
+    };
+
+    // Known beats assumed: when the strength words of one description resolve to disjoint HCP
+    // ranges and some of them rest on an assumed context (partner's or this player's range was
+    // unknown, §7.5's defaults), the assumed ones are dropped rather than making the row
+    // unsatisfiable (gjp `MAX, FG, 5-5`: `MAX` of the responder's own stated 5-9 against a `FG`
+    // derived from an assumed partner opening range).
+    let atoms = if strength_under_or(&top_clause, &fragments, false) {
+        // Strength words in different `Or` branches (`weak or GF`) are meant to be disjoint.
+        atoms
+    } else {
+        drop_conflicting_assumed_strength(&pass1_tokens, atoms, &provs)
     };
 
     // `NAT` itself is the origin of the "衝突は明示が勝つ" rule generalized above, but never
@@ -114,13 +151,13 @@ pub fn compile_description(text: &str, ctx: &RowContext<'_>, meta: &SystemMeta) 
     // against a stated 4).
     let nat_suit_pinned_explicitly =
         own_suit(ctx).is_some_and(|suit| pass1_tokens.iter().any(|t| suit_len_pins(t, suit, ctx)));
-    let atoms: Vec<Atom> = if nat_suit_pinned_explicitly {
+    let atoms: Vec<HandConstraint> = if nat_suit_pinned_explicitly {
         pass1_tokens
             .iter()
             .zip(atoms)
             .map(|(tok, atom)| {
                 if matches!(tok, Token::Natural) {
-                    Atom::ANY
+                    any()
                 } else {
                     atom
                 }
@@ -130,7 +167,7 @@ pub fn compile_description(text: &str, ctx: &RowContext<'_>, meta: &SystemMeta) 
         atoms
     };
 
-    let mut resolved: Vec<Option<(Atom, Provenance)>> = vec![None; fragments.len()];
+    let mut resolved: Vec<Option<(HandConstraint, Provenance)>> = vec![None; fragments.len()];
     for ((&idx, atom), mut prov) in token_indices.iter().zip(atoms).zip(provs) {
         prov.span = fragments[idx].span;
         resolved[idx] = Some((atom, prov));
@@ -148,7 +185,7 @@ pub fn compile_description(text: &str, ctx: &RowContext<'_>, meta: &SystemMeta) 
     )
     .unwrap_or(u8::MAX);
 
-    let flags = derive_flags(&fragments, &normalized, ctx);
+    let flags = derive_flags(&fragments, &top_clause, &normalized, ctx);
 
     let mut lints: Vec<Lint> = Vec::new();
     let info = |code: LintCode, message: String| Lint {
@@ -254,24 +291,86 @@ pub fn compile_description(text: &str, ctx: &RowContext<'_>, meta: &SystemMeta) 
     }
 }
 
+/// `true` when some `Strength` fragment sits below an `Or` node of `clause` (`inside_or` says
+/// whether an ancestor already was one).
+fn strength_under_or(clause: &Clause, fragments: &[Fragment], inside_or: bool) -> bool {
+    match clause {
+        Clause::Leaf(idx) => {
+            inside_or
+                && matches!(
+                    fragments[*idx].kind,
+                    FragmentKind::Token(Token::Strength(_))
+                )
+        }
+        Clause::And(items) => items
+            .iter()
+            .any(|c| strength_under_or(c, fragments, inside_or)),
+        Clause::Or(items) => items.iter().any(|c| strength_under_or(c, fragments, true)),
+    }
+}
+
+/// Drops the assumed-context `Strength` literals of a description whose `Strength` literals
+/// (all conjoined) resolve to disjoint HCP ranges, as long as at least one known-context one
+/// remains; otherwise returns `atoms` unchanged. `tokens`, `atoms` and `provs` are parallel.
+fn drop_conflicting_assumed_strength(
+    tokens: &[Token],
+    atoms: Vec<HandConstraint>,
+    provs: &[Provenance],
+) -> Vec<HandConstraint> {
+    let strength_hcp = |i: usize| match (&tokens[i], &atoms[i]) {
+        (Token::Strength(_), HandConstraint::Atom(a)) if *a != Atom::ANY => Some(a.hcp.clone()),
+        _ => None,
+    };
+    let ranges: Vec<(usize, core::ops::RangeInclusive<u8>)> = (0..tokens.len())
+        .filter_map(|i| strength_hcp(i).map(|r| (i, r)))
+        .collect();
+    let lo = ranges.iter().map(|(_, r)| *r.start()).max();
+    let hi = ranges.iter().map(|(_, r)| *r.end()).min();
+    let disjoint = matches!((lo, hi), (Some(lo), Some(hi)) if lo > hi);
+    let any_known = ranges.iter().any(|(i, _)| !provs[*i].assumed);
+    if !disjoint || !any_known {
+        return atoms;
+    }
+    let dropped: Vec<usize> = ranges
+        .iter()
+        .filter(|(i, _)| provs[*i].assumed)
+        .map(|(i, _)| *i)
+        .collect();
+    atoms
+        .into_iter()
+        .enumerate()
+        .map(|(i, a)| {
+            if dropped.contains(&i) {
+                HandConstraint::Atom(Atom::ANY)
+            } else {
+                a
+            }
+        })
+        .collect()
+}
+
 /// Folds a [`Clause`] tree into a [`HandConstraint`], skipping every fragment that contributes no
-/// literal (a `Convention`/`Forcing`/`NoBound` token, an `Unrecognized` fragment, or one Pass 2
-/// left at `Atom::ANY`): `None` means "this subtree is exactly `Atom::ANY`". `And` drops such
-/// children (`ANY` is `And`'s identity); `Or` cannot: `Or(ANY, x, …)` is `ANY` itself (`x` would
-/// never need to hold), so one uninformative branch collapses the whole group to `None` too.
+/// literal (a `Convention`/`Forcing`/`NoBound` token, an `Unrecognized` fragment, a fragment
+/// hedged with a possibility word, or one Pass 2 left at `Atom::ANY`): `None` means "this
+/// subtree is exactly `Atom::ANY`". `And` drops such children (`ANY` is `And`'s identity); `Or`
+/// cannot: `Or(ANY, x, …)` is `ANY` itself (`x` would never need to hold), so one uninformative
+/// branch collapses the whole group to `None` too.
 fn build(
     clause: &Clause,
     fragments: &[Fragment],
-    resolved: &[Option<(Atom, Provenance)>],
+    resolved: &[Option<(HandConstraint, Provenance)>],
 ) -> Option<HandConstraint> {
     match clause {
         Clause::Leaf(idx) => {
             let frag = &fragments[*idx];
-            let (atom, _) = resolved[*idx].as_ref()?;
-            if *atom == Atom::ANY {
+            if frag.possibility {
                 return None;
             }
-            let hc = HandConstraint::Atom(atom.clone());
+            let (literal, _) = resolved[*idx].as_ref()?;
+            if matches!(literal, HandConstraint::Atom(a) if *a == Atom::ANY) {
+                return None;
+            }
+            let hc = literal.clone();
             Some(if frag.negated { hc.not() } else { hc })
         }
         Clause::And(items) => {
@@ -350,19 +449,23 @@ fn atom_count(constraint: &HandConstraint) -> usize {
 /// suit sets `RowContext` does not carry; see `open_issues` in the compiler's final report.
 fn derive_flags(
     fragments: &[Fragment],
+    top: &Clause,
     normalized: &normalize::Normalized,
     ctx: &RowContext<'_>,
 ) -> NodeFlags {
     let mut artificial = normalized.alert;
     let mut sign_off = false;
     let mut has_support = false;
-    let mut game_forcing = false;
-    let mut forcing: Option<crate::Forcing> = None;
 
     for f in fragments {
         let FragmentKind::Token(token) = &f.kind else {
             continue;
         };
+        // A negated or merely possible convention/support (`no STAY`, `may be a transfer`) is
+        // not something this call is.
+        if f.negated || f.possibility {
+            continue;
+        }
         match token {
             Token::Convention(name) => {
                 artificial = true;
@@ -373,30 +476,73 @@ fn derive_flags(
                     sign_off = true;
                 }
             }
-            Token::Forcing(v) => {
-                forcing = Some(forcing.map_or(*v, |existing| stronger_forcing(existing, *v)));
-            }
-            Token::Strength(StrengthWord::GameForcing) => game_forcing = true,
+            Token::Splinter(..) => artificial = true,
             Token::Support(_) => has_support = true,
             _ => {}
         }
     }
 
-    // "`GF`, `FG`, … | `Strength(GameForcing)` + `Forcing(ToGame)`" (§7.4): being game-forcing
-    // implies forcing to game even without a separate `F`/`FG` word.
-    if game_forcing {
-        forcing = Some(forcing.map_or(crate::Forcing::ToGame, |existing| {
-            stronger_forcing(existing, crate::Forcing::ToGame)
-        }));
-    }
-
     NodeFlags {
         artificial,
-        forcing: forcing.unwrap_or_default(),
+        forcing: clause_forcing(top, fragments).unwrap_or_default(),
         soft: fragments.iter().any(|f| f.hedged),
         transfer_to: None,
         agreed_suit: if has_support { ctx.agreed_suit } else { None },
         sign_off,
+    }
+}
+
+/// The forcing status one fragment states: `F`/`F1`/`NF`/… directly, `GF`/`FG` as
+/// `Forcing::ToGame` (§7.4), a negated forcing word (`not forcing`, `non-forcing`) as
+/// `NonForcing`. A negated `GF` (`not GF`) says nothing about one-round forcing and a possibility
+/// (`may be forcing`) nothing definite, so both state nothing (`None`).
+fn fragment_forcing(f: &Fragment) -> Option<crate::Forcing> {
+    let FragmentKind::Token(token) = &f.kind else {
+        return None;
+    };
+    if f.possibility {
+        return None;
+    }
+    let stated = match token {
+        Token::Forcing(v) => *v,
+        Token::Strength(StrengthWord::GameForcing) => crate::Forcing::ToGame,
+        _ => return None,
+    };
+    if !f.negated {
+        return Some(stated);
+    }
+    match (token, stated) {
+        (Token::Forcing(_), crate::Forcing::OneRound | crate::Forcing::ToGame) => {
+            Some(crate::Forcing::NonForcing)
+        }
+        _ => None,
+    }
+}
+
+/// Forcing status over the clause tree: within an `And` the strongest stated value wins; across
+/// the branches of an `Or` only what every branch agrees on holds (the same value, or
+/// `OneRound` when every branch is forcing but to different degrees); otherwise nothing is
+/// known (`None`, i.e. `Forcing::Unknown`). So `weak or GF` and `PRE … or FG …` are not
+/// game-forcing.
+fn clause_forcing(clause: &Clause, fragments: &[Fragment]) -> Option<crate::Forcing> {
+    match clause {
+        Clause::Leaf(idx) => fragment_forcing(&fragments[*idx]),
+        Clause::And(items) => items
+            .iter()
+            .filter_map(|c| clause_forcing(c, fragments))
+            .reduce(stronger_forcing),
+        Clause::Or(items) => {
+            let values: Vec<Option<crate::Forcing>> =
+                items.iter().map(|c| clause_forcing(c, fragments)).collect();
+            let first = (*values.first()?)?;
+            if values.iter().all(|v| *v == Some(first)) {
+                return Some(first);
+            }
+            let all_forcing = values
+                .iter()
+                .all(|v| matches!(v, Some(crate::Forcing::OneRound | crate::Forcing::ToGame)));
+            all_forcing.then_some(crate::Forcing::OneRound)
+        }
     }
 }
 
@@ -429,7 +575,9 @@ fn fragment_tag(f: &Fragment) -> String {
     if f.negated {
         tag = format!("not({tag})");
     }
-    if f.hedged {
+    if f.possibility {
+        tag = format!("maybe({tag})");
+    } else if f.hedged {
         tag = format!("hedge({tag})");
     }
     tag
@@ -448,6 +596,8 @@ fn token_tag(t: &Token) -> String {
         Token::Forcing(v) => format!("forcing({v:?})"),
         Token::Convention(name) => format!("conv({name})"),
         Token::Quality(s, q) => format!("qual({s:?},{q:?})"),
+        Token::HonourRun(s, h, n) => format!("honours({s:?},{h},{n})"),
+        Token::Splinter(s, mini) => format!("spl({s:?},{mini})"),
         Token::Stopper(s) => format!("stop({s:?})"),
         Token::Shortness(s, n) => format!("short({s:?},{n})"),
         Token::Support(n) => format!("supp({n})"),
@@ -527,6 +677,8 @@ mod tests {
             their_last_bid: None,
             agreed_suit: None,
             role,
+            partner_hcp: None,
+            own_hcp: None,
         }
     }
 

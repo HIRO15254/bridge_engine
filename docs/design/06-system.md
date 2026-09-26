@@ -684,14 +684,16 @@ pub enum Token {
     Balanced, SemiBalanced, Unbalanced,      // `bal`, `semi-bal`, `unbal`
     Strength(StrengthWord),                  // `GF`, `INV`, `INV+`, `MIN`, `MAX`, `weak`, `STR`, `PRE`, `S/T`, `QUANT`, `NEG`, `LIM`
     Forcing(Forcing),                        // `NF`, `F`, `F1`, `FG`
-    Convention(String),                      // `ART`, `(R)`, `TRF`, `PUP`, `P/C`, `S/O`, `STAY`, `SPL`, `UNT`, `Multi`, …
-    Quality(SuitRef, QualityWord),           // `SOL`, `S-SOL`, `2 of top 3`, `AKQ`, `good suit`
+    Convention(String),                      // `ART`, `(R)`, `TRF`, `PUP`, `P/C`, `S/O`, `STAY`, `UNT`, `Multi`, …
+    Quality(SuitRef, QualityWord),           // `SOL`, `S-SOL`, `2 of top 3`, `good suit`
+    HonourRun(SuitRef, String, u8),          // `AKQ`, `AKQxx`, `KQJ109x`, `QJ10xx`: 列挙オナー (T 表記) と書かれた枚数
     Stopper(SuitRef),                        // `stopper`, `with stopper`
     Shortness(SuitRef, u8),                  // `singleton`, `void`, `short`, `0-1!h`
     Support(u8),                             // `fit`, `3+ SUPP`, `support`, `raise`
     Controls(RangeInclusive<u8>),            // `controls`, `2 controls`
     Losers(RangeInclusive<u8>),              // `7 losers`, `LTC`
     Natural,                                 // `NAT`, `natural`
+    Splinter(Option<SuitRef>, bool),         // `SPL`, `SPL !c`, `SPL m`, `mini-splinter` (true = mini); None = 自分のコールのスート
     NoBound,                                 // `unlimited`, `any hand`: 認識済み、制約なし
 }
 pub enum StrengthWord { GameForcing, Invitational, InvitationalPlus, Min, Max, Weak, Strong, Preemptive, SlamTry, Quantitative, Negative, Limit }
@@ -699,7 +701,8 @@ pub enum QualityWord { Solid, SemiSolid, TwoOfTopThree, ThreeOfTopFive, Good }
 pub fn recognize(text: &str) -> Option<(Token, usize)>;   // 1 断片を認識し、消費バイト数を返す
 
 // compile/desc/clause.rs
-pub struct Fragment { pub span: (u16, u16), pub negated: bool, pub hedged: bool, pub kind: FragmentKind }
+pub struct Fragment { pub span: (u16, u16), pub negated: bool, pub hedged: bool, pub possibility: bool, pub kind: FragmentKind }
+//  possibility: 可能性の hedge (`may`, `might`, `possibly`, `rarely`, `occasionally`, …) が付いた断片。§7.6
 pub enum FragmentKind { Token(Token), Unrecognized(String) }
 pub enum Clause { Leaf(usize) /* fragment index */, And(Vec<Clause>), Or(Vec<Clause>) }
 pub fn parse(text: &str) -> (Vec<Fragment>, Clause);
@@ -726,8 +729,11 @@ pub struct RowContext<'a> {
     pub their_last_bid: Option<Bid>,
     pub agreed_suit: Option<Suit>,
     pub role: Role,                       // Opener | Responder | Overcaller | Advancer | Balancer (from path shape)
+    pub partner_hcp: Option<RangeInclusive<u8>>, // パートナーがこの経路で行った全ノードの HCP 範囲の交差 (None = 未追跡)
+    pub own_hcp: Option<RangeInclusive<u8>>,     // 自分の同様の交差
 }
-pub fn resolve(tokens: &[Token], ctx: &RowContext<'_>, meta: &SystemMeta) -> (Vec<Atom>, Vec<Provenance>);
+// 1 トークンにつき 1 リテラル (普通は Atom。stopper は §7.4 の Or)
+pub fn resolve(tokens: &[Token], ctx: &RowContext<'_>, meta: &SystemMeta) -> (Vec<HandConstraint>, Vec<Provenance>);
 
 // compile/desc/mod.rs
 pub struct Compiled { pub constraint: HandConstraint, pub branch_weights: Option<Vec<f32>>, pub priority: i16, pub flags: NodeFlags, pub recognition: Recognition, pub lints: Vec<Lint> }
@@ -738,24 +744,33 @@ pub fn compute(text: &str, fragments: &[Fragment]) -> Recognition;
 pub const STOPWORDS: &[&str];   // a an the and or with w/ in of at hand suit suits cards points hcp
 ```
 
-パートナーの HCP 範囲や示したスートは `partner_last.constraint.hcp_range()` / `suit_len(..)` から Pass 2 が都度読む (専用のフィールドは持たない)。祖先が無い・ワイルドカード下・親が `Partial` にしか対応しない場合の `assumed` は `Provenance` に記録する。
+パートナーが示したスートは `partner_last.constraint.suit_len(..)` から Pass 2 が都度読む。HCP 範囲は直前ノードだけでは足りない (直前が人工コールや HCP を書かない応答であることが多い) ので、展開 (`expand.rs`) が席ごとに経路上の全ノードの `hcp_range()` の交差を `Frame` に持ち、`RowContext.partner_hcp` / `own_hcp` として渡す (交差が空になったら後のノードの範囲を採る)。祖先が無い・ワイルドカード下・親が `Partial` にしか対応しない場合の `assumed` は `Provenance` に記録する。
 
 ### 7.3 節文法 (`clause.rs`)
 
 ```ebnf
 description = { line } ;
 line        = enumitem | clauses ;
-enumitem    = ( LETTER ")" | DIGIT ")" | DIGIT "." ) clauses ;      (* items form an OR group *)
-clauses     = orgroup { ( "," | ";" | "." ) orgroup } ;              (* "," = AND, loosest *)
+enumitem    = ( LETTER ")" | DIGIT ")" | DIGIT "." | "(" lower ")" | "(" DIGIT+ ")" ) clauses ;
+                                                                     (* items form an OR group *)
+clauses     = orgroup { ( "," | ";" | "." ) [ "or" | "/" ] orgroup } ;
+                                                                     (* "," = AND, loosest; "A, B, or C" = OR *)
 orgroup     = andgroup { ( "or" | "/" ) andgroup } ;
 andgroup    = fragment { ( "and" | "with" | "w/" | "+" | WS ) fragment } ;
 fragment    = [ negation ] [ hedge ] atom ;
 negation    = "not" | "no" | "without" | "w/o" | "denies" | "non" ;
-hedge       = "usually" | "normally" | "may" | "might" | "rarely" | "typically" | "(?)" ;
-atom        = token (§7.4) | freetext ;
+hedge       = probable | possibility [ "be" | "have" | "hold" | "contain" | "include" ] ;
+probable    = "usually" | "normally" | "typically" | "likely" | "mostly" ;
+possibility = "may" | "might" | "possibly" | "perhaps" | "maybe" | "rarely" | "occasionally" | "sometimes" | "(?)" ;
+atom        = callref | token (§7.4) | freetext ;
+callref     = call { ( "-" | "/" ) call } ;   (* call = 1-7 + スート記号 | NT | N。下記の条件のときだけ *)
 ```
 
-優先順位 (強い順): `and` > `or`/`/` > `,`/`;`。これにより `6+!c or 5!c and 4!h/!s, 11--15 hcp` は `(6+♣ ∨ (5♣ ∧ (4♥ ∨ 4♠))) ∧ 11-15` にコンパイルされ、README の著者の意図と一致する。1 つの長さトークン内の 2 つのスート参照の間の `/` (`4!h/!s`) は局所的な OR、節の間の `/` (`20--21 bal / Any game force`) は節の OR。列挙項目 (`a) b)` や `1) 2)`) は 1 つの OR 群を作り、列挙の前後の節 (`one of:` や共通の HCP) は全項に AND される。
+優先順位 (強い順): `and` > `or`/`/` > `,`/`;`。これにより `6+!c or 5!c and 4!h/!s, 11--15 hcp` は `(6+♣ ∨ (5♣ ∧ (4♥ ∨ 4♠))) ∧ 11-15` にコンパイルされ、README の著者の意図と一致する。1 つの長さトークン内の 2 つのスート参照の間の `/` (`4!h/!s`) は局所的な OR、節の間の `/` (`20--21 bal / Any game force`) は節の OR。列挙項目 (`a) b)`、`1) 2)`、`(a) (b)`、`(1) (2)`。括弧付きの文字は小文字のみで、`(R)` や `(?)` は原子のまま) は 1 つの OR 群を作り、列挙の前後の節 (`one of:` や共通の HCP) は全項に AND される。
+
+`,`/`;` の直後に `or` が来る列挙 (`A, B, or C`、`A, or B`) は、その `or` で終わるコンマ列全体 (直前の `.`/`;` 以降、または前の `, or` 項以降) を 1 つの `Or` にする。`or` 項の後の普通のコンマで列は閉じる (`A, or B, 12-14 hcp` = `(A ∨ B) ∧ 12-14`)。長さ 0 の断片 (節頭の `or` の前など) は記録しない (空の `Unrecognized` 葉が `Or` を `ANY` に潰していたため)。
+
+`callref` はコール名/オークションへの参照で、スート長ではない。コール形のトークン (`4!s`, `1NT`, `2!d-2!h-3!h`, `3!d/3!h`) が `to`/`over`/`after`/`for`/`than`/`via`/`opposite`/`like`/`see`/`from`/`into`/`then`/`by`/`bid`/`rebid`/`opening`/`open`/`bids`/`else`/`otherwise`/`instead` の直後にあるとき、または `-` でつながった厳密に昇順の列で、3 コール以上・NT を含む・レベルが変わる・1〜2 レベルの同レベル対のいずれかのとき (オークションとして読める。`5!h-4!s` のような降順/同レベルの長さ略記は対象外) に限り、1 つの `Unrecognized` 断片として消費する (`TRF to 4!s`、`see 1!h-1!s-2!c`、`(else 2!s)`)。
 
 ### 7.4 トークン語彙 (v1。`v2` と記した行を除く)
 
@@ -763,40 +778,41 @@ atom        = token (§7.4) | freetext ;
 
 | トークン形 (ファイルからの実例) | `Token` | `Atom` への効果 |
 | --- | --- | --- |
-| `15-17`, `15--17`, `12+`, `0--7`, `12+ hcp`, `9+HCP`, `ca 15+`, `about 11--12 hcp`, `7--9 HCP`, `18+ hcp any distribution` | `Hcp(a..=b)` | `hcp = a..=b` (裸の `a-b` はスート/スート群/`cards` が続かない限り HCP。続けばシェイプ) |
+| `15-17`, `15--17`, `12+`, `0--7`, `12+ hcp`, `9+HCP`, `ca 15+`, `about 11--12 hcp`, `7--9 HCP`, `18+ hcp any distribution` | `Hcp(a..=b)` | `hcp = a..=b` (裸の `a-b` はスート/スート群/`cards` が続かない限り HCP。続けばシェイプ。ただし `a > b` か `a == b ≥ 4` の裸の対 (`6-5`, `5-4`, `5-5`。後ろに単位/スート/`SUPP` が無いとき) は 2 スート型の分布 (長い順に 2 スートが `≥ a`, `≥ b`) で、HCP ではない。`1-11-2017` のように `-数字` が続く列 (日付など) も範囲ではない) |
 | `12--14 NT`, `20--21 bal`, `22-24 NT` | `Hcp` + `Balanced` | `hcp`、`shapes ∩= meta.balanced` |
 | `13+ points`, `9--17 points`, `14+ points`, `TP`, `total points` | `Points(a..=b)` | `eval += TotalPoints(meta.dist_method), a..=b` |
-| `5+!s`, `4!h`, `4=!h`, `0--3!s`, `2--4!d`, `6+!c`, `3=!h`, `4+ !h` | `SuitLen(Fixed(s), a..=b)` | `suit_len[s] = a..=b` (`4=` はちょうど 4、裸の `4!h` は 4..=4) |
+| `5+!s`, `4!h`, `4=!h`, `0--3!s`, `2--4!d`, `6+!c`, `3=!h`, `4+ !h`, `at least 4!s`, `at most 3!h` | `SuitLen(Fixed(s), a..=b)` | `suit_len[s] = a..=b` (`4=` はちょうど 4、裸の `4!h` は 4..=4。`at least`/`at most` は後続の数値トークンの片側を開く: `at least 4!s` = 4..=13。HCP/points/controls/losers も同様)。コール参照 (§7.3 の `callref`) の中の `4!s` は長さではない |
 | `6+ suit`, `5+ suit`, `6+ cards`, `5 card suit`, `6+ card`, `7+ suit` | `SuitLen(Own, …)` | `suit_len[Own]` (Own はスートであること。NT/P/D なら未認識 + Lint) |
 | `5+#`, `7+#`, `0--1#`, `good 4+#` | `SuitLen(Hash, …)` | `#` を §1.3 の規則で解決 (`RowContext.hash_suit`) |
 | `5+ M`, `5+M`, `4+m`, `4+ major`, `3+ minor`, `6+m`, `4M`, `5M` (未束縛のとき) | `SuitLen(AnyMajor \| AnyMinor, …)` | Own が群に属せば Own、そうでなければ群上の `Or` |
 | `4+!h 4+!s`, `5+!s 4+!h`, `5!h-4!s`, `5+m-4M`, `5+!d-4+!c`, `4+!d 4+!c` | `SuitLen` × 2 | 連言 |
 | `5-5 minors`, `4-4 majors`, `5-4 majors`, `at least 5-4 majors`, `55MM`, `54MM`, `44MM`, `5+4+MM`, `5(4)+4+MM`, `4+4+ MM`, `5+5+ red suits`, `5+5+ minors`, `5-5 !d+!c`, `both MM`, `5+ 5+ in lowest two unbid suits`[C] | `Shape(text)` (2 スート型) | 群の 2 スートへの長さ割当 2 通りの `Or` (`ShapeSet` の和); `both MM` = 4-4+; `unbid` は `our_suits ∪ their_suits` の補集合の下位 2 つ |
-| `4414`, `4441`, `4405`, `3405`, `3433`, `4333` | `Shape(text)` (完全指定、S H D C 順) | `shapes = {その順序付きシェイプ}` |
+| `4414`, `4441`, `4405`, `3405`, `3433`, `4333` | `Shape(text)` (完全指定、S H D C 順) | `shapes = {その順序付きシェイプ}`。4 桁が 13 にならない数 (`RKCB 0314`, `1430`, 年号 `2017`)、固定桁の和が 13 を超えるパターン、空集合になるパターンはシェイプではない (未認識) |
 | `(5431)`, `(54)`, `(4441)`, `33(43)`, `3(433)`, `22(54)`, `31(54)`, `40(54)`, `34(42)`, `54(31)`, `(54)(xx)`, `5m422`, `5M4oM22`, `4M(441)` | `Shape(text)` (パターン) | `shapes ∩= クラス集合`; 括弧内の数字は順不同、位置指定の数字は S,H,D,C に対応; `x` = 任意; `m/M/oM` は束縛で解決 |
 | `bal`, `BAL`, `balanced`, `(semi)Balanced`, `semi-bal`, `SEMI-BAL`, `unbal`, `UNBAL`, `unbalanced`, `not 4333` | `Balanced` / `SemiBalanced` / `Unbalanced` | `shapes ∩= meta.balanced` / semi = bal ∪ `meta.semi_balanced` / unbal = 補集合 |
 | `GF`, `FG`, `game force`, `game forcing`, `forcing to game`, `Any game force`, `FG!` | `Strength(GameForcing)`[C] + `Forcing(ToGame)` | `hcp.start = max(0, gf_total − partner_min)` |
 | `INV`, `inv`, `invitational`, `INV+`, `at most invitational`, `Strongly invitational`, `Mildly invitational`, `LIM`, `limit`, `G/T`, `game try` | `Strength(Invitational \| InvitationalPlus \| Limit)`[C] | `hcp = inv_total − partner_min` (mild は −1、strong は +1 のシフト); `INV+` は `start` のみ; `at most` は `end` のみ |
-| `MIN`, `minimum`, `MAX`, `maximum`, `min`, `max`, `MIN/MAX` | `Strength(Min \| Max)`[C] | 自分の直前の範囲の半分ずつ |
+| `MIN`, `minimum`, `MAX`, `maximum`, `min`, `max` | `Strength(Min \| Max)`[C] | 自分のこれまでの範囲の半分ずつ (§7.5)。`MIN/MAX` (どちらの端でもよい) は `NoBound` |
 | `weak`, `WK`, `Weak`, `light`, `(very) light`, `NEG`, `negative`, `0+ hcp` | `Strength(Weak \| Negative)`[C] | `hcp = 0..=weak_max` (レスポンダー) / `0..=neg_max`; オープナーは `natural` の weak-two / preempt 範囲、オーバーコーラーは jump overcall 範囲 |
 | `PRE`, `preemptive`, `Preemptive`, `barrage` | `Strength(Preemptive)`[C] | weak ∧ `suit_len[Own] ≥ 4 + L` (2→6, 3→7, 4→8)、明示の長さがあればそちら |
 | `S/O`, `sign off`, `Sign off`, `T/P`, `to play`, `To play` | `Convention("S/O")` | Atom なし; `flags.sign_off = true` |
 | `STR`, `strong`, `Strong` | `Strength(Strong)` | `hcp.start = strong_min` |
 | `S/T`, `slam try`, `slam interest`, `QUANT`, `quantitative` | `Strength(SlamTry \| Quantitative)`[C] | `S/T`: `hcp.start = slam_total − partner_max`; `QUANT`: §7.5 |
-| `F`, `F1`, `F1R`, `NF`, `Non forcing`, `forcing`, `F2NT`, `!F` | `Forcing(_)` | Atom なし; `flags.forcing` (`F2NT` は `OneRound`) |
+| `F`, `F1`, `F1R`, `NF`, `Non forcing`, `forcing`, `F2NT`, `!F` | `Forcing(_)` | Atom なし; `flags.forcing` (`F`/`forcing`/`F1`/`F1R`/`F2NT` は `OneRound`。`Forcing::Unknown` は「何も書かれていない」の意味にだけ使う。否定された `F`/`forcing` (`Non forcing`, `non-forcing`, `not forcing`) は `NonForcing`。集約は §7.6) |
 | `ART`, `artificial`, `Artificial`, `(R)`, `relay`, `Relay`, `ask`, `asks`, `asking`, `Asking for …`, `PUP`, `puppet`, `Puppet to 2!d`, `P/C`, `pass/correct`, `Pass/correct`, `Forced`, `forced`, `CoG`, `choice of games`, `cue`, `CUE`, `cuebid`, `Waiting` | `Convention(name)` | Atom なし (認識済み、`flags.artificial = true`); `Forced`/`P/C` は `constraint = ANY` を継承 |
 | `TRF`, `transfer`, `Transfer`, `TRF !c`, `transfer to !h`, `TRF for !h`, `Texas TRF`, `Retransfer` | `Convention("TRF")`[C] | 明示スート → `suit_len[target] ≥ conventions.transfer_len`; スート無しで Own がスート → 次のストレイン (`C→D`, `D→H`, `H→S`); Own が `S` または NT のとき target は不定なので Atom なし + `AssumedContext`; `flags.transfer_to = target`; `flags.artificial` |
 | `STAY`, `Stayman`, `stayman`, `Garbage STAY`, `Muppet STAY`, `Puppet Stayman`, `Smolen`, `Landy`, `Michaels`, `UNT`, `unusual`, `Unusual NT`, `Gambling`, `Lebensohl`, `Ogust`, `BW`, `RKCB`, `KCB`, `K/B`, `Multi`, `multi` | `Convention(name)` | 既定では Atom なし; `ConventionDefaults` が与えるものだけ Atom を作る (`stayman_major = true` → `Or(suit_len[H] ≥ 4, suit_len[S] ≥ 4)`; `UNT` → 最下位の 2 つの未ビッドスート (明示があればその群) に `≥ 5` ずつ、5 は定数); 名前付きコンベンションは `flags.artificial = true` |
-| `SPL`, `splinter`, `Splinter`, `FG SPL`, `SPL m`, `SPL in the other major`, `mini-Splinter` | `Convention("SPL")`[C] → `Shortness(short, 1)` + `Support(conventions.splinter_support)` | `suit_len[short] = 0..=1` (short = Own か明示スート) ∧ `suit_len[agreed] ≥ conventions.splinter_support` ∧ `GF` の式 (mini は INV) |
+| `SPL`, `splinter`, `Splinter`, `FG SPL`, `SPL !c`, `SPL m`, `mini-Splinter` | `Splinter(short, mini)`[C] | `suit_len[short] = 0..=1` (short = 語の直後の明示スート、無ければ Own。`SPL in the other major` は未解析で Own) ∧ `suit_len[agreed] ≥ conventions.splinter_support` ∧ `GF` の式 (mini は INV)。各部分は明示が勝つ: 説明文に明示の `Hcp`/`Points` があれば強さ部分なし、明示のショートネス (`Shortness` か `≤ 1` の `SuitLen`) があれば Own のショートネスなし、合意スートの明示の長さがあればサポート部分なし。合意スート = short のとき (そのスートへのスプリンター、トランスファー越しなど) もサポート部分なし。`flags.artificial` |
 | `singleton`, `void`, `short !h`, `shortness in X`, `S/S`, `0--1!h`, `no short !h`, `not short`, `short in M` | `Shortness(suit, max)` | 指定スート: `suit_len[s] = 0..=max` (`void` 0、`singleton` 1、`short` 2。否定は `≥ max + 1`); 無指定: `shapes ∩= ShapeSet::filter(shortest ≤ max)` |
 | `fit`, `FIT`, `3+ SUPP`, `SUPP`, `4+ trumps`, `support`, `raise`, `with fit`, パートナーのスートへの `3=!s` | `Support(min)`[C] | `suit_len[agreed] ≥ min` (明示 `n`、無ければ §7.5 の `support_min`; ジャンプ/リミットレイズは 4); `flags.agreed_suit` |
 | `NAT`, `natural`, `Natural`, `nat` | `Natural`[C] | §7.5 の NAT 規則 (`NaturalInference` の該当規則を借用) |
 | `stopper`, `with stopper`, `without stopper`, `stop`, `Axx in their suit`, `stopper in X`, `!s stopper`, `no stopper` | `Stopper(suit)` | `Or(A, K ∧ len≥2, Q ∧ len≥3, J ∧ len≥4)` を `CardRequirement` と `suit_len` の `Or` で表現; スート無指定なら `their_suits` の直近 (`Theirs`) |
-| `SOL`, `solid`, `solid suit`, `S-SOL`, `semi-solid`, `2 of top 3`, `2 of 3 top`, `2/3 top`, `3 of top 5`, `AKQ`, `AKQxx`, `KQJ109x`, `good suit`, `good 4+#`, `decent suit`, `reasonable 5 card suit`, `quality suit` | `Quality(suit, word)` | `Solid`: `CardRequirement{mask = AKQ of s, count 3..=3}` ∧ `suit_len[s] ≥ 6`; `SemiSolid`: `{AKQ, 2..=3}` ∧ `≥ 6`; `TwoOfTopThree`: `{AKQ, 2..=3}`; `ThreeOfTopFive`: `{AKQJT, 3..=5}`; オナー列は列挙オナーを `count = 全部` で、`x` の個数は `suit_len ≥` に; `Good`: `EvalRequirement{SuitQuality(s), 2..=5}` (`honors5` = 上位 5 オナーの枚数、2 は定数) |
+| `SOL`, `solid`, `solid suit`, `S-SOL`, `semi-solid`, `2 of top 3`, `2 of 3 top`, `2/3 top`, `3 of top 5`, `AKQ`, `AKQxx`, `KQJ109x`, `QJ10xx`, `good suit`, `good 4+#`, `decent suit`, `reasonable 5 card suit`, `quality suit` | `Quality(suit, word)` / オナー列は `HonourRun(suit, honours, cards)` (`10` は `T`。`QT` 単独は quick tricks なので対象外) | `Solid`: `CardRequirement{mask = AKQ of s, count 3..=3}` ∧ `suit_len[s] ≥ 6`; `SemiSolid`: `{AKQ, 2..=3}` ∧ `≥ 6`; `TwoOfTopThree`: `{AKQ, 2..=3}`; `ThreeOfTopFive`: `{AKQJT, 3..=5}`; オナー列は列挙オナーを `count = 全部` で、`x` の個数は `suit_len ≥` に; `Good`: `EvalRequirement{SuitQuality(s), 2..=5}` (`honors5` = 上位 5 オナーの枚数、2 は定数) |
 | `3+ controls`, `2 controls`, `controls`, `7 losers`, `≤ 6 losers`, `6-7 losers`, `LTC 7`, `LTC` | `Controls(range)` / `Losers(range)` | `EvalRequirement{Controls, range}` / `EvalRequirement{Losers(Classic), range}` (`controls` / `LTC` 単独は Atom なし) |
-| `usually`, `normally`, `may`, `may have`, `might`, `rarely`, `typically`, `likely`, `occasionally`, `(?)` | hedge (`Fragment.hedged`) | 直後の断片に `hedged = true`; `flags.soft = true`; Atom はそのまま採用 (緩めない) |
+| `usually`, `normally`, `typically`, `likely`, `mostly` | hedge (`Fragment.hedged`) | 直後の断片に `hedged = true`; `flags.soft = true`; Atom はそのまま採用 (緩めない) |
+| `may`, `may be`, `may have`, `might`, `possibly`, `perhaps`, `maybe`, `rarely`, `occasionally`, `sometimes`, `(?)` | 可能性の hedge (`Fragment.possibility`) | `hedged = true`、`flags.soft = true` だが Atom は採用しない (`ANY`)。「〜もありうる」「まれに〜」は要件ではない (`may be 6!h` を「ちょうど 6 枚」にしない)。`(may be …)` のように開き括弧の直後でも hedge。`be`/`have`/`hold`/… は読み飛ばす |
 | `not`, `no`, `without`, `w/o`, `denies`, `non` | negation (`Fragment.negated`) | 直後の断片を `Not` |
-| `unlimited`, `wide range`, `wide ranged`, `any distribution`, `any hand`, `any strength`, `any`, `might be strong` | `NoBound` | 認識済み、制約なし |
+| `unlimited`, `wide range`, `wide ranged`, `any distribution`, `any hand`, `any strength`, `any`, `might be strong`, `min/max` | `NoBound` | 認識済み、制約なし (`might be strong` と `min/max` は hedge/強さ語を剥がす前に句全体で照合する) |
 | `CONST`, `constructive`, `positive`, `sound` | v2 | `StrengthWord` に variant が無い。未認識 (`Unrecognized`) として認識率に計上 |
 | `CTRL` (cue-bid の意味), `no outside A/K`, `0--1 outside A/K`, `9 tricks`, `playing tricks`, `QT` | v2 | 未認識 |
 | `1st/2nd`, `3rd seat`, `by passed hand`, `PH`, `NV`, `VUL` (文中の席/vul 条件) | v2 | 未認識 (行レベルの条件は `#SEAT`/`#VUL` で書く) |
@@ -804,23 +820,24 @@ atom        = token (§7.4) | freetext ;
 
 ### 7.5 Pass 2 の解決規則 (`context.rs`)
 
-親連鎖は `path` 上の祖先ノード (既にコンパイル済み) から `RowContext.own_prev` / `partner_last` として取る。`partner_min/max` は `partner_last.constraint.hcp_range()`。パートナーの範囲が不明 (直前ノードが無い、祖先にワイルドカード (`Class`) がある、祖先が `Partial` にしか対応しない) なら、オープナーなら `opening_min..=21`、それ以外は `0..=hcp_max` を仮定し `assumed = true` とする。閾値は全て `meta.strength` (`StrengthVocab`) から取る。
+親連鎖は `path` 上の祖先ノード (既にコンパイル済み) から `RowContext.own_prev` / `partner_last` として取る。`partner_min/max` はパートナーがこの経路で示した全範囲の交差 `RowContext.partner_hcp` (§7.2。未追跡なら `partner_last.constraint.hcp_range()`)。例えば `1N (15-17) - 2C (STAY) - 2H - 3S = S/T` の `S/T` は、HCP を書かない `2H` ではなく 1N の 15-17 から `31 − 17 = 14` になる。範囲が全域 `0..=hcp_max` のままなら「不明」であって「任意」ではない。パートナーの範囲が不明 (HCP を示したノードが無い、祖先にワイルドカード (`Class`) がある、祖先が `Partial` にしか対応しない) なら `opening_min..=21` を仮定し `assumed = true` とする (`AssumedContext` が出る)。閾値は全て `meta.strength` (`StrengthVocab`) から取る。
 
 | 断片 | 式 | `Source` |
 | --- | --- | --- |
 | `GF` | `own_min = clamp(gf_total − partner_min)`; `flags.forcing = ToGame` | `Context` |
 | `INV` | `hcp = (inv_total.start − partner_min)..=(inv_total.end − partner_min)` (mild −1 / strong +1 のシフト); `INV+` は `start` のみ; `at most` は `end` のみ; `0..=hcp_max` にクランプ | `Context` |
-| `MIN` / `MAX` | 自分の直前の範囲 `[a, b]` → `MIN: [a, ⌊(a+b)/2⌋]`、`MAX: [⌊(a+b)/2⌋+1, b]`。直前が無ければオープナーの `[opening_min, opening_min+2]` / `[opening_min+3, 21]` を仮定 (`assumed`) | `Context` |
+| `MIN` / `MAX` | 自分のこれまでの範囲 `[a, b]` (`RowContext.own_hcp`、同様に全域は不明扱い) → `MIN: [a, ⌊(a+b)/2⌋]`、`MAX: [⌊(a+b)/2⌋+1, b]`。範囲が不明なら、オープナーは `[opening_min, opening_min+2]` / `[opening_min+3, 21]` を仮定、それ以外 (レスポンダーやアドバンサーの最初のコール) は半分を取る基準が無いので制約なし。どちらも `assumed` | `Context` |
 | `weak` / `NEG` | レスポンダー: `0..=weak_max` / `0..=neg_max`; オープナーの 2 レベル: `natural.weak_two.1`; 3〜5 レベル: `natural.preempt[L].2`; オーバーコーラー: `natural.overcall[2].1` (jump overcall) | `Context` / `NaturalDefault` |
 | `PRE` | `weak` ∧ `suit_len[Own] ≥ 4 + L` (明示の長さがあればそちらを優先) | `Context` |
 | `STR` | `hcp.start = strong_min` | `Explicit` |
 | `S/T` | `hcp.start = slam_total − partner_max` | `Context` |
-| `QUANT` (NT の後) | `hcp = (gf_total − partner_max + 1)..=(slam_total − partner_min)` (1N 15-17 の後の 4N は `9..=16`; 明示の範囲があれば交差) | `Context` |
+| `QUANT` (NT の後) | スモールスラムへの招待: `small = slam_total + 2` (既定 33) として `hcp = (small − partner_max)..=(small − partner_min − 1)` (空なら下端に広げる)。1N 15-17 の後の 4N は `16..=17` (パートナーが最大なら 6NT に届き、最小なら届かない)。同じ説明文の `INV`/`INV+`/mild/strong は `QUANT` が招待であることを言っているだけなので HCP を作らない (`QUANT INV to 6NT` がゲーム招待の範囲と交差して空になるのを防ぐ)。旧式 `(gf_total − partner_max + 1)..=(slam_total − partner_min)` (= `9..=16`) はゲーム招待の値まで含み誤りだったので改めた | `Context` |
 | `NAT` | `NaturalInference::infer(classify(path 相当のオークション, own index, owner))` の制約を採用し、明示の断片と交差する (衝突は明示が勝つ)。信頼度は使わない | `NaturalDefault` |
 | (全 `StrengthWord` 共通) | 同じ説明文の中に明示の `Hcp`/`Points` 断片が 1 つでもあれば、`GF`/`INV`/`MIN`/`MAX`/`weak`/`PRE`/`STR`/`S/T`/`QUANT` など全ての `StrengthWord` が Pass 2 で作る HCP の Atom は採用せず `Atom::ANY` にする (`NAT` 用の「衝突は明示が勝つ」を全語に一般化したもの。例: jdh8 `3C = INV, 7+!c, 4--7 HCP` は著者自身の `4--7 HCP` を残し、`INV` の文脈由来レンジは捨てる)。`Forcing`/`flags` など HCP 以外への効果 (`GF` の `Forcing::ToGame` 等) はそのまま残る | `Context` (Atom は破棄) |
 | `#`, `Own`, `AnyMajor/AnyMinor`, `Agreed`, `Theirs` | 具体スート、または群上の `Or`。`#` は経路を自分のコールから遡り、最初の `Var`/`Strains`/`AnyOf` コール (相手の `(2HS)` も含む) のスート (`RowContext.hash_suit`)。`Strains` で複数なら `Or` | `Context` |
 | `support` / `fit` / `SUPP` / レイズ行 | `agreed = agreed_suit` かパートナーの最後のスートビッド (`flags.artificial` なコール、例えば puppet やステップレスポンスは対象外。人工コールは実際のスートを示さないので、それをそのまま合意スートに使うと `SPL` の明示のショートネス断片と衝突しうる); `support_min = max(3, 8 − partner_len_min)` (`partner_len_min` は `partner_last.constraint.suit_len(agreed).start`、不明なら 3); `suit_len[agreed] ≥ support_min`。`call.strain == agreed` のレイズ行は、文が無くても `meta.natural.implicit_raise_support` (既定 true) なら `Support(3)` を付ける (`assumed`) | `Context` |
-| `SPL` | `suit_len[short] ≤ 1` ∧ `suit_len[agreed] ≥ conventions.splinter_support` ∧ `GF` の式 | `Context` |
+| `SPL` | `suit_len[short] ≤ 1` ∧ `suit_len[agreed] ≥ conventions.splinter_support` ∧ `GF` の式 (§7.4 の `SPL` 行の除外規則つき) | `Context` |
+| (強さ語どうしの衝突) | 同じ説明文で `Or` の下に無い (連言の) 強さ語の HCP 範囲が互いに素になったら、`assumed` な文脈に基づく語の Atom を捨てて、既知の文脈に基づく語を残す (既知が 1 つも無ければ何もしない)。例: gjp `1C-2H (5-9 HCP) - 2N - 3H = MAX, FG`: `MAX` は自分の 5-9 から `8..=9`、`FG` は不明なパートナー範囲を仮定した `13+` なので `FG` 側を捨てる | `Context` |
 | `TRF` | §7.4 の行のとおり。`flags.transfer_to` | `Context` |
 | `UNT` / 2 スート型の `unbid` | `unbid = 全スート − our_suits − their_suits` の下位 2 つに `≥ 5` (定数); 2 スート型は同じ集合上で長さ割当の `Or` | `Context` |
 
@@ -830,7 +847,8 @@ atom        = token (§7.4) | freetext ;
 
 - 断片は `andgroup` 内で `And`、`orgroup` で `Or`、`clauses` の `,`/`;` で `And`。列挙は `Or` 群。
 - 否定は `Not` で包み、`to_dnf` (`05-constraint.md` §4.2 の排他的連鎖) に任せる。
-- hedge (`usually`, `may`, …) は制約を緩めず `hedged = true` を記録し、ノードの `flags.soft = true` と `SoftConstraint` (Info) を出す。L3 の ε 混合 (D15) が事後補正を担うので、ここで「HCP を 2 広げる」ような場当たりな緩和はしない。
+- 蓋然性の hedge (`usually`, `normally`, …) は制約を緩めず `hedged = true` を記録し、ノードの `flags.soft = true` と `SoftConstraint` (Info) を出す。L3 の ε 混合 (D15) が事後補正を担うので、ここで「HCP を 2 広げる」ような場当たりな緩和はしない。可能性の hedge (`may`, `might`, `rarely`, `occasionally`, …) は可能性や例外を述べるだけなので、断片のリテラルを採らない (`ANY`)。`soft` と `SoftConstraint` は同じく出す。
+- `flags.forcing` は節の木で集約する: `And` の中では強い方 (`ToGame` > `OneRound` > `NonForcing`)、`Or` の枝どうしでは全枝が一致する値だけ (全枝が forcing だが程度が違えば `OneRound`、そうでなければ不明)。`GF`/`FG` は `ToGame` を述べる。否定された `GF` (`not GF`) と可能性の hedge が付いた語は何も述べない。したがって `weak or GF` や `PRE 7+!c or FG 6+!c` は `ToGame` にならない。
 - `Convention` / `Forcing` / `NoBound` は Atom を生まず `flags` だけを更新する。全断片が Atom を生まなければ `constraint = ANY` で `Recognition.constraint_bearing = false`。
 - `Or` の枝数が `InterpretOptions.max_alternatives` (8) を超えることは許すが、`to_dnf` の `max_terms = 256` を超えた場合は `residual` に退避される (`05-constraint.md`)。このとき `DnfTruncated` を出す (Warning。`CompileOptions.strict_dnf` なら Error で、そのノードの制約は `ANY` に落とす)。
 

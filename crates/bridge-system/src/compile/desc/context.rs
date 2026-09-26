@@ -4,20 +4,22 @@
 //! | --- | --- |
 //! | `GF` | `own_min = gf_total − partner_min` |
 //! | `INV` | `[inv.start − partner_min, inv.end − partner_min]`; `INV+` lower bound only; mildly/strongly shift both bounds by ∓1; "at most" upper bound only |
-//! | `MIN` / `MAX` | lower / upper half of the same player's previous range |
+//! | `MIN` / `MAX` | lower / upper half of the same player's range so far; with none, the opener's `[opening_min, opening_min+2]` / `[opening_min+3, 21]` (assumed), unconstrained (assumed) for anyone else |
 //! | `weak` | responder `[0, weak_max]`; opener at level 2 `weak_two`; level 3/4 `preempt`; overcaller `weak_jump` |
 //! | `S/T` | `own_min = slam_total − partner_max` |
-//! | `QUANT` | `[gf_total − partner_max + 1, slam_total − partner_min]` |
+//! | `QUANT` | `[small − partner_max, small − partner_min − 1]` with `small = slam_total + 2` (small-slam total) |
 //! | `NAT` | `NaturalInference` for this call in this context, intersected with explicit fragments |
 //! | `#`, `Own`, `Agreed`, `Theirs` | concrete suits from the path |
 //!
-//! Unknown partner ranges default to `opening_min..=21` (opener) or `0..=37` and are flagged
-//! `assumed`.
+//! A player's range is the intersection of every HCP range that player has shown on the path
+//! (`RowContext::partner_hcp` / `own_hcp`), not just their last call's, which is often an
+//! artificial call stating no HCP at all. A range that is still the full `0..=hcp_max` is
+//! unknown: an unknown partner range defaults to `opening_min..=21` and is flagged `assumed`.
 
 use core::ops::RangeInclusive;
 
-use bridge_constraint::{Atom, CardRequirement, EvalRequirement, Metric};
-use bridge_core::{Bid, Call, Holding, ShapeSet, Side as TableSide, Suit};
+use bridge_constraint::{Atom, CardRequirement, EvalRequirement, HandConstraint, Metric};
+use bridge_core::{Bid, Call, Holding, Rank, ShapeSet, Side as TableSide, Suit};
 use bridge_eval::LtcMethod;
 
 use super::tokens::{QualityWord, StrengthWord, SuitRef, Token};
@@ -70,12 +72,19 @@ pub struct RowContext<'a> {
     pub agreed_suit: Option<Suit>,
     /// Role in the auction.
     pub role: Role,
+    /// Partner's HCP range so far: the intersection of the HCP ranges of every node partner made
+    /// on this path (`None` when not tracked; then `partner_last`'s own range is used).
+    pub partner_hcp: Option<RangeInclusive<u8>>,
+    /// This player's own HCP range so far, the same way (`None`: fall back to `own_prev`).
+    pub own_hcp: Option<RangeInclusive<u8>>,
 }
 
-/// Resolves the context-dependent tokens of a clause into atom literals.
+/// Resolves the context-dependent tokens of a clause into constraint literals.
 ///
-/// One [`Atom`] and one [`Provenance`] are produced per input token, in the same order, so a
-/// caller holding the original [`super::clause::Fragment`]s can zip them back together by index.
+/// One literal (an [`Atom`], or for a stopper the §7.4 `Or` of honour-and-length atoms) and one
+/// [`Provenance`] are produced per input token, in the same order, so a caller holding the
+/// original [`super::clause::Fragment`]s can zip them back together by index. `tokens` is the
+/// whole description, so a splinter can see what the author stated explicitly elsewhere in it.
 /// `Provenance::span` is left as `(0, 0)` here: this function is not given fragment spans (only
 /// bare tokens), so `compile_description` (which does have them) overwrites each entry's `span`
 /// with the originating fragment's span before the provenance is used for lints or tracing.
@@ -83,15 +92,87 @@ pub fn resolve(
     tokens: &[Token],
     ctx: &RowContext<'_>,
     meta: &SystemMeta,
-) -> (Vec<Atom>, Vec<Provenance>) {
-    let mut atoms = Vec::with_capacity(tokens.len());
+) -> (Vec<HandConstraint>, Vec<Provenance>) {
+    let facts = ExplicitFacts::of(tokens, ctx);
+    let mut literals = Vec::with_capacity(tokens.len());
     let mut provs = Vec::with_capacity(tokens.len());
     for token in tokens {
-        let (atom, prov) = resolve_one(token, ctx, meta);
-        atoms.push(atom);
+        let (literal, prov) = match token {
+            Token::Stopper(suitref) => match resolve_single_suit(*suitref, ctx) {
+                Some(suit) => (stopper_constraint(suit), explicit()),
+                None => (HandConstraint::ANY, context_prov(true)),
+            },
+            Token::Splinter(short, mini) => {
+                let (atom, prov) = resolve_splinter(*short, *mini, &facts, ctx, meta);
+                (HandConstraint::Atom(atom), prov)
+            }
+            _ => {
+                let (atom, prov) = resolve_one(token, ctx, meta);
+                (HandConstraint::Atom(atom), prov)
+            }
+        };
+        literals.push(literal);
         provs.push(prov);
     }
-    (atoms, provs)
+    (literals, provs)
+}
+
+/// What the description states explicitly elsewhere, for the "衝突は明示が勝つ" rule of
+/// compound words (`SPL`).
+struct ExplicitFacts {
+    /// An explicit `Hcp`/`Points` fragment.
+    strength: bool,
+    /// An explicit shortness (`Shortness`, or a suit length of at most 1).
+    shortness: bool,
+    /// Suits whose length an explicit `SuitLen` fragment pins.
+    lengths: Vec<Suit>,
+}
+
+impl ExplicitFacts {
+    fn of(tokens: &[Token], ctx: &RowContext<'_>) -> ExplicitFacts {
+        let strength = tokens
+            .iter()
+            .any(|t| matches!(t, Token::Hcp(_) | Token::Points(_)));
+        let shortness = tokens.iter().any(|t| match t {
+            Token::Shortness(..) => true,
+            Token::SuitLen(_, r) => *r.end() <= 1,
+            _ => false,
+        });
+        let lengths = [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades]
+            .into_iter()
+            .filter(|&suit| {
+                tokens
+                    .iter()
+                    .any(|t| matches!(t, Token::SuitLen(..)) && suit_len_pins(t, suit, ctx))
+            })
+            .collect();
+        ExplicitFacts {
+            strength,
+            shortness,
+            lengths,
+        }
+    }
+}
+
+/// A stopper in `suit` (`docs/design/06-system.md` §7.4): `A`, or `K` with 2+ cards, or `Q` with
+/// 3+ cards, or `J` with 4+ cards.
+pub(super) fn stopper_constraint(suit: Suit) -> HandConstraint {
+    let branch = |rank: Rank, min_len: u8| {
+        HandConstraint::Atom(Atom {
+            shapes: ShapeSet::from_suit_len(suit, min_len, 13),
+            ..Atom::ANY.with_cards(CardRequirement::in_suit(
+                suit,
+                Holding::EMPTY.with(rank),
+                1..=1,
+            ))
+        })
+    };
+    HandConstraint::Or(vec![
+        branch(Rank::Ace, 1),
+        branch(Rank::King, 2),
+        branch(Rank::Queen, 3),
+        branch(Rank::Jack, 4),
+    ])
 }
 
 fn explicit() -> Provenance {
@@ -262,22 +343,31 @@ fn quality_requirement(suit: Suit, word: QualityWord) -> CardRequirement {
     }
 }
 
-/// Partner's HCP range from their last node on this path, or an assumed opening-range default
-/// when there is none yet (`docs/design/06-system.md` §7.5's "unknown partner ranges default to
-/// `opening_min..=21`").
-fn partner_hcp_range(ctx: &RowContext<'_>, meta: &SystemMeta) -> (RangeInclusive<u8>, bool) {
-    match ctx.partner_last {
-        Some(node) => (node.constraint.hcp_range(), false),
-        None => (meta.strength.opening_min..=21, true),
-    }
+/// A player's known HCP range: the tracked running range, else their last node's own range;
+/// `None` when neither states anything (the full `0..=hcp_max` is "unknown", not "any").
+fn known_range(
+    tracked: Option<&RangeInclusive<u8>>,
+    last: Option<&Node>,
+    meta: &SystemMeta,
+) -> Option<RangeInclusive<u8>> {
+    let full = 0..=meta.strength.hcp_max;
+    let informative = |r: &RangeInclusive<u8>| *r.start() > 0 || *r.end() < *full.end();
+    tracked
+        .filter(|r| informative(r))
+        .cloned()
+        .or_else(|| {
+            last.map(|node| node.constraint.hcp_range())
+                .filter(|r| informative(r))
+        })
+        .filter(|r| r.start() <= r.end())
 }
 
-/// The same player's previous HCP range on this path, or an assumed full opening-to-maximum
-/// default when there is none yet.
-fn own_prev_hcp_range(ctx: &RowContext<'_>, meta: &SystemMeta) -> (RangeInclusive<u8>, bool) {
-    match ctx.own_prev {
-        Some(node) => (node.constraint.hcp_range(), false),
-        None => (meta.strength.opening_min..=meta.strength.hcp_max, true),
+/// Partner's HCP range so far on this path, or an assumed opening-range default when nothing
+/// partner said states one (`docs/design/06-system.md` §7.5).
+fn partner_hcp_range(ctx: &RowContext<'_>, meta: &SystemMeta) -> (RangeInclusive<u8>, bool) {
+    match known_range(ctx.partner_hcp.as_ref(), ctx.partner_last, meta) {
+        Some(r) => (r, false),
+        None => (meta.strength.opening_min..=21, true),
     }
 }
 
@@ -369,14 +459,30 @@ fn strength_hcp(
             (0..=hi, partner_assumed)
         }
         StrengthWord::Min | StrengthWord::Max => {
-            let (prev, assumed) = own_prev_hcp_range(ctx, meta);
-            let lo = *prev.start();
-            let hi = *prev.end();
-            let mid = lo + hi.saturating_sub(lo) / 2;
-            if matches!(word, StrengthWord::Min) {
-                (lo..=mid, assumed)
-            } else {
-                ((mid + 1).min(hi).max(lo)..=hi, assumed)
+            let is_min = matches!(word, StrengthWord::Min);
+            match known_range(ctx.own_hcp.as_ref(), ctx.own_prev, meta) {
+                Some(prev) => {
+                    let lo = *prev.start();
+                    let hi = *prev.end();
+                    let mid = lo + hi.saturating_sub(lo) / 2;
+                    if is_min {
+                        (lo..=mid, false)
+                    } else {
+                        ((mid + 1).min(hi).max(lo)..=hi, false)
+                    }
+                }
+                // §7.5: with no range of its own yet, the opener's minimum / maximum opening; for
+                // anyone else there is no base range to take a half of, so the word stays
+                // unconstrained (still flagged assumed).
+                None if ctx.role == Role::Opener => {
+                    let open = sv.opening_min;
+                    if is_min {
+                        (open..=open.saturating_add(2).min(max), true)
+                    } else {
+                        (open.saturating_add(3).min(21)..=21.min(max), true)
+                    }
+                }
+                None => (0..=max, true),
             }
         }
         StrengthWord::Weak => weak_hcp(ctx, meta),
@@ -387,12 +493,12 @@ fn strength_hcp(
             partner_assumed,
         ),
         StrengthWord::Quantitative => {
-            let lo = sv
-                .gf_total
-                .saturating_sub(partner_max)
-                .saturating_add(1)
-                .min(max);
-            let hi = sv.slam_total.saturating_sub(partner_min).min(max);
+            // An invitation to a small slam: enough for 6NT opposite partner's maximum but not
+            // opposite the minimum (`small` = small-slam total, `slam_total` + 2, i.e. 33 with the
+            // default 31 slam-interest threshold): 16..=17 over a 15-17 notrump.
+            let small = sv.slam_total.saturating_add(2);
+            let lo = small.saturating_sub(partner_max).min(max);
+            let hi = small.saturating_sub(partner_min).saturating_sub(1).min(max);
             (lo..=hi.max(lo), partner_assumed)
         }
         StrengthWord::Negative => (0..=sv.neg_max, false),
@@ -462,24 +568,51 @@ fn natural_suit_length(suit: Suit, ctx: &RowContext<'_>, meta: &SystemMeta) -> u
 /// invitational) strength range (`docs/design/06-system.md` §7.4/§7.5's `SPL` row: `suit_len[short]
 /// = 0..=1` ∧ `suit_len[agreed] ≥ conventions.splinter_support` ∧ the `GF`/`INV` formula).
 ///
-/// This does not yet parse an explicit named suit after `SPL` (`SPL m`, `SPL in the other
-/// major`): `Token::Convention` carries no suit reference, only the bare word, so the short suit
-/// is always the row's own call; see `open_issues` in the compiler's final report.
-fn resolve_splinter(mini: bool, ctx: &RowContext<'_>, meta: &SystemMeta) -> (Atom, Provenance) {
+/// The short suit is the one written after the word (`SPL ♣`, `SPL m`), else the row's own call
+/// (`SPL in the other major` is not parsed). Explicit statements elsewhere in the description
+/// win over each part (§7.5's "衝突は明示が勝つ"): an explicit HCP/points range drops the
+/// strength part, an explicit shortness drops the own-suit shortness, and an explicit length in
+/// the agreed suit drops the support part. The support part is also dropped when the agreed suit
+/// is the short suit itself (a splinter in, or over a transfer into, that suit), which would
+/// otherwise demand at most one and at least four cards in the same suit.
+fn resolve_splinter(
+    short: Option<SuitRef>,
+    mini: bool,
+    explicit: &ExplicitFacts,
+    ctx: &RowContext<'_>,
+    meta: &SystemMeta,
+) -> (Atom, Provenance) {
     let mut atom = Atom::ANY;
     let mut assumed = false;
 
-    match own_suit(ctx) {
-        Some(short) => {
+    let short_suit = match short {
+        Some(suitref) => {
+            let (shapes, prov) = suit_len_shapes(suitref, 0, 1, ctx);
             atom = atom.intersect(&Atom {
-                shapes: ShapeSet::from_suit_len(short, 0, 1),
+                shapes,
                 ..Atom::ANY
             });
+            assumed |= prov.assumed;
+            resolve_single_suit(suitref, ctx)
         }
-        None => assumed = true,
-    }
+        None if explicit.shortness => None,
+        None => match own_suit(ctx) {
+            Some(suit) => {
+                atom = atom.intersect(&Atom {
+                    shapes: ShapeSet::from_suit_len(suit, 0, 1),
+                    ..Atom::ANY
+                });
+                Some(suit)
+            }
+            None => {
+                assumed = true;
+                None
+            }
+        },
+    };
 
     match agreed_suit_or_partner_last(ctx) {
+        Some(agreed) if Some(agreed) == short_suit || explicit.lengths.contains(&agreed) => {}
         Some(agreed) => {
             atom = atom.intersect(&Atom {
                 shapes: ShapeSet::from_suit_len(agreed, meta.conventions.splinter_support, 13),
@@ -489,15 +622,39 @@ fn resolve_splinter(mini: bool, ctx: &RowContext<'_>, meta: &SystemMeta) -> (Ato
         None => assumed = true,
     }
 
-    let word = if mini {
-        StrengthWord::Invitational
-    } else {
-        StrengthWord::GameForcing
-    };
-    let (hcp, strength_assumed) = strength_hcp(word, ctx, meta);
-    atom = atom.intersect(&Atom { hcp, ..Atom::ANY });
+    if !explicit.strength {
+        let word = if mini {
+            StrengthWord::Invitational
+        } else {
+            StrengthWord::GameForcing
+        };
+        let (hcp, strength_assumed) = strength_hcp(word, ctx, meta);
+        atom = atom.intersect(&Atom { hcp, ..Atom::ANY });
+        assumed |= strength_assumed;
+    }
 
-    (atom, context_prov(assumed || strength_assumed))
+    (atom, context_prov(assumed))
+}
+
+/// A literal honour run (`KQJ109x`): every listed honour held, and at least as many cards in
+/// the suit as were written (§7.4).
+fn honour_run_atom(suit: Suit, honours: &str, cards: u8) -> Atom {
+    let mut mask = Holding::EMPTY;
+    for ch in honours.chars() {
+        let rank = match ch {
+            'A' => Rank::Ace,
+            'K' => Rank::King,
+            'Q' => Rank::Queen,
+            'J' => Rank::Jack,
+            _ => Rank::Ten,
+        };
+        mask = mask.with(rank);
+    }
+    let n = u8::try_from(honours.len()).unwrap_or(u8::MAX);
+    Atom {
+        shapes: ShapeSet::from_suit_len(suit, cards, 13),
+        ..Atom::ANY.with_cards(CardRequirement::in_suit(suit, mask, n..=n))
+    }
 }
 
 /// Resolves one token, per `docs/design/06-system.md` §7.4/§7.5. Named conventions
@@ -582,22 +739,16 @@ fn resolve_one(token: &Token, ctx: &RowContext<'_>, meta: &SystemMeta) -> (Atom,
                 context_prov(assumed),
             )
         }
-        Token::Forcing(_) | Token::NoBound => (Atom::ANY, explicit()),
-        Token::Convention(name) => match name.as_str() {
-            "SPL" | "SPLINTER" => resolve_splinter(false, ctx, meta),
-            "MINI-SPLINTER" => resolve_splinter(true, ctx, meta),
-            _ => (Atom::ANY, explicit()),
+        Token::Forcing(_) | Token::NoBound | Token::Convention(_) => (Atom::ANY, explicit()),
+        // Both need the whole description; `resolve` handles them before calling this.
+        Token::Splinter(..) | Token::Stopper(_) => (Atom::ANY, context_prov(true)),
+        Token::HonourRun(suitref, honours, cards) => match resolve_single_suit(*suitref, ctx) {
+            Some(suit) => (honour_run_atom(suit, honours, *cards), explicit()),
+            None => (Atom::ANY, context_prov(true)),
         },
         Token::Quality(suitref, word) => match resolve_single_suit(*suitref, ctx) {
             Some(suit) => (
                 Atom::ANY.with_cards(quality_requirement(suit, *word)),
-                explicit(),
-            ),
-            None => (Atom::ANY, context_prov(true)),
-        },
-        Token::Stopper(suitref) => match resolve_single_suit(*suitref, ctx) {
-            Some(suit) => (
-                Atom::ANY.with_cards(CardRequirement::in_suit(suit, Holding::top_ranks(3), 1..=3)),
                 explicit(),
             ),
             None => (Atom::ANY, context_prov(true)),
@@ -701,7 +852,26 @@ mod tests {
             their_last_bid: None,
             agreed_suit: None,
             role,
+            partner_hcp: None,
+            own_hcp: None,
         }
+    }
+
+    /// [`resolve`], for tests whose literals are all plain atoms.
+    fn resolve_atoms(
+        tokens: &[Token],
+        ctx: &RowContext<'_>,
+        meta: &SystemMeta,
+    ) -> (Vec<Atom>, Vec<Provenance>) {
+        let (literals, provs) = resolve(tokens, ctx, meta);
+        let atoms = literals
+            .into_iter()
+            .map(|l| match l {
+                HandConstraint::Atom(a) => a,
+                other => panic!("expected an atom literal, got {other:?}"),
+            })
+            .collect();
+        (atoms, provs)
     }
 
     fn recognize_one(text: &str) -> Token {
@@ -716,7 +886,7 @@ mod tests {
         let ctx = base_ctx(&binding, Call::Pass, Role::Opener);
         let meta = SystemMeta::default();
         let token = recognize_one("15-17 hcp");
-        let (atoms, provs) = resolve(&[token], &ctx, &meta);
+        let (atoms, provs) = resolve_atoms(&[token], &ctx, &meta);
         assert_eq!(atoms[0].hcp, 15..=17);
         assert_eq!(provs[0].source, Source::Explicit);
         assert!(!provs[0].assumed);
@@ -730,7 +900,7 @@ mod tests {
         ctx.partner_last = Some(&partner);
         let meta = SystemMeta::default();
         let token = recognize_one("GF");
-        let (atoms, provs) = resolve(&[token], &ctx, &meta);
+        let (atoms, provs) = resolve_atoms(&[token], &ctx, &meta);
         // gf_total (25) - partner_min (12) = 13.
         assert_eq!(atoms[0].hcp, 13..=37);
         assert_eq!(provs[0].source, Source::Context);
@@ -743,7 +913,7 @@ mod tests {
         let ctx = base_ctx(&binding, Call::Pass, Role::Responder);
         let meta = SystemMeta::default();
         let token = recognize_one("GF");
-        let (atoms, provs) = resolve(&[token], &ctx, &meta);
+        let (atoms, provs) = resolve_atoms(&[token], &ctx, &meta);
         // gf_total (25) - opening_min (12) = 13, same numeric answer here, but flagged assumed.
         assert_eq!(atoms[0].hcp, 13..=37);
         assert!(provs[0].assumed);
@@ -758,11 +928,11 @@ mod tests {
         let meta = SystemMeta::default();
 
         let min_token = recognize_one("MIN");
-        let (atoms, _) = resolve(&[min_token], &ctx, &meta);
+        let (atoms, _) = resolve_atoms(&[min_token], &ctx, &meta);
         assert_eq!(atoms[0].hcp, 12..=14);
 
         let max_token = recognize_one("MAX");
-        let (atoms, _) = resolve(&[max_token], &ctx, &meta);
+        let (atoms, _) = resolve_atoms(&[max_token], &ctx, &meta);
         assert_eq!(atoms[0].hcp, 15..=16);
     }
 
@@ -773,7 +943,7 @@ mod tests {
         let ctx = base_ctx(&binding, call, Role::Opener);
         let meta = SystemMeta::default();
         let token = recognize_one("weak");
-        let (atoms, _) = resolve(&[token], &ctx, &meta);
+        let (atoms, _) = resolve_atoms(&[token], &ctx, &meta);
         assert_eq!(atoms[0].hcp, meta.natural.weak_two.1);
     }
 
@@ -784,7 +954,7 @@ mod tests {
         ctx.hash_suit = Some(Suit::Hearts);
         let meta = SystemMeta::default();
         let token = recognize_one("5+#");
-        let (atoms, provs) = resolve(&[token], &ctx, &meta);
+        let (atoms, provs) = resolve_atoms(&[token], &ctx, &meta);
         assert_eq!(
             atoms[0].shapes,
             ShapeSet::from_suit_len(Suit::Hearts, 5, 13)
@@ -799,7 +969,7 @@ mod tests {
         let ctx = base_ctx(&binding, Call::Pass, Role::Responder);
         let meta = SystemMeta::default();
         let token = recognize_one("4+#");
-        let (atoms, provs) = resolve(&[token], &ctx, &meta);
+        let (atoms, provs) = resolve_atoms(&[token], &ctx, &meta);
         assert_eq!(atoms[0].shapes, ShapeSet::ALL);
         assert!(provs[0].assumed);
     }
@@ -811,7 +981,7 @@ mod tests {
         let ctx = base_ctx(&binding, call, Role::Opener);
         let meta = SystemMeta::default();
         let token = recognize_one("NAT");
-        let (atoms, provs) = resolve(&[token], &ctx, &meta);
+        let (atoms, provs) = resolve_atoms(&[token], &ctx, &meta);
         assert_eq!(
             atoms[0].shapes,
             ShapeSet::from_suit_len(Suit::Spades, meta.natural.open_1major_len, 13)
@@ -826,7 +996,7 @@ mod tests {
         let ctx = base_ctx(&binding, call, Role::Opener);
         let meta = SystemMeta::default();
         let token = recognize_one("NAT");
-        let (atoms, _) = resolve(&[token], &ctx, &meta);
+        let (atoms, _) = resolve_atoms(&[token], &ctx, &meta);
         assert_eq!(
             atoms[0].shapes,
             ShapeSet::from_classes(&meta.balanced.balanced)
@@ -839,7 +1009,7 @@ mod tests {
         let ctx = base_ctx(&binding, Call::Pass, Role::Responder);
         let meta = SystemMeta::default();
         let token = recognize_one("NAT");
-        let (atoms, _) = resolve(&[token], &ctx, &meta);
+        let (atoms, _) = resolve_atoms(&[token], &ctx, &meta);
         assert_eq!(atoms[0], Atom::ANY);
     }
 
@@ -849,7 +1019,7 @@ mod tests {
         let ctx = base_ctx(&binding, Call::Pass, Role::Opener);
         let meta = SystemMeta::default();
         let token = recognize_one("bal");
-        let (atoms, _) = resolve(&[token], &ctx, &meta);
+        let (atoms, _) = resolve_atoms(&[token], &ctx, &meta);
         assert_eq!(
             atoms[0].shapes,
             ShapeSet::from_classes(&meta.balanced.balanced)
@@ -863,7 +1033,7 @@ mod tests {
         let ctx = base_ctx(&binding, call, Role::Opener);
         let meta = SystemMeta::default();
         let token = recognize_one("AKQ");
-        let (atoms, provs) = resolve(&[token], &ctx, &meta);
+        let (atoms, provs) = resolve_atoms(&[token], &ctx, &meta);
         assert_eq!(atoms[0].cards.len(), 1);
         assert_eq!(provs[0].source, Source::Explicit);
     }
@@ -877,7 +1047,7 @@ mod tests {
         let meta = SystemMeta::default();
         for text in ["STAY", "F1", "unlimited"] {
             let token = recognize_one(text);
-            let (atoms, _) = resolve(&[token], &ctx, &meta);
+            let (atoms, _) = resolve_atoms(&[token], &ctx, &meta);
             assert_eq!(atoms[0], Atom::ANY, "{text} should carry no atom");
         }
     }
@@ -890,7 +1060,7 @@ mod tests {
         ctx.agreed_suit = Some(Suit::Hearts);
         let meta = SystemMeta::default();
         let token = recognize_one("SPL");
-        let (atoms, provs) = resolve(&[token], &ctx, &meta);
+        let (atoms, provs) = resolve_atoms(&[token], &ctx, &meta);
         assert_eq!(
             atoms[0].shapes,
             ShapeSet::from_suit_len(Suit::Clubs, 0, 1).intersect(ShapeSet::from_suit_len(
@@ -915,7 +1085,7 @@ mod tests {
         ctx.partner_last = Some(&partner);
         let meta = SystemMeta::default();
         let token = recognize_one("mini-splinter");
-        let (atoms, _) = resolve(&[token], &ctx, &meta);
+        let (atoms, _) = resolve_atoms(&[token], &ctx, &meta);
         // inv_total 22..=24, partner_min 12: [10, 12] (same formula as bare `INV`).
         assert_eq!(atoms[0].hcp, 10..=12);
     }
@@ -944,7 +1114,7 @@ mod tests {
         // `ctx.agreed_suit` deliberately left `None`: nothing upstream has agreed a trump yet.
         let meta = SystemMeta::default();
         let token = recognize_one("SPL");
-        let (atoms, provs) = resolve(&[token], &ctx, &meta);
+        let (atoms, provs) = resolve_atoms(&[token], &ctx, &meta);
         assert_eq!(
             atoms[0].shapes,
             ShapeSet::from_suit_len(Suit::Clubs, 0, 1).intersect(ShapeSet::from_suit_len(
@@ -971,7 +1141,7 @@ mod tests {
         ctx.partner_last = Some(&partner);
         let meta = SystemMeta::default();
         let token = recognize_one("SPL");
-        let (atoms, provs) = resolve(&[token], &ctx, &meta);
+        let (atoms, provs) = resolve_atoms(&[token], &ctx, &meta);
         // No `suit_len[agreed]` conjunct at all (just the own-suit shortness): the artificial 3H
         // is not agreeing hearts.
         assert_eq!(atoms[0].shapes, ShapeSet::from_suit_len(Suit::Clubs, 0, 1));
@@ -984,7 +1154,7 @@ mod tests {
         let ctx = base_ctx(&binding, Call::Pass, Role::Opener);
         let meta = SystemMeta::default();
         let token = recognize_one("4414");
-        let (atoms, _) = resolve(&[token], &ctx, &meta);
+        let (atoms, _) = resolve_atoms(&[token], &ctx, &meta);
         // "4414" reads spades-hearts-diamonds-clubs (S4 H4 D1 C4); `Shape::new` takes C D H S.
         assert!(
             atoms[0]

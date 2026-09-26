@@ -3,8 +3,10 @@
 //! ```ebnf
 //! description = { line } ;
 //! line        = enumitem | clauses ;
-//! enumitem    = ( LETTER ")" | DIGIT ")" | DIGIT "." ) clauses ;      (* items form an OR group *)
-//! clauses     = orgroup { ( "," | ";" | "." ) orgroup } ;              (* "," = AND, loosest *)
+//! enumitem    = ( LETTER ")" | DIGIT ")" | DIGIT "." | "(" lower ")" | "(" DIGIT+ ")" ) clauses ;
+//!                                                                     (* items form an OR group *)
+//! clauses     = orgroup { ( "," | ";" | "." ) [ "or" | "/" ] orgroup } ;
+//!               (* "," = AND, loosest; "A, B, or C" = OR of the comma run *)
 //! orgroup     = andgroup { ( "or" | "/" ) andgroup } ;
 //! andgroup    = fragment { ( "and" | "with" | "w/" | "+" | WS ) fragment } ;
 //! fragment    = [ negation ] [ hedge ] atom ;
@@ -35,6 +37,10 @@ pub struct Fragment {
     pub negated: bool,
     /// Hedged.
     pub hedged: bool,
+    /// Hedged with a *possibility* word (`may`, `might`, `possibly`, `rarely`, `occasionally`,
+    /// `(?)`): the fragment states something the hand can have, not something it must have, so
+    /// it contributes no literal (`docs/design/06-system.md` §7.6). Always implies `hedged`.
+    pub possibility: bool,
     /// The content.
     pub kind: FragmentKind,
 }
@@ -64,14 +70,49 @@ pub enum Clause {
 // ---------------------------------------------------------------------------------------------
 
 const NEGATIONS: &[&str] = &["without", "denies", "not", "no", "w/o", "non"];
-const HEDGES: &[&str] = &[
-    "normally",
-    "typically",
-    "usually",
+/// Hedges that still describe the typical hand: the literal is kept (`usually 15-17` stays
+/// 15..=17), only `soft` is recorded.
+const PROBABLE_HEDGES: &[&str] = &["normally", "typically", "usually", "likely", "mostly"];
+/// Hedges that describe a possibility or an exception (`may be 6!h`, `rarely 4!s`): the literal
+/// is dropped (the fragment is `ANY`), `soft` is still recorded.
+const POSSIBILITY_HEDGES: &[&str] = &[
+    "occasionally",
+    "sometimes",
+    "possibly",
+    "perhaps",
+    "maybe",
     "rarely",
     "might",
     "may",
     "(?)",
+];
+/// Filler verbs a hedge is commonly followed by before the actual atom (`may be 6!h`, `might have
+/// 4!s`); skipped so the hedge reaches the atom instead of hedging the filler word alone.
+const HEDGE_FILLERS: &[&str] = &["be", "have", "hold", "contain", "include"];
+/// Words after which a call-shaped token (`4!s`, `1NT`, `2!d-2!h-3!h`) names a call or an auction,
+/// not a suit length (`TRF to 4!s`, `over 1NT`, `qualify for 1!d`).
+const CALL_REF_WORDS: &[&str] = &[
+    "to",
+    "over",
+    "after",
+    "for",
+    "than",
+    "via",
+    "opposite",
+    "like",
+    "see",
+    "from",
+    "into",
+    "then",
+    "by",
+    "bid",
+    "rebid",
+    "opening",
+    "open",
+    "bids",
+    "else",
+    "otherwise",
+    "instead",
 ];
 const AND_WORDS: &[&str] = &["and", "with", "w/"];
 const OR_WORDS: &[&str] = &["or"];
@@ -98,6 +139,105 @@ fn strip_ci_word<'a>(s: &'a str, word: &str) -> Option<&'a str> {
         Some(&b) if !is_word_byte(b) => Some(tail),
         _ => None,
     }
+}
+
+/// The length of a call-shaped token at the start of `s` (`4♠`, `1NT`, `2N`, `3♦`), `None` when
+/// `s` does not start with one. Levels are `1..=7`; the token must end at a word boundary.
+fn call_token_len(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let level = *bytes.first()?;
+    if !(b'1'..=b'7').contains(&level) {
+        return None;
+    }
+    let rest = &s[1..];
+    let strain_len = if let Some(ch) = rest.chars().next().filter(|c| "♣♦♥♠".contains(*c)) {
+        ch.len_utf8()
+    } else if rest.len() >= 2 && rest.as_bytes()[..2].eq_ignore_ascii_case(b"nt") {
+        2
+    } else if rest
+        .as_bytes()
+        .first()
+        .is_some_and(|b| b.eq_ignore_ascii_case(&b'n'))
+    {
+        1
+    } else {
+        return None;
+    };
+    let end = 1 + strain_len;
+    match s.as_bytes().get(end) {
+        Some(&b) if is_word_byte(b) || b == b'+' || b == b'=' => None,
+        _ => Some(end),
+    }
+}
+
+/// `(level, strain rank)` of a call token, for the ascending-auction test.
+fn call_token_key(tok: &str) -> (u8, u8) {
+    let level = tok.as_bytes()[0] - b'0';
+    let strain = match tok[1..].chars().next() {
+        Some('♣') => 0,
+        Some('♦') => 1,
+        Some('♥') => 2,
+        Some('♠') => 3,
+        _ => 4,
+    };
+    (level, strain)
+}
+
+/// A chain of call tokens joined by `-` or `/` at the start of `s`: returns the byte length and
+/// the tokens.
+fn call_chain(s: &str) -> Option<(usize, Vec<&str>)> {
+    let first = call_token_len(s)?;
+    let mut toks = vec![&s[..first]];
+    let mut i = first;
+    while let Some(b'-' | b'/') = s.as_bytes().get(i) {
+        let Some(l) = call_token_len(&s[i + 1..]) else {
+            break;
+        };
+        toks.push(&s[i + 1..i + 1 + l]);
+        i += 1 + l;
+    }
+    Some((i, toks))
+}
+
+/// A `-`-joined chain of call tokens that reads as an auction (`1♥-1♠-2♣`, `2♦-2♥-3♥`), not as
+/// the `5♥-4♠` length shorthand: strictly ascending, and either three or more calls, a notrump
+/// call, a level change, or a same-level pair at the one or two level (no hand holds one or two
+/// cards in each of two suits as a meaningful length statement).
+fn is_auction_chain(s: &str, toks: &[&str]) -> bool {
+    if toks.len() < 2 || s.contains('/') {
+        return false;
+    }
+    let keys: Vec<(u8, u8)> = toks.iter().map(|t| call_token_key(t)).collect();
+    if !keys.windows(2).all(|w| w[0] < w[1]) {
+        return false;
+    }
+    toks.len() >= 3 || keys.iter().any(|k| k.1 == 4) || keys[0].0 != keys[1].0 || keys[0].0 <= 2
+}
+
+/// The last whole word of `before` (the text preceding the current fragment, which must end in
+/// whitespace), lower-cased.
+fn last_word(before: &str) -> Option<String> {
+    let trimmed = before.trim_end_matches(' ');
+    if trimmed.len() == before.len() {
+        return None;
+    }
+    let word_start = trimmed
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| c.is_ascii_alphabetic())
+        .last()
+        .map(|(i, _)| i)?;
+    Some(trimmed[word_start..].to_ascii_lowercase())
+}
+
+/// A call reference at the start of `s`, given the text `before` it on the same andgroup: a
+/// call-shaped token (or `-`/`/` chain of them) after a [`CALL_REF_WORDS`] word, or an ascending
+/// `-` chain that reads as an auction. Returns the byte length to consume as one opaque
+/// `Unrecognized` fragment.
+fn call_reference_len(before: &str, s: &str) -> Option<usize> {
+    let (len, toks) = call_chain(s)?;
+    let after_word = last_word(before).is_some_and(|w| CALL_REF_WORDS.contains(&w.as_str()));
+    (after_word || is_auction_chain(&s[..len], &toks)).then_some(len)
 }
 
 fn strip_any<'a>(s: &'a str, words: &[&str]) -> Option<&'a str> {
@@ -177,22 +317,58 @@ fn peek_connective(s: &str) -> Connective {
 /// One fragment: an optional negation, an optional hedge, then a recognised token or a run of
 /// unrecognised words up to the next separator.
 pub fn fragment(input: &mut &str) -> ModalResult<Fragment> {
+    fragment_after(input, "")
+}
+
+/// [`fragment`], given the text `before` the fragment on the same andgroup (used to tell a call
+/// reference such as `TRF to 4♠` from a suit length).
+fn fragment_after(input: &mut &str, before: &str) -> ModalResult<Fragment> {
     let start_text: &str = input;
     let mut s: &str = input;
 
     let mut negated = false;
-    if let Some(rest) = strip_any(s, NEGATIONS) {
-        negated = true;
-        s = rest.trim_start_matches(' ');
+    // A whole phrase that happens to start with a negation or hedge word (`might be strong`) is
+    // tried first, before any prefix is stripped off it.
+    let whole_phrase = tokens::recognize(s).is_some();
+    if !whole_phrase {
+        if let Some(rest) = strip_any(s, NEGATIONS) {
+            negated = true;
+            s = rest.trim_start_matches(' ');
+            // `non-forcing` / `non-natural`: the hyphen belongs to the negation.
+            if let Some(rest) = s.strip_prefix('-') {
+                s = rest;
+            }
+        }
     }
     let mut hedged = false;
-    if let Some(rest) = strip_any(s, HEDGES) {
-        hedged = true;
-        s = rest.trim_start_matches(' ');
+    let mut possibility = false;
+    if tokens::recognize(s).is_none() {
+        // `(may be 6♥ occasionally)`: a hedge inside an opening parenthesis still hedges.
+        let t = match s.strip_prefix('(') {
+            Some(t) if !s.starts_with("(?)") => t,
+            _ => s,
+        };
+        let hit = if let Some(rest) = strip_any(t, PROBABLE_HEDGES) {
+            Some((rest, false))
+        } else {
+            strip_any(t, POSSIBILITY_HEDGES).map(|rest| (rest, true))
+        };
+        if let Some((rest, maybe)) = hit {
+            hedged = true;
+            possibility = maybe;
+            let mut rest = rest.trim_start_matches(' ');
+            if let Some(r) = strip_any(rest, HEDGE_FILLERS) {
+                rest = r.trim_start_matches(' ');
+            }
+            s = rest;
+        }
     }
 
     let consumed_prefix = start_text.len() - s.len();
-    let kind = if let Some(len) = consume_see_reference(s) {
+    let kind = if let Some(len) = call_reference_len(before, s) {
+        *input = &start_text[consumed_prefix + len..];
+        FragmentKind::Unrecognized(s[..len].to_string())
+    } else if let Some(len) = consume_see_reference(s) {
         // A cross-reference to another auction/opening (`see 1!c-1!d-2!d-2NT`, `see the 2M
         // opening`), which `docs/design/06-system.md` §7.4 classifies as wholly `v2`/unrecognised
         // prose, not a hand description at all. Handled before the normal word-by-word
@@ -222,6 +398,7 @@ pub fn fragment(input: &mut &str) -> ModalResult<Fragment> {
         span,
         negated,
         hedged,
+        possibility,
         kind,
     })
 }
@@ -321,14 +498,20 @@ fn parse_andgroup(s: &str, base: usize, frags: &mut Vec<Fragment>) -> (Clause, u
         let mut rest = &s[pos..];
         let before = rest.len();
         let idx = frags.len();
-        let mut frag = fragment
-            .parse_next(&mut rest)
+        let mut frag = fragment_after(&mut rest, &s[..pos])
             .expect("fragment() never fails: it falls back to Unrecognized");
         let consumed = before - rest.len();
         let abs_start = (base + pos) as u16;
         frag.span = (abs_start, abs_start + frag.span.1);
-        frags.push(frag);
-        items.push(Clause::Leaf(idx));
+        // A zero-length fragment (nothing consumable before a connective, e.g. an `or` right at
+        // the start of a clause) carries no text at all: never record it, since an empty
+        // `Unrecognized` leaf inside an `Or` would collapse that whole group to `ANY`.
+        let empty =
+            consumed == 0 && matches!(&frag.kind, FragmentKind::Unrecognized(t) if t.is_empty());
+        if !empty {
+            frags.push(frag);
+            items.push(Clause::Leaf(idx));
+        }
         pos += consumed;
 
         match peek_connective(&s[pos..]) {
@@ -344,17 +527,27 @@ fn parse_andgroup(s: &str, base: usize, frags: &mut Vec<Fragment>) -> (Clause, u
     (clause, pos)
 }
 
+/// `true` for the empty `And` an andgroup of only zero-length fragments produces.
+fn is_empty_clause(c: &Clause) -> bool {
+    matches!(c, Clause::And(v) if v.is_empty())
+}
+
 fn parse_orgroup(s: &str, base: usize, frags: &mut Vec<Fragment>) -> (Clause, usize) {
     let mut items = Vec::new();
     let mut pos = 0usize;
     loop {
         let (item, consumed) = parse_andgroup(&s[pos..], base + pos, frags);
-        items.push(item);
+        if !is_empty_clause(&item) {
+            items.push(item);
+        }
         pos += consumed;
         match peek_connective(&s[pos..]) {
             Connective::Or(n) => pos += n,
             _ => break,
         }
+    }
+    if items.is_empty() {
+        return (Clause::And(Vec::new()), pos);
     }
     let clause = if items.len() == 1 {
         items.pop().expect("just checked len == 1")
@@ -364,25 +557,56 @@ fn parse_orgroup(s: &str, base: usize, frags: &mut Vec<Fragment>) -> (Clause, us
     (clause, pos)
 }
 
+/// `clauses` (§7.3), with the list reading of a trailing `, or`: in `A, B, or C` (and `A, or B`)
+/// the `or` after a comma turns the whole comma-separated run it ends into one `Or` of its items,
+/// instead of `A ∧ B ∧ (∅ ∨ C)`. A run is the items since the last `.`/`;` (sentence break) or
+/// since the previous `, or` item; items of a run with no such `or` are `And`ed as before.
 fn parse_clauses(s: &str, base: usize, frags: &mut Vec<Fragment>) -> (Clause, usize) {
     let mut items = Vec::new();
+    let mut run: Vec<Clause> = Vec::new();
+    let mut run_is_or = false;
+    let flush = |run: &mut Vec<Clause>, run_is_or: &mut bool, items: &mut Vec<Clause>| {
+        if *run_is_or && run.len() > 1 {
+            items.push(Clause::Or(core::mem::take(run)));
+        } else {
+            items.append(run);
+        }
+        *run_is_or = false;
+    };
     let mut pos = 0usize;
+    // A clause cannot start with a disjunction: a stray leading `or` has nothing to join.
+    if let Connective::Or(n) = peek_connective(s) {
+        pos += n;
+    }
     loop {
         let (item, consumed) = parse_orgroup(&s[pos..], base + pos, frags);
-        items.push(item);
+        if !is_empty_clause(&item) {
+            run.push(item);
+        }
         pos += consumed;
         match peek_connective(&s[pos..]) {
             Connective::Clause(n) => {
+                let sentence_break = !s[pos..].trim_start_matches(' ').starts_with(',');
                 pos += n;
                 // Skip a single space after the separator (kept for symmetry; whitespace was
                 // already collapsed by `normalize.rs`).
                 if s[pos..].starts_with(' ') {
                     pos += 1;
                 }
+                if let Connective::Or(k) = peek_connective(&s[pos..]) {
+                    // `A, B, or C`: the run so far and the next item are alternatives.
+                    pos += k;
+                    run_is_or = true;
+                } else if sentence_break || run_is_or {
+                    // A sentence break ends the run; so does a plain comma after the `or` item
+                    // (`A, or B, 12-14 hcp` is `(A ∨ B) ∧ 12-14`).
+                    flush(&mut run, &mut run_is_or, &mut items);
+                }
             }
             _ => break,
         }
     }
+    flush(&mut run, &mut run_is_or, &mut items);
     let clause = if items.len() == 1 {
         items.pop().expect("just checked len == 1")
     } else {
@@ -421,6 +645,7 @@ fn finish_line(
         span: (start, start + trimmed.len() as u16),
         negated: false,
         hedged: false,
+        possibility: false,
         kind: FragmentKind::Unrecognized(trimmed.to_string()),
     });
     match clause {
@@ -432,10 +657,27 @@ fn finish_line(
     }
 }
 
-/// Strips a leading enumeration marker (`a)`, `1)`, `1.`) from one line, if present.
+/// Strips a leading enumeration marker (`a)`, `1)`, `1.`, `(a)`, `(1)`) from one line, if
+/// present. The parenthesised letter form only takes a lower-case letter, so `(R)` (relay) and
+/// `(?)` stay atoms.
 fn strip_enum_marker(line: &str) -> Option<&str> {
     let bytes = line.as_bytes();
     if bytes.is_empty() {
+        return None;
+    }
+    // `"(" LETTER ")"` / `"(" DIGIT+ ")"`
+    if bytes[0] == b'(' {
+        let mut i = 1usize;
+        if bytes.get(1).is_some_and(u8::is_ascii_lowercase) {
+            i = 2;
+        } else {
+            while bytes.get(i).is_some_and(u8::is_ascii_digit) {
+                i += 1;
+            }
+        }
+        if i > 1 && bytes.get(i) == Some(&b')') {
+            return Some(line[i + 1..].trim_start_matches(' '));
+        }
         return None;
     }
     // `LETTER ")"`

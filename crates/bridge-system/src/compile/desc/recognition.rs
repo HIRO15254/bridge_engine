@@ -183,7 +183,10 @@ mod tests {
 
     #[test]
     fn bare_convention_is_not_constraint_bearing() {
-        let (_, r) = compile("SPL");
+        let (_, r) = compile("STAY");
         assert!(!r.constraint_bearing);
+        // `SPL` is not a bare convention: it builds shortness/support/strength literals.
+        let (_, r) = compile("SPL");
+        assert!(r.constraint_bearing);
     }
 }
