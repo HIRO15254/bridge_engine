@@ -105,20 +105,48 @@ pub fn advise(
 
 ## 4. 評価方法
 
-- **単体テスト** (`tests/`、非 `#[ignore]`、本レーンで実行できるもの): 契約/リーダー導出、エラー系 (未完了、パスアウト、手の枚数違い)、集計の数式 (手計算値との一致)、同値グループ化、決定性 (同じ seed で同一の `LeadAdvice`、`parallel` feature 有無で同一)。DDS を使わないダミーの `DoubleDummy` 実装 (`tests/common/mod.rs` の `FakeDd`: リーダーの手だけから決まる決定的なルールで守備トリック数を返す。配牌の残り 39 枚に依存しないので、期待値が厳密に手計算できる) を使う。オークションとシステムは `bridge-system` を dev-dependency にして `bridge-bidding/tests/common/mod.rs` と同じ手法 (`SystemBuilder` 相当) で手組みする — `bridge_system::compile` は本レーンの基点でまだ `todo!()` である。
+- **単体テスト** (`tests/`、非 `#[ignore]`、本レーンで実行できるもの): 契約/リーダー導出、エラー系 (未完了、パスアウト、手の枚数違い)、集計の数式 (手計算値との一致)、同値グループ化、決定性 (同じ seed で同一の `LeadAdvice`、`parallel` feature 有無で同一)。DDS を使わないダミーの `DoubleDummy` 実装 (`tests/common/mod.rs` の `FakeDd`: リーダーの手だけから決まる決定的なルールで守備トリック数を返す。配牌の残り 39 枚に依存しないので、期待値が厳密に手計算できる) を使う。オークションとシステムは `bridge-system` を dev-dependency にして `bridge-bidding/tests/common/mod.rs` と同じ手法 (`SystemBuilder` 相当) で手組みする (単体テストは特定システムの入札表に依存させないため。実システムは下のコーパス評価で使う)。
 - **DDS smoke テスト** (`--features dds`、非 `#[ignore]`、少数サンプル): 固定の配牌とオークションで `bridge::dd::dds()` を呼び、実際に解ける (`None` ならスキップ、ベンダリング済みなら solve する) ことを確認する。
-- **コーパス評価ハーネス** (`tests/corpus_eval.rs`、`#[ignore]`、`--features dds`): `corpus/data/pbn` 以下を再帰的に探索したファイルをパス順にソートし、その順で「完了したオークション・完全な配牌・パスアウトでない契約」を持つボードを先頭から 100 件選ぶ (決定的だがシードは使わない。現状のコーパスでは 1 ファイル分に収まるため、複数イベントにまたがる層化抽出は未決事項に残す)。各ボードで:
+- **コーパス評価ハーネス** (`tests/corpus_eval.rs`、`#[ignore]`、`--features dds`): `corpus/data/pbn` 以下を再帰的に探索したファイルをパス順にソートし、その順で「完了したオークション・完全な配牌・パスアウトでない契約」を持つボードを先頭から 100 件選ぶ (決定的だがシードは使わない。現状のコーパスでは `OptimumPlayTable.pbn` の 1 件と Bermuda Bowl 2019 決勝の 4 ファイル (32 + 32 + 32 + 3 件) になり、複数イベントにまたがる層化抽出は未決事項に残す)。各ボードで:
   - `truth`: 実際の配牌に対する `dd.lead_scores` の全 13 枚のスコアと、その最大値を達成するカード集合。
-  - `advice`: `systems/sayc.bml` (`BRIDGE_SYSTEMS_DIR` 環境変数、既定はワークスペース直下の `systems/`) を `bridge_system::compile` (facade 経由 `bridge::system::compile`) でコンパイルし、`bridge_sample::ConstraintProposal` を使った `advise(...)` (サンプル数は環境変数 `LEAD_SAMPLES`、既定 100)。`bridge_system::compile` と `ConstraintProposal` は他レーンの担当で本レーン基点では `todo!()` なので、このテストは **今はコンパイルだけを保証し、実行はしない** (`#[ignore]` に加え、実装が揃うまでは統合担当が回す)。環境変数 `LEAD_UNIFORM=1` は本評価 (`advice`) のサンプリングだけを `ConstraintProposal` から `UniformProposal` に差し替える (ビディング尤度による重み付けはそのまま残る)。ベースライン (a) はこのフラグと無関係に、`advise` と同じ集計パイプライン (`advise_with_context`、`#[doc(hidden)]`) を `UniformProposal` かつ `bidding: None` (解釈は空、`ANY` 相当) で呼んで毎回別途計算する。
+  - `advice`: `systems/sayc/sayc.bml` (`BRIDGE_SYSTEMS_DIR` 環境変数、既定はワークスペース直下の `systems/`) を `bridge_system::compile` (facade 経由 `bridge::system::compile`) でコンパイルし、`bridge_sample::ConstraintProposal` を使った `advise(...)` (サンプル数は環境変数 `LEAD_SAMPLES`、既定 100)。release で数分かかるため `#[ignore]` (実行方法は §4.1)。環境変数 `LEAD_UNIFORM=1` は本評価 (`advice`) のサンプリングだけを `ConstraintProposal` から `UniformProposal` に差し替える (ビディング尤度による重み付けはそのまま残る)。ベースライン (a) はこのフラグと無関係に、`advise` と同じ集計パイプライン (`advise_with_context`、`#[doc(hidden)]`) を `UniformProposal` かつ `bidding: None` (解釈は空、`ANY` 相当) で呼んで毎回別途計算する。
   - `hit`: 上位 3 (グループの `equivalents` を含めて数える) に `truth` の要素が 1 つでも入っているか。同じ判定関数 (`hits_truth`) をベースライン (a) にも使う。
   - `tricks_lost`: 上位 1 のカードが**実際の配牌**で達成する守備トリック数 (`truth.all_scores` から引く) と `truth.max` の差。サンプルにわたる推定平均 (`mean_defence_tricks`) ではなく、選んだカードの実測値を使う (推定バイアスではなく選択の結果を測るため)。`mean_estimation_error_top1` として `|mean_defence_tricks − 実測値|` も別途報告する。
-  - 出力 `target/lead_report.json` (ワークスペース直下の `target/`、`CARGO_MANIFEST_DIR` からの相対ではない): 上位 1/3 命中率 (全ボードと、DD 同値クラスが 2 つ以上ある「非自明」ボードに絞った版の両方)、上位 1 の選択が最適から失う実測の平均 DD トリック数、平均推定誤差、平均 ESS 比、ボードあたりの時間、ベースライン (a) 無ビディング情報 (`UniformProposal`、解釈なし、`advise` と同じグループ化と命中判定) と (b) ランダム選択 (リーダーの**カード**13 枚から `k` 枚を無作為に選んだときに最適カードを 1 枚以上含む超幾何確率 `1 − C(13−m, k) / C(13, k)`、`m` は `truth` の最適カード枚数。DD 同値クラスの個数ではない — このコーパスは 1 ボードあたり最大 3 クラスしかなく、クラス単位で 3 つ選べば常に 1.0 になってしまうため) の 2 つ。
+  - ボードごとの結果は `target/lead_eval/board_NNN.json` に書き、実行のたびに同じ設定 (サンプル数・提案・seed・選択ボード数) で作られた記録すべてから `target/lead_report.json` を作り直す。`LEAD_BOARDS=a..b` (選択ボードの半開区間) で分割実行でき、`boards_with_records == boards_selected` になれば完全。実配牌の DD 解析や `advise` がエラー (`NoSamples` など) になったボードはパニックせず、理由付きで `skipped` に記録して命中率の分母から外す。
+  - 出力 `target/lead_report.json` (ワークスペース直下の `target/`、`CARGO_MANIFEST_DIR` からの相対ではない): 上位 1/3 命中率 (全ボードと、DD 同値クラスが 2 つ以上ある「非自明」ボードに絞った版の両方)、上位 1 の選択が最適から失う実測の平均 DD トリック数、平均推定誤差、ESS の統計 (平均・中央値・最小・最大、ESS/n ≥ 0.5 のボード数、ESS < 5 のボード数)、ボードあたりの時間、スキップしたボードと理由、ベースライン (a) 無ビディング情報 (`UniformProposal`、解釈なし、`advise` と同じグループ化と命中判定) と (b) ランダム選択 (リーダーの**カード**13 枚から `k` 枚を無作為に選んだときに最適カードを 1 枚以上含む超幾何確率 `1 − C(13−m, k) / C(13, k)`、`m` は `truth` の最適カード枚数。DD 同値クラスの個数ではない — このコーパスは 1 ボードあたり最大 3 クラスしかなく、クラス単位で 3 つ選べば常に 1.0 になってしまうため) の 2 つ。
+
+### 4.1 測定結果 (2026-09-27、`wip/p6int`)
+
+実行: `cargo test -p bridge-lead --release --features dds,parallel --test corpus_eval -- --ignored --nocapture` (10 コアの macOS、他のワークフローと同時実行)。SAYC (`systems/sayc/sayc.bml`) を 4 席共通に使い、`ConstraintProposal`、seed 0。3 回の実行で結果はビット一致 (決定性)。
+
+| 項目 | n = 100 (既定、`target/lead_report.json`) | n = 500 (参考、`target/lead_report_n500.json`) |
+| --- | --- | --- |
+| 評価ボード / スキップ | 99 / 1 | 99 / 1 |
+| 非自明ボード (DD 同値クラス ≥ 2) | 70 | 70 |
+| 上位 1 命中率 (全体 / 非自明) | **0.758** / 0.657 | 0.798 / 0.714 |
+| 上位 3 命中率 (全体 / 非自明) | **0.939** / 0.914 | 0.929 / 0.900 |
+| 上位 1 の実測損失 (平均 DD トリック) | 0.283 | 0.242 |
+| 上位 1 の推定誤差 (平均 \|推定 − 実測\|) | 1.52 | 1.33 |
+| ベースライン (a) 無ビディング 上位 1 / 3 | 0.808 / 0.899 | 0.838 / 0.909 |
+| ベースライン (b) ランダム 上位 1 / 3 | 0.655 / 0.879 | 0.655 / 0.879 |
+| ESS 平均 / 中央値 / 最小 / 最大 | 6.94 / 4.01 / 1.00 / 39.0 | 29.1 / 12.2 / 1.00 / 181 |
+| ESS/n 平均 / 中央値 | 0.069 / 0.040 | 0.058 / 0.024 |
+| ESS/n ≥ 0.5 のボード / ESS < 5 のボード | 0 / 60 | 0 / 24 |
+| 実行時間 (100 ボード、ベースライン (a) 込み) | 134.7 s (最良、3 回: 134.7 / 148.7 / 187.2 s、loadavg 8.65 / 18.18 / 14.32) | 317.2 s + 360.4 s (2 分割、loadavg 17.67 / 23.50) |
+
+スキップ 1 件は `bermuda-bowl-2019-final/65946.pbn` のボード 23 (4H、ゲーム 13): `ConstraintProposal` が 100 回 (n = 500 では 500 回) の提案をすべて棄却し `LeadError::NoSamples`。リーダー自身の手が SAYC の解釈と両立しない (§3 手順 5 の想定どおりの経路)。
+
+所見:
+
+- 上位 3 は DD 最善を 93.9% で含み、ベースライン (a) 89.9%、(b) 87.9% を上回る。ただし上位 1 は 75.8% で (a) の 80.8% を**下回る**。原因は ESS の低さ: ビディング尤度の重み (`sequence_log_likelihood`) で ESS 中央値が n = 100 で 4.0 (ESS/n 0.04) しかなく、少数の配牌が集計を支配する。ESS ≥ 20 のボード (n = 100 で 8 件、n = 500 で 38 件) に限ると上位 1 は 0.875 / 0.895 で (a) と同等、ESS < 5 のボードでは (a) より 5〜8 ポイント低い。フェーズ 5.3 の ESS 未達 (`12-roadmap.md` §6、09-sample.md §10.2: `interpret` と方策 `call_distribution` の不整合) がそのまま効いている。
+- n を 5 倍にすると上位 1 は 4 ポイント上がるが上位 3 は 1 ポイント下がり、ESS/n はむしろ下がる (重みの裾が重い)。サンプル数ではなく提案と目標の乖離が律速。
+- ランダム選択でも上位 3 が 0.879 になるのは、このコーパスでは最善カードが平均して多い (同値カードが多い) ため。命中率は必ずベースラインとの差で読む。
 
 ## 5. 未決事項
 
 | # | 項目 | 現状 |
 | --- | --- | --- |
-| 1 | 上位 3 命中率の閾値 X (`12-roadmap.md` §7、6.2) | コーパス評価が実行できてから測って決める (他レーンの `compile`/`ConstraintProposal` 待ち) |
+| 1 | 上位 3 命中率の閾値 X (`12-roadmap.md` §7、6.2) | 測定済み (§4.1: n = 100 で 0.939、ベースライン (a) 0.899、(b) 0.879)。X は未決定。候補は「上位 3 ≥ 0.90 かつベースライン (a) 以上」。上位 1 が (a) を下回る問題は ESS (フェーズ 5.3) の解決待ち |
 | 2 | `LeadScoring::Score` の得点表を `bridge-core` に上げて共有するか | 現状は `bridge-lead` 内に複製 (非公開)。他クレートが得点計算を必要にした時点で `bridge-core` へ移す |
 | 3 | 真の IMP/Matchpoints (他契約との比較) | 対象外。他契約の DD 値の総当たりが要り、フェーズ 6 の範囲を超える |
 | 4 | `LeadOptions.sample.seed` を無視して `opts.seed` で上書きする API は分かりにくいという指摘 | 現状の決定。単一の `seed` を露出したいという設計上の理由を doc コメントに明記する |

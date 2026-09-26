@@ -1,13 +1,12 @@
 //! Test-only helpers shared by `bridge-lead`'s integration tests.
 //!
-//! `bridge_system::compile` (BML expansion) is `todo!()` on this lane's base (another lane owns
-//! it), so — exactly as `crates/bridge-bidding/tests/common/mod.rs` does — every [`Table`] here
-//! is hand-built from `bridge_system::ir`/`trie` types rather than compiled from BML source.
-//! `bridge_system::natural::{classify, infer, candidates}` are already implemented (not
-//! `todo!()`), so an empty [`SystemIR`] is enough: every call in the auction falls straight
-//! through Step A to natural inference (`07-bidding.md` §4.1 step 6), which is all these tests
-//! need — they only exercise the sampling/aggregation pipeline, not any particular system's
-//! bidding table.
+//! So that these tests do not depend on any particular system's bidding table (the real SAYC
+//! system is exercised by `corpus_eval.rs`), every [`Table`] here is hand-built from
+//! `bridge_system::ir`/`trie` types rather than compiled from BML source, exactly as
+//! `crates/bridge-bidding/tests/common/mod.rs` does. An empty [`SystemIR`] is enough: every call
+//! in the auction falls straight through Step A to natural inference (`07-bidding.md` §4.1
+//! step 6), which is all these tests need, since they only exercise the sampling/aggregation
+//! pipeline.
 #![allow(dead_code)]
 
 use std::sync::Arc;

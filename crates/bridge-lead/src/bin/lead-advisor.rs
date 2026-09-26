@@ -8,13 +8,11 @@
 //!              [--samples N] [--seed N] [--system PATH] [--uniform]
 //! ```
 //!
-//! `--system` defaults to `systems/sayc.bml` (relative to the current directory, i.e. run from
+//! `--system` defaults to `systems/sayc/sayc.bml` (relative to the current directory, i.e. run from
 //! the workspace root, matching `systems/README.md`'s own examples); `--uniform` swaps
 //! [`bridge_sample::ConstraintProposal`] (the default) for [`bridge_sample::UniformProposal`].
 //! Both proposals still need a compiled system, because [`bridge_bidding::interpret`] and the
-//! bidding-likelihood importance weights read it regardless of which proposal draws the deals;
-//! `bridge_system::compile` is `todo!()` on this lane's base (`docs/design/14-lead.md` §4), so
-//! running this binary before that lands will panic there, not here.
+//! bidding-likelihood importance weights read it regardless of which proposal draws the deals.
 
 use std::process::ExitCode;
 use std::sync::Arc;
