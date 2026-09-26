@@ -12,7 +12,7 @@ cargo xtask dds vendor
 | Tag | `v2.9.0` (2018) |
 | License | Apache-2.0 (Bo Haglund, Soren Hein) |
 | Layout expected by `build.rs` | `vendor/dds-2.9.0/src/*.cpp`, `vendor/dds-2.9.0/src/*.h`, `vendor/dds-2.9.0/include/dll.h`, `vendor/dds-2.9.0/include/portab.h`, `vendor/dds-2.9.0/LICENSE` |
-| Local patches | none |
+| Local patches | none. `src/ffi_guard.cpp` reimplements `SetResources` (`bdds_SetResources`) without `System::GetHardware`, whose failure path `exit(1)`s the process; the vendored `Init.cpp` is unchanged (docs/design/10-dds.md §7.3) |
 | Archive SHA-256 | recorded by `cargo xtask dds vendor` in `vendor/SHA256SUMS` |
 
 Why 2.9.0 and not DDS3 (v3.x): DDS3 builds only with Bazel and a hermetic LLVM toolchain, and

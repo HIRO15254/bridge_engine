@@ -9,8 +9,10 @@
 //! (`SolveAllChunksBin`, `CalcAllTables`, `CalcDDtable`, `AnalyseAllPlaysBin`) are not reentrant
 //! with each other *or* with a slot-holding call, since they also drive DDS's own
 //! per-thread-index state internally, so a bulk call takes every slot for its duration. DDS is
-//! initialised once (`SetResources`) with explicit limits, because 2.9's own memory probing
-//! shells out to `sysctl` / `free` and can fail in sandboxes.
+//! initialised once with explicit limits through `ffi_guard.cpp`'s reimplementation of
+//! `SetResources` that skips DDS's hardware probe: 2.9's probe shells out to `sysctl` / `free`,
+//! and when it fails (sandboxes, stripped `PATH`, Linux hosts without swap) upstream sizes DDS
+//! to zero threads and the next call terminates the process with `exit(1)`.
 #![warn(missing_docs)]
 
 #[cfg(target_arch = "wasm32")]
@@ -28,9 +30,15 @@ use bridge_core::{Card, Deal, Holding, PlayHistory, Seat, Strain, Vulnerability}
 pub struct DdsConfig {
     /// Threads (0 = DDS decides).
     pub max_threads: u32,
-    /// Memory in MB (0 = DDS decides; the default passes `threads × 95` explicitly).
+    /// Memory in MB (0 = `threads × 95`). DDS gives each thread at least 30 MB after adding
+    /// 30% headroom, so values below [`MIN_MEMORY_MB`] are raised to it (with a warning) to keep
+    /// at least one thread; fewer MB than `30 × threads / 1.3` limits the thread count.
     pub max_memory_mb: u32,
 }
+
+/// The smallest `max_memory_mb` DDS can run with: one small thread needs 30 MB, and DDS budgets
+/// `1.3 × max_memory_mb` (`ceil(30 / 1.3) = 24`). Smaller values are raised to this.
+pub const MIN_MEMORY_MB: u32 = 24;
 
 /// Initialises DDS once; later calls with a different config log a warning and keep the first.
 pub fn init(cfg: DdsConfig) -> Result<(), DdsError> {
@@ -436,19 +444,41 @@ mod backend {
             } else {
                 std::thread::available_parallelism().map_or(1, |n| n.get() as u32)
             };
-            // R6: DDS 2.9's own memory probe (`System::GetHardware`) shells out to
-            // `sysctl`/`free`, which can fail in a sandbox; pass an explicit value rather than
-            // leaving it to DDS's own guess.
+            // R6: DDS 2.9's own `SetResources` always runs its hardware probe
+            // (`System::GetHardware`, which shells out to `sysctl`/`free`) and caps memory at
+            // what it reads, so a failed probe means zero threads and an `exit(1)` on the next
+            // call whatever the caller passes. `bdds_SetResources` is a copy without the probe:
+            // the core count comes from here and the memory is always explicit.
             let memory_mb = if cfg.max_memory_mb > 0 {
                 cfg.max_memory_mb
             } else {
                 requested_threads.saturating_mul(95)
             };
-            // SAFETY: `SetResources` takes two plain integers and has no other precondition;
-            // the surrounding `OnceLock` guarantees exactly one call for the process, before
-            // any other DDS entry point runs.
-            let rc =
-                unsafe { sys::bdds_SetResources(memory_mb as c_int, cfg.max_threads as c_int) };
+            // Below `MIN_MEMORY_MB` DDS would size itself to zero threads (upstream then calls
+            // `exit(1)`; `bdds_SetResources` also clamps, this makes it explicit and logged).
+            let memory_mb = if memory_mb < crate::MIN_MEMORY_MB {
+                tracing::warn!(
+                    requested = memory_mb,
+                    used = crate::MIN_MEMORY_MB,
+                    "DDS max_memory_mb too small for one thread; raising it"
+                );
+                crate::MIN_MEMORY_MB
+            } else {
+                memory_mb
+            };
+            let ncores = std::thread::available_parallelism().map_or(1, |n| n.get());
+            let clamp = |v: u32| c_int::try_from(v).unwrap_or(c_int::MAX);
+            // SAFETY: `bdds_SetResources` takes three plain integers and has no other
+            // precondition (it clamps each to a usable value); the surrounding `OnceLock`
+            // guarantees exactly one call for the process, before any other DDS entry point
+            // runs.
+            let rc = unsafe {
+                sys::bdds_SetResources(
+                    clamp(memory_mb),
+                    clamp(cfg.max_threads),
+                    c_int::try_from(ncores).unwrap_or(c_int::MAX),
+                )
+            };
             if rc != sys::RETURN_NO_FAULT {
                 // Only a C++ exception (an allocation failure while sizing DDS's per-thread
                 // memory) gets here. Nothing better to do than report it: DDS keeps whatever

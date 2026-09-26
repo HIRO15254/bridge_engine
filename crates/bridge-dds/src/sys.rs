@@ -183,6 +183,9 @@ pub struct DDSInfo {
 
 // NOTE: 32-bit Windows uses __stdcall for these; unsupported and untested (see docs/design/10-dds.md).
 unsafe extern "C" {
+    // `SetMaxThreads` and `SetResources` run DDS's hardware probe (`popen` of `sysctl`/`free`);
+    // when it fails, DDS sizes itself to zero threads and its next call `exit(1)`s the process.
+    // The safe wrapper never calls them; it uses `bdds_SetResources` below.
     pub fn SetMaxThreads(userThreads: c_int);
     pub fn SetResources(maxMemoryMB: c_int, maxThreads: c_int);
     pub fn SetThreading(code: c_int) -> c_int;
@@ -233,7 +236,9 @@ unsafe extern "C" {
     // `RETURN_UNKNOWN_FAULT` instead of unwinding into Rust (undefined behaviour through an
     // `extern "C"` declaration). The safe wrapper in `lib.rs` calls only these (plus
     // `ErrorMessage`, which cannot throw: a `switch` of `strcpy`s).
-    pub fn bdds_SetResources(maxMemoryMB: c_int, maxThreads: c_int) -> c_int;
+    /// Not a wrapper of `SetResources` but a reimplementation without its hardware probe
+    /// (see `ffi_guard.cpp`): `ncores` replaces the probed core count.
+    pub fn bdds_SetResources(maxMemoryMB: c_int, maxThreads: c_int, ncores: c_int) -> c_int;
     pub fn bdds_GetDDSInfo(info: *mut DDSInfo) -> c_int;
     pub fn bdds_SolveBoard(
         dl: deal,

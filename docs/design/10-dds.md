@@ -378,7 +378,7 @@ pub enum DdsError {
 
 ### 7.2 スレッドスロットと Mutex の規則
 
-1. `init` は `OnceLock<Runtime>` (非公開) で 1 回だけ `SetResources(max_memory_mb, max_threads)` を呼び、続けて `GetDDSInfo` で `noOfThreads` を読んでスロット数とする。`SetMaxThreads` は使わない (DDS3 では no-op)。`init` を呼ばずにラッパー関数を呼んだ場合は `DdsConfig::default()` で暗黙に初期化する。
+1. `init` は `OnceLock<Runtime>` (非公開) で 1 回だけ `bdds_SetResources(max_memory_mb, max_threads, ncores)` (`ffi_guard.cpp` による、ハードウェア探索を除いた `SetResources` の再実装。§7.3) を呼び、続けて `GetDDSInfo` で `noOfThreads` を読んでスロット数とする。`SetMaxThreads` は使わない (DDS3 では no-op)。`init` を呼ばずにラッパー関数を呼んだ場合は `DdsConfig::default()` で暗黙に初期化する。
 2. `SolveBoard` と `AnalysePlayBin` は `thrId` (0..threads) ごとに独立した作業領域を使うので、空きスロットを 1 つ貸し出す間だけ並行して呼べる。空きが無ければ `Condvar` で待つ (非ブロッキング版は持たない)。
 3. `SolveAllChunksBin`、`CalcAllTables`、`CalcDDtable`、`AnalyseAllPlaysBin` は 2.9 のドキュメント通り非再入である「だけ」ではなく、バルク呼び出し自身も DDS 内部でこの同じ `thrId` 空間 (`track[]` などの per-thread-index 状態) を使って複数スレッドを回す。そのためバルク呼び出しは `slots` の全スロットを (空くまで `Condvar` で待って) 取ってから DDS を呼び、呼び終えたら全部返す。単に別の `Mutex` でバルク呼び出し同士だけを排他しても、バルク呼び出し中に外部から `solve_board`/`analyse_play` が同じ `thrId` に触れてしまい、DDS 内部状態が壊れる (`Moves::GetTrickData` の `"Sum N is not four"` や `ABsearch.cpp` のアサート落ち。`--include-ignored` で `masterdd_matches_upstream` と `list100_matches_upstream` が同一プロセス内で並行実行されたときに実際に踏んだ)。`tests/concurrency.rs` の `concurrent_bulk_and_slot_calls_do_not_corrupt_each_other` はこの組み合わせの恒久的な回帰テスト (元の再現手順はその場限りのリポプロで、コミットされたテストは無かった)。`acquire_slot` はバルク呼び出しが待機/保持中は新規スロットを渡さない (`batch_waiting` フラグ) ので、バルク呼び出し側が `solve_board`/`analyse_play` の絶え間ない要求で永久に待たされることもない。バルク呼び出しは DDS 内部で全スレッドを使うため、同時に `solve_board` を走らせても速くならない。
 4. `FreeMemory()` はプロセス寿命の間呼ばない (ドキュメントに明記)。
@@ -387,7 +387,18 @@ pub enum DdsError {
 
 ### 7.3 `popen` メモリ探索の緩和 (R6)
 
-2.9 の `System.cpp` は搭載メモリを macOS で `popen("sysctl -n hw.memsize")`、Linux で `popen("free -k …")` により調べる。サンドボックスやコンテナではこれが失敗し、既定値が不適切になりうる。対策として `DdsConfig::default()` (`max_memory_mb = 0`) は 0 を DDS に渡さず、`threads × 95` MB を明示して `SetResources` に渡す。`info()` の `threads` と `system` で DDS が実際に何を設定したかを確認でき、`tests/concurrency.rs` はこれを検査する。
+2.9 の `System.cpp` は搭載メモリを macOS で `popen("sysctl -n hw.memsize")`、Linux で `popen("free -k | tail -n+3 | head -n1 | awk '{print $NF}'")` により調べる (`System::GetHardware`)。上流の `SetResources` は引数の `maxMemoryMB` にかかわらず **必ず** この探索を行い、メモリ上限を `min(1.3 × maxMemoryMB, 0.7 × 探索値)` とする。探索が失敗して 0 を読むと (サンドボックスや `PATH` に `sysctl` が無い macOS、最近の procps で上のパイプラインが Swap 行を読んでしまう swap 無しの Linux、`free` が無いイメージ)、スレッド数 0 で `Memory` が作られ、`InitDebugFiles` の `Memory::GetPtr(0)` が `Memory::GetPtr: 0 vs. 0` を出力して `exit(1)` する。`popen` 自体が失敗すると `fscanf(NULL)` で落ちる。いずれも C++ 内部でプロセスを終了させるので、`noexcept` ガードでも Rust 側でも捕まえられない。`max_memory_mb ≤ 23` も `floor(1.3 × M / 30) = 0` スレッドで同じ経路に入る (フェーズ 5 レビューで発見。以前の文書は「明示値を渡せば探索を避けられる」としていたが誤り)。
+
+対策 (ベンダリングしたソースは無改変のまま):
+
+- `ffi_guard.cpp` の `bdds_SetResources(maxMemoryMB, maxThreads, ncores)` は `Init.cpp` の `SetResources` の本体を写したもので、`GetHardware` を呼ばない。コア数は Rust 側の `std::thread::available_parallelism()` を渡し、メモリ上限は `1.3 × maxMemoryMB` (32 ビットでは 1800 MB 上限) で、探索値による 70% 上限は無くなる。さらにメモリ上限を 1 スレッド分 (`THREADMEM_SMALL_MAX_MB` = 30 MB) 以上に、スレッド数を 1 以上に切り上げる。`sysdep`/`memory`/`scheduler`/`threadMgr`/`_initialized` と `InitDebugFiles`/`InitConstants` は `Init.cpp` の非 static な大域なので `extern` 宣言で足りる。
+- `Runtime::new` は `max_memory_mb` を `MIN_MEMORY_MB` (= 24 = ceil(30 / 1.3)) 未満なら 24 に切り上げ、`tracing::warn!` を出す。`DdsConfig::default()` (`max_memory_mb = 0`) は従来どおり `threads × 95` MB を明示する。
+- 生の `sys::SetResources`/`SetMaxThreads` は探索を行うので安全ラッパーからは呼ばない (`sys.rs` に注記)。このビルドでは `dds.cpp` のライブラリ初期化 (`DllMain`/`USES_CONSTRUCTOR`) も有効にならないので、探索はどこからも走らない。
+- 回帰テスト `tests/fatal_paths.rs` は自分のテストバイナリを子プロセスとして起動し、`PATH=/nonexistent` (探索失敗) と `max_memory_mb` = 1/20/23/24 で `init` → `info` → `calc_dd_table` が正常終了することを確かめる (修正前は子プロセスが終了コード 1 で落ちるのを確認済み)。
+
+残る `exit(1)` は `TransTableS.cpp`/`TransTableL.cpp` の `malloc`/`calloc` 失敗時 (メモリ枯渇) だけで、設定から到達する経路ではない (Rust 自身もメモリ確保失敗では abort する)。
+
+`info()` の `threads` と `system` で DDS が実際に何を設定したかを確認でき、`tests/concurrency.rs` はこれを検査する。
 
 ### 7.4 5.5–5.7 の健全性レビューで直したもの
 
