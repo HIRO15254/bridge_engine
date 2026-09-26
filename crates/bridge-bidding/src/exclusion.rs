@@ -38,6 +38,7 @@ use bridge_system::exclusive::{
     ExclusivePiece, PieceSummary, branches_of, is_empty_or, subtract, subtract_tree,
 };
 use bridge_system::{Forcing, NaturalCandidate, NaturalInference, PartnerContext};
+use smallvec::SmallVec;
 
 use crate::choose::{Position, enumerate_position, ranked_legal};
 use crate::memo;
@@ -102,7 +103,7 @@ impl MirrorPiece<'_> {
 #[derive(Clone, Debug)]
 pub(crate) struct CallMirror<'a> {
     /// The pieces (pairwise disjoint as exact regions, except `ANY`, which covers everything).
-    pub(crate) pieces: Vec<MirrorPiece<'a>>,
+    pub(crate) pieces: SmallVec<[MirrorPiece<'a>; 4]>,
     /// How the call resolves: `Exact`/`Partial` at an on-system position where the call has a
     /// system reading (or is a shadowed system member), else `Natural`.
     pub(crate) kind: ResolutionKind,
@@ -749,7 +750,7 @@ pub(crate) fn mirror_call<'t>(
     let n = pos.n_legal.max(1) as f64;
     let eps = f64::from(spec.policy.epsilon);
     let delta = f64::from(spec.policy.deviation);
-    let mut pieces: Vec<MirrorPiece<'t>> = Vec::new();
+    let mut pieces: SmallVec<[MirrorPiece<'t>; 4]> = SmallVec::new();
     let mut kind = ResolutionKind::Natural;
     let mut node: Option<NodeId> = None;
     let mut text = String::new();
@@ -759,10 +760,9 @@ pub(crate) fn mirror_call<'t>(
     let on_system = pos.on_system();
     let (nat_w, nat_none_w) = if on_system {
         let raw_sys = (1.0 - eps) * (1.0 - delta);
+        // The call's reading (`Reader::reading`) is computed lazily, only when a later natural
+        // position needs it as partner context and its natural data is not memoised yet.
         let x = system_x(&pos, call);
-        if let Some(r) = x.as_ref().and_then(system_reading) {
-            reader.memo[j] = Some(r);
-        }
         let is_member = pos.children.iter().any(|&(c, _, legal)| legal && c == call);
         if is_member || x.is_some() {
             kind = pos.system_kind();
@@ -860,13 +860,6 @@ pub(crate) fn mirror_call<'t>(
             spec.implicit_pass,
             || reader.partner_context(j),
         );
-        if !on_system && reader.memo[j].is_none() {
-            let r = match np.ranked.iter().find(|c| c.call == call) {
-                Some(cand) => natural_reading(cand),
-                None => Reading::default(),
-            };
-            reader.memo[j] = Some(r);
-        }
         let regions = np.regions(call);
         let piece = |role: PieceRole, raw: f64, p: &NaturalPiece| MirrorPiece {
             role,
@@ -878,7 +871,11 @@ pub(crate) fn mirror_call<'t>(
             } else {
                 None
             },
-            grid: if spec.membership { p.grid.clone() } else { None },
+            grid: if spec.membership {
+                p.grid.clone()
+            } else {
+                None
+            },
             summary: Cow::Owned(p.summary.clone()),
         };
         if let Some(y) = &regions.y {
