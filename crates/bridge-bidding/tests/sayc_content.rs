@@ -537,4 +537,14 @@ mod sayc_comp {
             ("1NT", "AQ3.KJ3.AQ32.K32", "X"),
         ]);
     }
+    /// dropped.json #19 (minor single raise): 1NT (6--9) and the single raise of a minor
+    /// (6--10) shared a range and 1NT came first, so a 6--9 hand with a fit never raised.
+    #[test]
+    fn minor_single_raise_is_reachable() {
+        check(&[
+            ("1C P", "Q3.963.64.KJ9763", "2C"),
+            ("1D P", "T85..K6432.KT965", "2D"),
+            ("1D P", "J62.T64.872.KQT9", "1NT"),
+        ]);
+    }
 }

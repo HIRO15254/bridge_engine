@@ -107,7 +107,7 @@ never reach these tables.
 
 1H-1S-2C-
 P = 6--9 hcp, not 3+!h, not 5+!s
-2D = {prio:-1} F
+2D = {prio:-1} F, 12+ hcp
 2H = 6--9 hcp, 3+!h
 2S = 6--9 hcp, 5+!s
 2N = 10--11 hcp, not 3+!h, not 5+!s
