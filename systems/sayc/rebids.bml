@@ -28,9 +28,11 @@ never reach these tables.
 2S = {prio:4} 12--15 hcp, 4+!s
 3S = {prio:4} 16--18 hcp, 4+!s
 4S = {prio:4} 19--21 hcp, 4+!s
+  #PASTE after-chain
 2H = {prio:3} 12--15 hcp, 6+!h
 3H = {prio:3} 16--18 hcp, 6+!h
 4H = {prio:3} 19--21 hcp, 6+!h
+  #PASTE after-chain
 1N = {prio:2} 12--14 hcp, bal
 2N = {prio:2} 18--19 hcp, bal
 2C = 12--18 hcp, 4+!c
@@ -50,12 +52,14 @@ never reach these tables.
 2C = 12--15 hcp, 5+!c
 3C = 16--18 hcp, 6+!c
 3N = 19--21 hcp
+  #PASTE after-chain
 
 1C-1H-
 #COPY rebid-1c-1h
 2H = {prio:4} 12--15 hcp, 4+!h
 3H = {prio:4} 16--18 hcp, 4+!h
 4H = {prio:4} 19--21 hcp, 4+!h
+  #PASTE after-chain
 1S = {prio:3} 12--18 hcp, 4+!s
 2S = {prio:3} 19--21 hcp, 4+!s
 1N = {prio:2} 12--14 hcp, bal
@@ -64,6 +68,7 @@ never reach these tables.
 2C = 12--15 hcp, 5+!c
 3C = 16--18 hcp, 6+!c
 3N = 19--21 hcp
+  #PASTE after-chain
 #ENDCOPY
 
 1C-1S-
@@ -71,6 +76,7 @@ never reach these tables.
 2S = {prio:4} 12--15 hcp, 4+!s
 3S = {prio:4} 16--18 hcp, 4+!s
 4S = {prio:4} 19--21 hcp, 4+!s
+  #PASTE after-chain
 1N = {prio:2} 12--14 hcp, bal
 2N = {prio:2} 18--19 hcp, bal
 2D = {prio:1} 16--21 hcp, 4+!d
@@ -78,12 +84,14 @@ never reach these tables.
 2C = 12--15 hcp, 5+!c
 3C = 16--18 hcp, 6+!c
 3N = 19--21 hcp
+  #PASTE after-chain
 #ENDCOPY
 
 1D-1H-
 2H = {prio:4} 12--15 hcp, 4+!h
 3H = {prio:4} 16--18 hcp, 4+!h
 4H = {prio:4} 19--21 hcp, 4+!h
+  #PASTE after-chain
 1S = {prio:3} 12--18 hcp, 4+!s
 2S = {prio:3} 19--21 hcp, 4+!s
 1N = {prio:2} 12--14 hcp, bal
@@ -93,12 +101,14 @@ never reach these tables.
 2D = 12--15 hcp, 5+!d
 3D = 16--18 hcp, 6+!d
 3N = 19--21 hcp
+  #PASTE after-chain
 
 1D-1S-
 #COPY rebid-1d-1s
 2S = {prio:4} 12--15 hcp, 4+!s
 3S = {prio:4} 16--18 hcp, 4+!s
 4S = {prio:4} 19--21 hcp, 4+!s
+  #PASTE after-chain
 1N = {prio:2} 12--14 hcp, bal
 2N = {prio:2} 18--19 hcp, bal
 2H = {prio:1} 16--21 hcp, 4+!h
@@ -107,6 +117,7 @@ never reach these tables.
 2D = 12--15 hcp, 5+!d
 3D = 16--18 hcp, 6+!d
 3N = 19--21 hcp
+  #PASTE after-chain
 #ENDCOPY
 
 ** Responder's second call after a one-level response
@@ -141,7 +152,9 @@ too little to act, responder passes (NOTES.md #C1).
 
 1H-1S-1N-
 4S = {prio:3} 13+ hcp, 6+!s
+  #PASTE after-chain
 4H = {prio:3} 13+ hcp, 3+!h
+  #PASTE after-chain
 3H = {prio:2} INV, 11--12 hcp, 3+!h
 3S = {prio:2} INV, 11--12 hcp, 6+!s
 2N = {prio:1} INV, 11--12 hcp
@@ -152,6 +165,7 @@ too little to act, responder passes (NOTES.md #C1).
 3C = F, 13+ hcp, 5+!c
 3D = F, 13+ hcp, 5+!d
 3N = 13+ hcp
+  #PASTE after-chain
 
 1C-1D-1N-
 4D = {prio:3} 13+ hcp, 6+!d
@@ -163,9 +177,11 @@ too little to act, responder passes (NOTES.md #C1).
 2H = F, 13+ hcp, 4+!h
 2S = F, 13+ hcp, 4+!s
 3N = 13+ hcp
+  #PASTE after-chain
 
 1C-1H-1N-
 4H = {prio:3} 13+ hcp, 6+!h
+  #PASTE after-chain
 3H = {prio:2} INV, 11--12 hcp, 6+!h
 2N = {prio:1} INV, 11--12 hcp
 2H = {prio:1} NF, 0--10 hcp, 6+!h
@@ -175,9 +191,11 @@ too little to act, responder passes (NOTES.md #C1).
 2S = F, 13+ hcp, 4+!s
 3D = F, 13+ hcp, 5+!d
 3N = 13+ hcp
+  #PASTE after-chain
 
 1C-1S-1N-
 4S = {prio:3} 13+ hcp, 6+!s
+  #PASTE after-chain
 3S = {prio:2} INV, 11--12 hcp, 6+!s
 2N = {prio:1} INV, 11--12 hcp
 2S = {prio:1} NF, 0--10 hcp, 6+!s
@@ -187,9 +205,11 @@ too little to act, responder passes (NOTES.md #C1).
 2H = NF, 0--10 hcp, 4+!h, 5+!s
 3D = F, 13+ hcp, 5+!d
 3N = 13+ hcp
+  #PASTE after-chain
 
 1D-1H-1N-
 4H = {prio:3} 13+ hcp, 6+!h
+  #PASTE after-chain
 3H = {prio:2} INV, 11--12 hcp, 6+!h
 2N = {prio:1} INV, 11--12 hcp
 2H = {prio:1} NF, 0--10 hcp, 6+!h
@@ -199,9 +219,11 @@ too little to act, responder passes (NOTES.md #C1).
 2S = F, 13+ hcp, 4+!s
 3C = F, 13+ hcp, 5+!c
 3N = 13+ hcp
+  #PASTE after-chain
 
 1D-1S-1N-
 4S = {prio:3} 13+ hcp, 6+!s
+  #PASTE after-chain
 3S = {prio:2} INV, 11--12 hcp, 6+!s
 2N = {prio:1} INV, 11--12 hcp
 2S = {prio:1} NF, 0--10 hcp, 6+!s
@@ -211,6 +233,7 @@ too little to act, responder passes (NOTES.md #C1).
 2H = NF, 0--10 hcp, 4+!h, 5+!s
 3C = F, 13+ hcp, 5+!c
 3N = 13+ hcp
+  #PASTE after-chain
 
 ** After a two-over-one response
 
@@ -227,6 +250,7 @@ suit is the minimum with nothing else to show (NOTES.md #C1).
 2D = {prio:2} 12--21 hcp, 4+!d
 2N = {prio:1} 12--14 hcp, bal
 3N = {prio:1} 18--19 hcp, bal
+  #PASTE after-chain
 3H = {prio:1} 16--21 hcp, 6+!h
 2H = 12--15 hcp
 
@@ -236,6 +260,7 @@ suit is the minimum with nothing else to show (NOTES.md #C1).
 3C = {prio:2} 12--21 hcp, 4+!c
 2N = {prio:1} 12--14 hcp, bal
 3N = {prio:1} 18--19 hcp, bal
+  #PASTE after-chain
 3H = {prio:1} 16--21 hcp, 6+!h
 2H = 12--15 hcp
 
@@ -245,6 +270,7 @@ suit is the minimum with nothing else to show (NOTES.md #C1).
 2D = {prio:2} 12--21 hcp, 4+!d
 2N = {prio:1} 12--14 hcp, bal
 3N = {prio:1} 18--19 hcp, bal
+  #PASTE after-chain
 3S = {prio:1} 16--21 hcp, 6+!s
 2S = 12--15 hcp
 
@@ -254,6 +280,7 @@ suit is the minimum with nothing else to show (NOTES.md #C1).
 3C = {prio:2} 12--21 hcp, 4+!c
 2N = {prio:1} 12--14 hcp, bal
 3N = {prio:1} 18--19 hcp, bal
+  #PASTE after-chain
 3S = {prio:1} 16--21 hcp, 6+!s
 2S = 12--15 hcp
 
@@ -263,6 +290,7 @@ suit is the minimum with nothing else to show (NOTES.md #C1).
 3D = {prio:2} 12--21 hcp, 4+!d
 2N = {prio:1} 12--14 hcp, bal
 3N = {prio:1} 18--19 hcp, bal
+  #PASTE after-chain
 3S = {prio:1} 16--21 hcp, 6+!s
 2S = 12--15 hcp
 
@@ -272,6 +300,7 @@ suit is the minimum with nothing else to show (NOTES.md #C1).
 2S = {prio:2} 16--21 hcp, 4+!s
 2N = {prio:1} 12--14 hcp, bal
 3N = {prio:1} 18--19 hcp, bal
+  #PASTE after-chain
 3D = {prio:1} 16--21 hcp, 6+!d
 2D = 12--15 hcp
 
@@ -292,12 +321,14 @@ with a minimum and makes a slam try with more.
 1S-2C-2H-3D-
 3H = {prio:3} 5+!h
 3N = {prio:2} stopper in !d
+  #PASTE after-chain
 4C = {prio:1} 3+!c
 3S = 12+ hcp
 
 1S-2C-2H-3S-
 4C = {prio:1} 16+ hcp
 4S = 12--15 hcp
+  #PASTE after-chain
 
 ** After a raise or a notrump response
 
@@ -313,16 +344,20 @@ showing extra values.
 1H-2H-
 3H = 16--18 hcp
 4H = 19--21 hcp
+  #PASTE after-chain
 
 1S-2S-
 3S = 16--18 hcp
 4S = 19--21 hcp
+  #PASTE after-chain
 
 1H-3H-
 4H = 14+ hcp
+  #PASTE after-chain
 
 1S-3S-
 4S = 14+ hcp
+  #PASTE after-chain
 
 1H-2N-
 3C = {prio:3} 0--1!c
@@ -334,6 +369,7 @@ showing extra values.
 3H = 18+ hcp
 3N = 15--17 hcp
 4H = 12--14 hcp
+  #PASTE after-chain
 
 1S-2N-
 3C = {prio:3} 0--1!c
@@ -345,11 +381,13 @@ showing extra values.
 3S = 18+ hcp
 3N = 15--17 hcp
 4S = 12--14 hcp
+  #PASTE after-chain
 
 1H-1N-
 2S = {prio:2} 16--21 hcp, 4+!s
 3H = {prio:1} 16--18 hcp, 6+!h
 4H = {prio:1} 19--21 hcp, 6+!h
+  #PASTE after-chain
 2N = {prio:1} 18--19 hcp, bal
 2C = 12--18 hcp, 4+!c, not bal
 2D = 12--18 hcp, 4+!d, not bal
@@ -360,6 +398,7 @@ showing extra values.
 1S-1N-
 3S = {prio:1} 16--18 hcp, 6+!s
 4S = {prio:1} 19--21 hcp, 6+!s
+  #PASTE after-chain
 2N = {prio:1} 18--19 hcp, bal
 2H = 12--18 hcp, 4+!h
 2C = 12--18 hcp, 4+!c, not bal

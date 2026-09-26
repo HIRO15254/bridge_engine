@@ -144,6 +144,7 @@ a minor) rather than passing a forcing bid.
   6N = 11+ hcp
     P = unlimited
 3N = 25+ hcp and bal or 25+ hcp and 0--4!s and 0--4!h and 0--4!d and 0--4!c
+  #PASTE after-chain
 2H = F, 5+!h
   3H = F, 3+!h
     4H = unlimited
@@ -231,12 +232,14 @@ D = 4+#
 D = 4+#
 3Y = {prio:1} 5+#
 3N = unlimited
+  #PASTE after-chain
 
 2C-2D-(3C)-
 3D = 5+!d
 3H = 5+!h
 3S = 5+!s
 3N = unlimited
+  #PASTE after-chain
 
 2C-2D-(bid)-
 D = unlimited

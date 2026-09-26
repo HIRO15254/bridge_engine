@@ -230,6 +230,7 @@ expand to anything).
 D = 8+ hcp, 4+#
 2N = 8--9 hcp, stopper
 3N = 10--15 hcp, stopper
+  #PASTE after-chain
 
 A new suit at the 3 level is forcing (10+, 5+ cards; NOTES.md #C8) and is
 preferred to the suitless cuebid; with less, responder competes at the 2 level
@@ -254,6 +255,7 @@ his own at the 3 level; anything else passes (NOTES.md "Notrump lane" #N3).
 1N-(3X)-
 3Y = {prio:1} 8+ hcp, 5+#
 3N = 10+ hcp, stopper
+  #PASTE after-chain
 D = 8+ hcp
 
 1N-(4X)-
@@ -435,6 +437,7 @@ a completed transfer, a further overcall is doubled with game values.
 3H = {prio:1} !TRF, 5+!s
   3S = unlimited
 3N = 4--10 hcp
+  #PASTE after-chain
 R = 11+ hcp
 
 2N-3D-3H-(bid)-
@@ -449,6 +452,7 @@ D = 4+ hcp
 
 2N-(3X)-
 3N = 4+ hcp, stopper
+  #PASTE after-chain
 D = 4+ hcp
 
 2N-(4X)-

@@ -1,0 +1,703 @@
+* After our pass: continuations
+
+Phase 4 (NOTES.md #P3). Wherever one of the tables of the other files leaves a
+player to pass (the table's implicit pass, NOTES.md #C2), the auction used to
+leave the system at the partner's next turn: our own pass is a trie edge only
+where a history line names it. This file names it. Its default, pasted below
+for every table that has no pass of its own, is the simplest reading of a
+partnership that has stopped: after one of us passes, and whatever the
+opponents do next, the partner passes too (`pass-chain`, `passes.bml`). Only
+the frequent opener's reopening after an overcall and responder's pass is
+written out with real calls.
+
+** Opener's reopening after an overcall and responder's pass
+
+Responder's pass over a one-level overcall is often a trap pass with length in
+their suit (a negative double would have shown the other suits), so opener,
+short in their suit, reopens with a double; opener rebids a six-card suit;
+otherwise opener passes. After the reopening double responder passes for
+penalty with four cards in their suit, bids notrump with a stopper, and
+otherwise returns to opener's suit, which carries no requirement of its own.
+The partnership then stops.
+
+#CUT reopen-answer
+P = {prio:3} 6+ hcp, 4+\Y
+  #PASTE after-chain
+3N = {prio:2} 13+ hcp, stopper
+  #PASTE after-chain
+2N = {prio:2} 11--12 hcp, stopper
+  #PASTE after-chain
+\R = {prio:-1} any hand
+  #PASTE after-chain
+#ENDCUT
+
+1X-(1Y)-P-(P)-
+D = {prio:2} 12+ hcp, 0--2Y
+2X = {prio:1} 12--16 hcp, 6+X
+  #PASTE after-chain
+#PASTE pass-chain
+
+1X-(1Y)-P-(P)-D-(P)-
+1N = {prio:2} 6--10 hcp, stopper
+  #PASTE after-chain
+#PASTE reopen-answer \Y=Y \R=2X
+
+1X-(1Y)-P-(P)-D-(any)-
+#PASTE pass-chain
+
+1Y-(2X)-P-(P)-
+D = {prio:2} 12+ hcp, 0--2X
+2Y = {prio:1} 12--16 hcp, 6+Y
+  #PASTE after-chain
+#PASTE pass-chain
+
+1Y-(2X)-P-(P)-D-(P)-
+#PASTE reopen-answer \Y=X \R=2Y
+
+1Y-(2X)-P-(P)-D-(any)-
+#PASTE pass-chain
+
+1X-(2Y)-P-(P)-
+D = {prio:2} 12+ hcp, 0--2Y
+3X = {prio:1} 12--16 hcp, 6+X
+  #PASTE after-chain
+#PASTE pass-chain
+
+1X-(2Y)-P-(P)-D-(P)-
+#PASTE reopen-answer \Y=Y \R=3X
+
+1X-(2Y)-P-(P)-D-(any)-
+#PASTE pass-chain
+
+** The partnership stops after a pass
+
+1N-P-(any)-
+#PASTE pass-chain
+
+1N-(D)-P-(any)-
+#PASTE pass-chain
+
+1N-(2X)-P-(any)-
+#PASTE pass-chain
+
+1N-(2D)-P-(any)-
+#PASTE pass-chain
+
+1N-(2H)-P-(any)-
+#PASTE pass-chain
+
+1N-(2S)-P-(any)-
+#PASTE pass-chain
+
+1N-(3X)-P-(any)-
+#PASTE pass-chain
+
+1N-(4X)-P-(any)-
+#PASTE pass-chain
+
+1N-(bid)-P-(any)-
+#PASTE pass-chain
+
+1N-2C-(D)-P-(any)-
+#PASTE pass-chain
+
+1N-2C-(2D)-P-(any)-
+#PASTE pass-chain
+
+1N-2C-(2H)-P-(any)-
+#PASTE pass-chain
+
+1N-2C-(2S)-P-(any)-
+#PASTE pass-chain
+
+1N-2D-(D)-P-(any)-
+#PASTE pass-chain
+
+1N-2D-(2S)-P-(any)-
+#PASTE pass-chain
+
+1N-2D-(3C)-P-(any)-
+#PASTE pass-chain
+
+1N-2D-(3D)-P-(any)-
+#PASTE pass-chain
+
+1N-2H-(D)-P-(any)-
+#PASTE pass-chain
+
+1N-2H-(3C)-P-(any)-
+#PASTE pass-chain
+
+1N-2H-(3D)-P-(any)-
+#PASTE pass-chain
+
+1N-2H-(3H)-P-(any)-
+#PASTE pass-chain
+
+1N-2D-(2H)-P-(any)-
+#PASTE pass-chain
+
+1N-2H-(2N)-P-(any)-
+#PASTE pass-chain
+
+1N-2D-(2N)-P-(any)-
+#PASTE pass-chain
+
+1N-2H-(2S)-P-(any)-
+#PASTE pass-chain
+
+1N-2D-2H-(bid)-P-(any)-
+#PASTE pass-chain
+
+1N-2H-2S-(bid)-P-(any)-
+#PASTE pass-chain
+
+1N-2N-(bid)-P-(any)-
+#PASTE pass-chain
+
+2N-P-(any)-
+#PASTE pass-chain
+
+2N-(D)-P-(any)-
+#PASTE pass-chain
+
+2N-3D-3H-(bid)-P-(any)-
+#PASTE pass-chain
+
+2N-3C-(3D)-P-(any)-
+#PASTE pass-chain
+
+2N-3H-3S-(bid)-P-(any)-
+#PASTE pass-chain
+
+2N-(3X)-P-(any)-
+#PASTE pass-chain
+
+2N-(4X)-P-(any)-
+#PASTE pass-chain
+
+2N-(bid)-P-(any)-
+#PASTE pass-chain
+
+3N-P-(any)-
+#PASTE pass-chain
+
+2D-P-(any)-
+#PASTE pass-chain
+
+2H-P-(any)-
+#PASTE pass-chain
+
+2S-P-(any)-
+#PASTE pass-chain
+
+2D-(D)-P-(any)-
+#PASTE pass-chain
+
+2H-(D)-P-(any)-
+#PASTE pass-chain
+
+2S-(D)-P-(any)-
+#PASTE pass-chain
+
+2D-(2HS)-P-(any)-
+#PASTE pass-chain
+
+2D-(3C)-P-(any)-
+#PASTE pass-chain
+
+2H-(2S)-P-(any)-
+#PASTE pass-chain
+
+2H-(3CD)-P-(any)-
+#PASTE pass-chain
+
+2S-(3CDH)-P-(any)-
+#PASTE pass-chain
+
+2D-(bid)-P-(any)-
+#PASTE pass-chain
+
+2H-(bid)-P-(any)-
+#PASTE pass-chain
+
+2S-(bid)-P-(any)-
+#PASTE pass-chain
+
+2D-2N-(bid)-P-(any)-
+#PASTE pass-chain
+
+2H-2N-(bid)-P-(any)-
+#PASTE pass-chain
+
+2S-2N-(bid)-P-(any)-
+#PASTE pass-chain
+
+2D-2H-(bid)-P-(any)-
+#PASTE pass-chain
+
+2D-2S-(bid)-P-(any)-
+#PASTE pass-chain
+
+2D-3C-(bid)-P-(any)-
+#PASTE pass-chain
+
+2H-2S-(bid)-P-(any)-
+#PASTE pass-chain
+
+2H-3C-(bid)-P-(any)-
+#PASTE pass-chain
+
+2H-3D-(bid)-P-(any)-
+#PASTE pass-chain
+
+2S-3C-(bid)-P-(any)-
+#PASTE pass-chain
+
+2S-3D-(bid)-P-(any)-
+#PASTE pass-chain
+
+2S-3H-(bid)-P-(any)-
+#PASTE pass-chain
+
+3C-P-(any)-
+#PASTE pass-chain
+
+3D-P-(any)-
+#PASTE pass-chain
+
+3H-P-(any)-
+#PASTE pass-chain
+
+3S-P-(any)-
+#PASTE pass-chain
+
+4C-P-(any)-
+#PASTE pass-chain
+
+4D-P-(any)-
+#PASTE pass-chain
+
+4H-P-(any)-
+#PASTE pass-chain
+
+4S-P-(any)-
+#PASTE pass-chain
+
+3C-(bid)-P-(any)-
+#PASTE pass-chain
+
+3D-(bid)-P-(any)-
+#PASTE pass-chain
+
+3H-(bid)-P-(any)-
+#PASTE pass-chain
+
+3S-(bid)-P-(any)-
+#PASTE pass-chain
+
+4C-(bid)-P-(any)-
+#PASTE pass-chain
+
+4D-(bid)-P-(any)-
+#PASTE pass-chain
+
+4H-(bid)-P-(any)-
+#PASTE pass-chain
+
+4S-(bid)-P-(any)-
+#PASTE pass-chain
+
+1H-P-(any)-
+#PASTE pass-chain
+
+1S-P-(any)-
+#PASTE pass-chain
+
+1C-P-(any)-
+#PASTE pass-chain
+
+1D-P-(any)-
+#PASTE pass-chain
+
+1H-1S-P-(any)-
+#PASTE pass-chain
+
+1C-1D-P-(any)-
+#PASTE pass-chain
+
+1C-1H-P-(any)-
+#PASTE pass-chain
+
+1C-1S-P-(any)-
+#PASTE pass-chain
+
+1D-1H-P-(any)-
+#PASTE pass-chain
+
+1D-1S-P-(any)-
+#PASTE pass-chain
+
+1H-1S-2C-2D-P-(any)-
+#PASTE pass-chain
+
+1H-1S-1N-P-(any)-
+#PASTE pass-chain
+
+1C-1D-1N-P-(any)-
+#PASTE pass-chain
+
+1C-1H-1N-P-(any)-
+#PASTE pass-chain
+
+1C-1S-1N-P-(any)-
+#PASTE pass-chain
+
+1D-1H-1N-P-(any)-
+#PASTE pass-chain
+
+1D-1S-1N-P-(any)-
+#PASTE pass-chain
+
+1H-2C-P-(any)-
+#PASTE pass-chain
+
+1H-2D-P-(any)-
+#PASTE pass-chain
+
+1S-2C-P-(any)-
+#PASTE pass-chain
+
+1S-2D-P-(any)-
+#PASTE pass-chain
+
+1S-2H-P-(any)-
+#PASTE pass-chain
+
+1D-2C-P-(any)-
+#PASTE pass-chain
+
+1S-2C-2H-P-(any)-
+#PASTE pass-chain
+
+1S-2C-2H-3D-P-(any)-
+#PASTE pass-chain
+
+1S-2C-2H-3S-P-(any)-
+#PASTE pass-chain
+
+1H-2H-P-(any)-
+#PASTE pass-chain
+
+1S-2S-P-(any)-
+#PASTE pass-chain
+
+1H-3H-P-(any)-
+#PASTE pass-chain
+
+1S-3S-P-(any)-
+#PASTE pass-chain
+
+1H-2N-P-(any)-
+#PASTE pass-chain
+
+1S-2N-P-(any)-
+#PASTE pass-chain
+
+1H-1N-P-(any)-
+#PASTE pass-chain
+
+1S-1N-P-(any)-
+#PASTE pass-chain
+
+1C-1N-P-(any)-
+#PASTE pass-chain
+
+1D-1N-P-(any)-
+#PASTE pass-chain
+
+(1X)-P-(any)-
+#PASTE pass-chain
+
+(1m)-P-(any)-
+#PASTE pass-chain
+
+(1H)-P-(any)-
+#PASTE pass-chain
+
+(1S)-P-(any)-
+#PASTE pass-chain
+
+(1C)-P-(any)-
+#PASTE pass-chain
+
+(1D)-P-(any)-
+#PASTE pass-chain
+
+(1X)-1N-P-(any)-
+#PASTE pass-chain
+
+(1X)-D-P-(any)-
+#PASTE pass-chain
+
+(1C)-D-P-(any)-
+#PASTE pass-chain
+
+(1D)-D-P-(any)-
+#PASTE pass-chain
+
+(1H)-D-P-(any)-
+#PASTE pass-chain
+
+(1S)-D-P-(any)-
+#PASTE pass-chain
+
+1C-(1D)-P-(any)-
+#PASTE pass-chain
+
+1C-(1H)-P-(any)-
+#PASTE pass-chain
+
+1C-(1S)-P-(any)-
+#PASTE pass-chain
+
+1D-(1H)-P-(any)-
+#PASTE pass-chain
+
+1D-(1S)-P-(any)-
+#PASTE pass-chain
+
+1H-(1S)-P-(any)-
+#PASTE pass-chain
+
+1m-(1Y)-P-(any)-
+#PASTE pass-chain
+
+1C-(1D)-1H-(P)-P-(any)-
+#PASTE pass-chain
+
+1C-(1D)-1S-(P)-P-(any)-
+#PASTE pass-chain
+
+1C-(1H)-1S-(P)-P-(any)-
+#PASTE pass-chain
+
+1D-(1H)-1S-(P)-P-(any)-
+#PASTE pass-chain
+
+1C-(1D)-2H-(P)-P-(any)-
+#PASTE pass-chain
+
+1C-(1D)-2S-(P)-P-(any)-
+#PASTE pass-chain
+
+1C-(1H)-2D-(P)-P-(any)-
+#PASTE pass-chain
+
+1C-(1S)-2D-(P)-P-(any)-
+#PASTE pass-chain
+
+1C-(1S)-2H-(P)-P-(any)-
+#PASTE pass-chain
+
+1D-(1H)-2C-(P)-P-(any)-
+#PASTE pass-chain
+
+1D-(1S)-2C-(P)-P-(any)-
+#PASTE pass-chain
+
+1D-(1S)-2H-(P)-P-(any)-
+#PASTE pass-chain
+
+1M-(2m)-P-(any)-
+#PASTE pass-chain
+
+1S-(2H)-P-(any)-
+#PASTE pass-chain
+
+1D-(2C)-P-(any)-
+#PASTE pass-chain
+
+1C-(2Y)-P-(any)-
+#PASTE pass-chain
+
+1D-(2M)-P-(any)-
+#PASTE pass-chain
+
+1H-(2S)-P-(any)-
+#PASTE pass-chain
+
+1S-(3Y)-P-(any)-
+#PASTE pass-chain
+
+1H-(3m)-P-(any)-
+#PASTE pass-chain
+
+1H-(3S)-P-(any)-
+#PASTE pass-chain
+
+1m-(3Y)-P-(any)-
+#PASTE pass-chain
+
+1D-(3C)-P-(any)-
+#PASTE pass-chain
+
+1X-(1N)-P-(any)-
+#PASTE pass-chain
+
+1D-(D)-P-(any)-
+#PASTE pass-chain
+
+1C-(D)-P-(any)-
+#PASTE pass-chain
+
+1H-(D)-P-(any)-
+#PASTE pass-chain
+
+1S-(D)-P-(any)-
+#PASTE pass-chain
+
+(1X)-1Y-(P)-P-(any)-
+#PASTE pass-chain
+
+(1X)-1Z-(P)-P-(any)-
+#PASTE pass-chain
+
+(1Y)-1Z-(P)-P-(any)-
+#PASTE pass-chain
+
+(1X)-1Y-(P)-2X-(P)-P-(any)-
+#PASTE pass-chain
+
+(1X)-1Y-(D)-2X-(P)-P-(any)-
+#PASTE pass-chain
+
+(1X)-1Y-(1Z)-P-(any)-
+#PASTE pass-chain
+
+(1X)-1Y-(1N)-P-(any)-
+#PASTE pass-chain
+
+(1X)-1Y-(2X)-P-(any)-
+#PASTE pass-chain
+
+(1Y)-2X-(P)-P-(any)-
+#PASTE pass-chain
+
+(1X)-2Y-(P)-P-(any)-
+#PASTE pass-chain
+
+(1Y)-2X-(2Y)-P-(any)-
+#PASTE pass-chain
+
+(1X)-2Y-(3X)-P-(any)-
+#PASTE pass-chain
+
+(1X)-1Y-(2N)-P-(any)-
+#PASTE pass-chain
+
+(1X)-1Y-(2Y)-P-(any)-
+#PASTE pass-chain
+
+(1X)-1Y-(3X)-P-(any)-
+#PASTE pass-chain
+
+(1X)-1Z-(2Y)-P-(any)-
+#PASTE pass-chain
+
+(1Y)-1Z-(2X)-P-(any)-
+#PASTE pass-chain
+
+(1X)-1Y-(2Z)-P-(any)-
+#PASTE pass-chain
+
+(1X)-1N-(2Y)-P-(any)-
+#PASTE pass-chain
+
+(1X)-1N-(2X)-P-(any)-
+#PASTE pass-chain
+
+(1Y)-2X-(D)-P-(any)-
+#PASTE pass-chain
+
+(1X)-2Y-(D)-P-(any)-
+#PASTE pass-chain
+
+(1m)-2m-(P)-P-(any)-
+#PASTE pass-chain
+
+(1H)-2H-(P)-P-(any)-
+#PASTE pass-chain
+
+(1S)-2S-(P)-P-(any)-
+#PASTE pass-chain
+
+1H-(2H)-P-(any)-
+#PASTE pass-chain
+
+1S-(2S)-P-(any)-
+#PASTE pass-chain
+
+1C-(2C)-P-(any)-
+#PASTE pass-chain
+
+1D-(2D)-P-(any)-
+#PASTE pass-chain
+
+1X-(2N)-P-(any)-
+#PASTE pass-chain
+
+(1X)-P-(1Y)-1Z-(2Y)-P-(any)-
+#PASTE pass-chain
+
+(1X)-P-(1Y)-1Z-(2X)-P-(any)-
+#PASTE pass-chain
+
+(1X)-P-(1Y)-1Z-(1N)-P-(any)-
+#PASTE pass-chain
+
+(1X)-P-(1Z)-2Y-(2Z)-P-(any)-
+#PASTE pass-chain
+
+(1Y)-P-(1Z)-2X-(2Z)-P-(any)-
+#PASTE pass-chain
+
+(1X)-P-(2X)-2Y-(3X)-P-(any)-
+#PASTE pass-chain
+
+(1N)-P-(any)-
+#PASTE pass-chain
+
+(1N)-2X-(P)-P-(any)-
+#PASTE pass-chain
+
+(1N)-2M-(P)-P-(any)-
+#PASTE pass-chain
+
+(1N)-2m-(P)-P-(any)-
+#PASTE pass-chain
+
+(1N)-2X-(2Y)-P-(any)-
+#PASTE pass-chain
+
+(1N)-2Y-(3X)-P-(any)-
+#PASTE pass-chain
+
+(1N)-P-(P)-P-(any)-
+#PASTE pass-chain
+
+(1N)-P-(P)-2X-(P)-P-(any)-
+#PASTE pass-chain
+
+(1N)-P-(P)-2M-(P)-P-(any)-
+#PASTE pass-chain
+
+(1N)-P-(P)-2m-(P)-P-(any)-
+#PASTE pass-chain
+
+(1N)-P-(P)-2X-(2Y)-P-(any)-
+#PASTE pass-chain
+
+(1X)-P-(P)-P-(any)-
+#PASTE pass-chain
+

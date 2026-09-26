@@ -18,28 +18,28 @@ with the opponents' call (paste it under a row whose call ends our bidding).
 #CUT pass-chain
 P = {prio:-100} any hand
   (any)
-    P = any hand
+    P = {prio:-100} any hand
       (any)
-        P = any hand
+        P = {prio:-100} any hand
           (any)
-            P = any hand
+            P = {prio:-100} any hand
               (any)
-                P = any hand
+                P = {prio:-100} any hand
                   (any)
-                    P = any hand
+                    P = {prio:-100} any hand
 #ENDCUT
 
 #CUT after-chain
 (any)
-  P = any hand
+  P = {prio:-100} any hand
     (any)
-      P = any hand
+      P = {prio:-100} any hand
         (any)
-          P = any hand
+          P = {prio:-100} any hand
             (any)
-              P = any hand
+              P = {prio:-100} any hand
                 (any)
-                  P = any hand
+                  P = {prio:-100} any hand
                     (any)
-                      P = any hand
+                      P = {prio:-100} any hand
 #ENDCUT

@@ -48,11 +48,13 @@ opener's suit. After a new suit, opener raises with three-card support, bids
   3N = 9--11 hcp
   3D = unlimited
 3N = 15+ hcp
+  #PASTE after-chain
 
 ** After 2!h
 
 2H-
 4H = 4+!h, 5--14 hcp
+  #PASTE after-chain
 3H = 3=!h, 6--14 hcp
 2N = F, 15+ hcp, 2+!h
   3H = 5--8 hcp
@@ -73,11 +75,13 @@ opener's suit. After a new suit, opener raises with three-card support, bids
   3N = 9--11 hcp
   3H = unlimited
 3N = 15+ hcp
+  #PASTE after-chain
 
 ** After 2!s
 
 2S-
 4S = 4+!s, 5--14 hcp
+  #PASTE after-chain
 3S = 3=!s, 6--14 hcp
 2N = F, 15+ hcp, 2+!s
   3S = 5--8 hcp
@@ -98,6 +102,7 @@ opener's suit. After a new suit, opener raises with three-card support, bids
   3N = 9--11 hcp
   3S = unlimited
 3N = 15+ hcp
+  #PASTE after-chain
 
 ** Interference over a weak two
 
