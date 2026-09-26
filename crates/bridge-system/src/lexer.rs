@@ -69,14 +69,22 @@ const MAX_INCLUDE_DEPTH: u32 = 16;
 /// `.`/`..` segments. Purely textual (`/`-separated): used for bookkeeping (file ids, the cycle
 /// guard) independent of whatever a [`SourceLoader`] does internally to actually resolve bytes.
 fn join_path(base: &str, path: &str) -> String {
-    if path.starts_with('/') {
-        return normalize_path(path);
+    let path = path.replace('\\', "/");
+    if path.starts_with('/') || drive_prefix(&path).is_some() {
+        return normalize_path(&path);
     }
+    let base = base.replace('\\', "/");
     let dir_end = base.rfind('/').map_or(0, |i| i + 1);
     let mut combined = String::with_capacity(dir_end + path.len());
     combined.push_str(&base[..dir_end]);
-    combined.push_str(path);
+    combined.push_str(&path);
     normalize_path(&combined)
+}
+
+/// The `C:` drive prefix of a Windows path, if any.
+fn drive_prefix(path: &str) -> Option<&str> {
+    let bytes = path.as_bytes();
+    (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':').then(|| &path[..2])
 }
 
 fn normalize_path(path: &str) -> String {
@@ -86,9 +94,16 @@ fn normalize_path(path: &str) -> String {
     // typically -- `#INCLUDE` targets computed from it then read back as a *relative*-looking
     // path missing its leading `/`, corrupting every file-table entry downstream of the first
     // `#INCLUDE`). Preserve it explicitly instead.
-    let absolute = path.starts_with('/');
+    //
+    // Windows paths (`Path::join` output such as `D:\repo\crates\x/../../systems/a.bml`)
+    // mix `\` and `/`. Every separator is read as `/`, and a `C:` drive prefix is kept as the
+    // root, so that `..` segments pop real directories instead of the whole backslashed prefix.
+    let path = path.replace('\\', "/");
+    let drive = drive_prefix(&path).unwrap_or("");
+    let body = &path[drive.len()..];
+    let absolute = body.starts_with('/');
     let mut out: Vec<&str> = Vec::new();
-    for seg in path.split('/') {
+    for seg in body.split('/') {
         match seg {
             "" | "." => {}
             ".." => {
@@ -108,9 +123,9 @@ fn normalize_path(path: &str) -> String {
     }
     let joined = out.join("/");
     if absolute {
-        format!("/{joined}")
+        format!("{drive}/{joined}")
     } else {
-        joined
+        format!("{drive}{joined}")
     }
 }
 
@@ -402,6 +417,25 @@ mod tests {
         assert_eq!(normalize_path("../../a/../x.bml"), "../../x.bml");
         assert_eq!(normalize_path("./a/./b/../x.bml"), "a/x.bml");
         assert_eq!(normalize_path("/../x.bml"), "/x.bml");
+    }
+
+    #[test]
+    fn windows_paths_normalise_with_their_drive_as_root() {
+        // What `Path::new(env!("CARGO_MANIFEST_DIR")).join("../../systems/sayc/sayc.bml")`
+        // produces on Windows: the backslashed prefix used to be one segment, so both `..`
+        // popped it away and the root became the relative `../systems/sayc/sayc.bml`.
+        assert_eq!(
+            normalize_path(r"D:\a\repo\crates\bridge-bidding/../../systems/sayc/sayc.bml"),
+            "D:/a/repo/systems/sayc/sayc.bml"
+        );
+        assert_eq!(normalize_path(r"C:\..\x.bml"), "C:/x.bml");
+        assert_eq!(normalize_path("C:a/../x.bml"), "C:x.bml");
+        assert_eq!(
+            join_path("D:/a/repo/systems/sayc/sayc.bml", "openings.bml"),
+            "D:/a/repo/systems/sayc/openings.bml"
+        );
+        assert_eq!(join_path(r"D:\a\sayc.bml", r"sub\x.bml"), "D:/a/sub/x.bml");
+        assert_eq!(join_path("a/b.bml", r"E:\x.bml"), "E:/x.bml");
         assert_eq!(join_path("../root.bml", "sub/a.bml"), "../sub/a.bml");
         assert_eq!(join_path("../sub/a.bml", "b.bml"), "../sub/b.bml");
     }

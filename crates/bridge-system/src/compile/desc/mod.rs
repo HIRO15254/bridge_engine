@@ -570,10 +570,7 @@ fn build(
         Clause::Or(items) => {
             let mut parts = Vec::with_capacity(items.len());
             for item in items {
-                match build(item, fragments, resolved) {
-                    None => return None,
-                    Some(hc) => parts.push(hc),
-                }
+                parts.push(build(item, fragments, resolved)?);
             }
             fold(parts, HandConstraint::Or)
         }
