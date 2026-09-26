@@ -9,12 +9,14 @@
 //! | --- | --- | --- |
 //! | Attitude | high: ≥ 1 honour in the discarded suit; low: none | 0.6 |
 //! | OddEven | odd rank: ≥ 1 honour in the discarded suit; even: as `Lavinthal` | 0.6 |
-//! | Lavinthal | high: ≥ 1 honour in the higher of the two suits other than trump and the suit led; low: the lower one | 0.6 |
+//! | Lavinthal | high: ≥ 1 honour in the higher of the two suits other than the discarded suit and trump (vs NT: and the suit led); low: the lower one; upside-down swaps | 0.6 |
 //!
 //! `Lavinthal`/`OddEven`'s mapping to a specific suit is design doc §11 item 4, left "undecided"
-//! there; this picks the higher- and lower-ranked ([`Suit`]'s own `Clubs < Diamonds < Hearts <
-//! Spades` order) of the suits other than trump and the suit led, which is the closest reading of
-//! "the higher/lower of the two remaining suits" that needs no further policy input.
+//! there; this reads it as standard suit preference: the discarded suit is the one the defender
+//! does not want, so the choice is between the two suits other than it and trump (against
+//! notrump, other than it and the suit led), ordered by [`Suit`]'s own `Clubs < Diamonds <
+//! Hearts < Spades`. When one of the two is the suit led (a suit contract with a side suit led),
+//! the defender is void there, so preferring it carries no honour inference.
 
 use bridge_constraint::{Atom, HandConstraint};
 use bridge_core::{Card, Rank, Seat, Strain, Suit};
@@ -149,10 +151,10 @@ fn first_discard_signal(event: SignalEvent, discards: &DiscardTable) -> Vec<(Han
                 // `discards.polarity` (including `Polarity::Unknown`).
                 vocab::branch(vocab::atom(vec![vocab::req(vocab::honors(u), 1..=4)]), w)
             } else {
-                lavinthal_discard(r, trump, led, w)
+                lavinthal_discard(u, r, trump, led, discards.polarity, w)
             }
         }
-        FirstDiscard::Lavinthal => lavinthal_discard(r, trump, led, w),
+        FirstDiscard::Lavinthal => lavinthal_discard(u, r, trump, led, discards.polarity, w),
     }
 }
 
@@ -169,22 +171,49 @@ fn attitude_discard(u: Suit, r: Rank, polarity: Polarity, w: f32) -> Vec<(HandCo
     height_branches(vocab::height(r), high, low, w)
 }
 
-/// The two suits other than `trump` and `led`, ascending by [`Suit`]'s own order.
-fn side_suits(trump: Strain, led: Suit) -> Vec<Suit> {
+/// The two suits a suit-preference discard of suit `discarded` chooses between (design doc §7.4,
+/// §11 item 4), ascending by [`Suit`]'s own order: the suits other than the discarded suit and
+/// trumps. Against notrump that leaves three, and the suit led (which the discarder has just
+/// shown out of) is dropped as well.
+fn preference_suits(discarded: Suit, trump: Strain, led: Suit) -> Vec<Suit> {
     let mut suits: Vec<Suit> = Suit::ALL
         .into_iter()
-        .filter(|&s| s != led && Some(s) != trump.suit())
+        .filter(|&s| s != discarded && Some(s) != trump.suit())
         .collect();
+    if suits.len() > 2 {
+        suits.retain(|&s| s != led);
+    }
     suits.sort();
     suits
 }
 
-fn lavinthal_discard(r: Rank, trump: Strain, led: Suit, w: f32) -> Vec<(HandConstraint, f32)> {
-    let suits = side_suits(trump, led);
+/// Suit preference: a high card asks for the higher of [`preference_suits`], a low card for the
+/// lower, and upside-down polarity swaps the two (§7.1; `Unknown` polarity reads as standard,
+/// since the convention itself already fixes a meaning). The preferred suit is read as holding an
+/// honour there, except when it is the suit led, which the discarder has just shown out of (a
+/// suit contract with a side suit led): that branch carries no honour inference and is `ANY`.
+fn lavinthal_discard(
+    u: Suit,
+    r: Rank,
+    trump: Strain,
+    led: Suit,
+    polarity: Polarity,
+    w: f32,
+) -> Vec<(HandConstraint, f32)> {
+    let suits = preference_suits(u, trump, led);
     let (Some(&low_suit), Some(&high_suit)) = (suits.first(), suits.last()) else {
         return Vec::new();
     };
-    let high = vocab::atom(vec![vocab::req(vocab::honors(high_suit), 1..=4)]);
-    let low = vocab::atom(vec![vocab::req(vocab::honors(low_suit), 1..=4)]);
+    let prefers = |suit: Suit| {
+        if suit == led {
+            HandConstraint::ANY
+        } else {
+            vocab::atom(vec![vocab::req(vocab::honors(suit), 1..=4)])
+        }
+    };
+    let (high, low) = match polarity {
+        Polarity::UpsideDown => (prefers(low_suit), prefers(high_suit)),
+        _ => (prefers(high_suit), prefers(low_suit)),
+    };
     height_branches(vocab::height(r), high, low, w)
 }

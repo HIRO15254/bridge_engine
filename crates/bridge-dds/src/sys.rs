@@ -229,6 +229,46 @@ unsafe extern "C" {
     pub fn GetDDSInfo(info: *mut DDSInfo);
     pub fn ErrorMessage(code: c_int, line: *mut c_char);
 
+    // ffi_guard.cpp: `noexcept` wrappers that turn any C++ exception escaping DDS into
+    // `RETURN_UNKNOWN_FAULT` instead of unwinding into Rust (undefined behaviour through an
+    // `extern "C"` declaration). The safe wrapper in `lib.rs` calls only these (plus
+    // `ErrorMessage`, which cannot throw: a `switch` of `strcpy`s).
+    pub fn bdds_SetResources(maxMemoryMB: c_int, maxThreads: c_int) -> c_int;
+    pub fn bdds_GetDDSInfo(info: *mut DDSInfo) -> c_int;
+    pub fn bdds_SolveBoard(
+        dl: deal,
+        target: c_int,
+        solutions: c_int,
+        mode: c_int,
+        futp: *mut futureTricks,
+        threadIndex: c_int,
+    ) -> c_int;
+    pub fn bdds_CalcDDtable(tableDeal: ddTableDeal, tablep: *mut ddTableResults) -> c_int;
+    pub fn bdds_CalcAllTables(
+        dealsp: *mut ddTableDeals,
+        mode: c_int,
+        trumpFilter: *mut c_int,
+        resp: *mut ddTablesRes,
+        presp: *mut allParResults,
+    ) -> c_int;
+    pub fn bdds_SolveAllChunksBin(
+        bop: *mut boards,
+        solvedp: *mut solvedBoards,
+        chunkSize: c_int,
+    ) -> c_int;
+    pub fn bdds_DealerParBin(
+        tablep: *mut ddTableResults,
+        presp: *mut parResultsMaster,
+        dealer: c_int,
+        vulnerable: c_int,
+    ) -> c_int;
+    pub fn bdds_AnalysePlayBin(
+        dl: deal,
+        play: playTraceBin,
+        solved: *mut solvedPlay,
+        thrId: c_int,
+    ) -> c_int;
+
     // layout_probe.cpp
     pub fn dds_sizeof_deal() -> usize;
     pub fn dds_offsetof_deal_remainCards() -> usize;
@@ -244,6 +284,9 @@ unsafe extern "C" {
     pub fn dds_sizeof_parResults() -> usize;
     pub fn dds_sizeof_allParResults() -> usize;
     pub fn dds_sizeof_parResultsMaster() -> usize;
+    pub fn dds_offsetof_parResultsMaster_contracts() -> usize;
+    pub fn dds_sizeof_contractType() -> usize;
+    pub fn dds_offsetof_contractType_seats() -> usize;
     pub fn dds_sizeof_playTraceBin() -> usize;
     pub fn dds_sizeof_playTracesBin() -> usize;
     pub fn dds_sizeof_solvedPlay() -> usize;

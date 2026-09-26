@@ -21,7 +21,7 @@ pub mod convert;
 pub mod sys;
 
 pub use bridge_core::DdTable;
-use bridge_core::{Card, Deal, DealError, Holding, PlayHistory, Seat, Strain, Vulnerability};
+use bridge_core::{Card, Deal, Holding, PlayHistory, Seat, Strain, Vulnerability};
 
 /// Resource limits given to DDS once.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -96,13 +96,28 @@ pub enum Solutions {
 }
 
 /// `SolveBoard` mode.
+///
+/// Kept for source compatibility with DDS's `mode` parameter, but every variant is passed to
+/// DDS as `1` (always search), because the other two values are unsafe or lossy behind this
+/// wrapper (docs/design/10-dds.md §7):
+///
+/// - DDS's `0` answers a position with a single legal card without searching and reports its
+///   score as the sentinel `-2`, which [`CardScore::score`] cannot represent.
+/// - DDS's `2` skips the transposition-table reset unconditionally, which is only valid when the
+///   previous call on the *same thread index* had the same deal and trump. Thread indices are
+///   handed out per call from a shared pool here, so the caller cannot know which table it gets;
+///   a stale one gives wrong results or crashes DDS (observed as a segfault).
+///
+/// Nothing is lost by this: in modes `0` and `1` DDS still keeps the transposition table
+/// between calls on the same thread index whenever the deal is the same or similar (e.g. a later
+/// position of the same board) and the trump is unchanged.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
-    /// Automatic (`0`).
+    /// DDS's automatic mode (`0`); searched like [`Mode::Search`] (see the type docs).
     Auto,
     /// Always search (`1`).
     Search,
-    /// Reuse the transposition table (`2`).
+    /// Reuse the transposition table (`2`); searched like [`Mode::Search`] (see the type docs).
     ReuseTable,
 }
 
@@ -244,12 +259,6 @@ pub enum DdsError {
         /// `ErrorMessage` text.
         message: String,
     },
-    /// The deal is invalid.
-    #[error(transparent)]
-    Deal(#[from] DealError),
-    /// More than 200 boards in one call.
-    #[error("too many boards: {0} > 200")]
-    TooManyBoards(usize),
     /// The DDS sources were not vendored at build time.
     #[error("DDS is not available in this build (run `cargo xtask dds vendor` and rebuild)")]
     Unavailable,
@@ -317,12 +326,12 @@ mod backend {
 
         /// Blocks until a `SolveBoard`/`AnalysePlayBin` thread-index slot is free (and no batch
         /// call is waiting for/holding every slot), then takes it.
-        pub(super) fn acquire_slot(&self) -> c_int {
+        pub(super) fn acquire_slot(&self) -> SlotGuard<'_> {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             loop {
                 if !state.batch_waiting {
                     if let Some(id) = state.free.pop() {
-                        return id;
+                        return SlotGuard { pool: self, id };
                     }
                 }
                 state = self
@@ -332,7 +341,7 @@ mod backend {
             }
         }
 
-        pub(super) fn release_slot(&self, id: c_int) {
+        fn release_slot(&self, id: c_int) {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             state.free.push(id);
             drop(state);
@@ -345,7 +354,7 @@ mod backend {
         /// Blocks until every slot is free (marking a batch call as waiting/active first, so
         /// `acquire_slot` stops handing new slots out and this cannot starve), then takes them
         /// all, giving the calling bulk function exclusive use of DDS's per-thread-index state.
-        pub(super) fn acquire_all_slots(&self) -> Vec<c_int> {
+        pub(super) fn acquire_all_slots(&self) -> AllSlotsGuard<'_> {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             loop {
                 // Reasserted on every iteration: a *different* batch call already waiting here
@@ -355,7 +364,10 @@ mod backend {
                 // forever.
                 state.batch_waiting = true;
                 if state.free.len() as c_int == state.total {
-                    return std::mem::take(&mut state.free);
+                    return AllSlotsGuard {
+                        pool: self,
+                        ids: std::mem::take(&mut state.free),
+                    };
                 }
                 state = self
                     .slot_available
@@ -364,12 +376,46 @@ mod backend {
             }
         }
 
-        pub(super) fn release_all_slots(&self, mut ids: Vec<c_int>) {
+        fn release_all_slots(&self, mut ids: Vec<c_int>) {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             state.free.append(&mut ids);
             state.batch_waiting = false;
             drop(state);
             self.slot_available.notify_all();
+        }
+    }
+
+    /// One thread-index slot, held from `acquire_slot` until dropped. Releasing on drop (rather
+    /// than by an explicit call after the FFI call) keeps the slot pool consistent even if code
+    /// between acquire and release ever panics: a leaked slot would otherwise make every later
+    /// bulk call wait forever.
+    pub(super) struct SlotGuard<'a> {
+        pool: &'a SlotPool,
+        id: c_int,
+    }
+
+    impl SlotGuard<'_> {
+        /// The DDS thread index this guard exclusively holds.
+        pub(super) fn id(&self) -> c_int {
+            self.id
+        }
+    }
+
+    impl Drop for SlotGuard<'_> {
+        fn drop(&mut self) {
+            self.pool.release_slot(self.id);
+        }
+    }
+
+    /// Every slot, held from `acquire_all_slots` until dropped (see `SlotGuard`).
+    pub(super) struct AllSlotsGuard<'a> {
+        pool: &'a SlotPool,
+        ids: Vec<c_int>,
+    }
+
+    impl Drop for AllSlotsGuard<'_> {
+        fn drop(&mut self) {
+            self.pool.release_all_slots(std::mem::take(&mut self.ids));
         }
     }
 
@@ -401,8 +447,18 @@ mod backend {
             // SAFETY: `SetResources` takes two plain integers and has no other precondition;
             // the surrounding `OnceLock` guarantees exactly one call for the process, before
             // any other DDS entry point runs.
-            unsafe {
-                sys::SetResources(memory_mb as c_int, cfg.max_threads as c_int);
+            let rc =
+                unsafe { sys::bdds_SetResources(memory_mb as c_int, cfg.max_threads as c_int) };
+            if rc != sys::RETURN_NO_FAULT {
+                // Only a C++ exception (an allocation failure while sizing DDS's per-thread
+                // memory) gets here. Nothing better to do than report it: DDS keeps whatever
+                // its library constructor (`dds.cpp` `libInit`) set up, and any later call
+                // that cannot run reports its own error code.
+                tracing::error!(
+                    memory_mb,
+                    max_threads = cfg.max_threads,
+                    "DDS SetResources failed; keeping DDS's built-in defaults"
+                );
             }
             let threads = dds_info().noOfThreads.max(1) as u32;
             Runtime {
@@ -432,9 +488,9 @@ mod backend {
         let mut info = zeroed::<sys::DDSInfo>();
         // SAFETY: `info` is a validly sized, zero-initialised `DDSInfo` that `GetDDSInfo` only
         // writes into.
-        unsafe {
-            sys::GetDDSInfo(&mut info);
-        }
+        // A failure (C++ exception) leaves `info` all-zero, which every caller tolerates
+        // (`noOfThreads` is clamped to at least 1).
+        let _ = unsafe { sys::bdds_GetDDSInfo(&mut info) };
         info
     }
 
@@ -524,18 +580,36 @@ mod backend {
         }
     }
 
+    /// Always `1`: see [`Mode`]'s doc comment for why `0` (unsearched `-2` score for a single
+    /// legal card) and `2` (unconditional reuse of a possibly unrelated transposition table,
+    /// which can crash DDS) are never passed through.
     const fn mode_code(mode: Mode) -> c_int {
         match mode {
-            Mode::Auto => 0,
-            Mode::Search => 1,
-            Mode::ReuseTable => 2,
+            Mode::Auto | Mode::Search | Mode::ReuseTable => 1,
+        }
+    }
+
+    /// Rejects a `target` DDS would reject, before DDS sees it: every DDS input check that
+    /// fails also writes a `dump.txt` into the process's working directory (`DumpInput`,
+    /// `SolverIF.cpp`), which a library must not do. `Target::Tricks(n)` can only be out of
+    /// range above 13; a [`Position`] always holds a full deal minus at most three cards of the
+    /// current trick, so 13 tricks always remain and `RETURN_TARGET_TOO_HIGH` cannot occur.
+    fn check_target(target: Target) -> Result<(), DdsError> {
+        match target {
+            Target::Tricks(n) if n > 13 => Err(synthetic_error(
+                sys::RETURN_TARGET_WRONG_HI,
+                "Target is higher than 13",
+            )),
+            _ => Ok(()),
         }
     }
 
     /// Builds the DDS `deal` for a [`Position`]: the whole `pos.deal`, minus the cards already
     /// played to the current (incomplete) trick — the only history a `Position` carries.
-    /// Validates `pos.trick` first (`docs/design/10-dds.md` §7: length and no duplicates), the
-    /// same way `SolveBoard` itself would reject a bad `currentTrickSuit`/`currentTrickRank`.
+    /// Validates `pos.trick` first (`docs/design/10-dds.md` §7: length, no duplicates, and each
+    /// card held by the seat whose turn it was), the same way `SolveBoard` itself would reject a
+    /// bad `currentTrickSuit`/`currentTrickRank` or unequal hand sizes, but without DDS's
+    /// `dump.txt` side effect (see `check_target`).
     fn position_deal(pos: &Position<'_>) -> Result<sys::deal, DdsError> {
         if pos.trick.len() > 3 {
             return Err(synthetic_error(
@@ -551,6 +625,15 @@ mod backend {
                         "cards duplicated",
                     ));
                 }
+            }
+        }
+
+        for (i, &card) in pos.trick.iter().enumerate() {
+            if pos.deal.owner(card) != pos.leader.offset(i as u8) {
+                return Err(synthetic_error(
+                    sys::RETURN_CARD_COUNT,
+                    "Wrong number of remaining cards in a hand",
+                ));
             }
         }
 
@@ -577,7 +660,8 @@ mod backend {
     }
 
     fn future_tricks_from(fut: &sys::futureTricks) -> FutureTricks {
-        let n = fut.cards.max(0) as usize;
+        // Clamped to the array length so a corrupt count can never index out of bounds.
+        let n = (fut.cards.max(0) as usize).min(fut.suit.len());
         let mut cards = Vec::with_capacity(n);
         for i in 0..n {
             cards.push(CardScore {
@@ -616,8 +700,8 @@ mod backend {
         // non-reentrant with the other bulk calls, and also drives DDS's own per-thread-index
         // state internally, so this call holds every slot for its duration (`SlotPool`'s doc
         // comment).
-        let rc = unsafe { sys::CalcDDtable(table_deal, &mut result) };
-        rt.slots.release_all_slots(held_slots);
+        let rc = unsafe { sys::bdds_CalcDDtable(table_deal, &mut result) };
+        drop(held_slots);
         if rc != sys::RETURN_NO_FAULT {
             return Err(dds_error(rc));
         }
@@ -646,7 +730,7 @@ mod backend {
             // the other bulk calls, and also drives DDS's own per-thread-index state
             // internally, so this call holds every slot for its duration.
             let rc = unsafe {
-                sys::CalcAllTables(
+                sys::bdds_CalcAllTables(
                     dealsp.as_mut(),
                     -1, // no par calculation (docs/design/10-dds.md §7.1)
                     trump_filter.as_mut_ptr(),
@@ -654,7 +738,7 @@ mod backend {
                     presp.as_mut(),
                 )
             };
-            rt.slots.release_all_slots(held_slots);
+            drop(held_slots);
             if rc != sys::RETURN_NO_FAULT {
                 return Err(dds_error(rc));
             }
@@ -670,6 +754,7 @@ mod backend {
         mode: Mode,
     ) -> Result<FutureTricks, DdsError> {
         let rt = runtime();
+        check_target(target)?;
         let dl = position_deal(pos)?;
         let slot = rt.slots.acquire_slot();
         let mut fut = zeroed::<sys::futureTricks>();
@@ -679,16 +764,16 @@ mod backend {
         // (docs/design/10-dds.md §7.2 rule 2); `acquire_slot` also guarantees no bulk call
         // holds (or is waiting to hold) every slot at the same time (`SlotPool`'s doc comment).
         let rc = unsafe {
-            sys::SolveBoard(
+            sys::bdds_SolveBoard(
                 dl,
                 target_code(target),
                 solutions_code(solutions),
                 mode_code(mode),
                 &mut fut,
-                slot,
+                slot.id(),
             )
         };
-        rt.slots.release_slot(slot);
+        drop(slot);
         if rc != sys::RETURN_NO_FAULT {
             return Err(dds_error(rc));
         }
@@ -704,6 +789,7 @@ mod backend {
             let mut bop = boxed_zeroed::<sys::boards>();
             bop.noOfBoards = chunk.len() as c_int;
             for (i, (pos, target, solutions, mode)) in chunk.iter().enumerate() {
+                check_target(*target)?;
                 bop.deals[i] = position_deal(pos)?;
                 bop.target[i] = target_code(*target);
                 bop.solutions[i] = solutions_code(*solutions);
@@ -715,8 +801,8 @@ mod backend {
             // kept alive for the whole call. `SolveAllChunksBin` is documented non-reentrant
             // with the other bulk calls, and also drives DDS's own per-thread-index state
             // internally, so this call holds every slot for its duration.
-            let rc = unsafe { sys::SolveAllChunksBin(bop.as_mut(), solvedp.as_mut(), 1) };
-            rt.slots.release_all_slots(held_slots);
+            let rc = unsafe { sys::bdds_SolveAllChunksBin(bop.as_mut(), solvedp.as_mut(), 1) };
+            drop(held_slots);
             if rc != sys::RETURN_NO_FAULT {
                 return Err(dds_error(rc));
             }
@@ -762,12 +848,12 @@ mod backend {
         // the callee only writes into; `slot` is exclusively held for this call, matching
         // `AnalysePlayBin`'s per-`thrId` reentrancy contract; `acquire_slot` also guarantees no
         // bulk call holds (or is waiting to hold) every slot at the same time.
-        let rc = unsafe { sys::AnalysePlayBin(dl, trace, &mut solved, slot) };
-        rt.slots.release_slot(slot);
+        let rc = unsafe { sys::bdds_AnalysePlayBin(dl, trace, &mut solved, slot.id()) };
+        drop(slot);
         if rc != sys::RETURN_NO_FAULT {
             return Err(dds_error(rc));
         }
-        let n = solved.number.max(0) as usize;
+        let n = (solved.number.max(0) as usize).min(solved.tricks.len());
         Ok(solved.tricks[..n].iter().map(|&t| t.max(0) as u8).collect())
     }
 
@@ -790,7 +876,7 @@ mod backend {
         // `DealerParBin` is a pure function of its inputs (docs/design/10-dds.md §7.2 rule 3:
         // "no lock").
         let rc = unsafe {
-            sys::DealerParBin(
+            sys::bdds_DealerParBin(
                 &mut table_res,
                 &mut pres,
                 convert::seat(dealer),
@@ -800,7 +886,7 @@ mod backend {
         if rc != sys::RETURN_NO_FAULT {
             return Err(dds_error(rc));
         }
-        let n = pres.number.max(0) as usize;
+        let n = (pres.number.max(0) as usize).min(pres.contracts.len());
         let contracts = pres.contracts[..n]
             .iter()
             .map(convert::format_par_contract)

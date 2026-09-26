@@ -4,7 +4,8 @@
 //! 2. Maintain `played[s]` and `shown_out[s][suit]` (a seat that did not follow the led suit).
 //! 3. `hard[s]` = shapes whose length in a shown-out suit equals the number of that suit's cards
 //!    the seat has played, and whose length in every other suit is at least the number played.
-//! 4. Consistency: per suit, the minimum lengths must sum to at most 13; otherwise a warning
+//! 4. Consistency: per suit, the length intervals of the four seats must admit a total of
+//!    exactly 13, and per seat, its four intervals must admit 13 cards; otherwise a warning
 //!    (revoke or bad record). The constraints are still returned.
 //!
 //! Only lengths go into the constraints; card identities go into [`KnownCards`] (the sampler's
@@ -67,26 +68,47 @@ pub fn hard_constraints(
         }
     }
 
-    // Consistency: the four seats' minimum lengths in one suit cannot add up to more than the
-    // 13 cards of that suit (a revoke, or a bad record). Every seat's own total across suits is
-    // its own played-card count, which `PlayHistory` already bounds at 13 (at most 13 completed
-    // tricks), so no analogous per-seat check is needed.
+    // Consistency (design doc §6 item 7). Each seat's original length in suit `u` lies in
+    // `min_len[s][u]..=max_len[s][u]`, where `max_len` is `min_len` for a shown-out suit and 13
+    // otherwise. The record is inconsistent when those intervals cannot hold a real deal:
     //
-    // `PlayWarning::Inconsistent` is defensive: `PlayHistory::play` (via `check`) rejects any
-    // already-played card unconditionally, so every suit's 13 physical cards can be distributed
-    // across the 4 seats' play counts at most once each, and `sum` above can never exceed 13 for
-    // a history built through the safe `PlayHistory` API. The branch is kept for untrusted or
-    // parsed input that builds a `PlayHistory` outside that API's checks (e.g. a future BML
-    // record loader that replays a possibly-corrupt log), where two seats' recorded plays could
-    // disagree about who held a card. No test can trigger it today without an unchecked
-    // `PlayHistory` constructor, which `bridge-core` does not currently expose.
+    // - per suit, the four seats' lengths must add up to exactly 13, so `Σ_s min_len ≤ 13 ≤
+    //   Σ_s max_len`. The lower-bound half is defensive (`PlayHistory::play` rejects a card
+    //   played twice, so the played cards of one suit never exceed 13); the upper-bound half is
+    //   reachable: when all four seats have shown out of a suit, their exact lengths must still
+    //   add up to 13, which a revoke (or a bad record) breaks.
+    // - per seat, the lengths must add up to exactly 13, so `Σ_u max_len ≥ 13`. A seat that has
+    //   shown out of every suit is held to exactly the cards it has played, fewer than 13 before
+    //   the last trick. (`Σ_u min_len ≤ 13` always holds: a seat plays at most 13 cards.)
+    //
+    // Either failure leaves some seat's `ShapeSet` (or the deal as a whole) empty; the warning
+    // names the suit, and the constraints are still returned (the caller treats them as
+    // `EmptySupport`).
+    let max_len = |si: usize, ui: usize| -> u8 {
+        if shown_out[si][ui] {
+            min_len[si][ui]
+        } else {
+            13
+        }
+    };
+    let mut inconsistent = [false; 4];
     for suit in Suit::ALL {
         let ui = suit.index() as usize;
-        let sum: u16 = Seat::ALL
-            .iter()
-            .map(|s| min_len[s.index() as usize][ui] as u16)
-            .sum();
-        if sum > 13 {
+        let lo: u16 = (0..4).map(|si| u16::from(min_len[si][ui])).sum();
+        let hi: u16 = (0..4).map(|si| u16::from(max_len(si, ui))).sum();
+        if lo > 13 || hi < 13 {
+            inconsistent[ui] = true;
+        }
+    }
+    for si in 0..4 {
+        let hi: u16 = (0..4).map(|ui| u16::from(max_len(si, ui))).sum();
+        if hi < 13 {
+            // Every suit of this seat is capped (it has shown out of all four): flag each.
+            inconsistent.fill(true);
+        }
+    }
+    for suit in Suit::ALL {
+        if inconsistent[suit.index() as usize] {
             warnings.push(PlayWarning::Inconsistent { suit });
         }
     }

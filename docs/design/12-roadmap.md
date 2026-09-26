@@ -108,9 +108,11 @@
 
 完了条件: オークションから配牌をサンプリングして ESS が要求数の 50% 以上、DDS FFI が動きサンプル配牌の解析結果が返る。
 
+5.3 の状況 (2026-09-26、詳細は 09-sample.md §10.2): ESS スイート (`tests/ess_suite.rs`、50 オークション × n = 1000、`target/ess_report.json`) と INFO 行のテスト (`tests/tracing_info.rs`) を追加。`ConstraintProposal` の ESS/n 中央値は 0.028 (生成 0.047、コーパス 0.017、一様提案 0.0026) で **完了条件は未達**。主因は `bridge-bidding` の `interpret` と方策 `call_distribution` の不整合 (Exact 解釈が上位優先度の兄弟を除外しない、ナチュラル推定の解釈が方策と食い違う、ナチュラル補完ありの `replay` の暴走) で、`bridge-sample` 側で試した厳密な改善 (成分重みの較正、`Fallback` の取り分、(c) の撤回、受理・棄却) は最大でも 2 倍程度。`bridge-bidding` 側の別タスクとして扱う。
+
 5.4 の状況 (2026-09-26、詳細は 09-sample.md §10.1): (a)(b)(c) はすべて採用、加えて再 prepare 席の同一要約の併合と `Sampler::prepare_many` による表・対畳み込みの共有。single_thread で `four_call_three_seats` 32.8 K 配牌/秒、実 SAYC (実ビディング尤度) の競り合い 2 ケース 10.4 K 配牌/秒で目標達成、Stayman 3NT は 8.1 K 配牌/秒で未達 (残りの約 8 割は `bridge-bidding` の `sequence_log_likelihood`、≈ 92 µs/配牌)。`propose_with_log_prob` は足さない。実 SAYC 3 ケースの ESS 比は 0.2〜2.6% で、完了条件の ESS は 5.3 側の課題として残る。
 
-5.3 の状況 (2026-09-26、詳細は 09-sample.md §10.2): ESS スイート (`tests/ess_suite.rs`、50 オークション × n = 1000、`target/ess_report.json`) と INFO 行のテスト (`tests/tracing_info.rs`) を追加。`ConstraintProposal` の ESS/n 中央値は 0.028 (生成 0.047、コーパス 0.017、一様提案 0.0026) で **完了条件は未達**。主因は `bridge-bidding` の `interpret` と方策 `call_distribution` の不整合 (Exact 解釈が上位優先度の兄弟を除外しない、ナチュラル推定の解釈が方策と食い違う、ナチュラル補完ありの `replay` の暴走) で、`bridge-sample` 側で試した厳密な改善 (成分重みの較正、`Fallback` の取り分、(c) の撤回、受理・棄却) は最大でも 2 倍程度。`bridge-bidding` 側の別タスクとして扱う。
+5.5–5.7 の検証状況 (2026-09-26、`wip/p5dds`): `list100.txt` で `calc_dd_table`/`solve_board`/`analyse_play`/`dealer_par` がそれぞれ 100/100 一致、バッチ版は `calc_dd_tables` 45/45・`solve_all_boards` 201/201 (チャンク境界越え) 一致。8 スレッド × 100 局面の並行 `solve_board` が逐次と一致 (release)。チャンク境界 39/40/41・199/200/201、バルクとスロット呼び出しの混在、`init` の冪等性、エラー経路 (`Target::Tricks(14)`、手番違い・重複・4 枚の `trick`) のテストあり。`unsafe` の見直しで実際の不具合 5 件を修正 (`10-dds.md` §7.4: `Mode::ReuseTable` のセグフォルト、`Mode::Auto` の強制 1 枚で得点 0、DDS の `dump.txt` 書き出し、C++ 例外の Rust への巻き戻り、`lead_scores` が同等カードを落とす)。ファサードは `dds` feature の有無の両方で `dds()` が `None`/`Some` を返し、`DdTable` は DDS なしで PBN から読める。wasm check は緑。計時 (release、負荷下): `calc_dd_table` 78.8 ms/配牌、`calc_dd_tables` 36.3 ms/配牌、`solve_board(AllRanked)` 40.0 ms/回 (`10-dds.md` §8)。
 
 ## 7. フェーズ 6: オープニングリードアドバイザ (別クレート)
 

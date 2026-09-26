@@ -190,27 +190,29 @@ fn discard_odd_even_odd_shows_honor_regardless_of_polarity() {
     }
 }
 
-/// Trump spades, suit led hearts: the two side suits are clubs (low) and diamonds (high).
+/// Notrump, hearts led, a diamond discarded: the two suits a suit-preference discard chooses
+/// between are clubs (low) and spades (high), never the discarded suit itself (the full table,
+/// suit contracts included, is in `tests/review.rs`).
 #[test]
 fn discard_lavinthal_high_card_prefers_the_higher_side_suit() {
     let d = discards(FirstDiscard::Lavinthal, Polarity::Standard);
     let alts = signal_constraints(
-        discard_event(Strain::Spades, Suit::Hearts, "D8"), // high card, discarded suit is itself the higher side suit
+        discard_event(Strain::NoTrump, Suit::Hearts, "D8"),
         &SignalTable::default(),
         &d,
     );
-    assert_branch(&alts, 0.6, "AKQ.32.AK73.KQ73", "AKQ.32.9743.AKQJ");
+    assert_branch(&alts, 0.6, "K973.32.9743.T98", "9873.32.KQJ3.T98");
 }
 
 #[test]
 fn discard_lavinthal_low_card_prefers_the_lower_side_suit() {
     let d = discards(FirstDiscard::Lavinthal, Polarity::Standard);
     let alts = signal_constraints(
-        discard_event(Strain::Spades, Suit::Hearts, "D3"),
+        discard_event(Strain::NoTrump, Suit::Hearts, "D3"),
         &SignalTable::default(),
         &d,
     );
-    assert_branch(&alts, 0.6, "AKQ.32.9743.AKQJ", "AKQ.32.AK73.9743");
+    assert_branch(&alts, 0.6, "9873.32.9743.AT9", "K973.32.KQJ3.T98");
 }
 
 /// `OddEven`'s even branch defers to the same suit-preference mapping as `Lavinthal`.
@@ -218,11 +220,11 @@ fn discard_lavinthal_low_card_prefers_the_lower_side_suit() {
 fn discard_odd_even_even_defers_to_lavinthal() {
     let d = discards(FirstDiscard::OddEven, Polarity::Standard);
     let alts = signal_constraints(
-        discard_event(Strain::Spades, Suit::Hearts, "D8"), // even, high
+        discard_event(Strain::NoTrump, Suit::Hearts, "D8"), // even, high
         &SignalTable::default(),
         &d,
     );
-    assert_branch(&alts, 0.6, "AKQ.32.AK73.KQ73", "AKQ.32.9743.AKQJ");
+    assert_branch(&alts, 0.6, "K973.32.9743.T98", "9873.32.KQJ3.T98");
 }
 
 #[test]

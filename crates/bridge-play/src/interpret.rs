@@ -115,9 +115,13 @@ pub fn interpret_play(
     }
 
     let trump = history.trump();
-    // Spot cards a defender has followed suit with when declarer's side led, indexed
-    // `[seat][suit]`; the second entry triggers the count signal (§7.3).
-    let mut spot_follows: [[Vec<Card>; 4]; 4] = Default::default();
+    // The first two cards each defender has played in each suit, indexed `[seat][suit]`, with
+    // whether that card was count-eligible (a non-winning spot following declarer's side's lead
+    // of the suit). The count signal (§7.3) reads the seat's first two cards of the suit, so it
+    // fires on the second card only when both of the first two were eligible: a pair of spots
+    // that follows an honour, a winning card or a card played to partner's lead of the suit does
+    // not start at the top of the holding, and its high-low says nothing about the parity.
+    let mut suit_cards: [[Vec<(Card, bool)>; 4]; 4] = Default::default();
     // Whether a defender's first discard (§7.4) has already been used.
     let mut first_discard_used = [false; 4];
 
@@ -158,30 +162,31 @@ pub fn interpret_play(
                 fire(seat, card, "signal:attitude", alts, &mut soft, &mut events);
             }
 
-            // Count: declarer's side led, this is a spot follow, and it does not win the trick.
-            // Only the second such follow in a suit fires (§7.3).
-            if !leader_is_defender
-                && trick.winner.is_some()
-                && !won_trick
-                && card.suit() == led
-                && is_spot(card)
+            // Count: the seat's second card of a suit, both of its first two cards of that suit
+            // being non-winning spot follows to declarer's side's leads.
             {
-                let follows = &mut spot_follows[si][led.index() as usize];
-                follows.push(card);
-                if follows.len() == 2 {
-                    let prior = follows[0];
-                    let event = SignalEvent {
-                        seat,
-                        card,
-                        kind: SignalKind::Count,
-                        context: SignalContext::Count(prior),
-                    };
-                    let alts = signal_constraints(
-                        event,
-                        &agreements[si].signals,
-                        &agreements[si].discards,
-                    );
-                    fire(seat, card, "signal:count", alts, &mut soft, &mut events);
+                let eligible = card.suit() == led
+                    && !leader_is_defender
+                    && trick.winner.is_some()
+                    && !won_trick
+                    && is_spot(card);
+                let cards = &mut suit_cards[si][card.suit().index() as usize];
+                if cards.len() < 2 {
+                    cards.push((card, eligible));
+                    if let [(prior, true), (_, true)] = cards.as_slice() {
+                        let event = SignalEvent {
+                            seat,
+                            card,
+                            kind: SignalKind::Count,
+                            context: SignalContext::Count(*prior),
+                        };
+                        let alts = signal_constraints(
+                            event,
+                            &agreements[si].signals,
+                            &agreements[si].discards,
+                        );
+                        fire(seat, card, "signal:count", alts, &mut soft, &mut events);
+                    }
                 }
             }
 
@@ -230,7 +235,7 @@ fn combine(
         Vec::with_capacity(existing.len() * new_alts.len());
     for (c1, w1) in &existing {
         for (c2, w2) in &new_alts {
-            let combined = c1.clone().and(c2.clone());
+            let combined = and_skipping_any(c1, c2);
             if !possibly_satisfiable(&hard.clone().and(combined.clone())) {
                 continue;
             }
@@ -252,6 +257,23 @@ fn combine(
         }
     }
     combos
+}
+
+/// `c1 ∧ c2`, returning the other side unchanged when one side is the `ANY` atom. Every rule's
+/// `(ANY, 1 − w)` remainder would otherwise pile up as `And([ANY, ANY, ..])` nodes, one per event,
+/// in the constraints handed to the sampler.
+fn and_skipping_any(c1: &HandConstraint, c2: &HandConstraint) -> HandConstraint {
+    if is_any(c1) {
+        c2.clone()
+    } else if is_any(c2) {
+        c1.clone()
+    } else {
+        c1.clone().and(c2.clone())
+    }
+}
+
+fn is_any(c: &HandConstraint) -> bool {
+    matches!(c, HandConstraint::Atom(a) if *a == bridge_constraint::Atom::ANY)
 }
 
 /// A summary satisfiability check built from primitives that are already exact (DNF expansion

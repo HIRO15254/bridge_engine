@@ -54,6 +54,7 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(dds_vendored)");
     println!("cargo:rerun-if-changed=vendor/dds-2.9.0");
     println!("cargo:rerun-if-changed=src/layout_probe.cpp");
+    println!("cargo:rerun-if-changed=src/ffi_guard.cpp");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_OPENMP");
 
@@ -84,6 +85,7 @@ fn main() {
         .include(src)
         .files(SOURCES.iter().map(|f| src.join(format!("{f}.cpp"))))
         .file("src/layout_probe.cpp")
+        .file("src/ffi_guard.cpp")
         .define("DDS_THREADS_STL", None)
         // Third-party sources, unmodified: silence their warnings instead of patching them
         // (`-w` on gcc/clang, `/W0` on MSVC).

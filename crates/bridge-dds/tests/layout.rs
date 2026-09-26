@@ -85,6 +85,21 @@ fn struct_sizes_match_the_cpp_probe() {
             "sizeof(parResultsMaster)"
         );
         assert_eq!(
+            core::mem::offset_of!(sys::parResultsMaster, contracts),
+            sys::dds_offsetof_parResultsMaster_contracts(),
+            "offsetof(parResultsMaster, contracts)"
+        );
+        assert_eq!(
+            size_of::<sys::contractType>(),
+            sys::dds_sizeof_contractType(),
+            "sizeof(contractType)"
+        );
+        assert_eq!(
+            core::mem::offset_of!(sys::contractType, seats),
+            sys::dds_offsetof_contractType_seats(),
+            "offsetof(contractType, seats)"
+        );
+        assert_eq!(
             size_of::<sys::playTraceBin>(),
             sys::dds_sizeof_playTraceBin(),
             "sizeof(playTraceBin)"
