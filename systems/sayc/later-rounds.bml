@@ -839,3 +839,160 @@ lower-ranking second suit with three-card support, and bids game opposite the
 1S-1N-3H-
 3N = {prio:1} any hand
   #PASTE after-chain
+
+** Opener after a minor raise, 2NT over a minor and 3NT over a major
+
+After the single raise of a minor (6--10) opener bids 3NT with 18+; after the
+limit raise (10--12) with 14+; opposite the game-forcing 2NT (13--15) opener
+bids 3NT. Opposite 3NT over a major (15--17, two-card support) opener with a
+six-card suit bids game in it.
+
+1C-2C-
+3N = {prio:1} 18+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-3C-
+3N = {prio:1} 14+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-2N-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1D-2D-
+3N = {prio:1} 18+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-3D-
+3N = {prio:1} 14+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-2N-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+1H-3N-
+4H = {prio:1} 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-3N-
+4S = {prio:1} 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+** The same auctions after an overcall
+
+Opener's rebid after a one-level response over an overcall uses the
+uncontested table (`competition.bml`, NOTES.md #C5), so the later rounds above
+apply to those auctions as well.
+
+1C-(1D)-1H-(P)-2H-
+#PASTE after-raise-major \M=H
+
+1C-(1D)-1H-(P)-3H-
+#PASTE after-jump-major \M=H
+
+1C-(1D)-1S-(P)-2S-
+#PASTE after-raise-major \M=S
+
+1C-(1H)-1S-(P)-2S-
+#PASTE after-raise-major \M=S
+
+1C-(1D)-1S-(P)-3S-
+#PASTE after-jump-major \M=S
+
+1C-(1H)-1S-(P)-3S-
+#PASTE after-jump-major \M=S
+
+1D-(1H)-1S-(P)-2S-
+#PASTE after-raise-major \M=S
+
+1D-(1H)-1S-(P)-3S-
+#PASTE after-jump-major \M=S
+
+1C-(1D)-1H-(P)-1S-
+#PASTE after-new-suit-1 \Z=S \z=s \Y=H \y=h \X=C \x=c
+
+1C-(1D)-1H-(P)-2C-
+#PASTE after-own-minor \X=C \x=c \Y=H \y=h
+
+1C-(1D)-1H-(P)-3C-
+#PASTE after-jump-minor
+
+1C-(1D)-1S-(P)-2C-
+#PASTE after-own-minor \X=C \x=c \Y=S \y=s
+
+1C-(1H)-1S-(P)-2C-
+#PASTE after-own-minor \X=C \x=c \Y=S \y=s
+
+1C-(1D)-1S-(P)-3C-
+#PASTE after-jump-minor
+
+1C-(1H)-1S-(P)-3C-
+#PASTE after-jump-minor
+
+1D-(1H)-1S-(P)-2D-
+#PASTE after-own-minor \X=D \x=d \Y=S \y=s
+
+1D-(1H)-1S-(P)-3D-
+#PASTE after-jump-minor
+
+1C-(1D)-1H-(P)-2D-
+#PASTE after-strong-new-suit
+
+1C-(1D)-1H-(P)-2S-
+#PASTE after-strong-new-suit
+
+1C-(1D)-1H-(P)-2N-
+#PASTE after-2n-rebid
+
+1C-(1D)-1H-(P)-2N-
+4H = {prio:2} 6+!h
+  #PASTE after-chain
+
+1C-(1D)-1S-(P)-2D-
+#PASTE after-strong-new-suit
+
+1C-(1H)-1S-(P)-2D-
+#PASTE after-strong-new-suit
+
+1C-(1D)-1S-(P)-2H-
+#PASTE after-strong-new-suit
+
+1C-(1H)-1S-(P)-2H-
+#PASTE after-strong-new-suit
+
+1C-(1D)-1S-(P)-2N-
+#PASTE after-2n-rebid
+
+1C-(1H)-1S-(P)-2N-
+#PASTE after-2n-rebid
+
+1C-(1D)-1S-(P)-2N-
+4S = {prio:2} 6+!s
+  #PASTE after-chain
+
+1C-(1H)-1S-(P)-2N-
+4S = {prio:2} 6+!s
+  #PASTE after-chain
+
+1D-(1H)-1S-(P)-2C-
+#PASTE after-low-new-suit \X=D \x=d \Y=S \y=s
+
+1D-(1H)-1S-(P)-3C-
+#PASTE after-strong-new-suit-3
+
+1D-(1H)-1S-(P)-2H-
+#PASTE after-strong-new-suit
+
+1D-(1H)-1S-(P)-2N-
+#PASTE after-2n-rebid
+
+1D-(1H)-1S-(P)-2N-
+4S = {prio:2} 6+!s
+  #PASTE after-chain
