@@ -474,6 +474,10 @@ impl ViolationCause {
 /// `choose_bid` surfaced along the way. Mirrors `11-testing.md` §2's `CoverageReport`.
 struct CoverageReport {
     seed: u64,
+    /// `11-testing.md` §2 step 1's off-system substitution rate the prefixes were drawn with.
+    random_call_rate: f64,
+    /// How many checked positions had at least one random-call substitution in their prefix.
+    random_call_prefixes: u64,
     positions: u64,
     chosen: u64,
     no_candidate: u64,
@@ -492,9 +496,11 @@ struct CoverageReport {
 }
 
 impl CoverageReport {
-    fn new(seed: u64) -> CoverageReport {
+    fn new(seed: u64, random_call_rate: f64) -> CoverageReport {
         CoverageReport {
             seed,
+            random_call_rate,
+            random_call_prefixes: 0,
             positions: 0,
             chosen: 0,
             no_candidate: 0,
@@ -564,6 +570,7 @@ impl CoverageReport {
         call: Call,
         root: Option<(usize, Call, Vec<ResolutionKind>, Option<String>)>,
         forced_passes: &[usize],
+        random_calls: &[usize],
     ) {
         let cause = ViolationCause::of(root.as_ref(), forced_passes);
         if cause == ViolationCause::GapInduced {
@@ -578,6 +585,7 @@ impl CoverageReport {
             "hand": format!("{hand:?}"),
             "cause": cause.label(),
             "forced_passes": forced_passes,
+            "random_calls": random_calls,
             "root_cause_call_index": root.as_ref().map(|(i, ..)| *i),
             "root_cause_call": root.as_ref().map(|(_, c, ..)| format!("{c}")),
             "root_cause_kinds": root.as_ref().map(|(_, _, k, _)| {
@@ -602,12 +610,14 @@ impl CoverageReport {
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            "{} violation(s) over {} position(s) (seed {:#x}): chosen={}, no_candidate={}, \
-             implicit_pass={}; {} gap-induced (root cause is a forced Pass the prefix generator \
+            "{} violation(s) over {} position(s) (seed {:#x}, random_call_rate {}, {} prefix(es) \
+             with a random call): chosen={}, no_candidate={}, implicit_pass={}; {} gap-induced (root cause is a forced Pass the prefix generator \
              substituted for a NoCandidate), {} not gap-induced; by cause: [{by_cause}]",
             self.violations.len(),
             self.positions,
             self.seed,
+            self.random_call_rate,
+            self.random_call_prefixes,
             self.chosen,
             self.no_candidate,
             self.implicit_pass,
@@ -662,7 +672,8 @@ impl CoverageReport {
             "compiler_version": meta.compiler_version,
             "seed": self.seed,
             "positions": self.positions,
-            "random_call_rate": 0.0,
+            "random_call_rate": self.random_call_rate,
+            "random_call_prefixes": self.random_call_prefixes,
             "violations": self.violations,
             "violations_by_cause": self.violations_by_cause,
             "violations_gap_induced": self.violations_gap_induced,
@@ -753,13 +764,15 @@ enum ReportOutput {
 
 /// Runs the strict forward-consistency property over `n` positions on the real, compiled SAYC
 /// system, per `11-testing.md` §2 / `07-bidding.md` §8's `forward_consistency` row. Positions come
-/// from `common::random_sayc_position_with_gaps` (11-testing.md §2 point 1: the prefix is advanced
-/// like `replay`, `NoCandidate` becoming `Pass`, minus the `random_call_rate` off-system
-/// substitution scoped to phase 3.11); its forced-pass indices classify gap-induced violations.
+/// from `common::random_sayc_position_with_substitution` (11-testing.md §2 point 1: the prefix is
+/// advanced like `replay`, `NoCandidate` becoming `Pass`, and each call by a seat other than the
+/// checked one is replaced by a random legal call with probability `random_call_rate`); its
+/// forced-pass indices classify gap-induced violations.
 fn run_forward_consistency(
     system: &'static str,
     n: u64,
     seed: u64,
+    random_call_rate: f64,
     output: ReportOutput,
 ) -> CoverageReport {
     let table = common::compile_sayc(system);
@@ -773,17 +786,31 @@ fn run_forward_consistency(
         strict: true,
         ..InterpretOptions::default()
     };
-    let mut report = CoverageReport::new(seed);
+    let mut report = CoverageReport::new(seed, random_call_rate);
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
 
     for i in 0..n {
         // A prefix that happened to complete the auction has no next call to check; redraw a
         // fresh position instead of silently under-counting.
-        let (deal, auction, forced_passes) = std::iter::repeat_with(|| {
-            common::random_sayc_position_with_gaps(&mut rng, &table, &ctx)
+        let common::SubstitutedPosition {
+            deal,
+            auction,
+            forced_passes,
+            random_calls,
+        } = std::iter::repeat_with(|| {
+            common::random_sayc_position_with_substitution(&mut rng, &table, &ctx, random_call_rate)
         })
-        .find(|(_, auction, _)| !auction.is_complete())
-        .expect("random_sayc_position_with_gaps eventually yields an incomplete auction");
+        .find(|p| !p.auction.is_complete())
+        .expect("random_sayc_position_with_substitution eventually yields an incomplete auction");
+        debug_assert!(
+            random_calls
+                .iter()
+                .all(|&i| auction.seat_at(i) != auction.next_seat()),
+            "the checked seat's own calls are never substituted"
+        );
+        if !random_calls.is_empty() {
+            report.random_call_prefixes += 1;
+        }
         let seat = auction.next_seat();
         let hand = deal.hand(seat);
         if !forced_passes.is_empty() {
@@ -808,7 +835,16 @@ fn run_forward_consistency(
                 };
                 if !interp.satisfied_by(seat, hand) {
                     let root = root_cause(&interp, seat, hand, &forced_passes);
-                    report.record_violation(i, &auction, seat, hand, c.call, root, &forced_passes);
+                    report.record_violation(
+                        i,
+                        &auction,
+                        seat,
+                        hand,
+                        c.call,
+                        root,
+                        &forced_passes,
+                        &random_calls,
+                    );
                 }
                 report.record_position(&auction, hand, gap, key);
             }
@@ -825,12 +861,20 @@ fn run_forward_consistency(
     report
 }
 
+/// `11-testing.md` §2 step 1's default `random_call_rate` (phase 3.11).
+const RANDOM_CALL_RATE: f64 = 0.05;
+
 /// Non-`#[ignore]`d, debug-friendly version: 0 violations other than the separately counted
 /// gap-induced ones (see [`ViolationCause::GapInduced`]), whose count is reported in the summary.
 #[test]
 fn sayc_forward_consistency_1e3() {
-    let report =
-        run_forward_consistency("sayc.bml", 1_000, 0x5A1C_0001, ReportOutput::CoverageJson);
+    let report = run_forward_consistency(
+        "sayc.bml",
+        1_000,
+        0x5A1C_0001,
+        RANDOM_CALL_RATE,
+        ReportOutput::CoverageJson,
+    );
     eprintln!("sayc_forward_consistency_1e3: {}", report.summary());
     assert_eq!(
         report.violations_not_gap_induced(),
@@ -848,6 +892,8 @@ fn sayc_forward_consistency_1e3() {
 /// `SAYC_CONSISTENCY_SEED_OFFSET` is added to the base seed (default 0), so the full run can be
 /// split into several shorter chunks -- e.g. four chunks of 250_000 with offsets 0/1/2/3 -- each
 /// drawing an independent random stream, with their counts summed for the reported total.
+/// `SAYC_CONSISTENCY_RANDOM_CALL_RATE` overrides the off-system substitution rate (default
+/// [`RANDOM_CALL_RATE`], 0.05).
 #[test]
 #[ignore = "10^6 positions; run with `cargo test --release -- --ignored`"]
 fn sayc_forward_consistency_1e6() {
@@ -862,10 +908,17 @@ fn sayc_forward_consistency_1e6() {
             .expect("SAYC_CONSISTENCY_SEED_OFFSET is a valid u64"),
         Err(_) => 0,
     };
+    let rate: f64 = match std::env::var("SAYC_CONSISTENCY_RANDOM_CALL_RATE") {
+        Ok(v) => v
+            .parse()
+            .expect("SAYC_CONSISTENCY_RANDOM_CALL_RATE is a valid f64"),
+        Err(_) => RANDOM_CALL_RATE,
+    };
     let report = run_forward_consistency(
         "sayc.bml",
         n,
         0x5A1C_0002u64.wrapping_add(seed_offset),
+        rate,
         ReportOutput::CoverageJson,
     );
     eprintln!(
@@ -887,7 +940,13 @@ fn sayc_forward_consistency_1e6() {
 /// exercise them; the real system should not).
 #[test]
 fn sayc_forward_consistency_diagnostics_are_empty_on_current_sayc() {
-    let report = run_forward_consistency("sayc.bml", 200, 0x5A1C_0003, ReportOutput::None);
+    let report = run_forward_consistency(
+        "sayc.bml",
+        200,
+        0x5A1C_0003,
+        RANDOM_CALL_RATE,
+        ReportOutput::None,
+    );
     assert!(
         report.illegal_system_call.is_empty(),
         "sayc.bml: unexpected IllegalSystemCall diagnostics: {:?}",
@@ -898,4 +957,41 @@ fn sayc_forward_consistency_diagnostics_are_empty_on_current_sayc() {
         "sayc.bml: unexpected UnsatisfiableNode diagnostics: {:?}",
         report.unsatisfiable_node
     );
+}
+
+/// The `random_call_rate` substitution (11-testing.md §2 step 1) really substitutes, only for
+/// seats other than the checked one, and leaves the RNG stream untouched at rate 0.
+#[test]
+fn random_call_substitution_skips_the_checked_seat() {
+    let table = common::compile_sayc("sayc.bml");
+    let ctx = BidContext {
+        scoring: Scoring::Imp,
+        natural: Some(table.natural.as_ref()),
+        implicit_pass: ImplicitPass::Complement,
+        policy: PolicyParams::default(),
+    };
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x5A1C_0004);
+    let mut substituted = 0;
+    for _ in 0..200 {
+        let p = common::random_sayc_position_with_substitution(&mut rng, &table, &ctx, 1.0);
+        if p.auction.is_complete() {
+            continue;
+        }
+        let checked = p.auction.next_seat();
+        for &i in &p.random_calls {
+            assert_ne!(p.auction.seat_at(i), checked, "{}", p.auction);
+        }
+        substituted += p.random_calls.len();
+    }
+    assert!(substituted > 0, "rate 1.0 must substitute some calls");
+
+    let mut a = Xoshiro256PlusPlus::seed_from_u64(7);
+    let mut b = Xoshiro256PlusPlus::seed_from_u64(7);
+    for _ in 0..20 {
+        let p = common::random_sayc_position_with_substitution(&mut a, &table, &ctx, 0.0);
+        let (_, auction, forced) = common::random_sayc_position_with_gaps(&mut b, &table, &ctx);
+        assert!(p.random_calls.is_empty());
+        assert_eq!(format!("{}", p.auction), format!("{auction}"));
+        assert_eq!(p.forced_passes, forced);
+    }
 }

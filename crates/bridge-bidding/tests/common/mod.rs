@@ -661,6 +661,39 @@ pub fn random_sayc_position_with_gaps(
     table: &bridge_bidding::Table,
     ctx: &bridge_bidding::BidContext<'_>,
 ) -> (Deal, Auction, Vec<usize>) {
+    let p = random_sayc_position_with_substitution(rng, table, ctx, 0.0);
+    (p.deal, p.auction, p.forced_passes)
+}
+
+/// One position from [`random_sayc_position_with_substitution`].
+pub struct SubstitutedPosition {
+    /// The deal.
+    pub deal: Deal,
+    /// The prefix auction (the checked seat is `auction.next_seat()`).
+    pub auction: Auction,
+    /// Indices of forced `Pass`es substituted for a `NoCandidate`.
+    pub forced_passes: Vec<usize>,
+    /// Indices of calls replaced by a uniformly random legal call.
+    pub random_calls: Vec<usize>,
+}
+
+/// [`random_sayc_position_with_gaps`] with `11-testing.md` §2 step 1's `random_call_rate`
+/// substitution: each prefix call by a seat *other than the one about to be checked* is, with
+/// probability `random_call_rate`, replaced by a uniformly random legal call, so the harness also
+/// exercises off-system (`Partial`/`Natural`) prefixes that opponents' (or partner's) odd calls
+/// produce. The checked seat's own earlier calls are never substituted: they are part of what its
+/// `satisfied_by` checks, and a random call there would be a violation by construction. The
+/// substituted indices are returned in `random_calls`.
+///
+/// The checked seat is the one `depth` calls after the dealer; a prefix that completes early is
+/// redrawn by the callers anyway. With `random_call_rate == 0.0` no extra random numbers are drawn,
+/// so the RNG is consumed exactly as by [`random_sayc_position_with_gaps`].
+pub fn random_sayc_position_with_substitution(
+    rng: &mut impl Rng,
+    table: &bridge_bidding::Table,
+    ctx: &bridge_bidding::BidContext<'_>,
+    random_call_rate: f64,
+) -> SubstitutedPosition {
     use bridge_bidding::{BidChoice, choose_bid};
 
     let deal = random_deal(rng);
@@ -668,21 +701,37 @@ pub fn random_sayc_position_with_gaps(
     let vul = Vulnerability::from_index((rng.next_u32() % 4) as u8);
     let mut auction = Auction::new(dealer, vul);
     let mut forced_passes = Vec::new();
+    let mut random_calls = Vec::new();
     let depth = rng.next_u32() % 12;
+    let checked = auction.seat_at(depth as usize);
     for _ in 0..depth {
         if auction.is_complete() {
             break;
         }
         let seat = auction.next_seat();
-        let hand = deal.hand(seat);
-        let call = match choose_bid(table, hand, &auction, ctx) {
-            BidChoice::Chosen(c) => c.call,
-            BidChoice::NoCandidate(_) => {
-                forced_passes.push(auction.len());
-                Call::Pass
+        let substitute = random_call_rate > 0.0
+            && seat != checked
+            && ((rng.next_u64() >> 11) as f64 / (1u64 << 53) as f64) < random_call_rate;
+        let call = if substitute {
+            let legal: Vec<Call> = auction.legal_calls().collect();
+            random_calls.push(auction.len());
+            legal[(rng.next_u64() % legal.len() as u64) as usize]
+        } else {
+            let hand = deal.hand(seat);
+            match choose_bid(table, hand, &auction, ctx) {
+                BidChoice::Chosen(c) => c.call,
+                BidChoice::NoCandidate(_) => {
+                    forced_passes.push(auction.len());
+                    Call::Pass
+                }
             }
         };
         auction = auction.with(call).expect("choose_bid returns a legal call");
     }
-    (deal, auction, forced_passes)
+    SubstitutedPosition {
+        deal,
+        auction,
+        forced_passes,
+        random_calls,
+    }
 }
