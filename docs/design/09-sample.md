@@ -217,7 +217,7 @@ impl Sampler {
 
 `deal` から同じ `σ` とプール列を再現し、`k = 1..=m−1` について `π_k(h_{σ_k}) = Σ_{i: h ∈ C_{σ_k,i}} v_i · exp(S^{(k)}_{σ_k,i}.log_prob(h))` を計算し、`ln π = Σ_k ln π_k` とする。項レベルに展開すると `π_k(h) = Σ_{(i,l): h ∈ a_{i,l}} u_{i,l} / cnt_{i,l}` であり、**重なる DNF 項・重なる代替をすべて足す**。混合密度は `h` を生成し得た全成分を数えなければ正しくない。最後の席は残りで決まるので対数領域で 0 を加える。いずれかの `π_k = 0`、または最後の席の検査に落ちる `deal` は −∞。
 
-`log_prob` は実際の提案分布に対して厳密であり、これが ESS を正直な数値にする。`propose` が準備した席 2 以降の `S^{(k)}` は `propose` の中で捨てられ、`log_prob` が再準備するので、配牌ごとの `prepare` 回数は §6.4 の見積りの 2 倍になる。これを避けるトレイト拡張（`propose_with_log_prob`）は §2.1 の未決。
+`log_prob` は実際の提案分布に対して厳密であり、これが ESS を正直な数値にする。`propose` が準備した席 2 以降の `S^{(k)}` は、同じスレッドで直後に呼ばれる同じ配牌の `log_prob` のためにスレッドローカルに残し、`(pool, fixed)` が一致すれば再利用する（一致しなければ再準備するので結果は常に厳密）。このため配牌ごとの `prepare` は §6.4 の見積りどおり 1 回分で済み、トレイト拡張（`propose_with_log_prob`）は足さない（§10.1）。
 
 ### 6.4 性能リスクと対策（計画 §8.3、R4）
 
@@ -236,7 +236,7 @@ impl Sampler {
 | (b) 対畳み込みの到達可能シェイプ限定 | `(l0,l1)`・`(l2,l3)` 対の疎畳み込みを、制約が許すシェイプが使う対（各 ≤ 105）に限定する（05-constraint.md、設計済み） | `prepare` の定数を下げる |
 | (c) 粗い提案 | 席 2 以降を「シェイプ + HCP のみ」の粗い項（`cards` / `eval` を外した要約 `Atom`）で提案し、細部は `L` の重みで補正する | `prepare` が高速パスに乗る。ESS は下がるが有限 |
 
-`prepare` の結果を `(代替 id, P_k)` でキャッシュする案は、プールがほぼ繰り返さないため効果が薄い。`prepare` 自体が本質的に安いこと（スート単位の DP、列挙でない）が前提になる。
+`prepare` の結果を `(代替 id, P_k)` でキャッシュする案は、プールがほぼ繰り返さないため効果が薄い（配牌をまたぐキャッシュは採らない。1 回の `propose` の中で同じ `P_k` に対する代替どうしは `Sampler::prepare_many` で表を共有する、§10.1）。`prepare` 自体が本質的に安いこと（スート単位の DP、列挙でない）が前提になる。
 
 ---
 
@@ -296,6 +296,8 @@ pub fn rng_for(master: u64, index: u64) -> SampleRng {
 | `deterministic_across_threads` | `tests/determinism.rs` | 同じ seed、`Single` vs 7 スレッドプール | バイト一致 |
 | `log_prob_consistency` | `tests/log_prob.rs` | 小さいプール（未知 8〜12 枚）で `ConstraintProposal` から 10^5 回提案し、配牌ごとのヒストグラムを `exp(log_prob)` と χ² 比較 | 棄却されない（有意水準 0.01） |
 | `middle_seat_multi_component_and_last_seat_rejection_log_prob_consistency` | `tests/log_prob.rs` | 未知 9 枚、再 prepare される中間席が生き残る 2 成分混合（coarsen で潰れない HCP 窓）を持ち、最終席が `Sampled` で棄却もあり得る文脈での同じ χ² 比較 | `Σ exp(log_prob) ≤ 1`、最終席のみの不整合で厳密に `-inf`、棄却されない |
+| `middle_seat_merged_summaries_log_prob_consistency` | `tests/log_prob.rs` | 未知 9 枚、再 prepare される中間席に要約が一致する 2 代替 + 別の HCP 窓の代替（§10.1 (i) の併合経路）での全列挙 + χ² | `Σ exp(log_prob) = 1`、棄却されない |
+| `log_prob_matches_the_unmerged_reference` | unit（`constraint_proposal.rs`） | 実 SAYC に似た 4 席の文脈で、併合・`ANY` 直接配り・スレッドローカルキャッシュを使う `log_prob` を、要約を 1 つずつ毎回 prepare する参照実装と比較（提案配牌と一様配牌の両方） | 差 < 1e-9、支持集合一致 |
 | `uniform_log_prob_constant` | unit | 全提案で `log_prob` が等しく、`Σ exp(log_prob)` が全列挙で 1 | |
 | `ess_formula` | unit | 手計算の小例（等重み n 個 → ESS = n、1 個だけ重い → ESS ≈ 1） | |
 | `normalized_weights_sum_to_one` | unit | | 1 ± 1e-12 |
@@ -322,20 +324,68 @@ pub fn rng_for(master: u64, index: u64) -> SampleRng {
 
 ### 10.1 フェーズ 5.4 のベンチ結果と (a)(b)(c) の採否
 
-`benches/deals.rs`（release、単一コア、ローカル環境）:
+**計測条件.** release、`Threads::Single`、Apple Silicon 10 コア。別のワークフローが同じマシンでビルド・ベンチを並行して回していたため、各数値の横に `sysctl -n vm.loadavg`（1 分平均）を記す。最終値は 3 回実行の最良値（criterion、`--warm-up-time 1 --measurement-time 4 --sample-size 10`）。`deals/*` は 1 反復 = `sample_deals` で 1,000 配牌（`sample_deals` 冒頭の §2.3 支持集合プローブと `prepare` を含む）。
 
-| ケース | single_thread | auto (rayon 既定プール) |
+**実 SAYC ケース（§10.1 で追加）.** 合成した `Interpretation` ではなく、`systems/sayc/sayc.bml` をコンパイルして `bridge_bidding::interpret` した解釈と、そのオークションの実際のビディング尤度（`SampleContext::bidding`、`sequence_log_likelihood`）で重み付けする 3 ケース:
+
+- `deals/sayc/stayman_to_3nt`: 1NT - P - 2♣ - P - 2♥ - P - 3NT - P - P - P
+- `deals/sayc/competitive_raise_to_4s`: 1♠ - 2♥ - 2♠ - P - 4♠ - P - P - P
+- `deals/sayc/four_seat_competitive`: 1♠ - 2♥ - 2♠ - 3♥ - 4♠ - P - P - P（4 席すべてがコール）
+
+**手順 1（再計測、変更前 = 8933b71）.**
+
+| ケース | single_thread | loadavg |
 | --- | --- | --- |
-| `deals/uniform`（無制約） | ≈ 3.5–4.6 M 配牌/秒 | ≈ 7.5–9.0 M 配牌/秒 |
-| `deals/constraint/1nt_opener`（1 席、15-17 balanced、ε = 0.02） | ≈ 1.4–1.6 M 配牌/秒 | ≈ 2.5–3.9 M 配牌/秒 |
-| `deals/constraint/four_call_three_seats`（3 席制約、ε 混合込み） | ≈ 1.39–1.51 K 配牌/秒 | ≈ 3.9–6.5 K 配牌/秒 |
+| `deals/uniform` | 4.59 M 配牌/秒 | 9.2 |
+| `deals/constraint/1nt_opener` | 2.00 M 配牌/秒 | 9.2 |
+| `deals/constraint/four_call_three_seats` | 14.1 K 配牌/秒 | 9.2 |
+| `deals/sayc/stayman_to_3nt` | 3.41 K 配牌/秒 | 9.2 |
+| `deals/sayc/competitive_raise_to_4s` | 5.07 K 配牌/秒 | 9.2 |
+| `deals/sayc/four_seat_competitive` | 4.67 K 配牌/秒 | 6.7 |
 
-参考: `bridge-constraint` の `sampler` ベンチ（同環境）— `prepare`: フルデッキ balanced 15-17 で ≈ 17.7 μs、中盤（26 枚プール・6 枚固定）で ≈ 99.4 μs（§6.4 の見積り 20-60 μs より、プールが縮んだ中盤は重い）。`sample`: ≈ 0.18-0.21 μs。
+`bridge-constraint` の `sampler` ベンチ（loadavg 7.5）: `prepare` フルデッキ balanced 15-17 で 8.08 µs、中盤（26 枚プール・6 枚固定）で 12.6 µs、`sample` 197 ns / 140 ns。旧版 §10.1 が前提にしていた「中盤 ≈ 100 µs/prepare」はフェーズ 2 の性能修正で既に解消済みで、`four_call_three_seats` はこの時点で目標を満たしていた。一方、実 SAYC の 3 ケースは 3.4〜5.1 K 配牌/秒で未達。
 
-採用:
+**プロファイル（macOS `sample`、`competitive_raise_to_4s` / `stayman_to_3nt`）.** 1 配牌あたりの時間は `propose` が 6〜7 割、`sequence_log_likelihood`（`bridge-bidding`）が 3〜4 割、`log_prob` はほぼ 0（2e2c8d2 のスレッドローカルキャッシュで `propose` の `Sampler` を再利用するため）。`propose` の中身はほぼすべて再 prepare される中間席の `Sampler::prepare`（スート表の列挙、対畳み込み、形ごとの重み、DNF 化、前回の `Sampler` の解放）だった。原因は実解釈の形にある: 1 席に 3〜8 個の代替があり、そのうち多くが `cards` / `eval` の細部だけが違うため §6.4 (c) の粗い要約が一致する（Stayman の東のパス 8 代替はすべて `ANY` に潰れる）。それぞれが毎回、同じプールに対して同じスート表と対畳み込みを作り直していた。
 
-- **(a) 無制約席の直接配り**: 採用（実装済み）。`uniform`・`1nt_opener` の 1 席のみ制約されるケースが目標 10^4/秒/コアを 2〜3 桁上回るのは、他の全席がこの経路に落ちるため。
-- **(c) 粗い提案**: 採用(実装済み、`ConstraintProposal` の再 prepare される席 = キャッシュされる先頭と残差の最終席を除く全席)。`tests/log_prob.rs` の `middle_seat_coarse_log_prob_consistency` で `log_prob` の厳密性(enumerated 支持集合の和 = 1、10^5 回の提案との χ²)を確認済み。ただし採否の根拠は「`cards` / `eval` の判定コストを削る」ではない — `Sampler::prepare` を直接測ると、`cards` リテラル 1 つ(「♠A を持たない」)を足しても 39 枚プールで 156.5 µs → 155.7 µs、26 枚プールで 141.6 µs → 124.0 µs(誤差の範囲、むしろ後者は逆転)で、リテラル単位のフィルタリング自体はほぼ無償。`four_call_three_seats` ベンチの候補はそもそも `cards` / `eval` を持たない `Atom` なので、(c) を入れても速度は変化しない(実測: 導入前後で `single_thread` は誤差範囲、`p > 0.05`)。(c) が効くのは、粗い要約が `Sampler::prepare` の通る経路そのものを変えるとき — 典型的には要約が `ANY` に潰れる、または HCP 窓を失って形状 DP の枝刈りが軽くなるとき(`ANY` 自体は 1.7 µs、2 エース保持のような `cards` 候補を粗めた場合は実測で ≈ 60 倍速くなった一方、ESS 比は 0.769 → 0.165 に落ちた、§6.1 の重み修正後の数値)。(c) は常に `cards` / `eval`・`Not` 推論・カード単位のハード play 制約を再 prepare 席で捨てるので、それらを使わない席には効果がなく ESS だけを下げうる。
-- **(b) 対畳み込みの到達可能シェイプ限定**: 未実装（このレーンでは実装しない）。`bridge-constraint` 内部の最適化であり、`crates/bridge-bidding` と同様このレーンから変更できない範囲（`crates/bridge-constraint` はタスクの制約で変更禁止）。`four_call_three_seats` が目標未達（single_thread で目標の約 14%）なのは、`Sampler::prepare` 自体のコスト（中盤プールで ≈ 100 μs/回、上記ベンチ）× 中間席（今回は 2 席）× 代替数（ε 混合で最大 2）の積が支配的で、(a)(c) だけでは解消できないため。この残りのギャップを埋めるには (b) が必要というのが今回の実測からの結論。
+**手順 3 の最適化（すべて厳密性を保つ。出力は `sample_deals` の配牌列まで不変、ただし (i) の併合で成分選択の乱数消費が変わるケースを除く）.**
 
-`propose_with_log_prob`(不決事項 4): `four_call_three_seats` を `propose` と `log_prob` に分けて計測すると、1 配牌あたり `propose` ≈ 434.9 µs、`log_prob` ≈ 415.6 µs とほぼ同じコスト(`propose` 単体なら ≈ 2,299 配牌/秒)。つまり両者を 1 回に統合できたとしても最大で 2 倍、目標 10^4/秒/コアの約 4 分の 1 にしかならず、依然として目標未達(旧稿の「1 桁以上不足」は過大評価— 実測は 4 倍程度の不足)。それでも (b) なしでは中間席 1 回あたり ≈ 100 µs のコスト自体が消えないため届かない見込みであることは変わらず、トレイトの公開シグネチャを変える(`propose`/`log_prob` の 1 段 API を崩す)コストに見合わないため、仕様通り「足さない」を確定する。
+1. (i) 同一要約の併合（`bridge-sample`）: 再 prepare される席の粗い要約のうち同一のものを 1 成分に併合し重みを合算する。同一成分は `cnt` を共有するので混合分布は不変。併合後の要約が `ANY` 1 つなら、その席は `SeatPlan::Direct` と同じく残りプールから一様に配る（`ANY` の `Sampler` と同じ密度、`prepare` 0 回）。
+2. (ii) `Sampler::prepare_many`（`bridge-constraint`）: 同じ `(pool, fixed)` に対する複数制約の prepare で、スート別フィルタも追加特徴も持たない（= 表が制約に依存しない）項の 4 スート表と `(l0,l1)` / `(l2,l3)` 対畳み込みを共有する。ホットパスでは「代替数 × 表構築」が「1 回の表構築 + 対畳み込みの和集合」になる。得られる `Sampler` は単独の `prepare` とビット一致（count・exact・同じ乱数列での標本・`log_prob` を差分テストで確認）。
+3. (iii) `Sampler::prepare_many_dnf`: 粗い要約の DNF 化を `ConstraintProposal::prepare` で 1 回だけ行い、毎回の `to_dnf`（形集合の全走査を含む正規化・自明充足不能判定、`propose` の約 1 割）を省く。
+4. (iv) `Sampler::prepare` 自体の定数削減: 追加特徴なしの項では形の重みを 1 次元 CDF の 2 回参照に、対畳み込みを密な 11×11 積和（非ゼロ範囲のみ）に。対畳み込みを `PairMap` の平坦な 2 本の `Vec` に格納し、1 回の prepare 呼び出しで作った表を `Arc` 1 組で共有（対ごとの `Box`/`Vec`/`Arc` の確保・解放が `propose` の約 2 割を占めていた）。平凡なスート表（フィルタなし・鍵 = HCP）の第 1 パス（ヒストグラム）を、オナー部分集合（≤ 16）× スポット枚数の二項係数の閉形式に置換（配置パスは同じ列挙順のまま、`build` とビット一致をテスト）。スート表の長さ別疎リストを 1 本のバッファにまとめる。
+
+**最終結果（7e7e89f 相当、3 回の最良値）.**
+
+| ケース | 変更前 | 最終 | loadavg |
+| --- | --- | --- | --- |
+| `deals/uniform` | 4.59 M/秒 | 4.67 M/秒 | 5.4 |
+| `deals/constraint/1nt_opener` | 2.00 M/秒 | 1.93 M/秒 | 5.4 |
+| `deals/constraint/four_call_three_seats` | 14.1 K/秒 | **32.8 K/秒** | 6.6 |
+| `deals/sayc/stayman_to_3nt` | 3.41 K/秒 | **8.09 K/秒** | 6.4 |
+| `deals/sayc/competitive_raise_to_4s` | 5.07 K/秒 | **10.4 K/秒** | 6.6 |
+| `deals/sayc/four_seat_competitive` | 4.67 K/秒 | **10.4 K/秒** | 6.6 |
+
+`uniform` と `1nt_opener` は変更の影響を受けない経路で、差は測定誤差（同じ負荷で旧版と交互に測ると 1.79 M/秒 vs 1.77 M/秒）。同じ負荷（loadavg 5〜6.5）で旧版と交互に測った A/B でも `four_call_three_seats` 12.9 K → 28.2 K、SAYC 3 ケース 3.05 / 3.81 / 4.13 K → 7.31 / 9.09 / 8.83 K（途中の版、最終版より 1 コミット前）。
+
+`sampler` ベンチ（最終、loadavg 5.4〜5.7、3 回の最良値）: `prepare` フルデッキ balanced 15-17 で 3.42 µs（変更前 8.08 µs）、中盤 7.44 µs（同 12.6 µs）、`sample` 164 ns / 135 ns（同 197 ns / 140 ns）。
+
+**1 配牌あたりの内訳（`sample_deals` 2,000 配牌 × 5 回の最良値、同じ解釈・同じ乱数列で `propose` + `log_prob` と `sequence_log_likelihood` を別々に計測、loadavg 5.1〜5.8）.**
+
+| ケース | `propose`+`log_prob` 変更前 → 最終 | ビディング尤度 | `sample_deals` 変更前 → 最終 |
+| --- | --- | --- | --- |
+| `stayman_to_3nt` | 183.7 µs → 29.5 µs | 90〜92 µs | 3.53 K → 8.21 K/秒 |
+| `competitive_raise_to_4s` | 136.8 µs → 39.6 µs | 55〜56 µs | 5.13 K → 10.2 K/秒 |
+| `four_seat_competitive` | 143.7 µs → 39.7 µs | 56〜59 µs | 5.18 K → 10.2 K/秒 |
+
+目標 10^4 配牌/秒/コア（= 100 µs/配牌）に対し、`four_call_three_seats` と競り合いの 2 ケースは達成。`stayman_to_3nt` は未達だが、残りの 8 割近くは `bridge-bidding` の `sequence_log_likelihood`（1 配牌 ≈ 92 µs、主に `NaturalInference::candidates` / `infer` と `summary_satisfiable` の `ShapeSet::min_hcp` / `max_hcp` 全走査）で、提案側をゼロにしても ≈ 10.8 K/秒が上限。これ以上はこのレーンの範囲（`bridge-sample`・`bridge-constraint/src/sampler`）の外で、ビディング尤度側の最適化（`ShapeSet` の HCP 範囲のキャッシュ、`candidates` の確保削減など）を別タスクとして扱う。
+
+**採否.**
+
+- **(a) 無制約席の直接配り**: 採用（実装済み）。今回、再 prepare される席の粗い要約が併合後 `ANY` になる場合にも拡張した（上記 (i)）。
+- **(b) 対畳み込みの到達可能シェイプ限定**: 採用（実装済み）。フェーズ 2 の時点で `PairMap` は実行可能なシェイプが使う対だけを遅延構築していた（旧版の「未実装」は誤り）。今回はさらに、同じプールに対する複数の項・代替のあいだで対畳み込みとスート表を共有する（上記 (ii)、`Sampler::prepare_many`）。
+- **(c) 粗い提案**: 採用（実装済み、変更なし）。再 prepare される中間席は `cards` / `eval` を落とした要約で提案する。実解釈では要約が高い確率で一致・`ANY` 化するので、(i)(ii) と組み合わせたときに最も効く。ESS の代償は従来どおり。
+- **`(代替, プール)` 単位のキャッシュ**: 1 回の `propose` の中では (ii) で実質的に実現（同じプールに対する全代替が表と畳み込みを共有、同一要約は (i) で 1 回だけ）。`propose` と `log_prob` のあいだは 2e2c8d2 のスレッドローカルキャッシュで再利用。配牌をまたぐキャッシュはプールがほぼ繰り返さないので採らない（§6.4 の判断どおり）。
+
+`propose_with_log_prob`（未決事項 4）: 足さないで確定。`log_prob` は `propose` が作った `Sampler` をスレッドローカルキャッシュ経由で再利用するので、プロファイル上 `log_prob` は 1 配牌あたりの時間のほぼ 0（`competitive_raise_to_4s` で 1% 未満）。統合しても測定可能な改善がなく、1 段 API（`propose` / `log_prob`）を保つ。
+
+**ESS についての注意（5.3 の範囲、未解決）.** 上記の実 SAYC 3 ケースを `sequence_log_likelihood` で重み付けすると、2,000 配牌での ESS 比は 0.7% / 2.6% / 0.2%（変更前後で同水準、`competitive_raise_to_4s` と `four_seat_competitive` は完全一致）で、フェーズ 5 の完了条件（ESS ≥ 0.5n）から大きく外れる。スループットの問題ではなく、提案分布（`interpret` の解釈 + ε 混合 + (c) の粗い要約）と目標（ポリシーの `call_distribution` に基づく尤度）の乖離であり、5.3 の ESS スイート側で扱う。

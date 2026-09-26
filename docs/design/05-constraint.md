@@ -180,6 +180,12 @@ impl Sampler {
     /// pool ∩ fixed = ∅ が必須 (違反は Err)。充足不能はエラーではなく count() == 0。DNF 化は内部で行う
     /// (DnfOptions::default()、Overflow::Residual なので DnfError は出ない)。
     pub fn prepare(c: &HandConstraint, pool: Hand, fixed: Hand, opts: &SampleOptions) -> Result<Sampler, PrepareError>;
+    /// 同じ (pool, fixed) に対する複数制約をまとめて prepare する (フェーズ 5.4)。各 Sampler は単独の prepare と
+    /// ビット一致。スート別フィルタも追加特徴も持たない項 (表が項に依存しない) の 4 スート表と対畳み込みを共有する。
+    pub fn prepare_many<'a>(cs: impl IntoIterator<Item = &'a HandConstraint>, pool: Hand, fixed: Hand, opts: &SampleOptions) -> Result<Vec<Sampler>, PrepareError>;
+    /// prepare_many の DNF 版: 各 dnf は c.to_dnf(&DnfOptions::default()) であること。同じ制約を毎回別プールで
+    /// prepare する呼び出し側 (bridge-sample の再 prepare 席) が DNF 化を 1 回で済ませるためのもの。
+    pub fn prepare_many_dnf<'a>(dnfs: impl IntoIterator<Item = &'a Dnf>, pool: Hand, fixed: Hand, opts: &SampleOptions) -> Result<Vec<Sampler>, PrepareError>;
     pub fn count(&self) -> u64;                       // Σ c_i (項が互いに素なら |U|)
     pub fn is_exact(&self) -> bool;                   // 全項が residual/custom を持たない
     pub fn sample<R: rand_core::Rng + ?Sized>(&self, rng: &mut R) -> Option<Sample>;   // None: count() == 0 または max_tries 超過
@@ -351,12 +357,15 @@ impl PreparedTerm {
 
 フルデッキ・フィルタなし・K=1 の共有テーブル (`FULL_SUIT`、`LazyLock` で実行時 1 回構築、16 KB + オフセット) は §7 手順 3 の高速パスとしてフェーズ 2.4 で追加する (骨格には無い)。`const fn` で作れなくはないが `Vec` を使うため実行時構築とする。
 
+実装の現状 (フェーズ 2 の性能修正と 5.4 で上の骨格から変わった点): `SuitTable` のオフセットは鍵の密な添字 (`nk` = 11 または 154) で持ち、長さ別の疎リストは 1 本のバッファ + オフセット、追加特徴なしの表は長さ別の密な HCP 行 (`[u64; 11]` と非ゼロ範囲) も持つ。`PairMap` は `(l0,l1)` → 添字の 196 要素配列で、全対の疎リストと接頭和を 2 本の平坦な `Vec` に格納し、`PairConv` はその借用ビュー。`GeneralTerm` は `Option<(Arc<PairMap>, Arc<PairMap>)>` を持ち、`term::SharedPlain` (1 回の `prepare` / `prepare_many` 呼び出しに 1 つ、`(pool, fixed)` 固定) が「フィルタなし・追加特徴なし・棄却リテラルなし」の項の 4 スート表と対畳み込みを集め、呼び出しの最後に `Arc` 1 組として各項に配る。棄却リテラルを持つ項は burn-in で prepare 中に描画するので自前の表を持つ。
+
 ## 7. `prepare` の手順 (DNF 項ごと)
 
 1. 検証: `fixed ∩ pool = ∅` (違反は `PrepareError::Overlap`)、`|fixed| <= 13` (違反は `TooManyFixed`)。`m = 13 − |fixed|`。`|pool| < m` なら項の個数は 0。`to_dnf(&DnfOptions::default())` で項に分ける。
 2. リテラルを §6.2 の表で分類する。スート別フィルタのクロージャ (`single_suit` のカード要件、`SuitQuality`)、追加特徴のテーブルポインタ (K=2 のとき)、シェイプフィルタ (`DistPoints` の shape-only) を決める。スロットに入らない加法的特徴・`BergenStarting`・`custom`・`residual` は棄却リテラルとして `term` 側に残す。棄却リテラルがあり `opts.allow_rejection == false` なら `PrepareError::NotSamplable`。
 3. 各スート `s` について `P = pool.holding(s)`、`F = fixed.holding(s)`:
    - 高速パス: `P == FULL` かつ `F == EMPTY` かつ `s` にフィルタなし かつ K=1 なら共有 `FULL_SUIT` を参照する (列挙不要)。
+   - フィルタなし・K=1 (平凡な表): 第 1 パスのヒストグラムを閉形式で作る。HCP はプールのオナー (A K Q J) のどれを取るかだけで決まるので、オナー部分集合 (≤ 16) ごとに長さ `|H| + |F| + k` の列へ `C(スポット枚数, k)` を足す。第 2 パス (配置) は下と同じ列挙順で行い、`build` とビット一致 (フェーズ 5.4)。
    - それ以外: `sub ⊆ P` を全列挙 (`sub = (sub − 1) & P`、`Holding::submasks`)。`H = sub ∪ F` を評価し、スートフィルタが `H` を拒否すれば飛ばす。`len = H.len()`、`key = SUIT.hcp[H] | feat[H] << 6`。カウンティングソート (第 1 パスで個数、第 2 パスで配置) で `holdings` と `start` を作る。コスト `2 × 2^|P|` 反復、約 4 ns/反復。
    - `counts[len]` をヒストグラムから疎リストにする。
    - **確定カードはここで合成される** ので制約は無変換 (D3)。`len` は元の長さ、`key` は確定分の寄与を含む。
@@ -443,10 +452,11 @@ log_prob(h) = ln( Σ_{i ∋ h} s_i / α_i ) − ln z
 | --- | --- | --- |
 | `Atom::satisfies` | 30〜80 ns | |
 | `to_dnf` | O(Π 子サイズ)、256 項で打ち切り | + O(k²) の包含除去 |
-| `prepare`、フルデッキ、スートフィルタなし、K=1 | 20〜60 μs | 対 <= 105 × 121 積和、シェイプ <= 560 × 21 |
+| `prepare`、フルデッキ、スートフィルタなし、K=1 | 20〜60 μs | 対 <= 105 × 121 積和、シェイプ <= 560 × 21。実測 (フェーズ 5.4 後、`full_deck_15_17_balanced`): 3.4 μs (5.4 前 8.1 μs) |
 | `prepare`、部分集合列挙が要るスート | +65 μs/スート (2 × 2^13 × 4 ns) | フィルタ・確定・縮小プールのあるスート。フルデッキ最悪 +260 μs |
 | `prepare`、プレイ途中 (未知 26 枚)、シェイプが絞られた項 | 3〜10 μs | スートあたり 2^6.5。実測 (`criterion`、`mid_play_26_pool_6_fixed` に `ShapeSet::BALANCED` を使う変種): 2.7〜3.3 μs |
-| `prepare`、プレイ途中 (未知 26 枚)、シェイプ無制約 (560 種) | 12〜15 μs | 上と同じスート列挙コストに、シェイプごとの対畳み込み (`(l0,l1)`・`(l2,l3)` ペア、最大 196 通り) が乗る。実測 (`criterion`、`mid_play_26_pool_6_fixed`): 12.0〜14.2 μs。09-sample.md §6.4 の「≲5 μs/`prepare`」予算はシェイプが絞られた項を前提とする; 無制約項を席 2 以降で使うなら (a)/(b)/(c) のいずれかで軽くする (フェーズ 5.4 で選ぶ) |
+| `prepare`、プレイ途中 (未知 26 枚)、シェイプ無制約 (560 種) | 12〜15 μs | 上と同じスート列挙コストに、シェイプごとの対畳み込み (`(l0,l1)`・`(l2,l3)` ペア、最大 196 通り) が乗る。実測 (`criterion`、`mid_play_26_pool_6_fixed`): 12.0〜14.2 μs、フェーズ 5.4 後 7.4 μs。09-sample.md §6.4 の「≲5 μs/`prepare`」予算はシェイプが絞られた項を前提とする; 無制約項を席 2 以降で使う場合は (a)(b)(c) と `prepare_many` による表の共有で軽くする (09-sample.md §10.1) |
+| `prepare_many`、同じプールに対する平凡な項 n 個 | 表構築 1 回 + 対畳み込みの和集合 + 項ごとのシェイプ重み | 平凡 = スート別フィルタ・追加特徴・棄却リテラルなし。単独 `prepare` × n とビット一致 |
 | `prepare`、K=2 | ×3〜5 | スートあたり 160 状態、2 次元接頭和 |
 | `sample`、K=1 | 0.3〜0.5 μs | 乱数 9 回、約 80 演算 |
 | `sample`、K=2 | 1〜2 μs | <= 147 対状態の走査 |

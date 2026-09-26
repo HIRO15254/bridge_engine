@@ -18,12 +18,15 @@
 //!
 //! # Cost
 //!
-//! `prepare` is the expensive step: about 18 µs for the full 52-card deck with a shape and HCP
-//! window (shared `FULL_SUIT` tables, no per-suit enumeration needed), about 100 µs for a
+//! `prepare` is the expensive step: about 3.5 µs for the full 52-card deck with a shape and HCP
+//! window (shared `FULL_SUIT` tables, no per-suit enumeration needed), about 7.5 µs for a
 //! mid-play position (26 unknown cards, 6 fixed, one HCP window) where every suit's table is
-//! rebuilt for the smaller pool. `sample` costs about 150–200 ns once a `Sampler` is prepared
-//! (release build; see `benches/sampler.rs`). Callers keep a prepared `Sampler` and sample from it
-//! many times.
+//! rebuilt for the smaller pool. `sample` costs about 135–170 ns once a `Sampler` is prepared
+//! (release build, phase 5.4 measurements; see `benches/sampler.rs` and 09-sample.md §10.1).
+//! Callers keep a prepared `Sampler` and sample from it many times; a caller that must prepare
+//! several constraints against the same pool (a mixture re-prepared on every draw) uses
+//! [`Sampler::prepare_many`] / [`Sampler::prepare_many_dnf`], which share the per-suit tables
+//! and pair convolutions of every term that has no per-suit filter and no additive feature.
 
 mod rand_util;
 mod suit_table;

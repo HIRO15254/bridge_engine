@@ -108,6 +108,8 @@
 
 完了条件: オークションから配牌をサンプリングして ESS が要求数の 50% 以上、DDS FFI が動きサンプル配牌の解析結果が返る。
 
+5.4 の状況 (2026-09-26、詳細は 09-sample.md §10.1): (a)(b)(c) はすべて採用、加えて再 prepare 席の同一要約の併合と `Sampler::prepare_many` による表・対畳み込みの共有。single_thread で `four_call_three_seats` 32.8 K 配牌/秒、実 SAYC (実ビディング尤度) の競り合い 2 ケース 10.4 K 配牌/秒で目標達成、Stayman 3NT は 8.1 K 配牌/秒で未達 (残りの約 8 割は `bridge-bidding` の `sequence_log_likelihood`、≈ 92 µs/配牌)。`propose_with_log_prob` は足さない。実 SAYC 3 ケースの ESS 比は 0.2〜2.6% で、完了条件の ESS は 5.3 側の課題として残る。
+
 ## 7. フェーズ 6: オープニングリードアドバイザ (別クレート)
 
 | id | 内容 | 証明 / 完了基準 |
