@@ -337,3 +337,350 @@ fn notrump_overcall_outranks_plain_overcall() {
          overcall: {choice:?}"
     );
 }
+
+/// Regression tests for the notrump / strong 2C / weak-two / preempt lane (`notrump.bml`,
+/// `strong-2c.bml`, `weak-twos.bml`, `preempts.bml`; `systems/sayc/NOTES.md` section "Notrump
+/// lane"). Each test replays one sequence that the replay-based consistency harness
+/// (`tests/consistency.rs`) or the review (`harness_review.json` #0/#3, `dropped.json` #10/#16)
+/// found mis-bid or without any call, and checks the call `choose_bid` now makes for a
+/// constructed hand. Auctions are written with North as dealer, hands as `S.H.D.C`.
+mod notrump_lane {
+    use super::ctx;
+    use bridge_bidding::{BidChoice, ChoiceSource, Table, choose_bid};
+    use bridge_core::{Auction, Call, Hand, Seat, Vulnerability};
+    use std::sync::OnceLock;
+
+    fn table() -> &'static Table {
+        static TABLE: OnceLock<Table> = OnceLock::new();
+        TABLE.get_or_init(|| super::common::compile_sayc("sayc.bml"))
+    }
+
+    /// `choose_bid` for `hand` (`S.H.D.C`) after `calls` (space-separated, North dealer).
+    fn choose(calls: &str, hand: &str) -> BidChoice {
+        let table = table();
+        let calls: Vec<Call> = calls
+            .split_whitespace()
+            .map(|c| c.parse().expect("test call parses"))
+            .collect();
+        let auction = Auction::from_calls(Seat::North, Vulnerability::None, calls)
+            .expect("test auction is legal");
+        let hand: Hand = hand.parse().expect("test hand parses");
+        choose_bid(table, hand, &auction, &ctx(table))
+    }
+
+    /// Asserts that the chosen call is `expected` and that it came from the system itself (a
+    /// row, not natural inference); `Pass` may also come from the implicit pass when
+    /// `implicit_pass_ok` is set.
+    fn assert_call(calls: &str, hand: &str, expected: &str, implicit_pass_ok: bool, why: &str) {
+        let choice = choose(calls, hand);
+        let expected: Call = expected.parse().expect("expected call parses");
+        let BidChoice::Chosen(chosen) = &choice else {
+            panic!("[{calls}] {hand}: expected {expected}, got NoCandidate ({why}): {choice:?}");
+        };
+        assert_eq!(chosen.call, expected, "[{calls}] {hand}: {why}: {choice:?}");
+        let source_ok = chosen.source == ChoiceSource::System
+            || (implicit_pass_ok && chosen.source == ChoiceSource::ImplicitPass);
+        assert!(
+            source_ok,
+            "[{calls}] {hand}: {expected} must come from the system, not {:?} ({why})",
+            chosen.source
+        );
+    }
+
+    /// The unconstrained `4C = !BW` row over 1NT swallowed every hand without another call.
+    #[test]
+    fn weak_balanced_hand_passes_1nt_instead_of_gerber() {
+        assert_call(
+            "1NT P",
+            "Q32.Q32.J32.5432",
+            "P",
+            true,
+            "a 5 hcp balanced hand passes 1NT; it is not a 4C Gerber ask",
+        );
+    }
+
+    /// The same catch-all over 2NT: 4+ hcp raises to game.
+    #[test]
+    fn game_values_raise_2nt_to_3nt() {
+        assert_call(
+            "2NT P",
+            "Q32.Q32.J32.5432",
+            "3NT",
+            false,
+            "5 hcp opposite 20-21 raises to 3NT",
+        );
+    }
+
+    /// And over 2C-2D-2NT (22-24): 3+ hcp raises to game.
+    #[test]
+    fn game_values_raise_2c_2d_2nt_to_3nt() {
+        assert_call(
+            "2C P 2D P 2NT P",
+            "Q32.Q32.J32.5432",
+            "3NT",
+            false,
+            "5 hcp opposite 22-24 raises to 3NT",
+        );
+    }
+
+    /// Stayman continuation: a 4-4 heart fit with game values bids game in the major, not the
+    /// natural fallback's 2NT.
+    #[test]
+    fn stayman_heart_fit_with_game_values_bids_4h() {
+        assert_call(
+            "1NT P 2C P 2H P",
+            "KQ32.K432.A2.432",
+            "4H",
+            false,
+            "12 hcp with four hearts after 1NT-2C-2H bids 4H",
+        );
+    }
+
+    /// Stayman continuation: invitational values without a heart fit bid 2NT.
+    #[test]
+    fn stayman_invitation_without_fit_bids_2nt() {
+        assert_call(
+            "1NT P 2C P 2H P",
+            "KQ32.Q32.J32.432",
+            "2NT",
+            false,
+            "8 hcp with four spades (no heart fit) invites with 2NT",
+        );
+    }
+
+    /// Stayman continuation after the 2D denial: game values bid 3NT.
+    #[test]
+    fn stayman_denial_with_game_values_bids_3nt() {
+        assert_call(
+            "1NT P 2C P 2D P",
+            "KQ32.K432.A2.432",
+            "3NT",
+            false,
+            "12 hcp after 1NT-2C-2D bids 3NT",
+        );
+    }
+
+    /// Opener's answer to 2NT after 1NT-2C-2H: responder has four spades, so a minimum with
+    /// four spades bids 3S.
+    #[test]
+    fn opener_shows_spades_after_stayman_2nt() {
+        assert_call(
+            "1NT P 2C P 2H P 2NT P",
+            "AK32.KQ32.Q2.J32",
+            "3S",
+            false,
+            "a 15 hcp opener with both majors shows the spade fit",
+        );
+    }
+
+    /// A 16-17 hcp transfer hand with five spades had no call at all (NoCandidate).
+    #[test]
+    fn strong_transfer_hand_makes_quantitative_4nt() {
+        assert_call(
+            "1NT P 2H P 2S P",
+            "AT974.KQ3.AK.J43",
+            "4NT",
+            false,
+            "16-17 hcp with exactly five spades invites slam with 4NT",
+        );
+    }
+
+    /// An 18+ hcp transfer hand with five hearts bids 6NT.
+    #[test]
+    fn very_strong_transfer_hand_bids_6nt() {
+        assert_call(
+            "1NT P 2D P 2H P",
+            "A6.KQT32.KQ.AT76",
+            "6NT",
+            false,
+            "18+ hcp with exactly five hearts bids 6NT",
+        );
+    }
+
+    /// 1NT-3NT is a system position: opener's closing Pass is written, not left to natural
+    /// inference.
+    #[test]
+    fn opener_passes_1nt_3nt_explicitly() {
+        assert_call(
+            "1NT P 3NT P",
+            "AK4.AKT7.QJ63.T4",
+            "P",
+            false,
+            "opener passes 1NT-3NT",
+        );
+    }
+
+    /// After a game-forcing new suit in a transfer auction, opener with three-card support
+    /// bids game in responder's major (it had no call before).
+    #[test]
+    fn opener_raises_transfer_major_after_new_suit() {
+        assert_call(
+            "1NT P 2D P 2H P 3D P",
+            "QJ97.K86.64.AKQ4",
+            "4H",
+            false,
+            "opener with three hearts bids 4H over 3D",
+        );
+    }
+
+    /// 3NT after a transfer: opener with three-card support corrects to 4 of the major.
+    #[test]
+    fn opener_corrects_transfer_3nt_with_support() {
+        assert_call(
+            "1NT P 2H P 2S P 3NT P",
+            "K32.KQ2.AQ32.K32",
+            "4S",
+            false,
+            "opener with three spades corrects 3NT to 4S",
+        );
+    }
+
+    /// Opener competes over an overcall of the transfer with four-card support.
+    #[test]
+    fn opener_competes_over_overcalled_transfer_with_fit() {
+        assert_call(
+            "1NT P 2D 3D",
+            "A32.AJ32.J4.AJ32",
+            "3H",
+            false,
+            "four hearts compete to 3H after 1NT-2D-(3D)",
+        );
+    }
+
+    /// A jump overcall of 1NT used to map back onto the uncontested table (lenient matching)
+    /// and leave responder with no call.
+    #[test]
+    fn responder_bids_3nt_with_stopper_over_jump_overcall() {
+        assert_call(
+            "P 1NT 3S",
+            "AQ5.KQ85.Q976.AT",
+            "3NT",
+            false,
+            "17 hcp with a spade stopper bids 3NT over (3S)",
+        );
+    }
+
+    /// Weak twos: the `unlimited` 4-level raise took every hand, so responder never passed.
+    #[test]
+    fn weak_hand_passes_weak_two() {
+        assert_call(
+            "2D P",
+            "8742.T9843.72.J9",
+            "P",
+            true,
+            "a 1 hcp hand passes 2D",
+        );
+    }
+
+    /// Weak twos: a strong balanced hand now reaches the 2NT ask instead of the game raise.
+    #[test]
+    fn strong_hand_asks_with_2nt_over_weak_two() {
+        assert_call(
+            "2S P",
+            "J42.KQ3.AQ65.KQ9",
+            "2NT",
+            false,
+            "17 hcp with three spades asks with 2NT",
+        );
+    }
+
+    /// Weak twos: feature rebids are reachable; the stopper suit is shown.
+    #[test]
+    fn weak_two_maximum_shows_its_feature() {
+        assert_call(
+            "2S P 2NT P",
+            "KQJ982.32.A52.32",
+            "3D",
+            false,
+            "a maximum with the diamond ace shows the 3D feature",
+        );
+    }
+
+    /// Weak twos: opener raises a forcing new suit with three-card support (no call before).
+    #[test]
+    fn weak_two_opener_raises_forcing_new_suit() {
+        assert_call(
+            "2H P 2S P",
+            "J32.AKQJ98.T5.52",
+            "3S",
+            false,
+            "opener with three spades raises 2S to 3S",
+        );
+    }
+
+    /// Weak twos: an overcall no longer maps onto the uncontested table; a hand without a
+    /// listed action passes.
+    #[test]
+    fn responder_passes_overcalled_weak_two_without_values() {
+        assert_call(
+            "P 2H 3H",
+            "J94.QT7.Q32.AQ84",
+            "P",
+            true,
+            "11 hcp passes after 2H-(3H)",
+        );
+    }
+
+    /// Preempts: the `unlimited` raise took every hand, so a 19 hcp hand raised to 4C and a
+    /// 1 hcp hand bid too.
+    #[test]
+    fn preempt_responses_have_real_ranges() {
+        assert_call(
+            "3C P",
+            "AJ42.KQ3.AQ65.K9",
+            "4NT",
+            false,
+            "19 hcp with club support asks for aces",
+        );
+        assert_call(
+            "3C P",
+            "8742.T9843.72.J9",
+            "P",
+            true,
+            "a 1 hcp hand passes 3C",
+        );
+        assert_call(
+            "4H P",
+            "87432.T9.8765.J9",
+            "P",
+            true,
+            "a 1 hcp hand passes 4H instead of bidding Blackwood",
+        );
+    }
+
+    /// Strong 2C: opener raises a positive response with three-card support (no call before).
+    #[test]
+    fn strong_2c_opener_raises_positive_response() {
+        assert_call(
+            "2C P 2H P",
+            "QJ764.KQ3.AKJ.AQ",
+            "3H",
+            false,
+            "opener with three hearts raises the 2H positive",
+        );
+    }
+
+    /// Strong 2C: responder may not pass opener's forcing major rebid.
+    #[test]
+    fn strong_2c_responder_keeps_forcing_rebid_alive() {
+        assert_call(
+            "2C P 2D P 2H P",
+            "432.32.J432.5432",
+            "2NT",
+            false,
+            "a bust without three hearts makes the waiting 2NT",
+        );
+    }
+
+    /// Strong 2C: a weak responder passes an overcall (no call before).
+    #[test]
+    fn strong_2c_weak_responder_passes_overcall() {
+        assert_call(
+            "2C 2S",
+            "74.QJ743.T3.J983",
+            "P",
+            false,
+            "4 hcp passes after 2C-(2S)",
+        );
+    }
+}

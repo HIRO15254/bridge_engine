@@ -14,61 +14,203 @@ specific call for those two ranges (see NOTES.md #2).
 ** Responses to 1NT
 
 Stayman is non-forcing (the auction may stop in 2 of a suit); opener bids 2H with
-4-4 in the majors. Jacoby transfers are used for both majors; 2S is a minor-suit
-relay showing both minors (a lower-frequency convention many partnerships do
-not fully exploit, per the booklet's own annotation) -- opener must rebid 3C, and
-responder passes with clubs or corrects to 3D with diamonds (see NOTES.md #13).
+4-4 in the majors. Jacoby transfers are used for both majors; 2S is a relay to
+3C for a weak hand with one long minor: opener must rebid 3C, and responder
+passes with clubs or corrects to 3D with diamonds (see NOTES.md #13). Without a
+major, responder raises by strength: 2NT invites (8--9), 3NT is to play
+(10--15), 4NT is the quantitative slam invitation (16--17) and 6NT is to play
+(18--19); 4C (Gerber, NOTES.md #15) is kept for the rare 20+ hand. Every leaf of
+this tree lists opener's closing Pass explicitly (NOTES.md "Notrump lane" #N1),
+so a sign-off such as 1NT-3NT is a system position, not a fall-through to
+natural inference.
 
 1N-
+2C = !STAY NF, 8+ hcp, 4+!h or 4+!s
+  2D = 0--3!s, 0--3!h
+    2N = 8--9 hcp
+      P = 15 hcp
+      3N = 16--17 hcp
+    3N = 10--15 hcp
+      P = unlimited
+    4N = 16--17 hcp
+      P = 15 hcp
+      6N = 16--17 hcp
+    6N = 18+ hcp
+      P = unlimited
+  2H = {prio:1} 4+!h
+    3H = 8--9 hcp, 4+!h
+      P = 15 hcp
+      4H = 16--17 hcp
+    4H = 10--15 hcp, 4+!h
+      P = unlimited
+    4C = !BW, 16+ hcp, 4+!h
+    2N = 8--9 hcp
+      3S = 15 hcp, 4+!s
+      4S = 16--17 hcp, 4+!s
+      P = 15 hcp
+      3N = 16--17 hcp
+    3N = 10--15 hcp
+      4S = 4+!s
+      P = unlimited
+    4N = 16--17 hcp
+      P = 15 hcp
+      6N = 16--17 hcp
+    6N = 18+ hcp
+      P = unlimited
+  2S = {prio:0} 4+!s, not 4+!h
+    3S = 8--9 hcp, 4+!s
+      P = 15 hcp
+      4S = 16--17 hcp
+    4S = 10--15 hcp, 4+!s
+      P = unlimited
+    4C = !BW, 16+ hcp, 4+!s
+    2N = 8--9 hcp
+      P = 15 hcp
+      3N = 16--17 hcp
+    3N = 10--15 hcp
+      P = unlimited
+    4N = 16--17 hcp
+      P = 15 hcp
+      6N = 16--17 hcp
+    6N = 18+ hcp
+      P = unlimited
+2D = {prio:1} !TRF, 5+!h
+  2H = {prio:0} unlimited
+    P = 0--7 hcp
+    2N = 8--9 hcp, 5=!h
+      3H = 15 hcp, 3+!h
+      P = 15 hcp
+      4H = 16--17 hcp, 3+!h
+      3N = 16--17 hcp
+    3H = 8--9 hcp, 6+!h
+      P = 15 hcp
+      4H = 16--17 hcp
+    3C = F, 10+ hcp, 5+!c
+      4H = 3+!h
+      3N = unlimited
+    3D = F, 10+ hcp, 5+!d
+      4H = 3+!h
+      3N = unlimited
+    3S = F, 10+ hcp, 5+!s
+      4H = 3+!h
+      4S = 3+!s
+      3N = unlimited
+    3N = CoG, 10--15 hcp, 5=!h
+      4H = 3+!h
+      P = unlimited
+    4H = 10--15 hcp, 6+!h
+      P = unlimited
+    4N = 16--17 hcp, 5=!h
+      6H = 16--17 hcp, 3+!h
+      6N = 16--17 hcp
+      P = 15 hcp
+    5H = 16--17 hcp, 6+!h
+      6H = 16--17 hcp
+      P = 15 hcp
+    6N = 18+ hcp, 5=!h
+      P = unlimited
+    6H = 18+ hcp, 6+!h
+      P = unlimited
+  3H = {prio:1} MAX, 17 hcp, 4+!h
+    P = 0--5 hcp
+    4H = 6--15 hcp
+      P = unlimited
+    6H = 16+ hcp
+      P = unlimited
+2H = {prio:1} !TRF, 5+!s
+  2S = {prio:0} unlimited
+    P = 0--7 hcp
+    2N = 8--9 hcp, 5=!s
+      3S = 15 hcp, 3+!s
+      P = 15 hcp
+      4S = 16--17 hcp, 3+!s
+      3N = 16--17 hcp
+    3S = 8--9 hcp, 6+!s
+      P = 15 hcp
+      4S = 16--17 hcp
+    3C = F, 10+ hcp, 5+!c
+      4S = 3+!s
+      3N = unlimited
+    3D = F, 10+ hcp, 5+!d
+      4S = 3+!s
+      3N = unlimited
+    3H = F, 10+ hcp, 5+!h
+      4S = 3+!s
+      4H = 3+!h
+      3N = unlimited
+    3N = CoG, 10--15 hcp, 5=!s
+      4S = 3+!s
+      P = unlimited
+    4S = 10--15 hcp, 6+!s
+      P = unlimited
+    4N = 16--17 hcp, 5=!s
+      6S = 16--17 hcp, 3+!s
+      6N = 16--17 hcp
+      P = 15 hcp
+    5S = 16--17 hcp, 6+!s
+      6S = 16--17 hcp
+      P = 15 hcp
+    6N = 18+ hcp, 5=!s
+      P = unlimited
+    6S = 18+ hcp, 6+!s
+      P = unlimited
+  3S = {prio:1} MAX, 17 hcp, 4+!s
+    P = 0--5 hcp
+    4S = 6--15 hcp
+      P = unlimited
+    6S = 16+ hcp
+      P = unlimited
+2S = !TRF, 0--7 hcp, 6+!c or 6+!d
+  3C = unlimited
+    P = 6+!c
+    3D = {prio:1} 6+!d
+      P = unlimited
+2N = 8--9 hcp, not 4+!h, not 4+!s
+  P = 15 hcp
+  3N = 16--17 hcp
+3C = INV, 6+!c
+  3N = 16--17 hcp
+  P = 15 hcp
+3D = INV, 6+!d
+  3N = 16--17 hcp
+  P = 15 hcp
+3H = {prio:2} S/T, 6+!h
+  4N = !BW, 17 hcp
+  4H = 15--16 hcp
+3S = {prio:2} S/T, 6+!s
+  4N = !BW, 17 hcp
+  4S = 15--16 hcp
+3N = 10--15 hcp, not 4+!h, not 4+!s
+  P = unlimited
+4N = 16--17 hcp, not 4+!h, not 4+!s
+  P = 15 hcp
+  6N = 16--17 hcp
+6N = 18--19 hcp, not 4+!h, not 4+!s
+  P = unlimited
+4C = !BW, 20+ hcp
+
+*** Interference over 1NT
+
+If an opponent doubles, Stayman and transfers stay on, and a redouble shows the
+values to punish the double. If an opponent overcalls, Stayman and transfers
+are off (bids are natural) except that a cuebid of the overcaller's suit may
+substitute for Stayman with game-forcing strength; a double is for penalty,
+and 2NT/3NT are natural with a stopper. If the opponents intervene over a
+conventional response, a further voluntary bid keeps its normal meaning ("I
+have a real fit").
+
+1N-(D)-
 2C = !STAY NF, 8+ hcp, 4+!h or 4+!s
   2D = 0--3!s, 0--3!h
   2H = {prio:1} 4+!h
   2S = {prio:0} 4+!s, not 4+!h
 2D = {prio:1} !TRF, 5+!h
-  2H = {prio:0} unlimited
-    P = 0--7 hcp
-    2N = 8--9 hcp
-    3C = F, 5+!c
-    3D = F, 5+!d
-    3S = F, 5+!s
-    3N = CoG, 10--15 hcp, 5=!h
-    4H = 10--15 hcp, 6+!h
-  3H = {prio:1} MAX, 17 hcp, 4+!h
+  2H = unlimited
 2H = {prio:1} !TRF, 5+!s
-  2S = {prio:0} unlimited
-    P = 0--7 hcp
-    2N = 8--9 hcp
-    3C = F, 5+!c
-    3D = F, 5+!d
-    3H = F, 5+!h
-    3N = CoG, 10--15 hcp, 5=!s
-    4S = 10--15 hcp, 6+!s
-  3S = {prio:1} MAX, 17 hcp, 4+!s
+  2S = unlimited
 2S = !TRF, 0--7 hcp, 6+!c or 6+!d
   3C = unlimited
-    P = 6+!c
-    3D = {prio:1} 6+!d
-2N = 8--9 hcp, not 4+!h, not 4+!s
-3C = INV, 6+!c
-3D = INV, 6+!d
-3H = {prio:2} S/T, 6+!h
-3S = {prio:2} S/T, 6+!s
-3N = 10--15 hcp, not 4+!h, not 4+!s
-4C = !BW
-4N = {prio:1} 16--17 hcp
-
-*** Interference over 1NT
-
-If an opponent doubles, Stayman and transfers stay on. If an opponent overcalls,
-Stayman and transfers are off (bids are natural) except that a cuebid of the
-overcaller's suit may substitute for Stayman with game-forcing strength. If the
-opponents intervene over a conventional response, a further voluntary bid keeps its
-normal meaning ("I have a real fit").
-
-1N-(D)-
-2C = !STAY NF, 8+ hcp, 4+!h or 4+!s
-2D = !TRF, 5+!h
-2H = !TRF, 5+!s
+R = 8+ hcp
 
 Any overcall of a 1NT opening is at the 2 level at the cheapest (notrump is the
 top strain at the 1 level, so no 1-level call ranks above it): `X` here binds
@@ -82,6 +224,12 @@ expand to anything).
 1N-(2X)-
 2Y = NAT
 3X = !cue, FG
+  3H = 4+!h
+  3S = 4+!s
+  3N = unlimited
+D = 8+ hcp, 4+#
+2N = 8--9 hcp, stopper
+3N = 10--15 hcp, stopper
 
 1N-(2D)-
 3C = NAT
@@ -95,19 +243,224 @@ expand to anything).
 3D = NAT
 3H = NAT
 
+A jump overcall to the 3 or 4 level leaves no room for Stayman or transfers:
+responder doubles with values, bids 3NT with a stopper, or bids a long suit of
+his own at the 3 level; anything else passes (NOTES.md "Notrump lane" #N3).
+
+1N-(3X)-
+3Y = {prio:1} 8+ hcp, 5+#
+3N = 10+ hcp, stopper
+D = 8+ hcp
+
+1N-(4X)-
+D = 8+ hcp
+
+1N-(bid)-
+D = 8+ hcp
+
+Interference over Stayman or a transfer: opener shows a fit (a four-card major
+over Stayman, three-card support over a doubled transfer, four-card support
+over an overcalled transfer) and otherwise passes.
+
+1N-2C-(D)-
+2D = 0--3!s, 0--3!h
+2H = {prio:1} 4+!h
+2S = {prio:0} 4+!s, not 4+!h
+
+1N-2C-(2D)-
+2H = 4+!h
+2S = 4+!s, not 4+!h
+
+1N-2C-(2H)-
+2S = 4+!s
+
+1N-2C-(2S)-
+3H = 4+!h
+
+1N-2D-(D)-
+2H = 3+!h
+
+1N-2D-(2S)-
+3H = 4+!h
+
+1N-2D-(3C)-
+3H = 4+!h
+
+1N-2D-(3D)-
+3H = 4+!h
+
+1N-2H-(D)-
+2S = 3+!s
+
+1N-2H-(3C)-
+3S = 4+!s
+
+1N-2H-(3D)-
+3S = 4+!s
+
+1N-2H-(3H)-
+3S = 4+!s
+
+1N-2D-(2H)-
+D = 4+!h
+
+1N-2H-(2N)-
+3S = 3+!s
+D = 16--17 hcp
+
+1N-2D-(2N)-
+3H = 3+!h
+D = 16--17 hcp
+
+1N-2H-(2S)-
+D = 4+!s
+
+If the opponents come in after the transfer has been completed, responder
+doubles with invitational or better values and otherwise passes.
+
+1N-2D-2H-(bid)-
+D = 8+ hcp
+
+1N-2H-2S-(bid)-
+D = 8+ hcp
+
+After a natural 2NT invitation, an overcall leaves opener to double with a
+maximum or pass.
+
+1N-2N-(bid)-
+D = 16--17 hcp
+
 ** Responses to 2NT and 3NT
 
 The same Stayman and Jacoby-transfer machinery is used one level higher for 2NT,
-and two levels higher for 3NT.
+and two levels higher for 3NT. Opposite 2NT, 4+ hcp is enough for game: 3NT is
+to play (4--10), 4NT is quantitative (11--12, NOTES.md "Notrump lane" #N2) and
+6NT is to play (13+); 4C (Gerber) is not written here since no range is left
+for it. A hand with 0--3 hcp passes.
 
 2N-
-3C = !STAY, 4+!h or 4+!s
+3C = !STAY, 4+ hcp, 4+!h or 4+!s
+  3D = 0--3!s, 0--3!h
+    3N = 4--10 hcp
+      P = unlimited
+    4N = 11--12 hcp
+      P = 20 hcp
+      6N = 21 hcp
+    6N = 13+ hcp
+      P = unlimited
+  3H = {prio:1} 4+!h
+    4H = 4--10 hcp, 4+!h
+      P = unlimited
+    6H = 11+ hcp, 4+!h
+      P = unlimited
+    3N = 4--10 hcp
+      4S = 4+!s
+      P = unlimited
+    4N = 11--12 hcp
+      P = 20 hcp
+      6N = 21 hcp
+    6N = 13+ hcp
+      P = unlimited
+  3S = {prio:0} 4+!s, not 4+!h
+    4S = 4--10 hcp, 4+!s
+      P = unlimited
+    6S = 11+ hcp, 4+!s
+      P = unlimited
+    3N = 4--10 hcp
+      P = unlimited
+    4N = 11--12 hcp
+      P = 20 hcp
+      6N = 21 hcp
+    6N = 13+ hcp
+      P = unlimited
 3D = {prio:1} !TRF, 5+!h
+  3H = unlimited
+    P = 0--3 hcp
+    3N = 4--10 hcp, 5=!h
+      4H = 3+!h
+      P = unlimited
+    4H = 4--10 hcp, 6+!h
+      P = unlimited
+    4N = 11--12 hcp, 5=!h
+      6H = 21 hcp, 3+!h
+      6N = 21 hcp
+      P = 20 hcp
+    5H = 11--12 hcp, 6+!h
+      6H = 21 hcp
+      P = 20 hcp
+    6N = 13+ hcp, 5=!h
+      P = unlimited
+    6H = 13+ hcp, 6+!h
+      P = unlimited
 3H = {prio:1} !TRF, 5+!s
-4C = !BW
-4N = {prio:1} 11--12 hcp
+  3S = unlimited
+    P = 0--3 hcp
+    3N = 4--10 hcp, 5=!s
+      4S = 3+!s
+      P = unlimited
+    4S = 4--10 hcp, 6+!s
+      P = unlimited
+    4N = 11--12 hcp, 5=!s
+      6S = 21 hcp, 3+!s
+      6N = 21 hcp
+      P = 20 hcp
+    5S = 11--12 hcp, 6+!s
+      6S = 21 hcp
+      P = 20 hcp
+    6N = 13+ hcp, 5=!s
+      P = unlimited
+    6S = 13+ hcp, 6+!s
+      P = unlimited
+3N = 4--10 hcp
+  P = unlimited
+4N = 11--12 hcp
+  P = 20 hcp
+  6N = 21 hcp
+6N = 13+ hcp
+  P = unlimited
+
+Interference over 2NT: over a double, Stayman and transfers stay on (as over
+1NT) and a redouble shows slam interest; over an overcall, with game values
+(4+ hcp) responder bids 3NT with a stopper or doubles; otherwise passes. After
+a completed transfer, a further overcall is doubled with game values.
+
+2N-(D)-
+3C = !STAY, 4+ hcp, 4+!h or 4+!s
+3D = {prio:1} !TRF, 5+!h
+  3H = unlimited
+3H = {prio:1} !TRF, 5+!s
+  3S = unlimited
+3N = 4--10 hcp
+R = 11+ hcp
+
+2N-3D-3H-(bid)-
+D = 4+ hcp
+
+2N-3C-(3D)-
+3H = {prio:1} 4+!h
+3S = 4+!s, not 4+!h
+
+2N-3H-3S-(bid)-
+D = 4+ hcp
+
+2N-(3X)-
+3N = 4+ hcp, stopper
+D = 4+ hcp
+
+2N-(4X)-
+D = 4+ hcp
+
+2N-(bid)-
+D = 4+ hcp
 
 3N-
 4C = !STAY, 4+!h or 4+!s
+  4D = 0--3!s, 0--3!h
+  4H = {prio:1} 4+!h
+  4S = {prio:0} 4+!s, not 4+!h
 4D = {prio:1} !TRF, 5+!h
+  4H = unlimited
+    P = unlimited
 4H = {prio:1} !TRF, 5+!s
+  4S = unlimited
+    P = unlimited
