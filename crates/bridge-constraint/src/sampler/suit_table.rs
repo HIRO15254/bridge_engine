@@ -71,8 +71,11 @@ pub(crate) struct SuitTable {
     /// The dense-key domain size this table was built with ([`DENSE_NK_NO_X`] or
     /// [`DENSE_NK_WITH_X`]); `bucket` must derive `d` the same way `build` did.
     nk: usize,
-    /// `counts[len]` = sparse `(key, n)` list with `n > 0`, sorted ascending by key.
-    pub(crate) counts: [SparseVec; 14],
+    /// Every length's sparse `(key, n)` list with `n > 0`, sorted ascending by key, stored back
+    /// to back (one allocation instead of 14); see [`SuitTable::counts`].
+    counts_data: Vec<(u16, u64)>,
+    /// `counts_data[counts_start[len]..counts_start[len + 1]]` is length `len`'s list.
+    counts_start: [u32; 15],
     /// `counts` again as dense HCP rows, for a table without an additive feature (`nk ==
     /// DENSE_NK_NO_X`, so every key is a bare HCP `0..=10`); all-empty rows otherwise. The pair
     /// convolution of two such tables reads these directly.
@@ -95,10 +98,6 @@ impl HcpRow {
         hi: 0,
     };
 }
-
-/// A sparse count vector.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct SparseVec(pub(crate) Vec<(u16, u64)>);
 
 /// The convolution of two suits' count vectors for one `(len_a, len_b)` pair, with prefix sums
 /// over the `(hcp, x)` axes so that any box (HCP window × feature window) is a four-lookup sum.
@@ -230,23 +229,26 @@ impl SuitTable {
         // `nk` is exactly `SUIT_HCP_MAX + 1` (no gap between consecutive `x` blocks), ascending
         // dense index implies ascending packed key too, so this matches the order a full
         // packed-key-domain scan would produce.
-        let counts: [SparseVec; 14] = core::array::from_fn(|len| {
-            let mut v = Vec::new();
+        let mut counts_data = Vec::new();
+        let mut counts_start = [0u32; 15];
+        let mut hcp_rows = [HcpRow::EMPTY; 14];
+        for len in 0..14 {
+            counts_start[len] = counts_data.len() as u32;
             for d in 0..nk {
                 let n = u64::from(start[len * (nk + 1) + d + 1] - start[len * (nk + 1) + d]);
                 if n > 0 {
                     let hcp = (d % (SUIT_HCP_MAX + 1)) as u8;
                     let x = (d / (SUIT_HCP_MAX + 1)) as u8;
-                    v.push((pack_key(hcp, x), n));
+                    counts_data.push((pack_key(hcp, x), n));
                 }
             }
-            SparseVec(v)
-        });
+        }
+        counts_start[14] = counts_data.len() as u32;
 
-        let mut hcp_rows = [HcpRow::EMPTY; 14];
         if nk == DENSE_NK_NO_X {
             for (len, row) in hcp_rows.iter_mut().enumerate() {
-                for &(key, n) in &counts[len].0 {
+                let range = counts_start[len] as usize..counts_start[len + 1] as usize;
+                for &(key, n) in &counts_data[range] {
                     let h = usize::from(key);
                     row.counts[h] = n;
                     if row.lo > row.hi {
@@ -261,9 +263,21 @@ impl SuitTable {
             holdings,
             start,
             nk,
-            counts,
+            counts_data,
+            counts_start,
             hcp_rows,
         }
+    }
+
+    /// Length `len`'s sparse `(key, n)` list (`n > 0`, ascending by key).
+    pub(crate) fn counts(&self, len: usize) -> &[(u16, u64)] {
+        &self.counts_data[self.counts_start[len] as usize..self.counts_start[len + 1] as usize]
+    }
+
+    /// Every length's list, for comparisons in tests.
+    #[cfg(test)]
+    pub(crate) fn counts_by_len(&self) -> Vec<Vec<(u16, u64)>> {
+        (0..14).map(|len| self.counts(len).to_vec()).collect()
     }
 
     /// The bucket for `(len, key)`, or an empty slice when that key was never observed.
@@ -392,9 +406,9 @@ impl PairMap {
             .resize(prefix_start + PAIR_HEIGHT * width, 0);
         let acc = &mut self.prefix_data[prefix_start..];
         if with_x {
-            for &(key_a, n_a) in &a.counts[len_a as usize].0 {
+            for &(key_a, n_a) in a.counts(len_a as usize) {
                 let (ha, xa) = unpack_key(key_a);
-                for &(key_b, n_b) in &b.counts[len_b as usize].0 {
+                for &(key_b, n_b) in b.counts(len_b as usize) {
                     let (hb, xb) = unpack_key(key_b);
                     let h = ha as usize + hb as usize;
                     let x = xa as usize + xb as usize;
@@ -494,7 +508,7 @@ mod tests {
         fixed: Holding,
         filter: &dyn Fn(Holding) -> bool,
         key: &dyn Fn(Holding) -> u16,
-    ) -> (Vec<u16>, [SparseVec; 14]) {
+    ) -> (Vec<u16>, Vec<Vec<(u16, u64)>>) {
         const KEYS: usize = 64 * 32;
         let mut hist = vec![0u32; 14 * KEYS];
         for sub in pool.submasks() {
@@ -533,16 +547,18 @@ mod tests {
             holdings[*slot as usize] = h.bits();
             *slot += 1;
         }
-        let counts: [SparseVec; 14] = core::array::from_fn(|len| {
-            let mut v = Vec::new();
-            for k in 0..KEYS {
-                let n = u64::from(hist[len * KEYS + k]);
-                if n > 0 {
-                    v.push((k as u16, n));
+        let counts: Vec<Vec<(u16, u64)>> = (0..14)
+            .map(|len| {
+                let mut v = Vec::new();
+                for k in 0..KEYS {
+                    let n = u64::from(hist[len * KEYS + k]);
+                    if n > 0 {
+                        v.push((k as u16, n));
+                    }
                 }
-            }
-            SparseVec(v)
-        });
+                v
+            })
+            .collect();
         (holdings, counts)
     }
 
@@ -619,7 +635,8 @@ mod tests {
                 "holdings differ for pool={pool:?} fixed={fixed:?}"
             );
             assert_eq!(
-                optimized.counts, dense_counts,
+                optimized.counts_by_len(),
+                dense_counts,
                 "counts differ for pool={pool:?} fixed={fixed:?}"
             );
             // `bucket` must be internally consistent with `holdings`/`counts`: every bucket's
@@ -627,7 +644,7 @@ mod tests {
             // reconstructs `holdings` exactly.
             let mut reconstructed = Vec::new();
             for len in 0..14u8 {
-                for &(k, n) in &optimized.counts[len as usize].0 {
+                for &(k, n) in optimized.counts(len as usize) {
                     let bucket = optimized.bucket(len, k);
                     assert_eq!(bucket.len() as u64, n);
                     reconstructed.extend_from_slice(bucket);
@@ -691,7 +708,8 @@ mod tests {
                 "pool={pool:?} fixed={fixed:?}"
             );
             assert_eq!(
-                plain.counts, reference.counts,
+                plain.counts_by_len(),
+                reference.counts_by_len(),
                 "pool={pool:?} fixed={fixed:?}"
             );
         }
@@ -701,10 +719,8 @@ mod tests {
     fn full_suit_has_every_holding_bucketed_by_hcp() {
         let table = full_suit();
         // Every one of the 8192 holdings is present exactly once.
-        let total: u64 = table
-            .counts
-            .iter()
-            .flat_map(|c| c.0.iter())
+        let total: u64 = (0..14)
+            .flat_map(|len| table.counts(len).iter())
             .map(|&(_, n)| n)
             .sum();
         assert_eq!(total, 8192);

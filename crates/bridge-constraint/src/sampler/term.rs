@@ -20,8 +20,8 @@ use bridge_eval::{DistMethod, LtcMethod, SUIT, holding_hcp, shape_points};
 
 use super::rand_util::{SplitMix64, random_below};
 use super::suit_table::{
-    DENSE_NK_NO_X, DENSE_NK_WITH_X, PAIR_HCP_MAX, PairConv, PairMap, SparseVec, SuitTable,
-    full_suit, pack_key, unpack_key,
+    DENSE_NK_NO_X, DENSE_NK_WITH_X, PAIR_HCP_MAX, PairConv, PairMap, SuitTable, full_suit,
+    pack_key, unpack_key,
 };
 use crate::{Atom, CardRequirement, DnfTerm, Metric};
 
@@ -211,15 +211,15 @@ impl GeneralTerm {
         // Steps 5-6: split each pair's combined (hcp, x) back into its two suits.
         let (h0, x0, h1, x1) = split_pair(
             rng,
-            &self.suits[0].counts[l0 as usize],
-            &self.suits[1].counts[l1 as usize],
+            self.suits[0].counts(l0 as usize),
+            self.suits[1].counts(l1 as usize),
             ah,
             ax,
         );
         let (h2, x2, h3, x3) = split_pair(
             rng,
-            &self.suits[2].counts[l2 as usize],
-            &self.suits[3].counts[l3 as usize],
+            self.suits[2].counts(l2 as usize),
+            self.suits[3].counts(l3 as usize),
             bh,
             bx,
         );
@@ -255,13 +255,13 @@ fn pick_holding<R: rand_core::Rng + ?Sized>(
 /// steps 5-6, generalised to two dimensions).
 fn split_pair<R: rand_core::Rng + ?Sized>(
     rng: &mut R,
-    counts_a: &SparseVec,
-    counts_b: &SparseVec,
+    counts_a: &[(u16, u64)],
+    counts_b: &[(u16, u64)],
     target_h: u8,
     target_x: u8,
 ) -> (u8, u8, u8, u8) {
     let mut total = 0u64;
-    for &(key_a, n_a) in &counts_a.0 {
+    for &(key_a, n_a) in counts_a {
         let (ha, xa) = unpack_key(key_a);
         if ha > target_h || xa > target_x {
             continue;
@@ -271,7 +271,7 @@ fn split_pair<R: rand_core::Rng + ?Sized>(
         }
     }
     let mut r = random_below(rng, total);
-    for &(key_a, n_a) in &counts_a.0 {
+    for &(key_a, n_a) in counts_a {
         let (ha, xa) = unpack_key(key_a);
         if ha > target_h || xa > target_x {
             continue;
@@ -289,8 +289,8 @@ fn split_pair<R: rand_core::Rng + ?Sized>(
     unreachable!("split_pair: total did not match the sum of its own contributions")
 }
 
-fn find_count(counts: &SparseVec, key: u16) -> Option<u64> {
-    counts.0.iter().find(|&&(k, _)| k == key).map(|&(_, n)| n)
+fn find_count(counts: &[(u16, u64)], key: u16) -> Option<u64> {
+    counts.iter().find(|&&(k, _)| k == key).map(|&(_, n)| n)
 }
 
 impl PairConv<'_> {
@@ -913,9 +913,9 @@ mod tests {
                         for xlo in [0u8, 2] {
                             for xhi in [xlo, xlo + 3, PAIR_X_MAX] {
                                 let mut expected = 0u64;
-                                for &(key_a, n_a) in &a.counts[len_a as usize].0 {
+                                for &(key_a, n_a) in a.counts(len_a as usize) {
                                     let (ha, xa) = unpack_key(key_a);
-                                    for &(key_b, n_b) in &b.counts[len_b as usize].0 {
+                                    for &(key_b, n_b) in b.counts(len_b as usize) {
                                         let (hb, xb) = unpack_key(key_b);
                                         let h = ha + hb;
                                         let x = xa + xb;
