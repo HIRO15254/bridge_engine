@@ -913,19 +913,33 @@ fn sayc_reproduction_rate() {
                 .collect();
                 let limit = env_usize("SAYC_REPRO_CORPUS_LIMIT", reproducible.len());
                 let sampled = &reproducible[..limit.min(reproducible.len())];
-                let opts = InterpretOptions::for_context(&human_ctx);
-                let records = par_map(sampled, |i, g| {
-                    let outcome = evaluate(
-                        &sampler,
-                        &table,
-                        &human_ctx,
-                        &g.auction,
-                        &opts,
-                        auction_seed(0x5A1C_4201, i),
-                    );
-                    record(g.label.clone(), &table, &g.auction, &opts, outcome)
-                });
+                // The headline reads the corpus with the human preset (D18). Its strict support
+                // also holds the natural deviation pieces Y_c (weight delta) at on-system
+                // positions, which an unweighted sampler overweights, so the same subset is also
+                // reported under the system-players preset.
+                let run = |ctx: &BidContext<'_>| {
+                    let opts = InterpretOptions::for_context(ctx);
+                    par_map(sampled, |i, g| {
+                        let outcome = evaluate(
+                            &sampler,
+                            &table,
+                            ctx,
+                            &g.auction,
+                            &opts,
+                            auction_seed(0x5A1C_4201, i),
+                        );
+                        record(g.label.clone(), &table, &g.auction, &opts, outcome)
+                    })
+                };
+                let records = run(&human_ctx);
+                let records_system = run(&system_ctx);
                 let mut part = part_json(&sampler, "human", "mirror (for_context)", &records);
+                part["system_players"] = part_json(
+                    &sampler,
+                    "system_players",
+                    "mirror (for_context)",
+                    &records_system,
+                );
                 part["eval_games"] = json!(eval.len());
                 part["eval_games_with_deal"] = json!(eval_with_deal.len());
                 part["reproducible"] = json!(reproducible.len());
@@ -937,6 +951,10 @@ fn sayc_reproduction_rate() {
                     headline_line("(ii) corpus SAYC-reproducible subset", &records),
                     reproducible.len(),
                     eval_with_deal.len()
+                ));
+                lines.push(headline_line(
+                    "(ii') the same subset under system_players",
+                    &records_system,
                 ));
                 report.insert("corpus_subset".into(), part);
             }
