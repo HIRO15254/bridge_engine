@@ -7,11 +7,14 @@
 //! cargo test -p bridge-lead --release --features dds,parallel --test corpus_eval -- --ignored --nocapture
 //! ```
 //!
-//! Each board's result is written to `target/lead_eval/board_NNN.json`, and every run rewrites
-//! `target/lead_report.json` from all records present that were produced under the same
-//! configuration, so the evaluation can be split into shorter runs with `LEAD_BOARDS=a..b`
-//! (half-open range of selected board indices); the report is complete once
-//! `boards_with_records == boards_selected`. A board whose real deal cannot be solved or for
+//! Each board's result is written to `target/lead_eval/<config>/board_NNN.json`, where
+//! `<config>` names the configuration (e.g. `n100-constraint-seed0-boards100`), and every run
+//! rewrites that configuration's report from all records present in its directory:
+//! `target/lead_report.json` for the default configuration (100 samples, `ConstraintProposal`,
+//! 100 boards), `target/lead_report_<suffix>.json` otherwise (e.g. `lead_report_n500.json`). Runs
+//! under different configurations therefore never overwrite each other's records or reports. The
+//! evaluation can be split into shorter runs with `LEAD_BOARDS=a..b` (half-open range of selected
+//! board indices); the report is complete once `boards_with_records == boards_selected`. A board whose real deal cannot be solved or for
 //! which `advise` returns an error (e.g. `NoSamples`) is recorded as skipped with the reason.
 //!
 //! Environment variables: `LEAD_SAMPLES` (default 100, samples per board for the real harness),
@@ -216,10 +219,9 @@ fn vacuous_interpretation() -> Interpretation {
 /// Baseline (a): no bidding information. Samples uniformly (ignoring the auction beyond deriving
 /// the contract/leader) and ranks with the exact same pipeline `advise` uses
 /// (`bridge_lead::advise_with_context`, `#[doc(hidden)]`) so its top-3 is comparable to the
-/// advisor's: equivalence groups, not bare cards, and a hit credits the whole group
-/// (review finding: re-implementing the ranking without grouping inflated the measured value of
-/// bidding information, since a touching-honour sequence like AKQ is one DD class but would count
-/// as 3 separate "hits" worth of baseline coverage).
+/// advisor's: the same equivalence groups and the same hit checks ([`hits_truth`] on the led card,
+/// [`hits_truth_group`] as the secondary group-credited rate). Re-implementing the ranking without
+/// grouping would let a touching-honour sequence like AKQ fill all 3 slots with one DD class.
 fn baseline_a(
     dd: &dyn bridge::dd::DoubleDummy,
     board: &Board,
@@ -275,15 +277,30 @@ fn compile_table(system_path: &Path) -> Result<Table, String> {
     ))
 }
 
-/// Whether `lead` (its representative card, or one of its equivalents) contains one of `truth`'s
-/// DD-optimal cards. Shared by the main advisor's hit check and baseline (a)'s.
+/// The primary hit: whether the card the advisor actually leads (the group's representative) is
+/// DD-optimal on the real deal. Shared by the main advisor and baseline (a), and like-for-like
+/// with baseline (b), which also picks `k` single cards.
 fn hits_truth(lead: &LeadScore, truth: &Truth) -> bool {
-    truth.cards.contains(&lead.card) || lead.equivalents.iter().any(|c| truth.cards.contains(c))
+    truth.cards.contains(&lead.card)
+}
+
+/// The secondary, group-credited hit: whether *any* card of `lead`'s group (representative or
+/// equivalent) is DD-optimal. A top-`k` list of groups covers more than `k` cards, so this rate
+/// is only comparable with baseline (b) evaluated at the covered card count
+/// (`baseline_random_covered_top{1,3}`), not with (b) at `k` (review finding: on this corpus the
+/// top-3 groups cover 5.4 cards on average).
+fn hits_truth_group(lead: &LeadScore, truth: &Truth) -> bool {
+    hits_truth(lead, truth) || lead.equivalents.iter().any(|c| truth.cards.contains(c))
+}
+
+/// Number of the leader's cards the given groups cover (representatives plus equivalents).
+fn cards_covered(leads: &[LeadScore]) -> u64 {
+    leads.iter().map(|l| 1 + l.equivalents.len() as u64).sum()
 }
 
 /// `LEAD_BOARDS=a..b`: the half-open range of selected board indices this run evaluates
 /// (default `0..LEAD_BOARD_COUNT`). Lets the 100-board evaluation be split into several shorter
-/// runs; every run rewrites `target/lead_report.json` from all per-board records present.
+/// runs; every run rewrites its configuration's report from all per-board records present.
 fn board_range(total: usize) -> std::ops::Range<usize> {
     let Ok(spec) = std::env::var("LEAD_BOARDS") else {
         return 0..total;
@@ -377,6 +394,19 @@ fn evaluate_board(
     };
     record["top1_hit"] = hits_truth(top1, &truth).into();
     record["top3_hit"] = advice.leads.iter().any(|l| hits_truth(l, &truth)).into();
+    record["top1_group_hit"] = hits_truth_group(top1, &truth).into();
+    record["top3_group_hit"] = advice
+        .leads
+        .iter()
+        .any(|l| hits_truth_group(l, &truth))
+        .into();
+    let covered1 = cards_covered(&advice.leads[..1]);
+    let covered3 = cards_covered(&advice.leads);
+    record["top1_cards_covered"] = covered1.into();
+    record["top3_cards_covered"] = covered3.into();
+    // Baseline (b) at the group-credited metric's own coverage: `covered` random cards.
+    record["baseline_random_covered_top1"] = random_choice_baseline(m, covered1).into();
+    record["baseline_random_covered_top3"] = random_choice_baseline(m, covered3).into();
     // The loss from the *choice actually made*: the chosen card's score on the real deal (not
     // the advisor's own sample-estimated mean, which measures estimation bias, not the
     // consequence of the choice). `all_scores` covers every one of the leader's 13 cards (the
@@ -405,6 +435,16 @@ fn evaluate_board(
                 .into();
             record["baseline_no_bidding_top3"] =
                 base.leads.iter().any(|l| hits_truth(l, &truth)).into();
+            record["baseline_no_bidding_top1_group"] = base
+                .leads
+                .first()
+                .is_some_and(|l| hits_truth_group(l, &truth))
+                .into();
+            record["baseline_no_bidding_top3_group"] = base
+                .leads
+                .iter()
+                .any(|l| hits_truth_group(l, &truth))
+                .into();
         }
         Err(e) => record["baseline_no_bidding_error"] = e.into(),
     }
@@ -414,7 +454,8 @@ fn evaluate_board(
 }
 
 /// Builds the summary over every per-board record in `records_dir` whose `config` equals
-/// `config` and whose index is below `total`.
+/// `config` and whose index is below `total`. `records_dir` is already per-configuration; the
+/// `config` check additionally drops records a different harness version wrote there.
 fn summarise(records_dir: &Path, config: &serde_json::Value, total: usize) -> serde_json::Value {
     let mut records: Vec<serde_json::Value> = Vec::new();
     for i in 0..total {
@@ -473,6 +514,12 @@ fn summarise(records_dir: &Path, config: &serde_json::Value, total: usize) -> se
         "hit_rate_top3": rate(&ok, "top3_hit"),
         "hit_rate_top1_nontrivial": rate(&nontrivial, "top1_hit"),
         "hit_rate_top3_nontrivial": rate(&nontrivial, "top3_hit"),
+        "group_hit_rate_top1": rate(&ok, "top1_group_hit"),
+        "group_hit_rate_top3": rate(&ok, "top3_group_hit"),
+        "group_hit_rate_top1_nontrivial": rate(&nontrivial, "top1_group_hit"),
+        "group_hit_rate_top3_nontrivial": rate(&nontrivial, "top3_group_hit"),
+        "mean_top1_cards_covered": avg(&ok, "top1_cards_covered"),
+        "mean_top3_cards_covered": avg(&ok, "top3_cards_covered"),
         "mean_tricks_lost_top1": avg(&ok, "tricks_lost_top1"),
         "mean_estimation_error_top1": avg(&ok, "estimation_error_top1"),
         "ess_mean": mean(&ess),
@@ -488,9 +535,60 @@ fn summarise(records_dir: &Path, config: &serde_json::Value, total: usize) -> se
         "baseline_boards": with_baseline.len(),
         "baseline_no_bidding_hit_rate_top1": rate(&with_baseline, "baseline_no_bidding_top1"),
         "baseline_no_bidding_hit_rate_top3": rate(&with_baseline, "baseline_no_bidding_top3"),
+        "baseline_no_bidding_group_hit_rate_top1":
+            rate(&with_baseline, "baseline_no_bidding_top1_group"),
+        "baseline_no_bidding_group_hit_rate_top3":
+            rate(&with_baseline, "baseline_no_bidding_top3_group"),
         "baseline_random_hit_rate_top1": avg(&ok, "baseline_random_top1"),
         "baseline_random_hit_rate_top3": avg(&ok, "baseline_random_top3"),
+        "baseline_random_covered_hit_rate_top1": avg(&ok, "baseline_random_covered_top1"),
+        "baseline_random_covered_hit_rate_top3": avg(&ok, "baseline_random_covered_top3"),
     })
+}
+
+/// Bumped whenever a record's fields or their meaning change, so `summarise` never mixes records
+/// written by an older harness (2: the primary hit became representative-card-only, group hits
+/// and coverage were added).
+const RECORD_VERSION: u64 = 2;
+
+const DEFAULT_SAMPLES: usize = 100;
+const DEFAULT_BOARD_COUNT: usize = 100;
+
+/// `lead_report.json` for the default configuration, `lead_report_<suffix>.json` otherwise, where
+/// the suffix lists only the settings that differ from the default (`n500`, `uniform`,
+/// `seed7`, `boards20`, joined by `-`).
+fn report_file_name(samples: usize, uniform: bool, seed: u64, boards: usize) -> String {
+    let mut parts = Vec::new();
+    if samples != DEFAULT_SAMPLES {
+        parts.push(format!("n{samples}"));
+    }
+    if uniform {
+        parts.push("uniform".to_string());
+    }
+    if seed != 0 {
+        parts.push(format!("seed{seed}"));
+    }
+    if boards != DEFAULT_BOARD_COUNT {
+        parts.push(format!("boards{boards}"));
+    }
+    if parts.is_empty() {
+        "lead_report.json".to_string()
+    } else {
+        format!("lead_report_{}.json", parts.join("-"))
+    }
+}
+
+#[test]
+fn report_file_names() {
+    assert_eq!(report_file_name(100, false, 0, 100), "lead_report.json");
+    assert_eq!(
+        report_file_name(500, false, 0, 100),
+        "lead_report_n500.json"
+    );
+    assert_eq!(
+        report_file_name(100, true, 3, 20),
+        "lead_report_uniform-seed3-boards20.json"
+    );
 }
 
 #[test]
@@ -505,8 +603,8 @@ fn corpus_eval() {
         return;
     };
 
-    let samples = env_usize("LEAD_SAMPLES", 100);
-    let board_count = env_usize("LEAD_BOARD_COUNT", 100);
+    let samples = env_usize("LEAD_SAMPLES", DEFAULT_SAMPLES);
+    let board_count = env_usize("LEAD_BOARD_COUNT", DEFAULT_BOARD_COUNT);
     let use_uniform = std::env::var("LEAD_UNIFORM").as_deref() == Ok("1");
 
     let boards = select_boards(&dir, board_count);
@@ -520,16 +618,26 @@ fn corpus_eval() {
     let proposal: &dyn Proposal = if use_uniform { &uniform } else { &constraint };
     // Records are only merged into the summary when they were produced under this exact
     // configuration, so a stale record from a run with different settings is never mixed in.
+    let proposal_name = if use_uniform { "uniform" } else { "constraint" };
+    let seed = 0u64;
     let config = serde_json::json!({
         "samples": samples,
-        "proposal": if use_uniform { "uniform" } else { "constraint" },
-        "seed": 0,
+        "proposal": proposal_name,
+        "seed": seed,
         "boards_selected": boards.len(),
+        "record_version": RECORD_VERSION,
     });
 
+    // Each configuration gets its own records directory and report, so e.g. the n = 500
+    // reference run cannot overwrite the default n = 100 run's evidence (review finding).
     let target_dir = workspace_root().join("target");
-    let records_dir = target_dir.join("lead_eval");
-    std::fs::create_dir_all(&records_dir).expect("creating target/lead_eval");
+    let config_name = format!(
+        "n{samples}-{proposal_name}-seed{seed}-boards{}",
+        boards.len()
+    );
+    let records_dir = target_dir.join("lead_eval").join(&config_name);
+    std::fs::create_dir_all(&records_dir).expect("creating the per-configuration records dir");
+    let report_path = target_dir.join(report_file_name(samples, use_uniform, seed, boards.len()));
 
     for index in board_range(boards.len()) {
         let record = evaluate_board(
@@ -549,11 +657,9 @@ fn corpus_eval() {
         .expect("writing a per-board record");
     }
 
-    let report = summarise(&records_dir, &config, boards.len());
-    std::fs::write(
-        target_dir.join("lead_report.json"),
-        serde_json::to_string_pretty(&report).unwrap(),
-    )
-    .expect("writing target/lead_report.json");
+    let mut report = summarise(&records_dir, &config, boards.len());
+    report["records_dir"] = format!("target/lead_eval/{config_name}").into();
+    std::fs::write(&report_path, serde_json::to_string_pretty(&report).unwrap())
+        .expect("writing the lead report");
     println!("{}", serde_json::to_string_pretty(&report).unwrap());
 }
