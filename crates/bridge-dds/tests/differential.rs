@@ -47,6 +47,17 @@ fn corpus_dir() -> Option<PathBuf> {
     }
 }
 
+/// `list100.txt` from the corpus, else from the vendored DDS tree.
+fn list100_path() -> Option<PathBuf> {
+    let from_corpus = corpus_dir().map(|dir| dir.join("dds/list100.txt"));
+    let vendored =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor/dds-2.9.0/hands/list100.txt");
+    from_corpus
+        .into_iter()
+        .chain(std::iter::once(vendored))
+        .find(|p| p.is_file())
+}
+
 /// One parsed `list100.txt`/`masterDD.txt` record.
 struct Record {
     dealer: Seat,
@@ -403,14 +414,22 @@ fn check_batch(records: &[Record]) -> (usize, usize, usize) {
 /// `PLAY`/`TRACE` pair, and `dealer_par`'s score against every `PAR2` score, for all 100 deals
 /// of `hands/list100.txt`. Not `#[ignore]`d: this file is small (100 deals) and this is the
 /// primary correctness gate for the wrapper (docs/design/12-roadmap.md 5.6).
+///
+/// The data comes from the corpus (`corpus/data/dds/list100.txt`) or, failing that, from the
+/// copy `cargo xtask dds vendor` extracts from the same DDS archive
+/// (`vendor/dds-2.9.0/hands/list100.txt`), so this runs wherever DDS is vendored. With
+/// `BRIDGE_REQUIRE_LIST100=1` (set by CI's `dds` job) missing data is a failure, not a skip.
 #[test]
 fn list100_matches_upstream() {
-    let Some(dir) = corpus_dir() else { return };
-    let path = dir.join("dds/list100.txt");
-    if !path.is_file() {
-        eprintln!("{} not found; skipping", path.display());
+    let Some(path) = list100_path() else {
+        assert!(
+            std::env::var_os("BRIDGE_REQUIRE_LIST100").is_none(),
+            "BRIDGE_REQUIRE_LIST100 is set but neither corpus/data/dds/list100.txt nor \
+             vendor/dds-2.9.0/hands/list100.txt exists (run `cargo xtask dds vendor`)"
+        );
+        eprintln!("list100.txt not found in the corpus or the vendored DDS tree; skipping");
         return;
-    }
+    };
     let records = parse_records(&path);
     let total = records.len();
     assert!(total > 0, "empty {}", path.display());

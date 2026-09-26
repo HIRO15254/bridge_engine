@@ -41,7 +41,7 @@
 | ショウアウトからのハード制約 `hard_constraints_from_showout` | `bridge-play` `tests/hard.rs` | unit (手組みの履歴、`hard_constraints`) | 長さ確定、`KnownCards` 一致、不整合は `PlayWarning::Inconsistent` |
 | リード・シグナル規則表 `lead_rules_table` | `bridge-play` `tests/leads.rs` | table-driven ((約束, リード札) → 期待制約の充足/不充足) | 全通過 |
 | DDS レイアウト | `bridge-dds` `tests/layout.rs` | unit (C++ プローブ) | 全構造体・全フィールドで一致 |
-| DDS 差分 `differential_dds` | `bridge-dds` `tests/differential.rs` | `list100.txt` (コーパス取得時)、`masterDD.txt` は `#[ignore]` | 100% 一致 |
+| DDS 差分 `differential_dds` | `bridge-dds` `tests/differential.rs` | `list100.txt` (コーパス、または `cargo xtask dds vendor` が展開する `vendor/dds-2.9.0/hands/list100.txt`。CI の `dds` ジョブで必須)、`masterDD.txt` は `#[ignore]` | 100% 一致 |
 | 並行 `SolveBoard` `concurrent_solve_board` | `bridge-dds` `tests/concurrency.rs` | 8 スレッド × 100 局面 | エラー 0、逐次結果と一致 |
 | wasm ビルド | CI `wasm` ジョブ | `cargo check --target wasm32-unknown-unknown` | 通る |
 

@@ -48,7 +48,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo xtask dds vendor
+      # `dds vendor` also extracts hands/list100.txt, so the list100 differential (the phase 5
+      # correctness gate, 5.6) runs here without the corpus; the variable makes missing data a
+      # failure instead of a silent skip.
       - run: cargo test -p bridge-dds
+        env:
+          BRIDGE_REQUIRE_LIST100: "1"
       - run: cargo test -p bridge --features dds
       # OpenMP variant: only ubuntu-latest is guaranteed to have a system OpenMP runtime
       # (libgomp, via gcc); macOS's Apple clang has none without Homebrew's libomp, and the
@@ -101,7 +106,9 @@ jobs:
           key: corpus-${{ hashFiles('corpus/manifest.toml') }}
       - run: cargo xtask corpus fetch
       - run: cargo xtask dds vendor
-      - run: cargo test --release --workspace --all-features -- --ignored
+      # `--include-ignored`, not `--ignored`: the latter runs only the #[ignore]d tests and
+      # would skip everything else that needs the corpus (list100 included).
+      - run: cargo test --release --workspace --all-features -- --include-ignored
         env:
           BRIDGE_CORPUS_DIR: ${{ github.workspace }}/corpus/data
       - run: cargo bench --workspace

@@ -418,7 +418,7 @@ pub enum DdsError {
 | テスト | 場所 | 内容 | 基準 |
 | --- | --- | --- | --- |
 | レイアウト | `tests/layout.rs` | §5.1 の `sizeof`/`offsetof` 突き合わせ | 全構造体で一致 |
-| 差分 `list100` | `tests/differential.rs` | `hands/list100.txt` の各配牌で `calc_dd_table` と `TABLE` 行を比較 (`BRIDGE_CORPUS_DIR` 必須) | 100% 一致 |
+| 差分 `list100` | `tests/differential.rs` | `hands/list100.txt` の各配牌で `calc_dd_table` と `TABLE` 行を比較。データはコーパス (`corpus/data/dds/list100.txt`) か、無ければ `cargo xtask dds vendor` が同じ DDS アーカイブ (SHA-256 検証済み) から展開する `vendor/dds-2.9.0/hands/list100.txt` を使う。CI の `dds` ジョブ (3 OS) は `BRIDGE_REQUIRE_LIST100=1` で実行し、データが無ければスキップせず失敗させる。nightly は `--include-ignored` (以前の `--ignored` は `#[ignore]` の無いこのテストを除外していた。フェーズ 5 レビューで修正) | 100% 一致 |
 | 差分 `masterDD` | 同 (`#[ignore]`) | 83,691 配牌 | 100% 一致 |
 | 並行 `SolveBoard` | `tests/concurrency.rs` | 8 スレッド × 100 局面を `solve_board`、逐次実行の結果と比較。`info().threads` の確認 | エラー 0、結果一致 |
 | `analyse_play` | `tests/differential.rs` | `list100.txt` の `PLAY`/`TRACE` 行 | 一致 |
