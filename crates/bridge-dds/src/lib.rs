@@ -222,7 +222,10 @@ pub fn solve_all_boards(
     }
 }
 
-/// Double-dummy tricks after each card of a play (`AnalysePlayBin`).
+/// Double-dummy tricks after each card of a play (`AnalysePlayBin`): for an `n`-card play the
+/// result has `n + 1` entries, `result[0]` being the value before the first card. DDS itself
+/// does not analyse the forced last trick (it returns 49 entries for any play of 49-52 cards);
+/// those entries repeat the value after the 48th card, which the forced trick cannot change.
 pub fn analyse_play(deal: &Deal, play: &PlayHistory) -> Result<Vec<u8>, DdsError> {
     #[cfg(dds_vendored)]
     return backend::analyse_play(deal, play);
@@ -884,7 +887,16 @@ mod backend {
             return Err(dds_error(rc));
         }
         let n = (solved.number.max(0) as usize).min(solved.tricks.len());
-        Ok(solved.tricks[..n].iter().map(|&t| t.max(0) as u8).collect())
+        let mut tricks: Vec<u8> = solved.tricks[..n].iter().map(|&t| t.max(0) as u8).collect();
+        // `AnalysePlayBin` stops after the 12th trick: every play of 49-52 cards comes back with
+        // 49 entries. The last trick is forced, so the result cannot change during it; repeat
+        // the last value so that the documented `len() == n + 1` holds for every `n`.
+        if cards.len() > 48 {
+            if let Some(&last) = tricks.last() {
+                tricks.resize(cards.len() + 1, last);
+            }
+        }
+        Ok(tricks)
     }
 
     pub(super) fn dealer_par(

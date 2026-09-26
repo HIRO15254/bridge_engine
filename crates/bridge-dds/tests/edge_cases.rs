@@ -8,8 +8,8 @@
 
 use std::path::Path;
 
-use bridge_core::{Card, Deal, Seat, Strain};
-use bridge_dds::{DdsError, Mode, Position, Solutions, Target, solve_board, sys};
+use bridge_core::{Card, Deal, PlayHistory, Seat, Strain};
+use bridge_dds::{DdsError, Mode, Position, Solutions, Target, analyse_play, solve_board, sys};
 
 fn deal(pbn: &str) -> Deal {
     pbn.parse().expect("valid deal")
@@ -95,4 +95,35 @@ fn trick_card_played_out_of_turn_is_rejected_without_calling_dds() {
         !dump_file().exists(),
         "DDS itself saw the bad trick and wrote dump.txt"
     );
+}
+
+/// Regression: `AnalysePlayBin` returns 49 entries for every play of 49-52 cards, while the
+/// wrapper documents `n + 1`. The wrapper now pads with the value after the 48th card.
+#[test]
+fn analyse_play_returns_n_plus_one_entries_for_every_play_length() {
+    let d = deal(FORCED);
+    let mut history = PlayHistory::new(Strain::NoTrump, Seat::North);
+    let mut lens = Vec::new();
+    for n in 0..=52 {
+        if n > 0 {
+            // Play the first legal card of whoever is to act.
+            let actor = history.next_to_play();
+            let hand = d.hand(actor);
+            let c = hand
+                .cards()
+                .find(|&c| history.is_legal(c, hand))
+                .expect("someone always has a legal card");
+            history.play(c, hand).unwrap();
+        }
+        if n >= 44 || n <= 1 {
+            let tricks = analyse_play(&d, &history).expect("analyse_play");
+            assert_eq!(tricks.len(), n + 1, "{n}-card play");
+            lens.push(n);
+            if n > 48 {
+                let at_48 = tricks[48];
+                assert!(tricks[48..].iter().all(|&t| t == at_48), "{tricks:?}");
+            }
+        }
+    }
+    assert!(lens.contains(&52));
 }

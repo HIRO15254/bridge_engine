@@ -370,7 +370,7 @@ pub enum DdsError {
 | `calc_dd_tables` | `CalcAllTables` を 40 件ずつ (`MAXNOOFTABLES` = 200 boards / 5 strains)、`mode = -1` (パー計算なし)、`trumpFilter = [0; 5]` (全ストレイン) | `slots` を全部 (チャンクごと) | `tests/batching.rs` が 39/40/41 の境界を検査 |
 | `solve_board` | `SolveBoard(dl, target, solutions, mode, &mut fut, thrId)` | `slots` から 1 スロット (ブロッキング取得) | Rust スレッド間で並行可 |
 | `solve_all_boards` | `SolveAllChunksBin(bop, solvedp, chunkSize = 1)` を 200 件ずつ | `slots` を全部 | 200 超はエラーにせず分割 (`tests/batching.rs` が 199/200/201 の境界を検査)。`boards` はヒープ |
-| `analyse_play` | `AnalysePlayBin(dl, play, &mut solved, thrId)` | `slots` から 1 スロット | 戻り値 `tricks[0..=n]` (`tricks[0]` = プレイ前の DD 結果)。`trump`/`leader` は `PlayHistory::trump()`/`leader()` |
+| `analyse_play` | `AnalysePlayBin(dl, play, &mut solved, thrId)` | `slots` から 1 スロット | 戻り値 `tricks[0..=n]` (`tricks[0]` = プレイ前の DD 結果、常に `n + 1` 要素)。DDS 自身は最後のトリック (強制) を解析せず 49〜52 枚のプレイに対して 49 要素しか返さないので、ラッパーが 48 枚目の後の値を繰り返して `n + 1` 要素に埋める (強制トリック中に結果は変わらない。フェーズ 5 レビューで修正)。`trump`/`leader` は `PlayHistory::trump()`/`leader()` |
 | `dealer_par` | `DealerParBin(&mut table, &mut pres, dealer, vul)` | なし (純関数) | |
 | `info` | `GetDDSInfo` | なし | `versionString`, `noOfThreads`, `threading`, `systemString` を写す |
 

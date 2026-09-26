@@ -295,7 +295,17 @@ fn check_all(records: &[Record]) -> (usize, usize, usize, usize) {
         match analyse_play(&rec.deal, &history) {
             Ok(tricks) => {
                 let got: Vec<i32> = tricks.iter().map(|&t| i32::from(t)).collect();
-                if got == rec.trace {
+                // Upstream's TRACE stops at 49 entries for plays of 49-52 cards (the forced
+                // last trick is not analysed); the wrapper pads to `n + 1` by repeating the
+                // last value, so compare the prefix and check the padding.
+                let n = history.cards().len();
+                let prefix_ok = got.len() == n + 1
+                    && got.len() >= rec.trace.len()
+                    && got[..rec.trace.len()] == rec.trace[..]
+                    && got[rec.trace.len()..]
+                        .iter()
+                        .all(|&t| Some(&t) == rec.trace.last());
+                if prefix_ok {
                     trace_ok += 1;
                 } else {
                     eprintln!(
