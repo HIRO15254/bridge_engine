@@ -612,14 +612,19 @@ fn signals_fire_on_the_right_cards() {
     let e = idx(Seat::East);
     let w = idx(Seat::West);
     // East: diamonds exactly 2 (hard); high-low = even (consistent); H6 splits; C9 high =
-    // a club honour. 3 x 2 x 2 = 12 combinations, capped at K = 8, summing to 1.
+    // a club honour. 3 x 2 x 2 = 12 combinations, capped at K = 8 (7 kept plus the dropped
+    // weight folded into the ANY remainder), summing to 1.
     assert_eq!(interp.hard[e].suit_len(Suit::Diamonds), 2..=2);
     assert_eq!(interp.soft[e].len(), 8);
     assert!((total(&interp.soft[e]) - 1.0).abs() < 1e-5);
-    // The heaviest East branch is everything that fired, with the H6's "high" half first: a heart
-    // honour (0.35), even diamonds (0.7) and a club honour (0.6).
+    // The heaviest East branch other than the ANY remainder is everything that fired, with the
+    // H6's "high" half first: a heart honour (0.35), even diamonds (0.7) and a club honour (0.6).
     assert!(interp.soft[e].windows(2).all(|p| p[0].1 >= p[1].1));
-    let top = &interp.soft[e][0].0;
+    assert!(
+        interp.soft[e].iter().any(|(c, w)| is_any(c) && *w > 0.0),
+        "the truncated tail must survive as an ANY remainder"
+    );
+    let top = &interp.soft[e].iter().find(|(c, _)| !is_any(c)).unwrap().0;
     assert!(top.satisfies(hand("K3.Q632.93.AQ932")));
     assert!(!top.satisfies(hand("K3.Q632.932.AQ93")), "odd diamonds");
     assert!(!top.satisfies(hand("K3.T632.93.AQ932")), "no heart honour");

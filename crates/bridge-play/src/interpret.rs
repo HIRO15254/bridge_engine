@@ -261,6 +261,8 @@ fn combine(
             Some((_, w)) => *w += dropped,
             None => combos.push((HandConstraint::ANY, dropped)),
         }
+        // The remainder can outweigh kept branches; keep the list sorted by weight.
+        combos.sort_by(|a, b| b.1.total_cmp(&a.1));
     }
     let total: f32 = combos.iter().map(|(_, w)| w).sum();
     if total > 0.0 {
