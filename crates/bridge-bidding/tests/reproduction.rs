@@ -5,20 +5,23 @@
 //! auction via `choose_bid`? A node whose reproduction rate is low is a node whose constraint is
 //! too *loose* (accepts hands that would never actually have produced that call).
 //!
-//! 11-testing.md §3's own pseudocode samples with `bridge_constraint::ConstraintProposal` and
-//! counts a raw (unweighted) fraction, because that proposal already draws from something close
-//! to the target distribution. `ConstraintProposal` is still `todo!()` on this branch (phase 5,
-//! a parallel lane's scope -- see `bridge-sample/src/lib.rs`'s crate-level doc comment and its
-//! `#![allow(dead_code, unused_variables)]`), so this harness instead follows the task brief's own
-//! escape hatch: sample with `bridge_sample::UniformProposal` (fully random deals, agnostic to the
-//! auction) and fold the correction into the importance weight itself, by setting
-//! `SampleContext::bidding = Some(BiddingLikelihood { .. })`. That makes `sample_deals` score each
-//! uniformly-drawn deal by `sequence_log_likelihood` (the actual `choose_bid` policy's likelihood
-//! of the real auction under that deal) rather than by `Interpretation::likelihood`. Each auction's
-//! reproduction rate is therefore the *weighted* fraction of its 1000 uniform samples that replay
-//! correctly -- weighted by `exp(log_weight - max log_weight)`, the same numerically-stable
-//! renormalisation `bridge_sample::effective_sample_size` uses -- not a raw count as in the design
-//! doc's `ConstraintProposal`-based pseudocode.
+//! 11-testing.md §3's pseudocode samples deals from the auction's own interpretation and counts
+//! the raw fraction that replays. `ConstraintProposal` is still `todo!()` (phase 5), so the
+//! headline statistic here gets the same distribution by rejection: uniformly random deals are
+//! kept only when every seat's hand strictly satisfies the auction's interpretation
+//! (`Interpretation::satisfied_by` under `InterpretOptions { strict: true, .. }`), up to
+//! [`TARGET_ACCEPTED`] kept deals out of at most [`MAX_DRAWS`] draws, and the rate is the raw
+//! fraction of kept deals whose `replay` reproduces the auction. Which auctions enter the headline
+//! median depends only on how many deals were kept (at least [`MIN_ACCEPTED`]), never on whether
+//! they replay, so the statistic is not tied to the rate by construction.
+//!
+//! The earlier headline (phase 3 recheck finding) weighted uniform deals by
+//! `sequence_log_likelihood` and took the median over auctions with ESS >= 30. A call `choose_bid`
+//! would not make gets only `epsilon / n_legal` of the policy's mass, so one reproducing deal
+//! carries almost all the weight (ESS about 1): a high ESS meant that *no* deal reproduced, and the
+//! ESS filter selected exactly the auctions whose rate was 0. That likelihood-weighted rate is
+//! still reported per auction, next to an `any_reproduced` flag, as a near-0/1 statistic -- it is
+//! no longer used as a headline.
 
 mod common;
 
@@ -33,7 +36,16 @@ use bridge_core::Auction;
 use bridge_sample::{
     BiddingLikelihood, SampleContext, SampleOptions, UniformProposal, sample_deals,
 };
+use rand_xoshiro::Xoshiro256PlusPlus;
+use rand_xoshiro::rand_core::SeedableRng;
 use serde_json::json;
+
+/// Deals kept per auction by the rejection sampler.
+const TARGET_ACCEPTED: usize = 1000;
+/// Uniform draws per auction before the rejection sampler gives up.
+const MAX_DRAWS: usize = 200_000;
+/// Kept deals an auction needs for its raw rate to enter the headline median.
+const MIN_ACCEPTED: usize = 30;
 
 /// Every `.pbn` file under `dir`, recursively, in a stable (sorted) order.
 fn pbn_files(dir: &Path) -> Vec<PathBuf> {
@@ -97,9 +109,18 @@ struct AuctionRecord {
     /// `"empty_auction"` for the vacuous zero-call auction (never produced by real corpus data,
     /// kept only so the match is total).
     kind_key: String,
-    /// The weighted fraction of `requested` uniform samples whose `choose_bid` replay reproduces
-    /// this auction exactly.
-    rate: f64,
+    /// Raw fraction of the rejection-sampled deals (every seat strictly satisfies the
+    /// interpretation) whose `choose_bid` replay reproduces this auction exactly; `None` when no
+    /// deal was kept.
+    raw_rate: Option<f64>,
+    /// Deals the rejection sampler kept, and how many uniform draws it took.
+    accepted: usize,
+    draws: usize,
+    /// The likelihood-weighted fraction of `requested` uniform samples whose replay reproduces
+    /// this auction (a near-0/1 statistic, see the module doc).
+    weighted_rate: f64,
+    /// Whether any of the `requested` likelihood-weighted uniform samples replayed.
+    any_reproduced: bool,
     requested: usize,
     produced: usize,
     ess: f64,
@@ -169,12 +190,22 @@ fn process_auction(
     let (deals, sample_report) = sample_deals(&sample_ctx, &UniformProposal, requested, &opts)
         .expect("UniformProposal + BiddingLikelihood always prepares and never hits EmptySupport");
 
+    let (raw_rate, accepted, draws) = rejection_rate(
+        table,
+        bid_ctx,
+        auction,
+        seed ^ 0xA5A5_5A5A_0F0F_F0F0,
+        TARGET_ACCEPTED,
+        MAX_DRAWS,
+    );
+
     let log_weight_max = deals
         .iter()
         .map(|d| d.log_weight)
         .fold(f64::NEG_INFINITY, f64::max);
     let mut weight_sum = 0.0f64;
     let mut reproduced_weight = 0.0f64;
+    let mut any_reproduced = false;
     for weighted in &deals {
         let w = (weighted.log_weight - log_weight_max).exp();
         weight_sum += w;
@@ -187,9 +218,10 @@ fn process_auction(
         );
         if replayed.auction == *auction {
             reproduced_weight += w;
+            any_reproduced = true;
         }
     }
-    let rate = if weight_sum > 0.0 {
+    let weighted_rate = if weight_sum > 0.0 {
         reproduced_weight / weight_sum
     } else {
         0.0
@@ -199,11 +231,59 @@ fn process_auction(
         path: format!("{auction}"),
         node_key: node_key(&interp),
         kind_key: kind_key(&interp),
-        rate,
+        raw_rate,
+        accepted,
+        draws,
+        weighted_rate,
+        any_reproduced,
         requested,
         produced: deals.len(),
         ess: sample_report.ess,
     }
+}
+
+/// Rejection-samples deals from `auction`'s own strict interpretation: uniform deals are kept when
+/// every seat's hand satisfies it, until `target` are kept or `max_draws` were drawn. Returns the
+/// raw fraction of kept deals whose `replay` reproduces `auction` (`None` if none was kept), the
+/// kept count and the draw count.
+fn rejection_rate(
+    table: &bridge_bidding::Table,
+    bid_ctx: &BidContext<'_>,
+    auction: &Auction,
+    seed: u64,
+    target: usize,
+    max_draws: usize,
+) -> (Option<f64>, usize, usize) {
+    let strict = InterpretOptions {
+        strict: true,
+        ..InterpretOptions::default()
+    };
+    let interp = interpret(table, auction, &strict);
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+    let (mut accepted, mut reproduced, mut draws) = (0usize, 0usize, 0usize);
+    while accepted < target && draws < max_draws {
+        draws += 1;
+        let deal = common::random_deal(&mut rng);
+        if !bridge_core::Seat::ALL
+            .iter()
+            .all(|&seat| interp.satisfied_by(seat, deal.hand(seat)))
+        {
+            continue;
+        }
+        accepted += 1;
+        let replayed = replay(
+            table,
+            &deal,
+            auction.dealer(),
+            auction.vulnerability(),
+            bid_ctx,
+        );
+        if replayed.auction == *auction {
+            reproduced += 1;
+        }
+    }
+    let rate = (accepted > 0).then(|| reproduced as f64 / accepted as f64);
+    (rate, accepted, draws)
 }
 
 fn median(values: &[f64]) -> f64 {
@@ -219,14 +299,6 @@ fn median(values: &[f64]) -> f64 {
         (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
     }
 }
-
-/// Auctions whose importance-weighted sample has an effective sample size below this floor are
-/// left out of the headline median (harness review finding 7): with `UniformProposal` and
-/// full-auction likelihood weights one deal usually carries almost all of an auction's weight
-/// (ESS about 1), so that auction's "rate" is essentially a 0/1 outcome on a single deal and says
-/// little about the system. The median over every auction is still reported, next to the ESS
-/// distribution, so the reader can see how many auctions the floored median rests on.
-const ESS_FLOOR: f64 = 30.0;
 
 /// The `p`-quantile (`0.0..=1.0`, nearest-rank on the sorted values) of `values`; `0.0` if empty.
 fn quantile(values: &[f64], p: f64) -> f64 {
@@ -267,16 +339,23 @@ fn ess_distribution(records: &[AuctionRecord]) -> serde_json::Value {
     })
 }
 
-/// The headline numbers: the median rate over auctions with `ess >= ESS_FLOOR`, how many such
-/// auctions there are, and the median over every auction.
-fn floored_median(records: &[AuctionRecord]) -> (f64, usize, f64) {
-    let floored: Vec<f64> = records
+/// The headline numbers: the median raw (rejection-sampled) rate over auctions with at least
+/// [`MIN_ACCEPTED`] kept deals, how many such auctions there are, and the share of all auctions
+/// for which any likelihood-weighted uniform sample replayed. The filter looks only at the kept
+/// count, never at the replay outcome.
+fn headline(records: &[AuctionRecord]) -> (f64, usize, f64) {
+    let rates: Vec<f64> = records
         .iter()
-        .filter(|r| r.ess >= ESS_FLOOR)
-        .map(|r| r.rate)
+        .filter(|r| r.accepted >= MIN_ACCEPTED)
+        .filter_map(|r| r.raw_rate)
         .collect();
-    let all: Vec<f64> = records.iter().map(|r| r.rate).collect();
-    (median(&floored), floored.len(), median(&all))
+    let any = records.iter().filter(|r| r.any_reproduced).count();
+    let any_share = if records.is_empty() {
+        0.0
+    } else {
+        any as f64 / records.len() as f64
+    };
+    (median(&rates), rates.len(), any_share)
 }
 
 /// Groups `records` by `key`, sorted by descending group size, and computes each group's median
@@ -287,8 +366,10 @@ fn grouped_medians(
 ) -> Vec<serde_json::Value> {
     use std::collections::HashMap;
     let mut groups: HashMap<String, Vec<f64>> = HashMap::new();
-    for r in records {
-        groups.entry(key(r)).or_default().push(r.rate);
+    for r in records.iter().filter(|r| r.accepted >= MIN_ACCEPTED) {
+        if let Some(rate) = r.raw_rate {
+            groups.entry(key(r)).or_default().push(rate);
+        }
     }
     let mut rows: Vec<(String, Vec<f64>)> = groups.into_iter().collect();
     rows.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then_with(|| a.0.cmp(&b.0)));
@@ -305,14 +386,19 @@ fn grouped_medians(
 
 /// Writes `<workspace>/target/reproduction_report.json` (11-testing.md §3's shape).
 fn write_json(records: &[AuctionRecord], corpus_dir: &Path) {
-    let (median_floored, floored_count, median_all) = floored_median(records);
+    let (median_raw, counted, any_share) = headline(records);
+    let weighted: Vec<f64> = records.iter().map(|r| r.weighted_rate).collect();
     let report = json!({
         "auctions": records.len(),
         "corpus_dir": corpus_dir.display().to_string(),
-        "ess_floor": ESS_FLOOR,
-        "auctions_at_or_above_ess_floor": floored_count,
-        "median_ess_at_or_above_floor": median_floored,
-        "overall_median": median_all,
+        "method": "rejection sampling on the strict interpretation of every seat (uniform draws)",
+        "target_accepted": TARGET_ACCEPTED,
+        "max_draws": MAX_DRAWS,
+        "min_accepted": MIN_ACCEPTED,
+        "auctions_with_min_accepted": counted,
+        "median_raw_rate": median_raw,
+        "any_weighted_sample_reproduced_share": any_share,
+        "weighted_rate_median_all": median(&weighted),
         "ess_distribution": ess_distribution(records),
         "by_node": grouped_medians(records, |r| r.node_key.clone()),
         "by_resolution_kind": grouped_medians(records, |r| r.kind_key.clone()),
@@ -320,7 +406,11 @@ fn write_json(records: &[AuctionRecord], corpus_dir: &Path) {
             "path": r.path,
             "node": r.node_key,
             "resolution_kind": r.kind_key,
-            "rate": r.rate,
+            "raw_rate": r.raw_rate,
+            "accepted": r.accepted,
+            "draws": r.draws,
+            "weighted_rate": r.weighted_rate,
+            "any_reproduced": r.any_reproduced,
             "requested": r.requested,
             "produced": r.produced,
             "ess": r.ess,
@@ -375,22 +465,88 @@ fn sayc_reproduction_rate() {
     };
 
     let started = std::time::Instant::now();
-    let records: Vec<AuctionRecord> = auctions
-        .iter()
-        .enumerate()
-        .map(|(i, auction)| {
-            process_auction(&table, &bid_ctx, auction, auction_seed(0x5A1C_3001, i))
-        })
+    // Auctions are independent (each has its own seed), so they are spread over a few threads;
+    // results are put back in corpus order, so the report does not depend on the thread count.
+    let threads = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .min(8);
+    let mut slots: Vec<Option<AuctionRecord>> = (0..auctions.len()).map(|_| None).collect();
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads)
+            .map(|t| {
+                let (table, bid_ctx, auctions) = (&table, &bid_ctx, &auctions);
+                scope.spawn(move || {
+                    (t..auctions.len())
+                        .step_by(threads)
+                        .map(|i| {
+                            let seed = auction_seed(0x5A1C_3001, i);
+                            (i, process_auction(table, bid_ctx, &auctions[i], seed))
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        for h in handles {
+            for (i, record) in h.join().expect("reproduction worker panicked") {
+                slots[i] = Some(record);
+            }
+        }
+    });
+    let records: Vec<AuctionRecord> = slots
+        .into_iter()
+        .map(|r| r.expect("every auction processed"))
         .collect();
     let elapsed = started.elapsed();
 
-    let (median_floored, floored_count, median_all) = floored_median(&records);
+    let (median_raw, counted, any_share) = headline(&records);
     write_json(&records, &dir);
     eprintln!(
-        "sayc_reproduction_rate: {} auction(s); median reproduction rate over the {floored_count} \
-         auction(s) with ESS >= {ESS_FLOOR} = {median_floored:.4}; median over all = \
-         {median_all:.4}; ESS distribution {}; in {elapsed:?}",
+        "sayc_reproduction_rate: {} auction(s); median raw reproduction rate (rejection-sampled \
+         from each auction's strict interpretation) over the {counted} auction(s) with >= \
+         {MIN_ACCEPTED} kept deals = {median_raw:.4}; share of auctions any likelihood-weighted \
+         uniform sample reproduced = {any_share:.3}; in {elapsed:?}",
         records.len(),
-        ess_distribution(&records),
     );
+}
+
+/// The headline statistic is not tied to the rate: an auction many deals reproduce (SAYC passed
+/// out, where every kept deal has four hands that open nothing) counts in it with a high rate.
+/// Under the old ESS >= 30 filter such an auction could only enter with rate 0.
+#[test]
+fn headline_counts_an_auction_that_many_deals_reproduce() {
+    let table = common::compile_sayc("sayc.bml");
+    let bid_ctx = BidContext {
+        scoring: Scoring::Imp,
+        natural: Some(table.natural.as_ref()),
+        implicit_pass: ImplicitPass::Complement,
+        policy: PolicyParams::default(),
+    };
+    let pass = bridge_core::Call::Pass;
+    let auction = Auction::from_calls(
+        bridge_core::Seat::North,
+        bridge_core::Vulnerability::None,
+        vec![pass, pass, pass, pass],
+    )
+    .expect("passed-out auction is legal");
+    let (rate, accepted, _) = rejection_rate(&table, &bid_ctx, &auction, 11, 60, 20_000);
+    assert!(accepted >= MIN_ACCEPTED, "only {accepted} deals kept");
+    let rate = rate.expect("some deal kept");
+    assert!(rate > 0.5, "passed-out rate {rate}");
+
+    let record = |raw_rate: Option<f64>, accepted: usize| AuctionRecord {
+        path: String::new(),
+        node_key: String::new(),
+        kind_key: String::new(),
+        raw_rate,
+        accepted,
+        draws: 0,
+        weighted_rate: 0.0,
+        any_reproduced: false,
+        requested: 0,
+        produced: 0,
+        ess: 1.0,
+    };
+    let (median, counted, _) = headline(&[record(Some(rate), accepted), record(Some(0.0), 5)]);
+    assert_eq!(counted, 1);
+    assert_eq!(median, rate);
 }
