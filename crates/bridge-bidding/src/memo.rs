@@ -145,7 +145,12 @@ impl Memo {
 
     fn insert(&mut self, h: u64, e: Rc<PrefixEntry>) {
         if self.current.len() >= GENERATION {
-            self.previous = std::mem::take(&mut self.current);
+            let full = std::mem::replace(
+                &mut self.current,
+                Map::with_capacity_and_hasher(GENERATION, BuildHasherDefault::default()),
+            );
+            // Dropping the old generation frees its entries here.
+            self.previous = full;
         }
         self.current.insert(h, e);
     }
