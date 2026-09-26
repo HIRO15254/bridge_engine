@@ -180,7 +180,8 @@ fn illegal_call_is_lint() {
 }
 
 /// A truncated system: past the point the trie covers exactly, resolution degrades to `Partial`
-/// via `resolve_lenient`, with `eps_partial` mixed in (non-strict).
+/// via `resolve_lenient`, with `eps_partial` mixed in (non-strict). Legacy mode
+/// ([`InterpretOptions::legacy`]); `partial_position_mirror_pieces` is the mirror's version.
 #[test]
 fn partial_and_natural_epsilon() {
     let sys = sayc_system();
@@ -196,7 +197,7 @@ fn partial_and_natural_epsilon() {
             bid(2, Strain::Hearts),
         ],
     );
-    let opts = InterpretOptions::default();
+    let opts = InterpretOptions::legacy();
     let interp = interpret(&table, &a, &opts);
 
     let pc = &interp.per_call[2];
@@ -222,7 +223,7 @@ fn partial_and_natural_epsilon() {
     // just shrinking its weight.
     let strict_opts = InterpretOptions {
         strict: true,
-        ..InterpretOptions::default()
+        ..InterpretOptions::legacy()
     };
     let strict_interp = interpret(&table, &a, &strict_opts);
     let strict_pc = &strict_interp.per_call[2];
@@ -235,6 +236,70 @@ fn partial_and_natural_epsilon() {
     );
     let (_, strict_weight, _) = &strict_pc.alternatives[0];
     assert!((*strict_weight - 1.0).abs() < TOL);
+}
+
+/// The mirror at a lenient (`Partial`) position: `X` pieces of the first full lenient match
+/// with the system weight `(1 − ε)`, the no-candidate complement at `(1 − ε)/n`, and `ANY` at
+/// `ε/n`; `log_scale` is `ln Σ raw`, and `strict` keeps only the `X` pieces.
+#[test]
+fn partial_position_mirror_pieces() {
+    let sys = sayc_system();
+    let table = table_of(&sys);
+    let a = auction(
+        Seat::North,
+        Vulnerability::None,
+        &[
+            bid(1, Strain::Hearts),
+            bid(1, Strain::NoTrump),
+            bid(2, Strain::Hearts),
+        ],
+    );
+    let opts = InterpretOptions::default();
+    let interp = interpret(&table, &a, &opts);
+    let pc = &interp.per_call[2];
+    assert_eq!(pc.kind, ResolutionKind::Partial { matched_depth: 1 });
+    assert_eq!(interp.divergence, Some(2));
+    assert!(!pc.shadowed);
+    let sum: f32 = pc.alternatives.iter().map(|(_, w, _)| *w).sum();
+    assert!((sum - 1.0).abs() < TOL);
+    let eps = f64::from(opts.policy.epsilon);
+    let prefix = auction(
+        Seat::North,
+        Vulnerability::None,
+        &[bid(1, Strain::Hearts), bid(1, Strain::NoTrump)],
+    );
+    let n = prefix.legal_calls().count() as f64;
+    let scale = pc.log_scale.exp();
+    let raw = |kind_ok: &dyn Fn(ResolutionKind) -> bool| -> f64 {
+        pc.alternatives
+            .iter()
+            .filter(|(_, _, ex)| kind_ok(ex.kind))
+            .map(|(_, w, _)| f64::from(*w) * scale)
+            .sum()
+    };
+    let system = raw(&|k| matches!(k, ResolutionKind::Partial { .. }));
+    assert!((system - (1.0 - eps)).abs() < 1e-5, "system raw {system}");
+    let fallback = raw(&|k| k == ResolutionKind::Fallback);
+    // The complement of the lenient siblings at (1 − ε)/n plus ANY at ε/n.
+    assert!(
+        (fallback - ((1.0 - eps) / n + eps / n)).abs() < 1e-5,
+        "fallback raw {fallback}"
+    );
+
+    let strict_opts = InterpretOptions {
+        strict: true,
+        ..InterpretOptions::default()
+    };
+    let strict_pc = &interpret(&table, &a, &strict_opts).per_call[2];
+    assert!(!strict_pc.alternatives.is_empty());
+    assert!(
+        strict_pc
+            .alternatives
+            .iter()
+            .all(|(_, _, ex)| ex.kind != ResolutionKind::Fallback)
+    );
+    let strict_sum: f32 = strict_pc.alternatives.iter().map(|(_, w, _)| *w).sum();
+    assert!((strict_sum - 1.0).abs() < TOL);
 }
 
 /// Regression: our own call can land exactly on an implicit-pass trie node that exists only

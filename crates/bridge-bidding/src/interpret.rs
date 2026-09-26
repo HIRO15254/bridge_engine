@@ -25,6 +25,9 @@ use bridge_system::trie::{LookupKey, RelVul, TrieId};
 use bridge_system::{CallContext, Forcing, SystemIR};
 use smallvec::SmallVec;
 
+use bridge_system::exclusive::PieceSummary;
+
+use crate::exclusion::{MirrorSpec, PieceRole, Reader, mirror_call};
 use crate::{BidContext, ImplicitPass, NodeId, PolicyParams, Table};
 
 /// Upper bound on opponents'-call substitutions passed to `resolve_lenient` (07-bidding.md §3;
@@ -241,15 +244,19 @@ pub struct InterpretOptions {
 }
 
 impl Default for InterpretOptions {
-    /// The mirror of [`PolicyParams::system_players`] with `ImplicitPass::Never`, `K = 8`, not
-    /// strict (the legacy knobs at their phase-3 defaults).
+    /// The mirror of [`PolicyParams::system_players`] with `ImplicitPass::Complement`, `K = 8`,
+    /// not strict (the legacy knobs at their phase-3 defaults). `Complement` because an unlisted
+    /// `Pass` is then read as the complement of its siblings, as the phase-3 interpretation always
+    /// read it; under `Never` the policy has no implicit pass and such a pass carries only the
+    /// `Fallback` pieces. Prefer [`InterpretOptions::for_context`], which takes both from the
+    /// likelihood's `BidContext`.
     fn default() -> InterpretOptions {
         InterpretOptions {
             max_alternatives: 8,
             strict: false,
             mode: InterpretMode::Mirror,
             policy: PolicyParams::system_players(),
-            implicit_pass: ImplicitPass::Never,
+            implicit_pass: ImplicitPass::Complement,
             eps_exact: 0.02,
             eps_partial: 0.15,
             eps_natural: 0.30,
@@ -371,7 +378,7 @@ fn expand_node_branches(
 
 /// The complement of the union of `siblings`' constraints (used by both the implicit-pass
 /// synthesis here and in `choose_bid`, so that the two stay bidirectionally consistent).
-pub(crate) fn complement_of(sys: &SystemIR, siblings: &[(Call, NodeId)]) -> HandConstraint {
+fn complement_of(sys: &SystemIR, siblings: &[(Call, NodeId)]) -> HandConstraint {
     let combined = siblings
         .iter()
         .map(|(_, id)| sys.node(*id).constraint.clone())
@@ -438,10 +445,9 @@ fn apply_epsilon_mixture(
 /// (07-bidding.md §2.2): the maximum-weight alternative of partner's most recent call, and
 /// whether that alternative's node is forcing.
 ///
-/// Used by [`fill_partner_context`] (`interpret`'s own natural step) and, through
-/// [`partner_context_for_prefix`], by `choose_bid`'s natural branch, so both compute
-/// `CallContext::partner_constraint`/`forcing_situation` identically for the same auction prefix.
-pub(crate) fn partner_context(
+/// Legacy mode only ([`InterpretMode::Legacy`]); the mirror and `choose_bid` use
+/// `exclusion::Reader::partner_context`.
+fn partner_context(
     table: &Table,
     per_call_so_far: &[CallInterpretation],
     s: Seat,
@@ -479,29 +485,6 @@ pub(crate) fn partner_context(
         None => false,
     };
     (Some(c.clone()), forcing)
-}
-
-/// [`partner_context`] for seat `s` about to call after `auction`, computed from Step A of
-/// `auction` itself (no Step B). `choose_bid`'s natural branch (07-bidding.md §5.2 step 4) needs
-/// the same `CallContext` that `interpret`'s natural step (§4.1 step 6) builds for the call it is
-/// about to make, and Step A's `per_call[..n]` of `auction` equals that of `auction.with(call)`
-/// for any `call`: each entry `j` reads only the calls up to `j` (the lookup key is truncated to
-/// `n_k` calls, `classify` reads only history up to `j`, and the leading-pass count of the prefix
-/// agrees with the extended auction's for every `j < n`). Strict options are used because
-/// `partner_context` ignores the ε-mixture's `Fallback` branch anyway and the mixture scales every
-/// other weight uniformly; `lenient_decay` stays at its default, so an `interpret` called with a
-/// non-default `lenient_decay` can in rare ties pick a different partner alternative.
-pub(crate) fn partner_context_for_prefix(
-    table: &Table,
-    auction: &Auction,
-    s: Seat,
-) -> (Option<HandConstraint>, bool) {
-    let opts = InterpretOptions {
-        strict: true,
-        ..InterpretOptions::default()
-    };
-    let (per_call, _) = step_a(table, auction, &opts);
-    partner_context(table, &per_call, s)
 }
 
 /// Fills `ctx.partner_constraint` / `ctx.forcing_situation` from the interpretation of partner's
@@ -764,8 +747,8 @@ fn step_a_call(
     )
 }
 
-/// Step A: builds `per_call` and the divergence index.
-fn step_a(
+/// Legacy Step A ([`InterpretMode::Legacy`]): builds `per_call` and the divergence index.
+fn step_a_legacy(
     table: &Table,
     auction: &Auction,
     opts: &InterpretOptions,
@@ -819,6 +802,135 @@ fn step_a(
     }
 
     (per_call, divergence)
+}
+
+/// The output of Step A: `per_call`, the divergence index, and per call the summaries of its
+/// alternatives and the index of its `ANY` piece (Step B's pre-check, mass ordering and
+/// catch-all).
+struct StepA {
+    per_call: Vec<CallInterpretation>,
+    divergence: Option<usize>,
+    summaries: Vec<Vec<Summary>>,
+    any_index: Vec<Option<usize>>,
+}
+
+/// Mirror Step A ([`InterpretMode::Mirror`], docs/design/15-phase4-plan.md D19): per call, the
+/// calibrated pieces of `exclusion::mirror_call`, weights normalised with
+/// `log_scale = ln Σ raw` recorded.
+fn step_a_mirror(table: &Table, auction: &Auction, opts: &InterpretOptions) -> StepA {
+    let spec = MirrorSpec {
+        table,
+        natural: table.natural.as_ref(),
+        policy: opts.policy,
+        implicit_pass: opts.implicit_pass,
+        strict: opts.strict,
+        want_text: true,
+    };
+    let mut reader = Reader::new(table, table.natural.as_ref(), auction, opts.implicit_pass);
+    let calls = auction.calls();
+    let n = calls.len();
+    let mut per_call = Vec::with_capacity(n);
+    let mut summaries = Vec::with_capacity(n);
+    let mut any_index = Vec::with_capacity(n);
+    let mut divergence = None;
+    let mut prefix = Auction::new(auction.dealer(), auction.vulnerability());
+    for (j, &call) in calls.iter().enumerate() {
+        let seat = auction.seat_at(j);
+        let m = mirror_call(&spec, &mut reader, &prefix, call);
+        if m.kind != ResolutionKind::Exact && divergence.is_none() {
+            divergence = Some(j);
+        }
+        let total: f64 = m.pieces.iter().map(|p| p.raw).sum();
+        let log_scale = if total > 0.0 {
+            total.ln()
+        } else {
+            f64::NEG_INFINITY
+        };
+        let sys = &table.systems[seat.index() as usize];
+        let mut alternatives = Vec::with_capacity(m.pieces.len());
+        let mut sums = Vec::with_capacity(m.pieces.len());
+        let mut any = None;
+        for (i, piece) in m.pieces.into_iter().enumerate() {
+            let fallback = piece.role.is_fallback();
+            if piece.role == PieceRole::Any {
+                any = Some(i);
+            }
+            let kind = match piece.role {
+                PieceRole::System => m.kind,
+                PieceRole::Natural => ResolutionKind::Natural,
+                _ => ResolutionKind::Fallback,
+            };
+            let text = match piece.node {
+                Some(id) if Some(id) != m.node => sys.node(id).description.clone(),
+                _ if !fallback || m.shadowed => m.text.clone(),
+                _ => String::new(),
+            };
+            sums.push(Summary::of_piece(&piece.summary));
+            alternatives.push((
+                piece.flat.into_owned(),
+                (piece.raw / total) as f32,
+                CallExplanation {
+                    call_index: j,
+                    call,
+                    node: if piece.role == PieceRole::System {
+                        piece.node
+                    } else {
+                        None
+                    },
+                    kind,
+                    text,
+                },
+            ));
+        }
+        per_call.push(CallInterpretation {
+            call_index: j,
+            seat,
+            call,
+            kind: m.kind,
+            alternatives,
+            log_scale,
+            shadowed: m.shadowed,
+        });
+        summaries.push(sums);
+        any_index.push(any);
+        prefix
+            .push(call)
+            .expect("call from a valid Auction is legal at its own position");
+    }
+    StepA {
+        per_call,
+        divergence,
+        summaries,
+        any_index,
+    }
+}
+
+/// Legacy Step A wrapped as [`StepA`] (summaries computed from the constraints).
+fn step_a_legacy_full(table: &Table, auction: &Auction, opts: &InterpretOptions) -> StepA {
+    let (per_call, divergence) = step_a_legacy(table, auction, opts);
+    let summaries = per_call
+        .iter()
+        .map(|ci| {
+            ci.alternatives
+                .iter()
+                .map(|(c, _, _)| Summary::of(c))
+                .collect()
+        })
+        .collect();
+    let any_index = per_call
+        .iter()
+        .map(|ci| {
+            ci.alternatives
+                .iter()
+                .position(|(_, _, ex)| ex.kind == ResolutionKind::Fallback)
+        })
+        .collect();
+    StepA {
+        per_call,
+        divergence,
+        summaries,
+        any_index,
+    }
 }
 
 /// `true` for the unconstrained atom (`HandConstraint::ANY`, i.e. `Atom::ANY`).
@@ -894,6 +1006,26 @@ impl Summary {
         }
     }
 
+    /// The summary of a piece precomputed by the exclusive index (or the mirror).
+    fn of_piece(p: &PieceSummary) -> Summary {
+        Summary {
+            shapes: p.shapes,
+            hcp: p.hcp.clone(),
+            bounds: p.shape_hcp_bounds,
+        }
+    }
+
+    /// The number of (shape, HCP) cells of the summary box: the volume of the mass-ordered
+    /// truncation (07-bidding.md §4.4).
+    fn cells(&self) -> f32 {
+        let span = if self.hcp.is_empty() {
+            0
+        } else {
+            u32::from(*self.hcp.end() - *self.hcp.start()) + 1
+        };
+        (u32::from(self.shapes.len()) * span) as f32
+    }
+
     /// `self ∧ addition`'s summary, or `None` when the cheap check finds it unsatisfiable (an
     /// empty shape set, an inverted HCP range, or an HCP range no shape in the set can reach —
     /// the same three checks as `summary_satisfiable`, just computed incrementally). The
@@ -966,6 +1098,8 @@ struct Combo {
     summary: Summary,
     weight: f32,
     key: ComboKey,
+    /// Every level so far took its call's `ANY` piece (the catch-all combination).
+    catch_all: bool,
 }
 
 /// Rebuilds a surviving combo's `Vec<CallExplanation>` from its `key` and the seat's own calls in
@@ -996,47 +1130,38 @@ fn materialize_constraint(
         })
 }
 
-/// Step B: combines `per_call` into the four seats' weighted disjunctions.
-fn step_b(
-    per_call: &[CallInterpretation],
-    opts: &InterpretOptions,
-) -> [Vec<(HandConstraint, f32, Explanation)>; 4] {
+/// Step B: combines `per_call` into the four seats' weighted disjunctions (07-bidding.md §4.4):
+/// the cross product of each seat's calls' pieces, pruned by the precomputed summaries,
+/// truncated at each step to `K` combinations by estimated mass `w · cells(summary)` (not by
+/// `w`), always keeping the all-`ANY` catch-all combination, then renormalised.
+fn step_b(a: &StepA, opts: &InterpretOptions) -> [Vec<(HandConstraint, f32, Explanation)>; 4] {
+    let per_call = &a.per_call;
     let mut seats: [Vec<(HandConstraint, f32, Explanation)>; 4] = Default::default();
+    let k = opts.max_alternatives.max(1);
 
     for seat in Seat::ALL {
-        let seat_calls: Vec<&CallInterpretation> =
-            per_call.iter().filter(|c| c.seat == seat).collect();
+        let seat_idx: Vec<usize> = (0..per_call.len())
+            .filter(|&j| per_call[j].seat == seat)
+            .collect();
+        let seat_calls: Vec<&CallInterpretation> = seat_idx.iter().map(|&j| &per_call[j]).collect();
         let mut combos: Vec<Combo> = vec![Combo {
             summary: Summary::ANY,
             weight: 1.0,
             key: ComboKey::new(),
+            catch_all: true,
         }];
         let had_calls = !seat_calls.is_empty();
 
-        for cj in &seat_calls {
-            // Precomputed once per call, not once per (combo, alternative) pair: the same
-            // `Summary::of` result is reused across every combo this call is folded into below.
-            let alt_summaries: Vec<Summary> = cj
-                .alternatives
-                .iter()
-                .map(|(c, _, _)| Summary::of(c))
-                .collect();
-            // Upper bound: every (combo, alternative) pair survives. Sized once so the cross
-            // product's `push` calls below never trigger a reallocation.
+        for (level, cj) in seat_calls.iter().enumerate() {
+            let j = seat_idx[level];
+            let alt_summaries = &a.summaries[j];
+            let any = a.any_index[j];
             let mut next: Vec<Combo> = Vec::with_capacity(combos.len() * cj.alternatives.len());
             for combo in &combos {
                 for (i, (_, wi, ex)) in cj.alternatives.iter().enumerate() {
                     let Some(summary) = combo.summary.and(&alt_summaries[i]) else {
                         continue;
                     };
-                    // `with_capacity` + `extend_from_slice` (one allocation, sized exactly right)
-                    // instead of `combo.key.clone()` then `push` (which can reallocate a second
-                    // time): `key` is rebuilt on every surviving candidate in this loop, so the
-                    // saving compounds across the cross product. `ComboKey`'s inline capacity
-                    // (4) keeps this allocation-free entirely for a seat with <= 4 calls. No
-                    // `HandConstraint` is built here at all (see `Combo`'s doc comment): the
-                    // alternative's own constraint is only needed through `alt_summaries[i]`
-                    // (already folded into `summary` above) until a combo survives to the end.
                     let mut key = ComboKey::with_capacity(combo.key.len() + 1);
                     key.extend_from_slice(&combo.key);
                     key.push((ex.node, ex.kind, i));
@@ -1044,25 +1169,26 @@ fn step_b(
                         summary,
                         weight: combo.weight * wi,
                         key,
+                        catch_all: combo.catch_all && any == Some(i),
                     });
                 }
             }
-            // Dedup by (node, kind, branch) parts, summing weights: sort by `key` so equal keys
-            // become adjacent (an O(n log n) full order on `Ord` tuples), then merge each run in
-            // one linear pass, instead of the O(n²) `deduped.iter_mut().find(|d| d.key ==
-            // combo.key)` this replaced (a linear scan of the deduped list so far for every
-            // candidate in `next`; recheck 3.12: `interpret < 10 µs`).
-            next.sort_by(|a, b| a.key.cmp(&b.key));
-            let mut deduped: Vec<Combo> = Vec::with_capacity(next.len());
-            for combo in next {
-                match deduped.last_mut() {
-                    Some(last) if last.key == combo.key => last.weight += combo.weight,
-                    _ => deduped.push(combo),
+            if next.len() > k {
+                next.sort_by(|x, y| {
+                    let mx = x.weight * x.summary.cells();
+                    let my = y.weight * y.summary.cells();
+                    my.total_cmp(&mx)
+                });
+                match next.iter().position(|c| c.catch_all) {
+                    Some(ca) if ca >= k => {
+                        let catch_all = next.swap_remove(ca);
+                        next.truncate(k - 1);
+                        next.push(catch_all);
+                    }
+                    _ => next.truncate(k),
                 }
             }
-            deduped.sort_by(|a, b| b.weight.total_cmp(&a.weight));
-            deduped.truncate(opts.max_alternatives);
-            combos = deduped;
+            combos = next;
         }
 
         if had_calls && combos.is_empty() {
@@ -1071,9 +1197,12 @@ fn step_b(
                 summary: Summary::ANY,
                 weight: 1.0,
                 key: ComboKey::new(),
+                catch_all: true,
             }];
         }
 
+        // Highest weight first (the order callers and explanations expect).
+        combos.sort_by(|x, y| y.weight.total_cmp(&x.weight));
         let total: f32 = combos.iter().map(|c| c.weight).sum();
         let idx = seat.index() as usize;
         seats[idx] = combos
@@ -1099,12 +1228,15 @@ fn step_b(
 
 /// Interprets `auction` under the four systems of `table`.
 pub fn interpret(table: &Table, auction: &Auction, opts: &InterpretOptions) -> Interpretation {
-    let (per_call, divergence) = step_a(table, auction, opts);
-    let seats = step_b(&per_call, opts);
+    let a = match opts.mode {
+        InterpretMode::Mirror => step_a_mirror(table, auction, opts),
+        InterpretMode::Legacy => step_a_legacy_full(table, auction, opts),
+    };
+    let seats = step_b(&a, opts);
     Interpretation {
         seats,
-        per_call,
-        divergence,
+        per_call: a.per_call,
+        divergence: a.divergence,
     }
 }
 

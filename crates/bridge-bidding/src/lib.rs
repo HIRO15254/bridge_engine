@@ -14,6 +14,7 @@
 mod auction_policy;
 mod cache;
 mod choose;
+mod exclusion;
 mod interpret;
 mod policy;
 mod replay;
