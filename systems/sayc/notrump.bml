@@ -301,6 +301,29 @@ over an overcalled transfer) and otherwise passes.
 1N-2H-(3H)-
 3S = 4+!s
 
+1N-2D-(2H)-
+D = 4+!h
+
+1N-2H-(2N)-
+3S = 3+!s
+D = 16--17 hcp
+
+1N-2D-(2N)-
+3H = 3+!h
+D = 16--17 hcp
+
+1N-2H-(2S)-
+D = 4+!s
+
+If the opponents come in after the transfer has been completed, responder
+doubles with invitational or better values and otherwise passes.
+
+1N-2D-2H-(bid)-
+D = 8+ hcp
+
+1N-2H-2S-(bid)-
+D = 8+ hcp
+
 After a natural 2NT invitation, an overcall leaves opener to double with a
 maximum or pass.
 
@@ -396,8 +419,29 @@ for it. A hand with 0--3 hcp passes.
 6N = 13+ hcp
   P = unlimited
 
-Interference over 2NT: with game values (4+ hcp) responder bids 3NT with a
-stopper or doubles; otherwise passes.
+Interference over 2NT: over a double, Stayman and transfers stay on (as over
+1NT) and a redouble shows slam interest; over an overcall, with game values
+(4+ hcp) responder bids 3NT with a stopper or doubles; otherwise passes. After
+a completed transfer, a further overcall is doubled with game values.
+
+2N-(D)-
+3C = !STAY, 4+ hcp, 4+!h or 4+!s
+3D = {prio:1} !TRF, 5+!h
+  3H = unlimited
+3H = {prio:1} !TRF, 5+!s
+  3S = unlimited
+3N = 4--10 hcp
+R = 11+ hcp
+
+2N-3D-3H-(bid)-
+D = 4+ hcp
+
+2N-3C-(3D)-
+3H = {prio:1} 4+!h
+3S = 4+!s, not 4+!h
+
+2N-3H-3S-(bid)-
+D = 4+ hcp
 
 2N-(3X)-
 3N = 4+ hcp, stopper

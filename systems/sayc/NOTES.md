@@ -326,3 +326,119 @@ comments in the `.bml` files.
     exactly the complementary case (`4=!s` in the double, `5+!s` in the
     direct bid, so a 4-card holding always has a call and a 5+ one always has
     the other), so no equivalent gap exists.
+
+## Notrump lane
+
+Notes for `notrump.bml`, `strong-2c.bml`, `weak-twos.bml` and `preempts.bml`
+written while closing the replay-based consistency harness's coverage holes
+(`tests/consistency.rs`, `target/coverage_report.json`). The `.bml` files
+refer to them as `NOTES.md "Notrump lane" #Nn`.
+
+N1. **Sign-off leaves list the closing Pass explicitly (`notrump.bml`,
+    `strong-2c.bml`, `preempts.bml`).** A trie leaf with no rows (1NT-3NT,
+    1NT-2C-2H-4H, a transfer followed by game, ...) is off-system for the
+    next player, so `choose_bid` falls back to natural inference, which
+    leaves strong or shapely openers with `NoCandidate` and makes the
+    harness force a `Pass` whose reading nobody defined. Each sign-off now
+    carries `P = unlimited` (or the minimum/maximum split `P = 15 hcp` /
+    `3N = 16--17 hcp` after an invitation), so the end of the auction is a
+    system position. Invitations are answered with plain HCP numbers taken
+    from the opening's own range (15 / 16--17 over 1NT, 20 / 21 over 2NT,
+    22 / 23--24 over 2C-2D-2NT) rather than `MIN`/`MAX`, for the same reason
+    as #18.
+
+N2. **Responder's ranges opposite 1NT, 2NT and 2C-2D-2NT (`notrump.bml`,
+    `strong-2c.bml`).** `4C = !BW` (Gerber, #15) had no constraint at all and
+    was the only row without an HCP or shape floor, so every hand that fit no
+    other response bid Gerber: a 5 hcp balanced hand answered 1NT, 2NT and
+    2C-2D-2NT with 4C. The notrump raises are now a complete ladder by
+    strength: over 1NT, 2NT 8--9, 3NT 10--15, 4NT 16--17 (quantitative), 6NT
+    18--19, and 4C only with 20+; over 2NT (20--21), 3NT 4--10, 4NT 11--12,
+    6NT 13+, with no Gerber row (no range is left for it); over 2C-2D-2NT
+    (22--24), 3NT 3--8, 4NT 9--10, 6NT 11+, and 4C only with 13+. Stayman
+    over 2NT needs 4+ hcp (3+ over 22--24), since a weaker hand passes.
+    `4N = 16--17` over 1NT no longer has `{prio:1}`: it used to outrank
+    Stayman, so a 16--17 hand with a four-card major never looked for the
+    fit. The Stayman and transfer continuations follow the same ladder
+    (invite / game / quantitative 4NT or 5M / slam), with a four-card fit
+    after Stayman shown by raising and a 6+ card suit after a transfer by
+    3M (invitational), 4M, 5M (slam invitation) or 6M. With a fit and slam
+    values after Stayman, responder uses 4C (Gerber) instead of 4NT.
+
+N3. **Interference tables and lenient matching (`notrump.bml`,
+    `strong-2c.bml`, `weak-twos.bml`, `preempts.bml`).** When no table
+    covers an opponent's call, `choose_bid` retries with that call replaced
+    by `Pass` (`resolve_lenient`, "system on") and offers the *uncontested*
+    table's rows. Over a 3-level overcall almost all of them are illegal and
+    the rest do not fit, so responder had no call at all; the old weak-two
+    and preempt catch-alls (N5) had been hiding exactly this. Each opening in
+    this lane now has an interference table: over 1NT the 2-, 3- and 4-level
+    overcalls, a double (systems on, redouble 8+), Stayman and transfer
+    interrupted by an overcall (opener shows a fit or passes), and an
+    overcall after a completed transfer (double with values); over 2NT a
+    double (systems on) and overcalls; over 2C and 2C-2D; over each weak two
+    and preempt. Overcalls not listed individually use the `(bid)` class
+    token (any bid), whose table holds only a double: a double is legal
+    after any bid, so the table never offers an illegal call. After
+    1NT-(2S)-3S (the cuebid substitute for Stayman), a heart suit can no
+    longer be shown at the 3 level; opener bids 3NT and leaves a 4-4 heart
+    fit to responder.
+
+N4. **Strong 2C continuations (`strong-2c.bml`).** After a positive
+    response the auction is forcing to game, so opener's catch-all
+    notrump rebid (2NT, or 3NT after a 3-level positive) is a legitimate
+    unconstrained row: opener must bid. After 2C-2D-2H (or 2S), responder
+    may not pass a forcing rebid, so the previous `2N = 8+ hcp, bal` became
+    the waiting 2NT (unconstrained, last in row order) behind a raise and a
+    five-card suit with 8+ hcp; opener then rebids a sixth card, a
+    four-card side suit, or 3NT. After 2C-2D-2H-2S opener raises with three
+    spades, bids 2NT when balanced, and otherwise makes the non-forcing 3H
+    rebid (the booklet's "forcing to 3 of opener's major").
+
+N5. **Weak-two responses have real ranges (`weak-twos.bml`;
+    `dropped.json` #10/#16, harness review #3).** `4D/4H/4S = unlimited`
+    and `3N = unlimited` matched every hand, so responder never passed a
+    weak two and the 2NT ask was unreachable. The rows are now: a raise to
+    game over a major with four-card support, 5--14 hcp (the further
+    preempt); a three-card raise to the 3 level, 6--14 hcp; the 2NT ask,
+    15+ hcp with at least a doubleton; a new suit (RONF), 10+ hcp and five
+    cards; 3NT, 15+ hcp (shortness in opener's suit, since a doubleton
+    asks first). A hand that fits none of them passes by the implicit
+    pass. After a new suit opener raises with three-card support, bids 2NT
+    (3NT at the 3 level) with 9--11 hcp, and otherwise rebids his suit.
+    Over a takeout double responder raises with three-card support or
+    redoubles with 15+; over an overcall he raises when the 3-level raise
+    is still available or doubles with 13+.
+
+N6. **Preempt responses have real ranges (`preempts.bml`).** The
+    `unlimited` raises outranked 3NT and 4NT, and 4NT over 4H/4S had no
+    strength floor, so a 1 hcp hand bid Blackwood. Now: Blackwood 18+ hcp
+    with a doubleton in opener's suit; a new suit 13+ hcp and five cards;
+    3NT 14+ hcp; a raise of a 3-level minor to 4 with 3+ cards and 6--13
+    hcp; a raise of a 3-level major to game with 2+ cards and 12--17 hcp; a
+    raise of a 4-level minor to 5 with 2+ cards and 13--17 hcp. Everything
+    else passes. After a new suit opener raises with three-card support and
+    otherwise rebids his suit.
+
+N7. **Feature rebids after the weak-two 2NT ask are now reachable
+    (`weak-twos.bml`; supersedes the "permanently unreachable" part of
+    #4).** Each feature row carries `stopper in !x` for its own suit, the
+    nearest vocabulary item to the booklet's "ace or king": the stopper
+    atom accepts A, Kx, Qxx or Jxxx, so a Qxx or Jxxx holding also counts
+    as a feature here (a documented over-approximation; the vocabulary has
+    no single-honour token, and an `AK`-style honour run needs two
+    honours). The priorities (clubs, then the next suits up) pick the
+    cheapest feature when there are several; 3NT (maximum, no feature) is
+    the remaining case. The earlier spelling `!c stopper` compiled to ANY:
+    the tokenizer reads a suit only *after* the word (`stopper in !c`), so
+    `!c stopper` was a stopper in the opponents' suit, which does not exist
+    in an uncontested auction.
+
+N8. **Pattern rows that share a table with exact rows carry `{prio:1}`
+    (`notrump.bml` `1N-(3X)- 3Y`, `strong-2c.bml` `2C-2D-(2X)- 2Y` and
+    `(3X)- 3Y`).** The expander processes a table's exact rows before its
+    pattern rows (`docs/design/06-system.md` §4.2 point 2), so under
+    row-order tie-breaking a pattern row loses to every exact sibling
+    whatever its position in the file. A variable-suit bid (`5+#` in the
+    suit named) is more specific than the neighbouring penalty double, so
+    it is given a priority above it.
