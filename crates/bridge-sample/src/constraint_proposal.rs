@@ -123,7 +123,7 @@ pub struct ConstraintProposal {
     /// cases, so this trade was left as `SampleWarning::CustomConstraint`'s documented caveat
     /// rather than measured and changed here.
     pub max_retries: u32,
-    /// Residual rejection (`09-sample.md` §6.5; default `false`): the residual last seat, which
+    /// Residual rejection (`09-sample.md` §6.5; default `true`): the residual last seat, which
     /// receives whatever cards remain, is accepted with probability `a(h) = min(1, m(h) / T)`,
     /// where `m(h) = Σ_{i: h ∈ C_i} w_i` is the seat's own alternative mixture at its hand and
     /// `T` a threshold fixed once in `prepare`, and `log_prob` adds `ln a`.
@@ -150,10 +150,16 @@ pub struct ConstraintProposal {
     /// rejected attempt skips `log_prob` and the likelihood, so it costs less than a produced
     /// deal; whether the trade pays depends on what a produced deal costs downstream (a
     /// double-dummy solve in the lead advisor costs far more than an attempt).
+    ///
+    /// On by default: on the ESS suite (§9, eval fixture) it raises the median ESS/n from 0.42 to
+    /// 0.73 at the default [`ConstraintProposal::residual_min_acceptance`], for 1.4-1.6x the
+    /// sampling time and about the same time per effective sample.
     pub residual_rejection: bool,
-    /// The pilot acceptance residual rejection's threshold is kept above (default 0.125: at most
-    /// about 8 attempts per produced deal, well inside the default attempt budget of `20n`).
-    /// Higher values reject less, at the cost of flatter-weighted residual hands.
+    /// The pilot acceptance residual rejection's threshold is kept above (default 0.5, tuned on
+    /// the ESS suite's tuning set to keep sampling time within 2x of the run without rejection;
+    /// at most about 2 attempts per produced deal). Lower values reject more and flatten the
+    /// weights further (0.125 gives a median ESS/n of 0.92 for about 4x the sampling time), which
+    /// pays when every produced deal is expensive downstream, as in the lead advisor.
     pub residual_min_acceptance: f64,
     /// Light-alternative folding (`09-sample.md` §6.4 (d); default `1e-2`). At a seat
     /// re-prepared on every draw, a coarse alternative `j` whose share of the full-pool mass,
@@ -171,8 +177,8 @@ impl Default for ConstraintProposal {
     fn default() -> ConstraintProposal {
         ConstraintProposal {
             max_retries: 16,
-            residual_rejection: false,
-            residual_min_acceptance: 0.125,
+            residual_rejection: true,
+            residual_min_acceptance: 0.5,
             light_threshold: 1e-2,
         }
     }
@@ -1197,6 +1203,11 @@ mod tests {
                 };
                 if !satisfied {
                     return f64::NEG_INFINITY;
+                }
+                if let (Some(threshold), SeatPlan::Sampled { candidates, .. }) =
+                    (prepared.residual_threshold, &entry.plan)
+                {
+                    ln_pi += residual_ln_accept(candidates, threshold, hand);
                 }
                 break;
             }

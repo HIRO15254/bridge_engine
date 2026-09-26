@@ -192,11 +192,16 @@ fn residual_log_prob_adds_ln_acceptance() {
         let (fixture, bound) = fixture(variant);
         let play = PLAY;
         let ctx = context(&fixture, &play);
-        let plain = ConstraintProposal::default()
-            .prepare(&ctx)
-            .expect("prepares");
+        let plain = ConstraintProposal {
+            residual_rejection: false,
+            ..ConstraintProposal::default()
+        }
+        .prepare(&ctx)
+        .expect("prepares");
+        // No acceptance floor, so the threshold is the bound itself.
         let residual = ConstraintProposal {
             residual_rejection: true,
+            residual_min_acceptance: 0.0,
             ..ConstraintProposal::default()
         }
         .prepare(&ctx)

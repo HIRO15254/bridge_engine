@@ -883,6 +883,8 @@ fn uniform_vs_constraint_ess_suite() {
         1
     };
     let criterion = &summaries[default_k];
+    let plain = &summaries[1];
+    let residual = &summaries[2];
     for (name, s) in PROPOSALS.iter().zip(&summaries) {
         println!(
             "{name:<20} median ESS/n {:.4} (generated {:.4}, corpus {:.4}); ESS per attempt \
@@ -902,6 +904,11 @@ fn uniform_vs_constraint_ess_suite() {
             s.cases_ge_half,
         );
     }
+    println!(
+        "residual rejection / plain: sampling time {:.2}x, time per effective sample {:.2}x",
+        residual.seconds / plain.seconds,
+        residual.seconds_per_effective_sample / plain.seconds_per_effective_sample,
+    );
     println!(
         "{} auctions ({corpus_note}); mode {mode:?}; suite {suite_seconds:.1}s; loadavg {} -> {}",
         rows.len(),
@@ -1038,17 +1045,31 @@ fn uniform_vs_constraint_ess_suite() {
     std::fs::write(&path, json).unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
     println!("wrote {}", path.display());
 
+    // The phase-4 criteria (11-testing.md §9): ESS/n >= 0.5 overall and on the generated cases
+    // with residual rejection, which exhausts the attempt budget on at most 2 cases; ESS per
+    // attempt >= 0.35 for the default proposal. The wall-time ratio is load-sensitive and only
+    // printed above.
     if mode == Mode::Eval && rows.len() == total_cases && !known_none {
         assert!(
-            criterion.median_ess_ratio >= 0.5,
-            "median ConstraintProposal ESS/n = {:.4} < 0.5",
-            criterion.median_ess_ratio
+            residual.median_ess_ratio >= 0.5,
+            "median ESS/n with residual rejection = {:.4} < 0.5",
+            residual.median_ess_ratio
         );
         assert!(
-            criterion.median_ess_ratio_generated >= 0.5
-                || criterion.median_ess_ratio_generated.is_nan(),
-            "median ConstraintProposal ESS/n on the generated cases = {:.4} < 0.5",
-            criterion.median_ess_ratio_generated
+            residual.median_ess_ratio_generated >= 0.5
+                || residual.median_ess_ratio_generated.is_nan(),
+            "median ESS/n with residual rejection on the generated cases = {:.4} < 0.5",
+            residual.median_ess_ratio_generated
+        );
+        assert!(
+            residual.budget_exhausted <= 2,
+            "{} cases exhausted the attempt budget with residual rejection",
+            residual.budget_exhausted
+        );
+        assert!(
+            criterion.median_ess_per_attempt >= 0.35,
+            "median ESS per attempt of the default ConstraintProposal = {:.4} < 0.35",
+            criterion.median_ess_per_attempt
         );
     }
 }
