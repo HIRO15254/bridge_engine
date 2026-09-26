@@ -15,14 +15,20 @@
 //! **§6.4 (c), coarse re-preparation.** Every `Sampled` seat other than the first (cached) and
 //! the last (only ever `satisfies`-checked, never `Sampler::prepare`d) is re-prepared on every
 //! `propose`/`log_prob` call. Those re-prepared seats use [`coarsen`] instead of their original
-//! candidates: a summary `Atom` (shapes + HCP range only, from `HandConstraint::shapes` /
-//! `HandConstraint::hcp_range`) that always covers a superset of the original candidate (`Or`
-//! unions, `And` intersects, so the summary's satisfying set is never smaller), so it never turns
-//! a satisfiable candidate unsatisfiable. The resulting proposal can land on hands the fine
-//! candidate would have rejected; `Interpretation::likelihood` still scores those against the
+//! candidates: a literal-free atom or flat `Or` of literal-free atoms (the policy mirror's
+//! exclusive pieces) is kept unchanged; anything else is replaced by its literal-free superset on
+//! the (shape, HCP) grid (`bridge_constraint::grid::bounds(..).sup`, at most
+//! [`COARSE_ATOM_CAP`] atoms), which drops `cards` / `eval` detail but keeps a tree's `Not`s and
+//! `Or`s where the grid can express them. It always covers a superset of the original candidate,
+//! so it never turns a satisfiable candidate unsatisfiable. The resulting proposal can land on
+//! hands the fine candidate would have rejected; the likelihood still scores those against the
 //! fine constraint, so the importance weight absorbs the mismatch — ESS drops but stays finite,
 //! exactly as §6.4 describes. `log_prob` replays the same coarsened candidates for these seats,
 //! since it must match the density `propose` actually drew from.
+//!
+//! **§6.5, residual rejection** ([`ConstraintProposal::residual_rejection`]). The last seat can
+//! be accepted with probability proportional to its own mixture at the residual hand, which moves
+//! that seat's likelihood factor out of the importance weight and into the acceptance rate.
 //!
 //! This is *not* a fix for a per-literal filtering cost at `Sampler::prepare` — measured on the
 //! bench cases (`09-sample.md` §10.1) and on `Sampler::prepare` directly, a `cards` literal adds
@@ -38,7 +44,7 @@
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bridge_constraint::{Atom, Dnf, DnfOptions, HandConstraint, Sampler};
+use bridge_constraint::{Atom, Dnf, DnfOptions, HandConstraint, HcpShapeGrid, Sampler};
 use bridge_core::{Deal, Hand, Seat};
 
 use crate::uniform::{draw_subset, ln_choose};
@@ -101,11 +107,30 @@ pub struct ConstraintProposal {
     /// cases, so this trade was left as `SampleWarning::CustomConstraint`'s documented caveat
     /// rather than measured and changed here.
     pub max_retries: u32,
+    /// Residual rejection (`09-sample.md` §6.5; default `false`): the residual last seat, which
+    /// receives whatever cards remain, is accepted with probability `a(h) = m(h) / U`, where
+    /// `m(h) = Σ_{i: h ∈ C_i} w_i` is the seat's own alternative mixture at its hand and `U` a
+    /// bound on `m` computed once in `prepare`, and `log_prob` adds `ln a`. `U` is the largest,
+    /// over the alternatives `i`, of the total weight of the alternatives whose (shape, HCP) grid
+    /// superset meets `i`'s: a valid bound whatever the alternatives, and equal to `max_i w_i`
+    /// when they are disjoint on the grid (the policy mirror's pieces).
+    ///
+    /// Without it the residual seat's whole likelihood factor lands in the importance weight;
+    /// with it, the accepted deals' density is `π_others(d) · a(h_last) / P_acc`, with a
+    /// deal-independent acceptance normaliser `P_acc` that self-normalised weights absorb, so the
+    /// estimator stays exact for any `a` in `(0, 1]` (the choice of `a` only moves variance
+    /// between the weights and the rejection rate). Rejected attempts are ordinary rejected
+    /// proposals: they count against `SampleOptions`' attempt budget and show up in
+    /// `SampleReport::acceptance_rate` and `ess_per_attempt`.
+    pub residual_rejection: bool,
 }
 
 impl Default for ConstraintProposal {
     fn default() -> ConstraintProposal {
-        ConstraintProposal { max_retries: 16 }
+        ConstraintProposal {
+            max_retries: 16,
+            residual_rejection: false,
+        }
     }
 }
 
@@ -206,13 +231,7 @@ impl ConstraintProposal {
                 continue;
             }
 
-            let mut candidates = seat_candidates(ctx, seat, hard);
-            candidates.sort_by(|a, b| {
-                b.weight
-                    .partial_cmp(&a.weight)
-                    .unwrap_or(core::cmp::Ordering::Equal)
-            });
-            truncate_keeping_support(&mut candidates, hard);
+            let candidates = seat_candidates(ctx, seat, hard);
 
             if candidates.len() == 1 && is_unconstrained(&candidates[0].constraint) {
                 let mass = ln_choose(pool.len(), needed);
@@ -226,16 +245,22 @@ impl ConstraintProposal {
                 continue;
             }
 
+            let samplers = Sampler::prepare_many(
+                candidates.iter().map(|c| &c.constraint),
+                pool,
+                fixed,
+                &sampler_opts,
+            )
+            .map_err(|e| SampleError::Prepare(e.to_string()))?;
             let mut alts: Vec<(Candidate, u64)> = Vec::with_capacity(candidates.len());
-            for candidate in candidates {
-                let sampler = Sampler::prepare(&candidate.constraint, pool, fixed, &sampler_opts)
-                    .map_err(|e| SampleError::Prepare(e.to_string()))?;
+            for (candidate, sampler) in candidates.into_iter().zip(samplers) {
                 let count = sampler.count();
                 if count == 0 {
                     continue;
                 }
                 alts.push((candidate, count));
             }
+            truncate_by_mass(&mut alts, hard, pool, fixed, &sampler_opts)?;
             if alts.is_empty() {
                 // `sample_deals` (§2.3 of `09-sample.md`) already checked that at least one
                 // interpretation alternative survives AND-ing with `hard` against the full pool;
@@ -314,39 +339,115 @@ impl ConstraintProposal {
             _ => None,
         };
 
+        // Residual rejection needs a bound on the last seat's mixture, computed once here.
+        let residual_bound = match order.last() {
+            Some(SeatEntry {
+                plan: SeatPlan::Sampled { candidates, .. },
+                ..
+            }) if self.residual_rejection && order.len() > 1 => Some(residual_bound(candidates)),
+            _ => None,
+        };
+
         Ok(PreparedConstraint {
             id: NEXT_PREPARED_ID.fetch_add(1, Ordering::Relaxed),
             ctx,
             sampler_opts,
             order,
             cached_first,
+            residual_bound,
         })
     }
 }
 
-/// Cuts `candidates` (sorted by descending weight) to at most [`MAX_ALTERNATIVES`] without
-/// shrinking the proposal's support (§6.1 point 1).
+/// Cuts `alts` (candidates with their `count` against the full pool, all positive) to at most
+/// [`MAX_ALTERNATIVES`] without shrinking the proposal's support (§6.1 point 1, 07-bidding.md
+/// §4.4), in estimated-mass order.
 ///
-/// The product `interpretation.seats[s] ⊗ play_soft[s]` can have up to 64 entries. Dropping the
-/// tail outright would leave every hand covered only by dropped products with positive target
-/// likelihood but proposal density 0: never drawn, so the estimator is biased while ESS still
-/// looks perfect. Instead the `K - 1` heaviest are kept and the rest are replaced by one
-/// catch-all candidate, the seat's `hard` constraint carrying the dropped weight. Every hand the
-/// target accepts satisfies `hard`, so it stays proposable, and `log_prob` accounts for the
-/// catch-all through the ordinary component sum.
-fn truncate_keeping_support(candidates: &mut Vec<Candidate>, hard: &HandConstraint) {
-    if candidates.len() <= MAX_ALTERNATIVES {
-        return;
+/// The candidates are ordered by `w_i · count_i`, their share of the draw, so the ones whose
+/// target mass is smallest are the ones dropped (ordering by `w_i` alone would drop a broad,
+/// light alternative that carries much of the mass). The product `interpretation.seats[s] ⊗
+/// play_soft[s]` can have up to 64 entries; dropping the tail outright would leave every hand
+/// covered only by dropped products with positive target likelihood but proposal density 0:
+/// never drawn, so the estimator is biased while ESS still looks perfect. Instead the `K - 1`
+/// heaviest are kept and the rest are replaced by one catch-all candidate, the seat's `hard`
+/// constraint carrying the dropped weight. Every hand the target accepts satisfies `hard`, so it
+/// stays proposable, and `log_prob` accounts for the catch-all through the ordinary component
+/// sum. Ties keep the input order, so the result is a deterministic function of `alts`.
+fn truncate_by_mass(
+    alts: &mut Vec<(Candidate, u64)>,
+    hard: &HandConstraint,
+    pool: Hand,
+    fixed: Hand,
+    opts: &bridge_constraint::SampleOptions,
+) -> Result<(), SampleError> {
+    let mass = |(c, count): &(Candidate, u64)| c.weight * *count as f64;
+    alts.sort_by(|a, b| {
+        mass(b)
+            .partial_cmp(&mass(a))
+            .unwrap_or(core::cmp::Ordering::Equal)
+    });
+    if alts.len() <= MAX_ALTERNATIVES {
+        return Ok(());
     }
-    let dropped: f64 = candidates[MAX_ALTERNATIVES - 1..]
+    let dropped: f64 = alts[MAX_ALTERNATIVES - 1..]
         .iter()
+        .map(|(c, _)| c.weight)
+        .sum();
+    alts.truncate(MAX_ALTERNATIVES - 1);
+    let count = Sampler::prepare(hard, pool, fixed, opts)
+        .map_err(|e| SampleError::Prepare(e.to_string()))?
+        .count();
+    alts.push((
+        Candidate {
+            constraint: hard.clone(),
+            weight: dropped,
+        },
+        count,
+    ));
+    Ok(())
+}
+
+/// A bound `U ≥ m(h) = Σ_{i: h ∈ C_i} w_i` over every hand, for residual rejection's acceptance
+/// probability `m(h) / U` (see [`ConstraintProposal::residual_rejection`]).
+///
+/// `U = max_i Σ_{j: sup_i ∩ sup_j ≠ ∅} w_j`, with `sup_i` the (shape, HCP) grid superset of
+/// candidate `i` (`bridge_constraint::grid::bounds`). It is a valid bound: for any hand `h` and
+/// any candidate `i` containing it, every candidate `j` that also contains `h` has `h`'s cell in
+/// `sup_i ∩ sup_j`, so `m(h)` sums over a subset of `i`'s overlap set. It is tight when the
+/// alternatives are pairwise disjoint on the grid (the policy mirror's exclusive pieces), where
+/// it is `max_i w_i`, and never above `Σ_i w_i`.
+fn residual_bound(candidates: &[Candidate]) -> f64 {
+    let sups: Vec<HcpShapeGrid> = candidates
+        .iter()
+        .map(|c| bridge_constraint::grid::bounds(&c.constraint).sup)
+        .collect();
+    let mut bound = 0.0f64;
+    for (i, sup_i) in sups.iter().enumerate() {
+        let overlapping: f64 = candidates
+            .iter()
+            .zip(&sups)
+            .enumerate()
+            .filter(|&(j, (_, sup_j))| j == i || sup_i.intersects(sup_j))
+            .map(|(_, (c, _))| c.weight)
+            .sum();
+        bound = bound.max(overlapping);
+    }
+    bound
+}
+
+/// `ln a(hand) = ln(m(hand) / bound)` of residual rejection (`-∞` outside every candidate). The
+/// bound makes `a ≤ 1` up to rounding, which the `min` absorbs.
+fn residual_ln_accept(candidates: &[Candidate], bound: f64, hand: Hand) -> f64 {
+    let m: f64 = candidates
+        .iter()
+        .filter(|c| c.constraint.satisfies(hand))
         .map(|c| c.weight)
         .sum();
-    candidates.truncate(MAX_ALTERNATIVES - 1);
-    candidates.push(Candidate {
-        constraint: hard.clone(),
-        weight: dropped,
-    });
+    if m <= 0.0 || bound <= 0.0 {
+        f64::NEG_INFINITY
+    } else {
+        (m / bound).min(1.0).ln()
+    }
 }
 
 /// `interpretation.seats[s] ⊗ play_soft[s]`, each AND-ed with `hard` (§6.1 point 1). A seat with
@@ -443,12 +544,41 @@ fn is_unconstrained(constraint: &HandConstraint) -> bool {
 /// satisfiable candidate unsatisfiable — only ever wider, never narrower. Used only for seats
 /// re-prepared on every `propose` / `log_prob` call; see the module doc comment.
 fn coarsen(constraint: &HandConstraint) -> HandConstraint {
-    HandConstraint::Atom(Atom {
-        shapes: constraint.shapes(),
-        hcp: constraint.hcp_range(),
-        cards: Vec::new(),
-        eval: Vec::new(),
-    })
+    // A literal-free atom, or a flat `Or` of them (the policy mirror's exclusive pieces), is
+    // already what `Sampler` handles exactly and cheaply: summarising it would only widen it.
+    if is_literal_free_atoms(constraint) {
+        return constraint.clone();
+    }
+    // Otherwise the tightest literal-free superset on the (shape, HCP) grid: exact for a
+    // literal-free tree (e.g. `And(C, Not(Or(higher)))`), the literal atoms' boxes otherwise.
+    // Capped at `COARSE_ATOM_CAP` atoms, which only ever widens it further.
+    let sup = bridge_constraint::grid::bounds(constraint).sup;
+    match sup.hull() {
+        // No 13-card cell: `constraint` is unsatisfiable, and so is its summary.
+        None => HandConstraint::Or(Vec::new()),
+        Some((shapes, hcp)) if sup == HcpShapeGrid::from_box(shapes, hcp.clone()) => {
+            HandConstraint::Atom(Atom {
+                shapes,
+                hcp,
+                cards: Vec::new(),
+                eval: Vec::new(),
+            })
+        }
+        Some(_) => sup.to_constraint(&Atom::ANY, COARSE_ATOM_CAP),
+    }
+}
+
+/// Most atoms a [`coarsen`]ed summary may have (each is one DNF term `Sampler` prepares on every
+/// draw of a re-prepared seat).
+const COARSE_ATOM_CAP: usize = 8;
+
+/// Whether `constraint` is a literal-free atom or a non-empty `Or` of them.
+fn is_literal_free_atoms(constraint: &HandConstraint) -> bool {
+    let free = |c: &HandConstraint| matches!(c, HandConstraint::Atom(a) if a.cards.is_empty() && a.eval.is_empty());
+    match constraint {
+        HandConstraint::Or(children) => !children.is_empty() && children.iter().all(free),
+        other => free(other),
+    }
 }
 
 /// [`coarsen`] applied to every candidate, with identical summaries merged into one candidate
@@ -472,10 +602,14 @@ fn coarsen_candidates(candidates: &[Candidate]) -> Vec<Candidate> {
     out
 }
 
-/// Whether `a` and `b` are both atoms and equal (every [`coarsen`] output is an atom).
+/// Whether `a` and `b` are the same atom, or `Or`s of the same atoms in the same order (every
+/// [`coarsen`] output is one of these).
 fn same_atom(a: &HandConstraint, b: &HandConstraint) -> bool {
     match (a, b) {
         (HandConstraint::Atom(a), HandConstraint::Atom(b)) => a == b,
+        (HandConstraint::Or(a), HandConstraint::Or(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| same_atom(x, y))
+        }
         _ => false,
     }
 }
@@ -589,6 +723,9 @@ struct PreparedConstraint<'c> {
     /// `Some` when `order`'s first entry is `Sampled` (its pool is the full pool and never
     /// shrinks before it is drawn, so it is prepared once here rather than in every `propose`).
     cached_first: Option<CachedFirst>,
+    /// `Some(U)` when residual rejection is on and the last seat is `Sampled`: the bound of
+    /// [`residual_bound`] on its mixture.
+    residual_bound: Option<f64>,
 }
 
 impl PreparedProposal for PreparedConstraint<'_> {
@@ -615,6 +752,15 @@ impl PreparedProposal for PreparedConstraint<'_> {
                 };
                 if !satisfied {
                     return None;
+                }
+                if let (Some(bound), SeatPlan::Sampled { candidates, .. }) =
+                    (self.residual_bound, &entry.plan)
+                {
+                    let a = residual_ln_accept(candidates, bound, hand).exp();
+                    let u = (rng.next_u64() >> 11) as f64 * (1.0 / (1u64 << 53) as f64);
+                    if u >= a {
+                        return None;
+                    }
                 }
                 hands[seat.index() as usize] = hand;
                 break;
@@ -707,6 +853,11 @@ impl PreparedProposal for PreparedConstraint<'_> {
                 };
                 if !satisfied {
                     return f64::NEG_INFINITY;
+                }
+                if let (Some(bound), SeatPlan::Sampled { candidates, .. }) =
+                    (self.residual_bound, &entry.plan)
+                {
+                    ln_pi += residual_ln_accept(candidates, bound, hand);
                 }
                 break;
             }
