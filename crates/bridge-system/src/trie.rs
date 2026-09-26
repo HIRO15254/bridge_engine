@@ -474,6 +474,24 @@ impl AuctionTrie {
         self.nodes.len() <= 2
     }
 
+    /// `true` when `at` has at least one exact child edge (a candidate of
+    /// [`AuctionTrie::children`] under some condition class).
+    pub fn has_children(&self, at: TrieId) -> bool {
+        !self.nodes[at.0 as usize].exact.is_empty()
+    }
+
+    /// `true` when some entry of an exact child of `at` carries a seat or vulnerability
+    /// condition, i.e. [`AuctionTrie::children`] may depend on `(opener_pos, vul)`. When
+    /// `false`, `children(at, ..)` is the same list for every condition.
+    pub fn children_are_conditioned(&self, at: TrieId) -> bool {
+        self.nodes[at.0 as usize].exact.iter().any(|&(_, child)| {
+            self.nodes[child.0 as usize]
+                .entries
+                .iter()
+                .any(|e| e.seat != SeatCond::Any || e.vul.specificity() != 0)
+        })
+    }
+
     fn root_id(we_opened: bool) -> TrieId {
         TrieId(if we_opened { 0 } else { 1 })
     }

@@ -28,9 +28,13 @@
 //! contains is counted once, in the higher member's piece). A call whose pieces are all empty
 //! is *shadowed*: the policy never makes it at this position.
 //!
-//! Naive; replaced in phase 4 lane S: the index is built lazily and by brute force over every
-//! trie position and all 16 condition classes. Lane S makes the build eager at the end of
-//! `compile()` and adds the grouping statistics and lints.
+//! Build: [`crate::compile`] builds the index eagerly at the end of compilation (SAYC: about
+//! 714 groups, 2.5k pieces, a handful of tree fallbacks, well under 15 ms release) and stores it
+//! in the cell; a deserialised or hand-built IR builds it on the first [`SystemIR::exclusive`]
+//! call. Per trie position the sibling list is computed once when no child entry carries a
+//! seat/vulnerability condition (the common case), and once per condition class otherwise;
+//! identical sibling lists share one group. [`ExclusiveIndex::stats`] reports the counts and
+//! the lints `ShadowedBranch` / `OverlappingBranches` read the groups.
 
 use core::cmp::Ordering;
 use core::ops::RangeInclusive;
@@ -412,7 +416,9 @@ impl ExclusiveGroup {
     /// the index build and by callers that must recompute a group from only the *legal*
     /// siblings at run time (a higher-ranked sibling that is illegal after the actual prefix).
     ///
-    /// Naive; replaced in phase 4 lane S.
+    /// Each piece is [`subtract`]`(branch_j, [branch_0..j, every higher-ranked member])`: exact
+    /// atom-level subtraction into pairwise-disjoint atoms, with the tree fallback past
+    /// [`MAX_EXCLUSIVE_ATOMS`] atoms or with a `Custom` literal. Empty pieces are dropped.
     pub fn build(sys: &SystemIR, siblings: &[(Call, NodeId)]) -> ExclusiveGroup {
         let mut members = siblings.to_vec();
         members.sort_by(|a, b| rank_cmp(sys, *a, *b));
@@ -502,38 +508,133 @@ pub struct ExclusiveIndex {
     groups: Vec<ExclusiveGroup>,
 }
 
+/// Counts describing a built [`ExclusiveIndex`] (diagnostics, compile tracing and the lane-S
+/// acceptance report).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct ExclusiveStats {
+    /// Distinct groups after dedup.
+    pub groups: usize,
+    /// `(trie position, condition class)` keys.
+    pub keys: usize,
+    /// Distinct trie positions with at least one key.
+    pub positions: usize,
+    /// Member slots over all distinct groups.
+    pub members: usize,
+    /// Top-level `Or` branches over all members of all distinct groups.
+    pub branches: usize,
+    /// Non-empty pieces over all distinct groups.
+    pub pieces: usize,
+    /// Pieces kept as a tree (the [`subtract`] fallback) rather than a flat atom list.
+    pub tree_pieces: usize,
+    /// Atoms over all flat pieces.
+    pub flat_atoms: usize,
+    /// Groups whose complement is a tree.
+    pub tree_complements: usize,
+    /// Member calls with no piece at all (shadowed calls), over all distinct groups.
+    pub shadowed_calls: usize,
+}
+
 impl ExclusiveIndex {
     /// Builds the index for every trie position of `sys` and every condition class with at
-    /// least one candidate.
+    /// least one candidate (A's algorithm: exact atom-level subtraction per piece, grouping by
+    /// `(parent trie position, condition class)`, dedup of identical sibling lists).
     ///
-    /// Naive; replaced in phase 4 lane S (A's algorithm with dedup statistics, run eagerly at
-    /// the end of `compile()`).
+    /// A position whose child entries carry no seat/vulnerability condition has the same
+    /// sibling list under all 16 classes; it is computed once and keyed 16 times.
     pub fn build(sys: &SystemIR) -> ExclusiveIndex {
         let mut keys = Vec::new();
         let mut groups: Vec<ExclusiveGroup> = Vec::new();
         let mut seen: HashMap<Vec<(Call, NodeId)>, u32> = HashMap::new();
+        let mut intern = |mut children: Vec<(Call, NodeId)>| -> u32 {
+            children.sort_by(|a, b| rank_cmp(sys, *a, *b));
+            match seen.get(&children) {
+                Some(&g) => g,
+                None => {
+                    groups.push(ExclusiveGroup::build(sys, &children));
+                    let g = (groups.len() - 1) as u32;
+                    seen.insert(children, g);
+                    g
+                }
+            }
+        };
         for pos in 0..sys.index.len() as u32 {
-            for class in 0u8..16 {
-                let (opener_pos, vul) = class_conditions(class);
-                let mut children = sys.index.children(TrieId(pos), opener_pos, vul);
+            let at = TrieId(pos);
+            if !sys.index.has_children(at) {
+                continue;
+            }
+            if !sys.index.children_are_conditioned(at) {
+                let (opener_pos, vul) = class_conditions(0);
+                let children = sys.index.children(at, opener_pos, vul);
                 if children.is_empty() {
                     continue;
                 }
-                children.sort_by(|a, b| rank_cmp(sys, *a, *b));
-                let group = match seen.get(&children) {
-                    Some(&g) => g,
-                    None => {
-                        groups.push(ExclusiveGroup::build(sys, &children));
-                        let g = (groups.len() - 1) as u32;
-                        seen.insert(children, g);
-                        g
-                    }
-                };
-                keys.push((pos, class, group));
+                let g = intern(children);
+                keys.extend((0u8..16).map(|class| (pos, class, g)));
+                continue;
+            }
+            for class in 0u8..16 {
+                let (opener_pos, vul) = class_conditions(class);
+                let children = sys.index.children(at, opener_pos, vul);
+                if children.is_empty() {
+                    continue;
+                }
+                keys.push((pos, class, intern(children)));
             }
         }
         keys.sort_unstable();
         ExclusiveIndex { keys, groups }
+    }
+
+    /// Every key: `(parent trie position, condition class, group)`, sorted by position then
+    /// class.
+    pub fn entries(&self) -> impl Iterator<Item = (TrieId, u8, &ExclusiveGroup)> {
+        self.keys
+            .iter()
+            .map(|&(p, c, g)| (TrieId(p), c, &self.groups[g as usize]))
+    }
+
+    /// Counts describing the index (`sys` is the IR it was built from, for the branch counts).
+    pub fn stats(&self, sys: &SystemIR) -> ExclusiveStats {
+        let mut s = ExclusiveStats {
+            groups: self.groups.len(),
+            keys: self.keys.len(),
+            ..ExclusiveStats::default()
+        };
+        let mut last = None;
+        for &(p, _, _) in &self.keys {
+            if last != Some(p) {
+                s.positions += 1;
+                last = Some(p);
+            }
+        }
+        for g in &self.groups {
+            s.members += g.members.len();
+            s.branches += g
+                .members
+                .iter()
+                .map(|&(_, node)| branches_of(&sys.node(node).constraint).len())
+                .sum::<usize>();
+            for (_, pieces) in &g.per_call {
+                if pieces.is_empty() {
+                    s.shadowed_calls += 1;
+                }
+                s.pieces += pieces.len();
+                for p in pieces {
+                    if p.flat {
+                        s.flat_atoms += match &p.constraint {
+                            HandConstraint::Or(v) => v.len(),
+                            _ => 1,
+                        };
+                    } else {
+                        s.tree_pieces += 1;
+                    }
+                }
+            }
+            if !is_flat(&g.complement) && !is_empty_or(&g.complement) {
+                s.tree_complements += 1;
+            }
+        }
+        s
     }
 
     /// The group at trie position `parent` for condition class `class` (see
