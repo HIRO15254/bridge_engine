@@ -438,7 +438,7 @@ impl ExclusiveGroup {
                     continue;
                 }
                 let summary = PieceSummary::of(&constraint);
-                if summary.is_empty() {
+                if summary.is_empty() || grid_proves_empty(&constraint) {
                     continue;
                 }
                 pieces.push(ExclusivePiece {
@@ -458,7 +458,10 @@ impl ExclusiveGroup {
             .iter()
             .map(|&(_, id)| &sys.node(id).constraint)
             .collect();
-        let complement = subtract(&HandConstraint::ANY, &all);
+        let mut complement = subtract(&HandConstraint::ANY, &all);
+        if grid_proves_empty(&complement) {
+            complement = HandConstraint::Or(Vec::new());
+        }
         let complement_summary = PieceSummary::of(&complement);
         ExclusiveGroup {
             members,
@@ -486,6 +489,14 @@ impl ExclusiveGroup {
     pub fn is_shadowed(&self, call: Call) -> bool {
         self.pieces(call).is_some_and(<[ExclusivePiece]>::is_empty)
     }
+}
+
+/// `true` when no 13-card hand satisfies `c`, proven on the (shape, HCP) grid: the superset
+/// bound ([`bridge_constraint::grid::bounds`]) has no feasible cell. Exact for literal-free
+/// constraints; for constraints with `cards`/`eval` literals or `Custom` predicates `false`
+/// only means "possibly non-empty".
+pub fn grid_proves_empty(c: &HandConstraint) -> bool {
+    is_empty_or(c) || bridge_constraint::grid::bounds(c).sup.is_empty_hands()
 }
 
 /// `true` for an atom or an `Or` of atoms.

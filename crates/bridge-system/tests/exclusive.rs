@@ -9,7 +9,7 @@ use bridge_core::{Bid, Call, Card, Hand, Strain};
 use bridge_system::exclusive::{ExclusiveIndex, class_conditions, condition_class, rank_cmp};
 use bridge_system::lexer::MemLoader;
 use bridge_system::trie::{LookupKey, RelVul, TrieId};
-use bridge_system::{CompileOptions, SystemIR};
+use bridge_system::{CompileOptions, LintCode, Severity, SystemIR};
 
 const SOURCE: &str = "#+TITLE: exclusive test
 #+TIEBREAK: row-order
@@ -22,6 +22,7 @@ const SOURCE: &str = "#+TITLE: exclusive test
 1C-
 1D = 6+ hcp
 1H = 6+ hcp, 4+!h
+2C = 8+ hcp, 4+!h or 4+!s
 ";
 
 fn compile() -> SystemIR {
@@ -379,10 +380,91 @@ fn sayc_exclusive_index_stats() {
     #[cfg(feature = "cache")]
     {
         let bytes = postcard::to_allocvec(&ir).expect("postcard encode");
+        // Without the two lint kinds derived from the index, the bytes are those of the
+        // phase-3 IR: the index itself is never serialised.
+        let mut stripped = ir.clone();
+        stripped.lints.retain(|l| {
+            !matches!(
+                l.code,
+                LintCode::ShadowedBranch | LintCode::OverlappingBranches
+            )
+        });
+        let without = postcard::to_allocvec(&stripped).expect("postcard encode");
         eprintln!(
-            "SAYC postcard IR: {} bytes (IR_FORMAT {})",
+            "SAYC postcard IR: {} bytes, {} without the ShadowedBranch/OverlappingBranches \
+             lints (IR_FORMAT {})",
             bytes.len(),
+            without.len(),
             bridge_system::IR_FORMAT
         );
     }
+}
+
+#[test]
+fn shadowed_and_overlapping_branch_lints() {
+    let opts = CompileOptions {
+        coverage_samples: 0,
+        ..CompileOptions::default()
+    };
+    let (ir, lints) = bridge_system::compile("inline.bml", SOURCE, &MemLoader::default(), &opts);
+    let calls_with = |code: LintCode| -> Vec<(Vec<Call>, String)> {
+        lints
+            .iter()
+            .filter(|l| l.code == code)
+            .map(|l| {
+                (
+                    ir.node(l.node.expect("node lint")).calls.clone(),
+                    l.message.clone(),
+                )
+            })
+            .collect()
+    };
+    let shadowed = calls_with(LintCode::ShadowedBranch);
+    let one_c = bid(1, Strain::Clubs);
+    // 1C-1H (single branch) and both branches of 1C-2C are covered by 1C-1D (6+ hcp).
+    assert!(
+        shadowed
+            .iter()
+            .any(|(c, m)| c.last() == Some(&bid(1, Strain::Hearts))
+                && c.first() == Some(&one_c)
+                && !m.contains("branch"))
+    );
+    assert_eq!(
+        shadowed
+            .iter()
+            .filter(|(c, _)| c.last() == Some(&bid(2, Strain::Clubs)))
+            .count(),
+        2
+    );
+    // No opening is shadowed (1C 12-21 is below the majors and 1NT, but has unbalanced
+    // hands with no five-card major, among others).
+    assert!(shadowed.iter().all(|(c, _)| c.len() > 1));
+    assert!(
+        lints
+            .iter()
+            .filter(|l| l.code == LintCode::ShadowedBranch)
+            .all(|l| l.severity == Severity::Warning)
+    );
+    // 4+ hearts or 4+ spades overlap on 4-4 majors.
+    let overlapping = calls_with(LintCode::OverlappingBranches);
+    assert_eq!(overlapping.len(), 1);
+    assert_eq!(overlapping[0].0.last(), Some(&bid(2, Strain::Clubs)));
+}
+
+/// The number of `ShadowedBranch` / `OverlappingBranches` lints SAYC compiles with (reported).
+#[test]
+fn sayc_exclusive_lint_counts() {
+    let ir = compile_sayc();
+    let count = |code: LintCode| ir.lints.iter().filter(|l| l.code == code).count();
+    let shadowed = count(LintCode::ShadowedBranch);
+    let overlapping = count(LintCode::OverlappingBranches);
+    let errors = ir
+        .lints
+        .iter()
+        .filter(|l| l.severity == Severity::Error)
+        .count();
+    eprintln!(
+        "SAYC lints: ShadowedBranch {shadowed}, OverlappingBranches {overlapping}, errors {errors}"
+    );
+    assert!(shadowed > 0);
 }
