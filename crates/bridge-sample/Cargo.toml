@@ -37,6 +37,9 @@ bridge-system = { workspace = true, features = ["std"] }
 # Parses the corpus auctions of `tests/ess_suite.rs` (phase 5.3's ESS suite); not a library
 # dependency.
 bridge-format = { workspace = true, features = ["std"] }
+# `std` unlocks `tracing::subscriber::with_default`, used only by `tests/tracing_info.rs` to check
+# the INFO line `sample_deals` emits; dev-dependencies are not part of the wasm32 build.
+tracing = { workspace = true, features = ["std"] }
 
 [[bench]]
 name = "deals"
