@@ -255,6 +255,7 @@ fn lens(u: Suit, set: &[u8]) -> ShapeSet;        // 列挙した長さの和集�
 | `combine_caps_at_k` | unit | 3 イベント × 2 枝で K = 8 に収まり、合計 1 |
 | `declarer_side_has_no_events` | unit | 宣言者・ダミーのカードで `events` が空 |
 | `tests/review.rs`（フェーズ 5 レビュー） | table-driven | ショウアウト 9 行、リボーク / `Inconsistent` 4 行、`KnownCards::with_play` と記録の一致、リード表 25 行（`lead_constraints` 単体と `interpret_play` 経由で vs suit / vs NT の表選択）、シグナル位置 6 行、初回ディスカード 14 行、全 4 席を宣言者にしてディフェンダーのみ発火、`hard` と矛盾する枝の剪定、K = 8 |
+| `bridge-sample/tests/play_sampling.rs` | 端から端まで | 実際の配牌を 7 トリック + 1 枚合法にプレイ（East が切り札で、South がハートでショウアウト）し、`interpret_play` の `hard` / `soft` と視点の `KnownCards`（自分の手 + ダミー + 既出カード）で `ConstraintProposal` から宣言者視点・ディフェンダー視点で各 300 ディールを引く。全ディールで既知カードと既出カードが正しい席にあり、ショウアウトしたスートの長さが既出枚数と一致し、履歴を標本の手で再生して合法（リボークなし）、`hard` を満たし、重みが有限。ESS 比は宣言者視点 0.67、ディフェンダー視点 0.82（閾値 0.5） |
 
 実装順（計画 §12）: 5.1 `hard_constraints` + `KnownCards::with_play`（`KnownCards` の他のメソッドは `bridge-constraint` 2.7 で先行）→ 5.8 `lead_constraints` / `signal_constraints` の表と `interpret_play` の結合（フェーズ 6 には不要。ずれても可）。
 
