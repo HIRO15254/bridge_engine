@@ -224,6 +224,9 @@ expand to anything).
 1N-(2X)-
 2Y = NAT
 3X = !cue, FG
+  3H = 4+!h
+  3S = 4+!s
+  3N = unlimited
 D = 8+ hcp, 4+#
 2N = 8--9 hcp, stopper
 3N = 10--15 hcp, stopper
@@ -297,6 +300,12 @@ over an overcalled transfer) and otherwise passes.
 
 1N-2H-(3H)-
 3S = 4+!s
+
+After a natural 2NT invitation, an overcall leaves opener to double with a
+maximum or pass.
+
+1N-2N-(bid)-
+D = 16--17 hcp
 
 ** Responses to 2NT and 3NT
 

@@ -31,9 +31,9 @@ opener's suit. After a new suit, opener raises with three-card support, bids
 3D = 3+!d, 6--14 hcp
 2N = F, 15+ hcp, 2+!d
   3D = 5--8 hcp
-  3C = {prio:3} 9--11 hcp, !c stopper
-  3H = {prio:2} 9--11 hcp, !h stopper
-  3S = {prio:1} 9--11 hcp, !s stopper
+  3C = {prio:3} 9--11 hcp, stopper in !c
+  3H = {prio:2} 9--11 hcp, stopper in !h
+  3S = {prio:1} 9--11 hcp, stopper in !s
   3N = {prio:0} 9--11 hcp
 2H = F, 10+ hcp, 5+!h
   3H = 3+!h
@@ -56,9 +56,9 @@ opener's suit. After a new suit, opener raises with three-card support, bids
 3H = 3=!h, 6--14 hcp
 2N = F, 15+ hcp, 2+!h
   3H = 5--8 hcp
-  3C = {prio:3} 9--11 hcp, !c stopper
-  3D = {prio:2} 9--11 hcp, !d stopper
-  3S = {prio:1} 9--11 hcp, !s stopper
+  3C = {prio:3} 9--11 hcp, stopper in !c
+  3D = {prio:2} 9--11 hcp, stopper in !d
+  3S = {prio:1} 9--11 hcp, stopper in !s
   3N = {prio:0} 9--11 hcp
 2S = F, 10+ hcp, 5+!s
   3S = 3+!s
@@ -81,9 +81,9 @@ opener's suit. After a new suit, opener raises with three-card support, bids
 3S = 3=!s, 6--14 hcp
 2N = F, 15+ hcp, 2+!s
   3S = 5--8 hcp
-  3C = {prio:3} 9--11 hcp, !c stopper
-  3D = {prio:2} 9--11 hcp, !d stopper
-  3H = {prio:1} 9--11 hcp, !h stopper
+  3C = {prio:3} 9--11 hcp, stopper in !c
+  3D = {prio:2} 9--11 hcp, stopper in !d
+  3H = {prio:1} 9--11 hcp, stopper in !h
   3N = {prio:0} 9--11 hcp
 3C = F, 10+ hcp, 5+!c
   4C = 3+!c
