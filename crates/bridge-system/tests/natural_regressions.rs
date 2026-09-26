@@ -259,3 +259,37 @@ fn advancer_new_suit_is_natural() {
     assert!(inf.constraint.satisfies(good));
     assert!(!inf.constraint.satisfies(short));
 }
+
+/// An unbounded pass (anything but the limited first pass of `pass_default_max_hcp`) must rank
+/// below every bid the hand satisfies; at equal priority `choose_bid` takes the lowest call, so
+/// the opener's `ANY` pass used to shadow `reverse` and `rebid_new_suit` completely.
+#[test]
+fn unbounded_pass_ranks_below_satisfied_bids() {
+    let engine = NaturalInference::default();
+    let cases = [
+        ("1C P 1S P", hand("AKQ32", "32", "AKJ2", "32"), "2H"), // reverse, 17 hcp
+        ("1H P 1S P", hand("AJ32", "32", "AKJ32", "32"), "2C"), // new suit rebid
+    ];
+    for (calls, h, expected) in cases {
+        let a = auction(Seat::North, Vulnerability::None, calls);
+        let candidates = engine.candidates(&a, a.next_seat());
+        let priority = |call: &str| {
+            let call: bridge_core::Call = call.parse().unwrap();
+            candidates
+                .iter()
+                .find(|(c, k, _)| *c == call && k.satisfies(h))
+                .map(|(_, _, p)| *p)
+        };
+        let pass = priority("P").expect("the pass is always available");
+        let bid = priority(expected).expect("the hand satisfies the natural bid");
+        assert!(bid > pass, "{calls}: {expected} {bid} vs pass {pass}");
+    }
+    // The limited first pass keeps its 0.4 priority.
+    let a = auction(Seat::North, Vulnerability::None, "1H P");
+    let pass = engine
+        .candidates(&a, Seat::South)
+        .into_iter()
+        .find(|(c, _, _)| *c == bridge_core::Call::Pass)
+        .unwrap();
+    assert_eq!(pass.2, 40);
+}

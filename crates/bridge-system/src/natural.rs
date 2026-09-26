@@ -1550,13 +1550,17 @@ fn rule_pass_default(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> 
     if ctx.call != Call::Pass {
         return None;
     }
-    let constraint = match pass_default_max_hcp(p, ctx) {
-        Some(hi) => HandConstraint::Atom(Atom::ANY.with_hcp(0..=hi)),
-        None => HandConstraint::ANY,
+    // An unbounded pass is satisfied by every hand, so it must rank below every bid rule
+    // (`choose_bid` breaks equal priorities by call order, where `Pass` comes first): at 0.4 it
+    // would shadow the 0.4 rules (`reverse`, `rebid_new_suit`, `jump_overcall`) entirely. A
+    // limited pass is disjoint from the bids it declines, so it keeps 0.4.
+    let (constraint, confidence) = match pass_default_max_hcp(p, ctx) {
+        Some(hi) => (HandConstraint::Atom(Atom::ANY.with_hcp(0..=hi)), 0.4),
+        None => (HandConstraint::ANY, 0.2),
     };
     Some(Inference {
         constraint,
-        confidence: 0.4,
+        confidence,
         rule: "pass_default",
         explanation: "pass: below the threshold to act".to_string(),
     })
