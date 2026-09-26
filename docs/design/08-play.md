@@ -204,7 +204,7 @@ fn lens(u: Suit, set: &[u8]) -> ShapeSet;        // 列挙した長さの和集�
 
 1. `combos = [(ANY, 1.0)]` から始め、各イベントの `Vec<(HandConstraint, f32)>` と直積し `and` する。
 2. `is_satisfiable`（要約検査）で剪定する。`hard[s]` と矛盾する枝も落とす。
-3. 重み降順に K = 8 に切り詰め、正規化する。空になったら `[(ANY, 1.0)]` と `tracing::warn!`。
+3. 重み降順に並べ、K = 8 を超えたら上位 K − 1 個を残し、落とした組み合わせの重みの合計を `ANY` の枝に足す（残した中に `ANY` があればそこへ、なければ `(ANY, 落とした重み)` を追加）。そのうえで正規化する。単純に上位 K 個へ切り詰めると全 `ANY` の組み合わせも落ち、どの枝にも合わない合法な手の soft 質量が 0 になって、偽カードや読み違いを許すはずの soft 規則がハード制約として働いてしまう（フェーズ 5 レビューで修正）。空になったら `[(ANY, 1.0)]` と `tracing::warn!`。
 4. `into_seats` は `[(hard[s].and(soft_i), w_i)]` を返す。イベントのない席は `[(hard[s], 1.0)]`。
 
 `and` は `ANY` 側を落として相手をそのまま返す（各規則の `(ANY, 1 − w)` が `And([ANY, ANY, ..])` として積み上がらないように）。
@@ -253,6 +253,7 @@ fn lens(u: Suit, set: &[u8]) -> ShapeSet;        // 列挙した長さの和集�
 | `lead_rules_table` | table-driven: (約束, リード札) → 標本ホールディングで満たす / 満たさない | 表の各行 |
 | `signal_rules_table` | table-driven: attitude / count / 初回ディスカード、`Standard` と `UpsideDown` | 表の各行 |
 | `combine_caps_at_k` | unit | 3 イベント × 2 枝で K = 8 に収まり、合計 1 |
+| `combine_truncation_keeps_the_any_remainder` | unit | 3 × 2 × 2 枝を K = 8 に切り詰めても `ANY` の余り枝が残り、`hard` を満たすどの手も soft 質量 > 0 |
 | `declarer_side_has_no_events` | unit | 宣言者・ダミーのカードで `events` が空 |
 | `tests/review.rs`（フェーズ 5 レビュー） | table-driven | ショウアウト 9 行、リボーク / `Inconsistent` 4 行、`KnownCards::with_play` と記録の一致、リード表 25 行（`lead_constraints` 単体と `interpret_play` 経由で vs suit / vs NT の表選択）、シグナル位置 6 行、初回ディスカード 14 行、全 4 席を宣言者にしてディフェンダーのみ発火、`hard` と矛盾する枝の剪定、K = 8 |
 | `bridge-sample/tests/play_sampling.rs` | 端から端まで | 実際の配牌を 7 トリック + 1 枚合法にプレイ（East が切り札で、South がハートでショウアウト）し、`interpret_play` の `hard` / `soft` と視点の `KnownCards`（自分の手 + ダミー + 既出カード）で `ConstraintProposal` から宣言者視点・ディフェンダー視点で各 300 ディールを引く。全ディールで既知カードと既出カードが正しい席にあり、ショウアウトしたスートの長さが既出枚数と一致し、履歴を標本の手で再生して合法（リボークなし）、`hard` を満たし、重みが有限。ESS 比は宣言者視点 0.67、ディフェンダー視点 0.82（閾値 0.5） |

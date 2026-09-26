@@ -224,7 +224,9 @@ fn is_spot(card: Card) -> bool {
 /// same procedure as 07-bidding.md Step B): cross product with `and`, drop combinations that
 /// contradict `hard` or are otherwise unsatisfiable (checked via [`HandConstraint::to_dnf`] and
 /// [`bridge_constraint::Atom::is_trivially_unsat`] rather than the still-provisional
-/// `is_satisfiable`, per the phase-5 notes), truncate to [`K`] by weight and renormalise. Falls
+/// `is_satisfiable`, per the phase-5 notes), truncate to [`K`] by weight (the `K - 1` heaviest
+/// plus the dropped weight folded into an `ANY` entry, so every hand satisfying `hard` keeps
+/// positive soft mass) and renormalise. Falls
 /// back to `[(ANY, 1.0)]` with a `tracing::warn!` if every combination turns out unsatisfiable.
 fn combine(
     existing: Vec<(HandConstraint, f32)>,
@@ -249,7 +251,17 @@ fn combine(
     }
 
     combos.sort_by(|a, b| b.1.total_cmp(&a.1));
-    combos.truncate(K);
+    if combos.len() > K {
+        // Keep the remainder (§7.1: it always goes to `ANY`). Dropping the tail outright would
+        // drop the all-`ANY` product too, and a legal hand matching none of the surviving
+        // branches would get soft mass 0, turning a soft signal into a hard exclusion.
+        let dropped: f32 = combos[K - 1..].iter().map(|(_, w)| w).sum();
+        combos.truncate(K - 1);
+        match combos.iter_mut().find(|(c, _)| is_any(c)) {
+            Some((_, w)) => *w += dropped,
+            None => combos.push((HandConstraint::ANY, dropped)),
+        }
+    }
     let total: f32 = combos.iter().map(|(_, w)| w).sum();
     if total > 0.0 {
         for (_, w) in &mut combos {
@@ -316,6 +328,47 @@ mod tests {
         assert!(combos.len() <= K);
         let total: f32 = combos.iter().map(|(_, w)| w).sum();
         assert!((total - 1.0).abs() < 1e-5, "total = {total}");
+    }
+
+    /// Regression: truncation used to drop the lowest-weight products, including the all-`ANY`
+    /// one, so a legal hand matching none of the surviving branches got soft mass 0 (a soft
+    /// signal acting as a hard exclusion). After truncation every hand satisfying `hard` must
+    /// keep positive mass.
+    #[test]
+    fn combine_truncation_keeps_the_any_remainder() {
+        let hard = HandConstraint::ANY;
+        let events = [
+            vec![
+                (atom_hcp(0, 5), 0.5),
+                (atom_hcp(6, 10), 0.3),
+                (HandConstraint::ANY, 0.2),
+            ],
+            vec![(atom_hcp(0, 8), 0.7), (HandConstraint::ANY, 0.3)],
+            vec![(atom_hcp(3, 12), 0.6), (HandConstraint::ANY, 0.4)],
+        ];
+        let mut combos = vec![(HandConstraint::ANY, 1.0)];
+        for alts in events {
+            combos = combine(combos, &hard, alts);
+        }
+        assert!(combos.len() <= K);
+        let total: f32 = combos.iter().map(|(_, w)| w).sum();
+        assert!((total - 1.0).abs() < 1e-5, "total = {total}");
+        // A 20-HCP hand matches only the all-ANY product (every other branch caps HCP at 12).
+        let strong: bridge_core::Hand = "AKQJ.AKQ.432.432".parse().unwrap();
+        let mass: f32 = combos
+            .iter()
+            .filter(|(c, _)| c.satisfies(strong))
+            .map(|(_, w)| w)
+            .sum();
+        assert!(mass > 0.0, "{combos:?}");
+        // The remainder carries every dropped product's weight: the kept branches other than
+        // ANY sum to exactly what they weighed before truncation (renormalisation is a no-op
+        // because the full product already sums to 1).
+        assert!(
+            combos
+                .iter()
+                .any(|(c, w)| is_any(c) && *w >= 0.2 * 0.3 * 0.4)
+        );
     }
 
     /// When every combination contradicts `hard`, `combine` falls back to `[(ANY, 1.0)]`.
