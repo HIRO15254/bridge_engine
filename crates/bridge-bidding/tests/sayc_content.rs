@@ -591,4 +591,22 @@ mod sayc_comp {
             ("1NT 2S 3C", "A3.K952.AQ832.95", "X"),
         ]);
     }
+
+    /// Opener's rebid after a forcing new suit by responder over an overcall had no table, and
+    /// natural inference had no call for many openers (`NoCandidate`): a one-level response
+    /// now uses the uncontested rebid table for the same two suits, a two-level one a table of
+    /// its own (raise, notrump with a stopper, rebid of the opening suit), and a further bid by
+    /// the opponents reverts to natural bidding.
+    #[test]
+    fn opener_rebid_after_a_new_suit_over_an_overcall() {
+        check(&[
+            ("1C 1D 1S P", "T3.AKQ3.QJ.K8763", "2C"),
+            ("1C 1D 1H P", "65.AK.Q653.AKJ94", "2D"),
+            ("1D 1H 1S P", "A3.K952.AQ832.95", "2D"),
+            ("1C 1H 2D P", "AQ86.KQJ5.5.J932", "2NT"),
+            ("1D 1S 2H P", "A854.8.AKT94.J74", "2NT"),
+            ("1D 1H 2C P", "3.KQ65.K752.KJ82", "3C"),
+            ("1C 1D 1S 3D", "KT87.KQ.Q7.Q9763", "3S"),
+        ]);
+    }
 }

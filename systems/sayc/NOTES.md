@@ -443,3 +443,10 @@ C5. **Positions where natural inference had nothing to offer are written out.** 
     pinch"), and a hand above 3NT's 16--18 with no four-card major bids 3NT instead of passing
     (the booklet has no forcing minor raise to start with instead). All ranges here are this
     file's interpolation; the booklet gives none.
+    Opener's rebid after responder's forcing new suit over an overcall had no table either:
+    after a one-level response it is the uncontested rebid table for the same two suits,
+    shared through `#COPY`/`#PASTE` (the overcall only removes calls those tables never
+    used), and after a two-level response (11+, five cards) a small table pasted per auction:
+    a raise, 2NT 12--14 or 3NT 18--21 with a stopper, and otherwise the cheapest rebid of the
+    opening suit. Each new table's position also gets an `(any)` line (C4), since otherwise
+    a further bid by the opponents would be read against the new table as if they had passed.

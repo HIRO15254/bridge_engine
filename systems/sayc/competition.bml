@@ -240,6 +240,64 @@ D = 6+ hcp, 4+!c, 4+!d
 2N = 11--12 hcp, stopper
 3N = 13--16 hcp, stopper
 
+*** Opener's rebid after a one-level response over an overcall
+
+A one-level new suit by responder after the overcall is natural and forcing,
+exactly as without interference (the rows above), so opener rebids with the
+uncontested table for the same two suits (NOTES.md #C5): the overcall only
+takes away calls that were not in those tables anyway.
+
+1C-(1D)-1H-(P)-
+#PASTE rebid-1c-1h
+
+1C-(1D)-1S-(P)-
+#PASTE rebid-1c-1s
+
+1C-(1H)-1S-(P)-
+#PASTE rebid-1c-1s
+
+1D-(1H)-1S-(P)-
+#PASTE rebid-1d-1s
+
+A two-level new suit by responder over the overcall is forcing (11+, a five-card
+suit), and there is no uncontested table with the same meaning, so opener's rebid
+is written once and pasted per auction: a raise (three-card support for a major,
+four for a minor), notrump with a stopper in the overcall's suit (2NT 12--14,
+3NT 18--21), and otherwise the cheapest rebid of the opening suit, which is
+opener's "nothing else to say" call and so carries no requirement of its own
+beyond the opening (NOTES.md #C5).
+
+#CUT rebid-over-new-suit
+3\N = {prio:4} \L+!\n
+2N = {prio:3} 12--14 hcp, stopper
+3N = {prio:3} 18--21 hcp, stopper
+\R = 12+ hcp
+#ENDCUT
+
+1C-(1D)-2H-(P)-
+#PASTE rebid-over-new-suit \N=H \n=h \L=3 \R=3C
+
+1C-(1D)-2S-(P)-
+#PASTE rebid-over-new-suit \N=S \n=s \L=3 \R=3C
+
+1C-(1H)-2D-(P)-
+#PASTE rebid-over-new-suit \N=D \n=d \L=4 \R=3C
+
+1C-(1S)-2D-(P)-
+#PASTE rebid-over-new-suit \N=D \n=d \L=4 \R=3C
+
+1C-(1S)-2H-(P)-
+#PASTE rebid-over-new-suit \N=H \n=h \L=3 \R=3C
+
+1D-(1H)-2C-(P)-
+#PASTE rebid-over-new-suit \N=C \n=c \L=4 \R=2D
+
+1D-(1S)-2C-(P)-
+#PASTE rebid-over-new-suit \N=C \n=c \L=4 \R=2D
+
+1D-(1S)-2H-(P)-
+#PASTE rebid-over-new-suit \N=H \n=h \L=3 \R=3D
+
 *** After a two-level overcall
 
 `1M-(2m)-` is a simple overcall of a lower minor over a major opening; the
@@ -644,3 +702,29 @@ interference has made some of its calls illegal and the rest inappropriate
 (1X)-1Y-(P)-2X-(any)-
 
 (1X)-1Y-(D)-2X-(any)-
+
+1C-(1D)-1H-(any)-
+
+1C-(1D)-1S-(any)-
+
+1C-(1H)-1S-(any)-
+
+1D-(1H)-1S-(any)-
+
+1C-(1D)-2H-(any)-
+
+1C-(1D)-2S-(any)-
+
+1C-(1H)-2D-(any)-
+
+1C-(1S)-2D-(any)-
+
+1C-(1S)-2H-(any)-
+
+1D-(1H)-2C-(any)-
+
+1D-(1S)-2C-(any)-
+
+1D-(1S)-2H-(any)-
+
+(1N)-2X-(any)-
