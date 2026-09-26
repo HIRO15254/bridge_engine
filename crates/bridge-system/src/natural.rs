@@ -252,6 +252,17 @@ pub struct CallContext {
     /// strong 2C, `opener_first_suit` instead names a later suit bid (a transfer completion, or
     /// nothing at all for 2C).
     pub opener_first_bid: Option<Bid>,
+    /// `owner` has already made a non-pass call (a bid, double or redouble) earlier in the
+    /// auction. Rules that describe a player's *first* action (an overcall, the limited pass of
+    /// partner's opening) only apply while this is `false`.
+    pub owner_acted: bool,
+    /// How many non-pass calls partner has made so far.
+    pub partner_actions: u8,
+    /// Partner's first non-pass call, if any.
+    pub partner_first_action: Option<Call>,
+    /// Levels skipped by `partner_first_action` when it is a bid (0 otherwise), measured like
+    /// [`CallKind::Bid::jump`] against the last bid before it.
+    pub partner_first_jump: u8,
 }
 
 /// Classifies call `index` of `auction` from the point of view of its caller.
@@ -312,6 +323,27 @@ pub fn classify(auction: &Auction, index: usize, owner: Seat) -> CallContext {
         owner_suits.contains(strain) && partner_suits.contains(strain)
     });
     let last_bid = history.iter().rev().find_map(|c| c.bid());
+    let owner_acted = history
+        .iter()
+        .enumerate()
+        .any(|(i, c)| auction.seat_at(i) == owner && *c != Call::Pass);
+    let mut partner_actions = 0u8;
+    let mut partner_first: Option<(usize, Call)> = None;
+    for (i, c) in history.iter().enumerate() {
+        if auction.seat_at(i) == owner.partner() && *c != Call::Pass {
+            partner_actions = partner_actions.saturating_add(1);
+            if partner_first.is_none() {
+                partner_first = Some((i, *c));
+            }
+        }
+    }
+    let partner_first_jump = match partner_first {
+        Some((i, Call::Bid(b))) => {
+            let before = history[..i].iter().rev().find_map(|c| c.bid());
+            b.level().saturating_sub(minimal_level(before, b.strain()))
+        }
+        _ => 0,
+    };
 
     CallContext {
         role,
@@ -331,6 +363,10 @@ pub fn classify(auction: &Auction, index: usize, owner: Seat) -> CallContext {
         forcing_situation: false,
         opener_first_suit,
         opener_first_bid,
+        owner_acted,
+        partner_actions,
+        partner_first_action: partner_first.map(|(_, c)| c),
+        partner_first_jump,
     }
 }
 
@@ -415,6 +451,13 @@ fn owner_first_bid(auction: &Auction, history: &[Call], owner: Seat) -> Option<B
         .find_map(|(_, c)| c.bid())
 }
 
+/// Index in `history` of `seat`'s first [`Call::Bid`] of `strain`, if any.
+fn first_bid_of(auction: &Auction, history: &[Call], seat: Seat, strain: Strain) -> Option<usize> {
+    history.iter().enumerate().position(|(i, c)| {
+        auction.seat_at(i) == seat && matches!(c, Call::Bid(b) if b.strain() == strain)
+    })
+}
+
 /// The lowest level at which `strain` may legally be bid over `last_bid`.
 fn minimal_level(last_bid: Option<Bid>, strain: Strain) -> u8 {
     match last_bid {
@@ -448,13 +491,26 @@ fn classify_kind(
             role,
             our_suits,
             their_suits,
+            owner_suits,
+            partner_suits,
         )),
         Call::Bid(b) => {
             let strain = b.strain();
             let nt = strain == Strain::NoTrump;
             let new_suit = !nt && !our_suits.contains(strain) && !their_suits.contains(strain);
             let cue = !nt && their_suits.contains(strain);
-            let raise = !nt && partner_suits.contains(strain);
+            // A raise is a bid of a strain *partner* introduced: when `owner` bid it first and
+            // partner only supported it (`1H-P-2H-P-3H`), bidding it again is `rebid_own` of an
+            // agreed suit, not a raise of partner's suit.
+            let raise = !nt
+                && match (
+                    first_bid_of(auction, history, owner.partner(), strain),
+                    first_bid_of(auction, history, owner, strain),
+                ) {
+                    (Some(p), Some(o)) => p < o,
+                    (Some(_), None) => true,
+                    (None, _) => false,
+                };
             let rebid_own = !nt && owner_suits.contains(strain);
             let last_bid = history.iter().rev().find_map(|c| c.bid());
             let jump = b.level().saturating_sub(minimal_level(last_bid, strain));
@@ -496,6 +552,7 @@ fn side_bid_strain_before(
 }
 
 /// Determines [`DoubleKind`] (§8.2.2). Order matters: earlier conditions take precedence.
+#[allow(clippy::too_many_arguments)]
 fn classify_double(
     auction: &Auction,
     history: &[Call],
@@ -503,6 +560,8 @@ fn classify_double(
     role: Role,
     our_suits: StrainSet,
     their_suits: StrainSet,
+    owner_suits: StrainSet,
+    partner_suits: StrainSet,
 ) -> DoubleKind {
     let Some(li) = history.iter().rposition(|c| c.is_bid()) else {
         return DoubleKind::Unknown;
@@ -516,10 +575,21 @@ fn classify_double(
     }
 
     let low_level_suit = target.strain() != Strain::NoTrump && target.level() <= 2;
-    // `their_suits` already includes `target.strain()`, so this is really "we have also bid the
-    // suit they are doubling in" -- the classic penalty-double trigger of an agreed trump suit.
-    let agreed_suit = our_suits.contains(target.strain());
+    // §8.2: "we have already agreed a suit" -- a suit bid by both `owner` and partner (the same
+    // test as `CallContext::agreed_suit`), not merely "we have bid the suit they are bidding".
+    let agreed_suit = Suit::ALL.into_iter().any(|s| {
+        let strain = Strain::from_suit(s);
+        owner_suits.contains(strain) && partner_suits.contains(strain)
+    });
     let penalty_cond = target.strain() == Strain::NoTrump || target.level() >= 4 || agreed_suit;
+    // Partner's most recent bid was notrump (typically the 1NT opening): SAYC doubles of an
+    // overcall of it are for penalty (§8.3 `penalty_x`).
+    let partner_last_bid_nt = history
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(i, c)| auction.seat_at(*i) == owner.partner() && c.is_bid())
+        .is_some_and(|(_, c)| matches!(c, Call::Bid(b) if b.strain() == Strain::NoTrump));
 
     let partner_last = history
         .iter()
@@ -528,11 +598,15 @@ fn classify_double(
         .find(|(i, _)| auction.seat_at(*i) == owner.partner())
         .map(|(_, c)| *c);
 
-    if low_level_suit && our_suits.0 == 0 && partner_last != Some(Call::Double) {
-        // The `partner_last != Double` guard keeps a double right after partner's own takeout
-        // double (no suit bid by us yet either) from being read as a second takeout double
-        // instead of responsive (checked below).
+    if low_level_suit && partner_suits.0 == 0 && partner_last != Some(Call::Double) {
+        // §8.2: "partner has not bid yet" -- `owner`'s own earlier bids (an overcall followed by
+        // a reopening double) do not stop the double from being takeout. The
+        // `partner_last != Double` guard keeps a double right after partner's own takeout double
+        // (no suit bid by partner yet either) from being read as a second takeout double instead
+        // of responsive (checked below).
         DoubleKind::Takeout
+    } else if partner_last_bid_nt {
+        DoubleKind::Penalty
     } else if role == Role::Responder && low_level_suit {
         DoubleKind::Negative
     } else if penalty_cond {
@@ -605,6 +679,9 @@ impl NaturalInference {
             .or_else(|| rule_resp_nt(p, ctx))
             .or_else(|| rule_rebid_own(p, ctx))
             .or_else(|| rule_reverse(p, ctx))
+            .or_else(|| rule_rebid_nt(p, ctx))
+            .or_else(|| rule_rebid_new_suit(p, ctx))
+            .or_else(|| rule_advance_new_suit(p, ctx))
             .or_else(|| rule_cue(p, ctx))
             .or_else(|| rule_pass_forcing(ctx))
             .or_else(|| rule_pass_default(p, ctx))
@@ -631,6 +708,11 @@ impl NaturalInference {
         out
     }
 }
+
+/// Rough combined-points target for game: the §8.3 `cue` formula's `gf_total`, and the upper
+/// bound of a pass of partner's notrump (`pass_default`). Not a field of [`NaturalParams`]
+/// because §8.3 only uses it as a fallback formula, not a tunable.
+const GF_TOTAL: u8 = 25;
 
 /// Standard "opening 1-of-a-minor" length and strength, adjusted for the balancing seat.
 fn opener_or_balancer_hcp(
@@ -809,7 +891,14 @@ fn rule_open_preempt(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> 
 }
 
 fn rule_open_pass(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
-    if ctx.role != Role::Opener || ctx.call != Call::Pass || ctx.passed_hand {
+    // Only the pass in the opening seat, before anyone has bid (§8.3). `classify_role` keeps the
+    // opener in `Role::Opener` for the whole auction, so without the `last_bid` guard every later
+    // pass by the opener (of partner's raise, of 3NT, ...) would claim 0-11 HCP.
+    if ctx.role != Role::Opener
+        || ctx.call != Call::Pass
+        || ctx.passed_hand
+        || ctx.last_bid.is_some()
+    {
         return None;
     }
     let hi = p.opening_hcp.start().saturating_sub(1);
@@ -822,12 +911,23 @@ fn rule_open_pass(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     })
 }
 
+/// `true` for the overcaller's (or balancer's) *first* action: every overcall rule describes
+/// entering the auction, not the same player's later bids (which `classify_role` still labels
+/// `Overcaller`).
+fn is_first_overcall(ctx: &CallContext) -> bool {
+    matches!(ctx.role, Role::Overcaller | Role::Balancer) && !ctx.owner_acted
+}
+
 fn rule_overcall(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
-    if !matches!(ctx.role, Role::Overcaller | Role::Balancer) {
+    if !is_first_overcall(ctx) {
         return None;
     }
+    // `new_suit` excludes a cue bid of the opponents' suit (which is `rule_cue`'s).
     let CallKind::Bid {
-        nt: false, jump: 0, ..
+        nt: false,
+        jump: 0,
+        new_suit: true,
+        ..
     } = ctx.kind
     else {
         return None;
@@ -860,11 +960,14 @@ fn rule_overcall(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
 }
 
 fn rule_jump_overcall(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
-    if !matches!(ctx.role, Role::Overcaller | Role::Balancer) {
+    if !is_first_overcall(ctx) {
         return None;
     }
     let CallKind::Bid {
-        nt: false, jump: 1, ..
+        nt: false,
+        jump: 1,
+        new_suit: true,
+        ..
     } = ctx.kind
     else {
         return None;
@@ -893,12 +996,20 @@ fn rule_jump_overcall(p: &NaturalParams, ctx: &CallContext) -> Option<Inference>
 }
 
 fn rule_nt_overcall(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
-    if !matches!(ctx.role, Role::Overcaller | Role::Balancer) {
+    if !is_first_overcall(ctx) {
         return None;
     }
-    let CallKind::Bid { nt: true, .. } = ctx.kind else {
+    // The natural strong notrump overcall is the cheapest notrump (1NT over a 1-level opening,
+    // 2NT over a weak two); a jump to 2NT (unusual) or to 3NT is something else.
+    let CallKind::Bid {
+        nt: true, jump: 0, ..
+    } = ctx.kind
+    else {
         return None;
     };
+    if ctx.level > 2 {
+        return None;
+    }
     let hcp = opener_or_balancer_hcp(p, ctx.role, p.nt_overcall.clone());
     let mut constraint = HandConstraint::Atom(
         Atom {
@@ -1195,6 +1306,9 @@ fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     };
     let bid = ctx.call.bid()?;
     let suit = bid.strain().suit()?;
+    if ctx.agreed_suit == Some(suit) && opened_one_of_a_suit(ctx) {
+        return Some(rule_reraise_agreed(p, ctx, suit, jump));
+    }
     let hcp = if jump >= 1 {
         p.rebid.jump_rebid.clone()
     } else {
@@ -1213,6 +1327,54 @@ fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
             hcp.end()
         ),
     })
+}
+
+/// `owner` opened one of a suit (the rebid rules below describe rebids after such an opening,
+/// not after a notrump, strong 2C or preempt opening).
+fn opened_one_of_a_suit(ctx: &CallContext) -> bool {
+    ctx.opener_first_bid
+        .is_some_and(|b| b.level() == 1 && b.strain() != Strain::NoTrump)
+}
+
+/// Opener bids again a suit it bid first and partner then supported (`1H-P-2H-P-3H`): not a
+/// raise of partner's suit, and not the 6-card rebid of an unsupported suit either. A non-jump
+/// re-raise without competition is a game try (`rebid.jump_rebid`); in competition it is
+/// merely competitive (`opening_hcp`); a jump (to game) shows `rebid.jump_rebid`'s minimum or
+/// more. Length is the opening's own minimum for the opened suit, 4 for a second suit.
+fn rule_reraise_agreed(p: &NaturalParams, ctx: &CallContext, suit: Suit, jump: u8) -> Inference {
+    let min_len = match ctx.opener_first_bid {
+        Some(b) if b.strain() == Strain::from_suit(suit) => {
+            if b.strain().is_major() {
+                p.open_1major_len
+            } else {
+                p.open_1m_len
+            }
+        }
+        _ => 4,
+    };
+    let hcp = if jump >= 1 {
+        *p.rebid.jump_rebid.start()..=*p.opening_hcp.end()
+    } else if ctx.competitive {
+        p.opening_hcp.clone()
+    } else {
+        p.rebid.jump_rebid.clone()
+    };
+    Inference {
+        constraint: HandConstraint::Atom(
+            Atom::ANY
+                .with_hcp(hcp.clone())
+                .with_suit_len(suit, min_len..=13),
+        ),
+        confidence: 0.5,
+        rule: "rebid_own",
+        explanation: format!(
+            "re-raises agreed suit {}: {}+ cards, {}-{} hcp",
+            ctx.call,
+            min_len,
+            hcp.start(),
+            hcp.end()
+        ),
+    }
 }
 
 fn rule_reverse(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
@@ -1240,16 +1402,129 @@ fn rule_reverse(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     })
 }
 
+/// Opener's notrump rebid after a 1-of-a-suit opening: the cheapest notrump shows
+/// `rebid.nt_1`, a jump `rebid.nt_2`, both balanced. Higher notrump rebids, and notrump once a
+/// suit is agreed (`1H-P-2H-P-2NT` is a game try, not a range rebid), are left to `fallback`.
+fn rule_rebid_nt(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+    if ctx.role != Role::Opener
+        || !opened_one_of_a_suit(ctx)
+        || ctx.level > 2
+        || ctx.agreed_suit.is_some()
+    {
+        return None;
+    }
+    let CallKind::Bid { nt: true, jump, .. } = ctx.kind else {
+        return None;
+    };
+    let hcp = match jump {
+        0 => p.rebid.nt_1.clone(),
+        1 => p.rebid.nt_2.clone(),
+        _ => return None,
+    };
+    Some(Inference {
+        constraint: HandConstraint::Atom(
+            Atom {
+                shapes: ShapeSet::BALANCED,
+                ..Atom::ANY
+            }
+            .with_hcp(hcp.clone()),
+        ),
+        confidence: 0.5,
+        rule: "rebid_nt",
+        explanation: format!(
+            "notrump rebid {}: balanced, {}-{} hcp",
+            ctx.call,
+            hcp.start(),
+            hcp.end()
+        ),
+    })
+}
+
+/// Opener's new suit that is not a reverse (`rule_reverse` runs first), after a 1-of-a-suit
+/// opening: 4+ cards, from the opening minimum up to `rebid.jump_raise`'s maximum; a jump shift
+/// shows more than `rebid.jump_rebid`.
+fn rule_rebid_new_suit(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+    if ctx.role != Role::Opener || !opened_one_of_a_suit(ctx) {
+        return None;
+    }
+    let CallKind::Bid {
+        new_suit: true,
+        jump,
+        ..
+    } = ctx.kind
+    else {
+        return None;
+    };
+    let suit = ctx.call.bid()?.strain().suit()?;
+    let hcp = if jump >= 1 {
+        p.rebid.jump_rebid.end().saturating_add(1)..=37
+    } else {
+        *p.opening_hcp.start()..=*p.rebid.jump_raise.end()
+    };
+    Some(Inference {
+        constraint: HandConstraint::Atom(
+            Atom::ANY.with_hcp(hcp.clone()).with_suit_len(suit, 4..=13),
+        ),
+        confidence: 0.4,
+        rule: "rebid_new_suit",
+        explanation: format!(
+            "new suit rebid {}: 4+ cards, {}-{} hcp",
+            ctx.call,
+            hcp.start(),
+            hcp.end()
+        ),
+    })
+}
+
+/// The advancer's first action in a new suit (not a jump) over partner's overcall:
+/// `advance.new_suit`. An answer to partner's takeout double is a different animal (it can be a
+/// forced bid with nothing) and is left to `fallback`.
+fn rule_advance_new_suit(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+    if ctx.role != Role::Advancer
+        || ctx.owner_acted
+        || !matches!(ctx.partner_first_action, Some(Call::Bid(_)))
+    {
+        return None;
+    }
+    let CallKind::Bid {
+        new_suit: true,
+        jump: 0,
+        ..
+    } = ctx.kind
+    else {
+        return None;
+    };
+    let suit = ctx.call.bid()?.strain().suit()?;
+    let (min_len, min_hcp) = p.advance.new_suit;
+    Some(Inference {
+        constraint: HandConstraint::Atom(
+            Atom::ANY
+                .with_hcp(min_hcp..=37)
+                .with_suit_len(suit, min_len..=13),
+        ),
+        confidence: 0.5,
+        rule: "advance_new_suit",
+        explanation: format!(
+            "new suit advance {}: {min_len}+ cards, {min_hcp}+ hcp",
+            ctx.call
+        ),
+    })
+}
+
 fn rule_cue(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     let CallKind::Bid { cue: true, .. } = ctx.kind else {
         return None;
     };
-    /// Rough combined-points target for a game-forcing sequence; not a field of
-    /// [`NaturalParams`] because §8.3 only specifies it as a fallback formula, not a tunable.
-    const GF_TOTAL: u8 = 25;
-    let min_hcp = match &ctx.partner_constraint {
-        Some(c) => GF_TOTAL.saturating_sub(*c.hcp_range().start()),
-        None => p.advance.cue,
+    // The game-forcing formula only describes a cue bid by the opening side (opener or
+    // responder cue-bidding the opponents' suit). An advancer's cue is the standard "limit raise
+    // or better" (`advance.cue`) whatever partner's overcall showed -- `25 - partner_min` would
+    // turn it into 17+ -- and an overcaller's or balancer's cue (Michaels-style) has no partner
+    // bid to build on at all.
+    let min_hcp = match (&ctx.partner_constraint, ctx.role) {
+        (Some(c), Role::Opener | Role::Responder) => {
+            GF_TOTAL.saturating_sub(*c.hcp_range().start())
+        }
+        _ => p.advance.cue,
     };
     Some(Inference {
         constraint: HandConstraint::Atom(Atom::ANY.with_hcp(min_hcp..=37)),
@@ -1275,23 +1550,59 @@ fn rule_pass_default(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> 
     if ctx.call != Call::Pass {
         return None;
     }
-    let constraint = match ctx.role {
-        Role::Responder => {
-            let hi = p.response.new_suit_1.1.saturating_sub(1);
-            HandConstraint::Atom(Atom::ANY.with_hcp(0..=hi))
-        }
-        Role::Advancer => {
-            let hi = p.advance.raise.1.start().saturating_sub(1);
-            HandConstraint::Atom(Atom::ANY.with_hcp(0..=hi))
-        }
-        _ => HandConstraint::ANY,
+    // An unbounded pass is satisfied by every hand, so it must rank below every bid rule
+    // (`choose_bid` breaks equal priorities by call order, where `Pass` comes first): at 0.4 it
+    // would shadow the 0.4 rules (`reverse`, `rebid_new_suit`, `jump_overcall`) entirely. A
+    // limited pass is disjoint from the bids it declines, so it keeps 0.4.
+    let (constraint, confidence) = match pass_default_max_hcp(p, ctx) {
+        Some(hi) => (HandConstraint::Atom(Atom::ANY.with_hcp(0..=hi)), 0.4),
+        None => (HandConstraint::ANY, 0.2),
     };
     Some(Inference {
         constraint,
-        confidence: 0.4,
+        confidence,
         rule: "pass_default",
         explanation: "pass: below the threshold to act".to_string(),
     })
+}
+
+/// The HCP ceiling of a limited pass (§8.3 `pass_default`), or `None` for an unbounded one.
+///
+/// Only the responder's or advancer's *first* action over partner's opening or overcall (their
+/// only non-pass call so far) is limited: a later pass by a player who has already bid, or a
+/// pass after partner has bid again, says nothing about strength. The ceiling depends on what
+/// partner bid:
+///
+/// - a 1-level suit opening: `response.new_suit_1.1 − 1` (below a 1-level response);
+/// - a 1NT/2NT opening: `GF_TOTAL − nt[L].end − 1` (no game opposite a maximum);
+/// - a simple (non-jump) suit overcall at the 1 or 2 level: `advance.raise.1.start − 1`;
+/// - a notrump overcall: `GF_TOTAL − nt_overcall.end − 1`;
+/// - anything else (weak two, preempt, strong 2C, a double, a jump overcall): unbounded.
+fn pass_default_max_hcp(p: &NaturalParams, ctx: &CallContext) -> Option<u8> {
+    if ctx.owner_acted || ctx.partner_actions != 1 {
+        return None;
+    }
+    let Some(Call::Bid(partner_bid)) = ctx.partner_first_action else {
+        return None;
+    };
+    let level = partner_bid.level();
+    let nt = partner_bid.strain() == Strain::NoTrump;
+    match ctx.role {
+        Role::Responder if !nt && level == 1 => Some(p.response.new_suit_1.1.saturating_sub(1)),
+        Role::Responder if nt && level <= 2 => {
+            p.nt.iter()
+                .find(|(l, _)| *l == level)
+                .map(|(_, hcp)| GF_TOTAL.saturating_sub(hcp.end().saturating_add(1)))
+        }
+        Role::Advancer if ctx.partner_first_jump == 0 && level <= 2 => {
+            if nt {
+                Some(GF_TOTAL.saturating_sub(p.nt_overcall.end().saturating_add(1)))
+            } else {
+                Some(p.advance.raise.1.start().saturating_sub(1))
+            }
+        }
+        _ => None,
+    }
 }
 
 fn rule_fallback() -> Inference {

@@ -959,6 +959,10 @@ pub struct CallContext {
     pub forcing_situation: bool,          // false from classify; the bidding layer may fill it in
     pub opener_first_suit: Option<(Suit, u8)>,  // owner's first suit Call::Bid; NT skipped
     pub opener_first_bid: Option<Bid>,          // owner's first Call::Bid of any strain, NT included
+    pub owner_acted: bool,                      // owner already made a non-pass call (bid/double/redouble)
+    pub partner_actions: u8,                    // number of partner's non-pass calls so far
+    pub partner_first_action: Option<Call>,     // partner's first non-pass call
+    pub partner_first_jump: u8,                 // levels skipped by that call when it is a bid (0 otherwise)
 }
 
 /// System-independent classification of auction[index] as made by `owner`; unit-testable.
@@ -982,8 +986,8 @@ impl Default for NaturalInference { /* NaturalParams::default() */ }
 ### 8.2 `classify` の判定
 
 1. `role`: 我々側の最初の非パスがオープニングなら `Opener`/`Responder`、相手のオープニングの後なら `Overcaller`/`Advancer`。相手の `(bid) P (P)` の直後のコールは `Balancer`。
-2. `kind`: `Pass` / `Redouble` はそのまま。`Double` は、直前の相手のコールがスートビッドで 2 レベル以下かつパートナーがまだビッドしていなければ `Takeout`、パートナーがオープンした後の相手のオーバーコール (2S 以下) に対してなら `Negative`、相手が NT または 4 レベル以上、あるいは我々が既にスートを合意していれば `Penalty`、パートナーのテイクアウトダブルの後の相手のレイズに対してなら `Responsive`、パートナーの応答スートへの相手の介入に対する低レベルなら `Support`、それ以外 `Unknown`。`Bid` は `our_suits` / `their_suits` / `partner_last` から `new_suit`、`raise` (パートナーのスート)、`nt`、`jump` (最小合法レベルとの差)、`cue` (相手のスート)、`reverse` (オープナーが 1 レベルで開いたスートより上位の新スートを 2 レベルで)、`rebid_own` を決める。
-3. `position`、`passed_hand`、`vul`、`competitive`、`our_suits`、`their_suits`、`agreed_suit` (同じスートをパートナーと自分がビッドした)、`last_bid` はオークションから直接。`partner_constraint = None`、`forcing_situation = false`。
+2. `kind`: `Pass` / `Redouble` はそのまま。`Double` は上から順に、直前の相手のコールがスートビッドで 2 レベル以下かつパートナーがまだビッドしていなければ (自分の以前のオーバーコールは妨げない。再開のダブルもテイクアウト) `Takeout`、パートナーの最後のビッドが NT (1NT オープンなど) なら `Penalty`、パートナーがオープンした後の相手のオーバーコール (2S 以下) に対してなら `Negative`、相手が NT または 4 レベル以上、あるいは我々が既にスートを合意していれば (自分とパートナーの両方がビッドしたスートがある。`agreed_suit` と同じ判定) `Penalty`、パートナーのテイクアウトダブルの後の相手のレイズに対してなら `Responsive`、パートナーの応答スートへの相手の介入に対する低レベルなら `Support`、それ以外 `Unknown`。`Bid` は `our_suits` / `their_suits` / `partner_last` から `new_suit`、`raise` (パートナーが **先に** ビッドしたスート。自分が先にビッドしパートナーがサポートしただけのスート (`1H-P-2H-P-3H`) は `raise` ではなく `rebid_own`)、`nt`、`jump` (最小合法レベルとの差)、`cue` (相手のスート)、`reverse` (オープナーが 1 レベルで開いたスートより上位の新スートを 2 レベルで)、`rebid_own` を決める。
+3. `position`、`passed_hand`、`vul`、`competitive`、`our_suits`、`their_suits`、`agreed_suit` (同じスートをパートナーと自分がビッドした)、`last_bid`、`owner_acted`、`partner_actions`、`partner_first_action`、`partner_first_jump` はオークションから直接。`partner_constraint = None`、`forcing_situation = false`。
 
 ### 8.3 規則表 (順序付き。最初に述語が成り立つ行を採る)
 
@@ -995,25 +999,30 @@ impl Default for NaturalInference { /* NaturalParams::default() */ }
 | `open_weak2` | `Opener`, `level 2`, スート ≠ C | `suit_len[s] ≥ weak_two.0` ∧ `hcp = weak_two.1` | 0.5 |
 | `open_2c` | `Opener`, `2C` | `hcp ≥ strong_two_c` (シェイプなし) | 0.5 |
 | `open_preempt` | `Opener`, `level 3..=5`, スート | `suit_len[s] ≥ preempt[L].1` ∧ `hcp = preempt[L].2` | 0.5 |
-| `open_pass` | `Opener` の席の `Pass` (パス済みでない) | `hcp ≤ opening_hcp.start − 1` | 0.5 |
-| `overcall` | `Overcaller`, スート, `jump == 0` | `suit_len[s] ≥ overcall[l].0` ∧ `hcp = overcall[l].1` (`l` = 0: 1 レベル、1: 2 レベル以上); `Balancer` は下限に `balancing_shift` | 0.5 |
-| `jump_overcall` | `Overcaller`, スート, `jump == 1` | `suit_len[s] ≥ overcall[2].0` ∧ `hcp = overcall[2].1` | 0.4 |
-| `nt_overcall` | `Overcaller`, `1N` | `hcp = nt_overcall` ∧ `BALANCED` ∧ `Stopper(their suit)` | 0.6 |
+| `open_pass` | `Opener` の席の `Pass` (パス済みでない、かつまだ誰もビッドしていない: `last_bid == None`。オープナーの後のパスはここに来ない) | `hcp ≤ opening_hcp.start − 1` | 0.5 |
+| `overcall` | `Overcaller` の最初のアクション (`!owner_acted`), `new_suit` (相手スートのキュービッドを除く), `jump == 0` | `suit_len[s] ≥ overcall[l].0` ∧ `hcp = overcall[l].1` (`l` = 0: 1 レベル、1: 2 レベル以上); `Balancer` は下限に `balancing_shift` | 0.5 |
+| `jump_overcall` | `Overcaller` の最初のアクション, `new_suit`, `jump == 1` | `suit_len[s] ≥ overcall[2].0` ∧ `hcp = overcall[2].1` | 0.4 |
+| `nt_overcall` | `Overcaller` の最初のアクション, 最安の NT (`jump == 0`) で 2 レベル以下 (1 レベルのオープンに 1N、ウィーク・ツーに 2N) | `hcp = nt_overcall` ∧ `BALANCED` ∧ `Stopper(their suit)` | 0.6 |
 | `takeout_x` | `Double(Takeout)`: パートナー未ビッド、相手のスートが 2 レベル以下 | `hcp ≥ takeout_double.0` ∧ `suit_len[their] ≤ takeout_double.1` ∧ 未ビッドスート各 `≥ takeout_double.2` (未ビッドが 3 つ以上なら `Or` で 2 つ以上を要求) | 0.5 |
-| `penalty_x` | `Double(Penalty)`: パートナーの 1N の後、相手のコントラクトが 4 レベル以上、またはリダブル局面 | `hcp ≥ 10` ∧ `suit_len[their] ≥ 4` | 0.3 |
+| `penalty_x` | `Double(Penalty)`: パートナーの最後のビッドが NT、相手が NT または 4 レベル以上、または我々がスートを合意済み | `hcp ≥ 10` ∧ `suit_len[their] ≥ 4` | 0.3 |
 | `negative_x` | `Double(Negative)`: パートナーがスートを開き RHO が 2 レベル以下でオーバーコール | 未ビッドメジャー `≥ 4` (`Or`) ∧ `hcp ≥ response.new_suit_1.1 + 2 × (level − 1)` | 0.5 |
-| `raise` | パートナーのスート `s` を我々がビッド, `jump == 0` | `suit_len[s] ≥ raise.0` ∧ 役割/レベル別の `hcp` (`Responder`: `response.raise.1` 単純、`response.jump_raise.1` ジャンプ、ゲームレイズ `13+`; `Advancer`: `advance.raise`; `Opener`: `rebid.raise` / `rebid.jump_raise`) | 0.6 |
+| `raise` | パートナーが先にビッドしたスート `s` を我々がビッド | `suit_len[s] ≥ raise.0` ∧ 役割/レベル別の `hcp` (`Responder`: `response.raise.1` 単純、`response.jump_raise.1` ジャンプ、ゲームレイズ `13+`; `Advancer`: `advance.raise`; `Opener`: `rebid.raise` / `rebid.jump_raise`) | 0.6 |
 | `new_suit_resp_1` | `Responder`, `new_suit`, `level 1` | `suit_len[s] ≥ response.new_suit_1.0` ∧ `hcp ≥ response.new_suit_1.1` | 0.5 |
 | `new_suit_resp_2` | `Responder`, `new_suit`, `level 2`, `jump == 0` | `suit_len[s] ≥ response.new_suit_2.0` (5) ∧ `hcp ≥ response.new_suit_2.1` (10); `jump == 1` は `hcp ≥ response.jump_shift` | 0.5 |
 | `resp_nt` | `Responder`, `nt`, レベル `L` | `hcp = response.nt[L]` (1N はシェイプなし、2N/3N は `BALANCED` 寄り: 4 メジャー否定は v2) | 0.5 |
-| `rebid_own` | `Opener`, `rebid_own` | `suit_len[s] ≥ 6` ∧ `hcp = opening_hcp` (`jump == 1` なら `rebid.jump_rebid`) | 0.5 |
+| `rebid_own` | `Opener`, `rebid_own` | `suit_len[s] ≥ 6` ∧ `hcp = opening_hcp` (`jump == 1` なら `rebid.jump_rebid`)。1 スートのオープン後に合意済みスート (自分が先にビッドしパートナーがサポートしたスート) を再び上げる場合は別枝: 長さはオープンの最小長 (2 番目のスートなら 4)、`hcp` は競り合いなしのジャンプなしが `rebid.jump_rebid` (ゲームトライ)、競り合いでは `opening_hcp`、ジャンプは `rebid.jump_rebid.start..=opening_hcp.end` | 0.5 |
 | `reverse` | `Opener`, `reverse` (最初のスートの 2 レベルより上の新スート) | `hcp ≥ rebid.reverse` ∧ 最初のスート `≥ 5` ∧ 2 番目 `≥ 4` | 0.4 |
-| `cue` | 相手のスートのビッド | シェイプなし; `hcp ≥ gf_total − partner_min` (`partner_constraint` が無ければ `Advancer` の `advance.cue`); `flags.artificial` | 0.3 |
+| `rebid_nt` | `Opener` (1 スートのオープン後), `nt`, 2 レベル以下、合意スートなし | `BALANCED` ∧ `hcp = rebid.nt_1` (`jump == 0`) / `rebid.nt_2` (`jump == 1`)。それより大きいジャンプは `fallback` | 0.5 |
+| `rebid_new_suit` | `Opener` (1 スートのオープン後), `new_suit` (リバースでない。`reverse` が先に当たる) | `suit_len[s] ≥ 4` ∧ `hcp = opening_hcp.start..=rebid.jump_raise.end` (`jump ≥ 1` のジャンプシフトは `hcp ≥ rebid.jump_rebid.end + 1`) | 0.4 |
+| `advance_new_suit` | `Advancer` の最初のアクション, パートナーの最初のアクションがビッド (テイクアウトダブルへの応答は除く), `new_suit`, `jump == 0` | `suit_len[s] ≥ advance.new_suit.0` ∧ `hcp ≥ advance.new_suit.1` | 0.5 |
+| `cue` | 相手のスートのビッド | シェイプなし; `Opener`/`Responder` で `partner_constraint` があれば `hcp ≥ gf_total − partner_min` (`gf_total = 25`)、それ以外 (`Advancer`/`Overcaller`/`Balancer`、または `partner_constraint` なし) は `advance.cue`; `flags.artificial` | 0.3 |
 | `pass_forcing` | `Pass` かつ `forcing_situation` (矛盾) | `hcp = 0..=0` (充足不能に近い制約。L3 が ε 混合で重みを下げる) | 0.1 |
-| `pass_default` | `Pass` | 役割別の上限 (補集合に近い): `Responder` → `hcp ≤ response.new_suit_1.1 − 1`; `Advancer` → `hcp ≤ advance.raise.1.start − 1`; それ以外 `ANY` | 0.4 |
+| `pass_default` | `Pass` | 上限は、自分がまだアクションしておらず (`!owner_acted`) パートナーの非パスがオープン/オーバーコールの 1 回だけ (`partner_actions == 1`) のときだけ付き、パートナーのコールで決まる: `Responder` で 1 レベルのスートオープン → `hcp ≤ response.new_suit_1.1 − 1`、1N/2N オープン → `hcp ≤ gf_total − nt[L].end − 1` (1N なら 7); `Advancer` でジャンプでない 1〜2 レベルのスートオーバーコール → `hcp ≤ advance.raise.1.start − 1`、NT オーバーコール → `hcp ≤ gf_total − nt_overcall.end − 1`。それ以外 (ウィーク・ツー、プリエンプト、2C、ダブル、ジャンプオーバーコール、2 回目以降のパス、`Opener`/`Overcaller` のパス) は `ANY` | 上限付き 0.4、`ANY` は 0.2 (どの手も満たすパスが、同じ優先度の規則 (`reverse` など) を `choose_bid` のコール順タイブレークで常に負かさないように) |
 | `fallback` | 上記のどれにも該当しない | `ANY` | 0.05 |
 
 `Balancer` は対応する `Overcaller` 規則を使い、HCP 下限に `balancing_shift` を加える。`candidates(auction, owner)` は合法コールの各々に `classify` + `infer` を適用し、`priority = round(confidence × 100)` を付けて返す (`fallback` 行のコールは除く)。
+
+**フェーズ 3 統合レビューによる訂正 (2026-09-26)。** (1) `open_pass` はオープナーの後のパス (`1H-P-2H-P-P`、`1NT-P-3NT-P-P`) にも当たり、オープンと矛盾する 0–11 HCP を与えていた: `last_bid == None` を条件に追加。(2) `pass_default` はレスポンダー/アドバンサーのあらゆるパスを 0–5 に制限していた (1S と応答した後のパスや、パートナーの 1NT・ウィーク・ツーへのパスも): 上表の通り最初のアクションだけに、パートナーのコールに応じた上限を付ける。(3) `overcall`/`jump_overcall` がキュービッド (`1H-(2H)`) とオーバーコーラー自身の 2 回目以降のビッドを新しいオーバーコールと読み、`nt_overcall` が任意レベルの NT (`1H-(2NT)` のアンユージュアル、3NT) に当たっていた: 最初のアクション・`new_suit`・最安 NT に限定。(4) `cue` の GF 式はアドバンサーのキュー (パートナーのオーバーコール最小 8 なら 17+) やオーバーコーラーのキューには当てはまらない: `Opener`/`Responder` だけに限定。(5) ダブル分類を §8.2 の文言に合わせた: パートナーの NT の後は `Penalty`、テイクアウトの条件は「パートナーが未ビッド」(自分のオーバーコール後の再開ダブルも `Takeout`)、合意スートは自分とパートナーの両方がビッドしたスートで判定。(6) `raise` はパートナーが先にビッドしたスートに限り、オープナーの合意スートの再レイズ (`1H-P-2H-P-3H`) は `rebid_own` の専用枝 (ゲームトライ) に回す。(7) `NaturalParams` にあるのにどの規則も使っていなかった `rebid.nt_1`/`nt_2`/`advance.new_suit` に規則 (`rebid_nt`、`rebid_new_suit`、`advance_new_suit`) を足した。これらの通常のナチュラルコールは従来 `fallback` に落ち、`candidates` が決して出さなかった。既知の限界: レスポンダーやオーバーコーラーが、パートナーのサポートを受けた自分のスートを再び上げるコール (`1H-P-1S-P-2S-P-3S` のレスポンダー) は `raise` でなくなり、対応する規則が無いので `fallback` になる。(8) (1) の後、オープナーの後のパスは `pass_default` の `ANY` になるが、confidence 0.4 のままでは `choose_bid` のコール順タイブレーク (`Pass` が最小) で同じ 0.4 の規則 (`reverse`、`rebid_new_suit`、`jump_overcall`) を常に負かした (再現率の `reverse` が 0.73 → 0.0): 上限なしのパスは 0.2 にした。回帰テストは `crates/bridge-system/tests/natural_regressions.rs`。これらの修正後の §8.5 測定 2 (再現率) は 600 決定点・8,046 候補で全体一致率 0.342 (修正前 7,593 候補・0.331。`11-testing.md` §6 の数値は修正前のもの)。
 
 **測定 (§8.5) から見つかった訂正と既知の限界。** `rule_rebid_own` は元々ジャンプなしの自己スート・リビッドを常に `opening_hcp` (12–21) と比較していたが、オープニングがウィーク・ツーやプリエンプトの場合これは無関係などころか非交叉の範囲であり (`weak_two.1` は 5–10)、隠しノード比較の recall/precision が恒常的に 0 になっていた。`crates/bridge-system/src/natural.rs` の `opening_level_hcp` ヘルパーで、オープナー自身の最初の `Call::Bid` (`CallContext::opener_first_bid`。NT を除外する `opener_first_suit` とは違い NT オープンも含む) のストレイン・レベルからウィーク・ツー (`weak_two.1`)、プリエンプト (`preempt` 表の該当レベル)、ストロング 2C (`strong_two_c..=37`) の HCP を選ぶよう修正済み。当初 `opener_first_suit` のレベルだけを見る実装で直したところ、1NT/2NT のトランスファー完成 (例 `1NT-P-2D-P-2H`) が「レベル 2 のスート」として記録され、後続のリビッドがウィーク・ツーの範囲と誤判定される回帰が見つかったため、`opener_first_bid` (NT を含むオープナーの最初のビッドそのもの) に基づく判定に直した (回帰テスト `rebid_own_after_weak_two_uses_weak_two_hcp` / `rebid_own_after_preempt_uses_preempt_hcp` / `rebid_own_after_nt_transfer_completion_uses_opening_hcp` / `rebid_own_after_strong_2c_uses_strong_two_c_hcp`)。同じ測定で `rule_resp_nt` にも既知の限界が見つかった: パートナー自身の 1NT/2NT オープンへの定量的レイズ (例 `1NT-P-2NT` は sayc.bml で 8–9 hcp) と、スート・オープンへのジャンプ NT レスポンス (`response.nt` 表、レベル 2 は 11–12 hcp) を同じ規則・同じ HCP 表で扱っており、前者は後者の表と非交叉になる。`NaturalParams` の既存フィールドだけでは区別できず (新フィールドの追加は `ir.rs`/`compile/meta.rs` 側の変更を伴い、このレーンの担当範囲外)、フェーズ 4 で `ResponseParams` に「パートナーの NT オープンへのレイズ」用のフィールドを足すかどうか検討する。
 

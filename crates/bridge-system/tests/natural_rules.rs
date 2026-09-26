@@ -248,9 +248,10 @@ fn rule_pass_forcing() {
 
 #[test]
 fn rule_pass_default() {
-    // Responder passing with a minimum hand: no earlier rule matches a plain pass by a
-    // non-opener, non-forcing-situation role.
-    let (ctx, inf) = infer("1S P 2S P P", 4, Seat::South);
+    // Responder's first pass of partner's 1-level opening: no earlier rule matches a plain pass
+    // by a non-opener, non-forcing-situation role, and the pass is limited to below a 1-level
+    // response.
+    let (ctx, inf) = infer("1S P P", 2, Seat::South);
     assert_eq!(ctx.call, bridge_core::Call::Pass);
     assert_eq!(inf.rule, "pass_default");
     let good = hand(LOW, LOW, LOW, "5432"); // 0 hcp
@@ -261,10 +262,9 @@ fn rule_pass_default() {
 
 #[test]
 fn rule_fallback() {
-    // Opener's 1-level notrump *rebid* (as opposed to opening 1NT) matches nothing in the v1
-    // table (06-system.md §8.3 does not wire `rebid.nt_1`/`nt_2` into any rule yet), so it falls
-    // through to `fallback`.
-    let (_, inf) = infer("1C P 1H P 1NT", 4, Seat::North);
+    // A redouble matches nothing in the v1 table (06-system.md §8.3 has no redouble rule), so it
+    // falls through to `fallback`.
+    let (_, inf) = infer("1S X XX", 2, Seat::South);
     assert_eq!(inf.rule, "fallback");
     // `ANY`: every hand satisfies it.
     assert!(inf.constraint.satisfies(hand(LOW, LOW, LOW, "5432")));

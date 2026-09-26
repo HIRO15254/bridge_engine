@@ -205,7 +205,8 @@ fn partial_and_natural_epsilon() {
     // Call 0 (1H) and call 1 (1NT) both resolve Exact, each in its own seat's system; call 2 (2H)
     // is the first call anywhere in the auction that does not.
     assert_eq!(interp.divergence, Some(2));
-    // eps_partial mixed in: the real alternative plus the ANY fallback.
+    // eps_partial mixed in: the real alternative plus the ANY fallback, which also receives the
+    // `lenient_decay` (rho) mass of the single substitution (07-bidding.md section 4.1 step 5.2).
     assert_eq!(pc.alternatives.len(), 2);
     let sum: f32 = pc.alternatives.iter().map(|(_, w, _)| *w).sum();
     assert!((sum - 1.0).abs() < TOL);
@@ -215,7 +216,7 @@ fn partial_and_natural_epsilon() {
         .find(|(_, _, ex)| ex.kind != ResolutionKind::Fallback)
         .unwrap()
         .1;
-    assert!((real_weight - (1.0 - opts.eps_partial)).abs() < TOL);
+    assert!((real_weight - (1.0 - opts.eps_partial) * opts.lenient_decay).abs() < TOL);
 
     // `strict: true` removes the `Fallback` branch entirely (07-bidding.md §4.2), rather than
     // just shrinking its weight.

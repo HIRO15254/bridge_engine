@@ -255,45 +255,57 @@ pub(crate) fn gather(
                 natural_text: None,
             });
         }
-    } else if let Some(natural) = ctx.natural {
-        // `NaturalInference::candidates` builds each call's `CallContext` with a bare `classify`,
-        // leaving `partner_constraint`/`forcing_situation` at `None`/`false`, whereas
-        // `interpret`'s natural step fills both from the prefix's interpretation before `infer`.
-        // Rules that read them (`rule_cue`'s `min_hcp`, `rule_pass_forcing`) would then give a
-        // different constraint here than `interpret` gives for the same call, breaking the
-        // bidirectional consistency of 07-bidding.md §2.3. So this branch builds the same context
-        // as `interpret` (classify on the extended auction, partner context from the prefix's
-        // Step A, then `infer`), keeping `candidates`' filtering and priority rule.
-        let (partner_constraint, forcing_situation) =
-            partner_context_for_prefix(table, auction, seat);
-        for call in auction.legal_calls() {
-            let Ok(next) = auction.with(call) else {
-                continue;
-            };
-            let mut call_ctx = classify(&next, auction.len(), seat);
-            call_ctx.partner_constraint = partner_constraint.clone();
-            call_ctx.forcing_situation = forcing_situation;
-            let inf = natural.infer(&call_ctx);
-            if inf.rule == "fallback" {
-                continue;
+    }
+
+    // A position with no legal continuation in the system (a leaf reached through an opponents'
+    // edge that only a deeper row put in the trie, or a lenient match whose children are all
+    // illegal here) is off-system for every call we could make: `interpret` resolves each of them
+    // as `Natural` (§4.1 step 5.1 finds no sibling, `resolve_lenient` no node), so the natural
+    // candidates answer here too instead of `NoCandidate`. Illegal system children are still
+    // reported above.
+    let off_system = legal_system_candidates.is_empty();
+    if off_system {
+        if let Some(natural) = ctx.natural {
+            // `NaturalInference::candidates` builds each call's `CallContext` with a bare
+            // `classify`, leaving `partner_constraint`/`forcing_situation` at `None`/`false`,
+            // whereas `interpret`'s natural step fills both from the prefix's interpretation
+            // before `infer`. Rules that read them (`rule_cue`'s `min_hcp`, `rule_pass_forcing`)
+            // would then give a different constraint here than `interpret` gives for the same
+            // call, breaking the bidirectional consistency of 07-bidding.md §2.3. So this branch
+            // builds the same context as `interpret` (classify on the extended auction, partner
+            // context from the prefix's Step A, then `infer`), keeping `candidates`' filtering
+            // and priority rule.
+            let (partner_constraint, forcing_situation) =
+                partner_context_for_prefix(table, auction, seat);
+            for call in auction.legal_calls() {
+                let Ok(next) = auction.with(call) else {
+                    continue;
+                };
+                let mut call_ctx = classify(&next, auction.len(), seat);
+                call_ctx.partner_constraint = partner_constraint.clone();
+                call_ctx.forcing_situation = forcing_situation;
+                let inf = natural.infer(&call_ctx);
+                if inf.rule == "fallback" {
+                    continue;
+                }
+                if call == Call::Pass {
+                    pass_offered = true;
+                }
+                if !inf.constraint.satisfies(hand) {
+                    // Natural candidates are not system nodes, so a rejection is not reported
+                    // (`Tried` and `IllegalSystemCall`/`UnsatisfiableNode` only ever reference a
+                    // system `NodeId`; see 07-bidding.md §5.2).
+                    continue;
+                }
+                let priority = (inf.confidence * 100.0).round() as i16;
+                kept.push(Kept {
+                    call,
+                    node: None,
+                    priority,
+                    source: ChoiceSource::Natural,
+                    natural_text: Some((inf.explanation, inf.rule)),
+                });
             }
-            if call == Call::Pass {
-                pass_offered = true;
-            }
-            if !inf.constraint.satisfies(hand) {
-                // Natural candidates are not system nodes, so a rejection is not reported
-                // (`Tried` and `IllegalSystemCall`/`UnsatisfiableNode` only ever reference a
-                // system `NodeId`; see 07-bidding.md §5.2).
-                continue;
-            }
-            let priority = (inf.confidence * 100.0).round() as i16;
-            kept.push(Kept {
-                call,
-                node: None,
-                priority,
-                source: ChoiceSource::Natural,
-                natural_text: Some((inf.explanation, inf.rule)),
-            });
         }
     }
 
