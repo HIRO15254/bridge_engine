@@ -38,7 +38,7 @@
 | スレッド数不変 `deterministic_across_threads` | `bridge-sample` `tests/determinism.rs` | unit、同一 seed で `Threads::Single` と 7 スレッドプール | `Vec<WeightedDeal>` と `SampleReport` (`elapsed` 除く) がバイト一致 |
 | `ConstraintProposal` の `log_prob` 整合 | `bridge-sample` `tests/log_prob.rs` | 小プールで 10^5 提案のヒストグラム vs `exp(log_prob)`（格子要約・軽い代替の畳み込み・残差棄却を含む。棄却がある文脈では失敗率も照合） | χ² 通過 |
 | 残差棄却の厳密性 | `bridge-sample` `tests/residual.rs` | 全列挙での `log_prob` の差、提案の χ²、`sample_deals` の重み付き推定の不偏性（Wald χ²） | 差 < 1e-9、p > 0.01 |
-| ESS スイート `uniform_vs_constraint_ess_suite` | `bridge-sample` `tests/ess_suite.rs` | `#[ignore]`、release、固定ケース 50 オークション × n = 1000、実ビディング尤度、`target/ess_report.json`（§13） | 残差棄却ありで ESS/n の中央値 ≥ 0.5（全体・生成）、予算切れ ≤ 2 件、既定の試行あたり ESS ≥ 0.35。2026-09-27: 0.7345 / 0.9103、0 件、0.4222（達成。09-sample.md §10.2 の続き） |
+| ESS スイート `uniform_vs_constraint_ess_suite` | `bridge-sample` `tests/ess_suite.rs` | `#[ignore]`、release、固定ケース 50 オークション × n = 1000、実ビディング尤度、`target/ess_report.json`（§13） | 残差棄却ありで ESS/n の中央値 ≥ 0.5（全体・生成）、予算切れ ≤ 2 件、既定の試行あたり ESS ≥ 0.35。2026-09-27: 0.8258 / 0.8711、0 件、0.5154（達成。09-sample.md §10.2 の続き） |
 | 配牌サンプラーベンチ | `bridge-sample` `benches/deals.rs` | criterion | ≥ 10^4 配牌/秒/コア |
 | ショウアウトからのハード制約 `hard_constraints_from_showout` | `bridge-play` `tests/hard.rs` | unit (手組みの履歴、`hard_constraints`) | 長さ確定、`KnownCards` 一致、不整合は `PlayWarning::Inconsistent` |
 | リード・シグナル規則表 `lead_rules_table` | `bridge-play` `tests/leads.rs` | table-driven ((約束, リード札) → 期待制約の充足/不充足) | 全通過 |

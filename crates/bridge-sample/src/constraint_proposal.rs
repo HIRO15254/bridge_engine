@@ -84,8 +84,8 @@ struct SeatCache {
     id: u64,
     pool: Hand,
     fixed: Hand,
-    /// The kept alternatives' components (`None` when none has support on this pool).
-    heavy: Option<Vec<(Sampler, f64)>>,
+    /// The seat's mixture on that pool.
+    mix: SeatMix,
 }
 
 /// Source of [`PreparedConstraint::id`]: a fresh value per `prepare_constraint` call.
@@ -170,6 +170,13 @@ pub struct ConstraintProposal {
     /// for any value, and the uniform component covers every light alternative's hands; the
     /// ratio bounds what each light alternative can add to `E[w²]` (about `π_j / f_j`), so the
     /// default costs at most a few percent of ESS. `0.0` turns folding off.
+    ///
+    /// The shares are fixed on the full pool, but earlier seats' draws can leave the kept
+    /// alternatives almost no room on the pool a draw actually sees, while the folded ones still
+    /// fit. So on every draw the kept alternatives' mass `Σ w_i · cnt_i(pool)` is compared with
+    /// their full-pool mass scaled by how much the number of hands shrank; when it fell below a
+    /// tenth of that, the seat is drawn from every alternative, adaptively, instead (a choice
+    /// that depends only on the pool, so `log_prob` replays it exactly).
     pub light_threshold: f64,
 }
 
@@ -222,14 +229,8 @@ enum SeatPlan {
     ///
     /// At a re-prepared seat the *light* alternatives of `coarse` (see
     /// [`ConstraintProposal::light_threshold`]) are removed from it and folded into one uniform
-    /// component drawn with the fixed probability `π_L` (`light_share`, §6.4 (d) of
-    /// `09-sample.md`); the rest keep the per-draw adaptive shares. The seat's density is
-    ///
-    /// `q(h) = (1 − π_L) · Σ_{i kept, h ∈ C_i} v_i(pool) / cnt_i(pool) + π_L / C(|pool|, needed)`,
-    ///
-    /// exact for any fixed `π_L`. Per draw only the kept alternatives are prepared: the policy
-    /// mirror's tiny fallback pieces, whose coarse summaries overlap the main piece and each
-    /// other, no longer cost a `Sampler::prepare` each on every draw.
+    /// component drawn with the fixed probability `π_L` (`fold`, §6.4 (d) of `09-sample.md`);
+    /// the rest keep the per-draw adaptive shares. See [`SeatMix`] for the density.
     Sampled {
         candidates: Vec<Candidate>,
         coarse: Vec<Candidate>,
@@ -237,10 +238,122 @@ enum SeatPlan {
         /// per-draw `Sampler::prepare` (see `Sampler::prepare_many_dnf`).
         coarse_dnfs: Vec<Dnf>,
         coarse_direct: bool,
-        /// `π_L`, the draw probability of the uniform component the light alternatives were
-        /// folded into (0 except at re-prepared seats).
-        light_share: f64,
+        /// The light alternatives folded out of `coarse` (`None` unless this is a re-prepared
+        /// seat with at least one light alternative).
+        fold: Option<Fold>,
     },
+}
+
+/// The light alternatives folded out of a re-prepared seat's `coarse` (§6.4 (d); see
+/// [`ConstraintProposal::light_threshold`]).
+struct Fold {
+    /// `π_L`, the uniform component's draw probability.
+    share: f64,
+    /// The seat's coarse candidates before folding, with their DNFs: the mixture a draw falls
+    /// back to when the kept alternatives lost most of their room on its pool.
+    all: Vec<Candidate>,
+    all_dnfs: Vec<Dnf>,
+    /// `Σ_kept w_i · cnt_i` on the full pool.
+    kept_mass_full: f64,
+    /// `ln C(|full pool|, needed)`.
+    ln_hands_full: f64,
+}
+
+/// A draw falls back from the folded mixture to the full one when the kept alternatives' mass
+/// shrank, relative to the number of hands, below this fraction of its full-pool value.
+const FOLD_FALLBACK_RATIO: f64 = 0.1;
+
+/// A re-prepared seat's mixture on one `(pool, fixed)`.
+///
+/// - `Folded`: `q(h) = (1 − π_L) · Σ_{i kept, h ∈ C_i} v_i(pool) / cnt_i(pool) + π_L / C(|pool|,
+///   needed)`, with `v_i ∝ w_i · cnt_i(pool)` over the kept alternatives.
+/// - `Full`: `q(h) = Σ_{i, h ∈ C_i} v_i(pool) / cnt_i(pool)` over every coarse alternative (no
+///   folding at this seat, or the fallback of [`Fold`]); `None` when none has support.
+///
+/// Which one a pool gets depends only on the pool, so both are exact densities of what
+/// `propose` draws.
+enum SeatMix {
+    Folded {
+        kept: Vec<(Sampler, f64)>,
+        share: f64,
+    },
+    Full(Option<Vec<(Sampler, f64)>>),
+}
+
+impl SeatMix {
+    fn prepare(
+        coarse: &[Candidate],
+        coarse_dnfs: &[Dnf],
+        fold: Option<&Fold>,
+        pool: Hand,
+        fixed: Hand,
+        needed: u8,
+        opts: &bridge_constraint::SampleOptions,
+    ) -> SeatMix {
+        let Some(fold) = fold else {
+            return SeatMix::Full(prepare_components(
+                coarse,
+                Some(coarse_dnfs),
+                pool,
+                fixed,
+                opts,
+            ));
+        };
+        let hands_shrink = (ln_choose(pool.len(), needed) - fold.ln_hands_full).exp();
+        match prepare_components_with_mass(coarse, Some(coarse_dnfs), pool, fixed, opts) {
+            Some((kept, mass))
+                if mass >= FOLD_FALLBACK_RATIO * hands_shrink * fold.kept_mass_full =>
+            {
+                SeatMix::Folded {
+                    kept,
+                    share: fold.share,
+                }
+            }
+            _ => SeatMix::Full(prepare_components(
+                &fold.all,
+                Some(&fold.all_dnfs),
+                pool,
+                fixed,
+                opts,
+            )),
+        }
+    }
+
+    fn sample(
+        &self,
+        pool: Hand,
+        fixed: Hand,
+        needed: u8,
+        rng: &mut dyn rand_core::Rng,
+    ) -> Option<Hand> {
+        let components = match self {
+            SeatMix::Folded { kept, share } => {
+                if uniform01(rng) < *share {
+                    return Some(fixed.union(draw_subset(pool, needed, rng)));
+                }
+                kept
+            }
+            SeatMix::Full(components) => components.as_ref()?,
+        };
+        let i = choose_component(components, rng);
+        Some(components[i].0.sample(rng)?.hand)
+    }
+
+    fn ln_density(&self, pool: Hand, needed: u8, hand: Hand) -> f64 {
+        match self {
+            SeatMix::Folded { kept, share } => {
+                let density = (1.0 - share) * mixture_log_prob(kept, hand).exp()
+                    + share * (-ln_choose(pool.len(), needed)).exp();
+                if density > 0.0 {
+                    density.ln()
+                } else {
+                    f64::NEG_INFINITY
+                }
+            }
+            SeatMix::Full(Some(components)) => mixture_log_prob(components, hand),
+            SeatMix::Full(None) => f64::NEG_INFINITY,
+        }
+    }
 }
 
 /// One seat in the sampling order `σ` (§6.1 point 3): most constrained first, so failure is
@@ -369,7 +482,7 @@ impl ConstraintProposal {
                         coarse,
                         coarse_dnfs,
                         coarse_direct,
-                        light_share: 0.0,
+                        fold: None,
                     },
                 },
                 mass.ln(),
@@ -391,11 +504,11 @@ impl ConstraintProposal {
                 coarse,
                 coarse_dnfs,
                 coarse_direct: false,
-                light_share,
+                fold,
                 ..
             } = &mut entry.plan
             {
-                *light_share = fold_light(
+                *fold = fold_light(
                     self.light_threshold,
                     coarse,
                     coarse_dnfs,
@@ -453,10 +566,10 @@ impl ConstraintProposal {
 }
 
 /// Folds a re-prepared seat's light `coarse` candidates (see
-/// [`ConstraintProposal::light_threshold`]) out of `coarse` / `coarse_dnfs` and returns their
-/// total share `π_L` of the full-pool mass `w_i · cnt_i(pool)`. Candidates with no support on the
-/// full pool are dropped (they have none on any smaller pool either); the heaviest candidate is
-/// always kept.
+/// [`ConstraintProposal::light_threshold`]) out of `coarse` / `coarse_dnfs`; `None` when none is
+/// light. Candidates with no support on the full pool are dropped from `coarse` either way (they
+/// have none on any smaller pool); the heaviest candidate is always kept.
+#[allow(clippy::too_many_arguments)]
 fn fold_light(
     threshold: f64,
     coarse: &mut Vec<Candidate>,
@@ -465,7 +578,7 @@ fn fold_light(
     pool: Hand,
     fixed: Hand,
     opts: &bridge_constraint::SampleOptions,
-) -> Result<f64, SampleError> {
+) -> Result<Option<Fold>, SampleError> {
     let samplers = Sampler::prepare_many_dnf(coarse_dnfs.iter(), pool, fixed, opts)
         .map_err(|e| SampleError::Prepare(e.to_string()))?;
     let counts: Vec<f64> = samplers.iter().map(|s| s.count() as f64).collect();
@@ -476,31 +589,48 @@ fn fold_light(
         .collect();
     let total: f64 = masses.iter().sum();
     if total <= 0.0 {
-        return Ok(0.0);
+        return Ok(None);
     }
-    let hands = ln_choose(pool.len(), needed).exp();
+    let ln_hands_full = ln_choose(pool.len(), needed);
+    let hands = ln_hands_full.exp();
     let heaviest = masses
         .iter()
         .enumerate()
         .fold(0, |best, (i, m)| if *m > masses[best] { i } else { best });
-    let mut light_share = 0.0;
+    let mut share = 0.0;
+    let mut kept_mass_full = 0.0;
+    let mut all = Vec::with_capacity(coarse.len());
+    let mut all_dnfs = Vec::with_capacity(coarse.len());
     let mut kept = Vec::with_capacity(coarse.len());
     let mut kept_dnfs = Vec::with_capacity(coarse.len());
     for (i, (candidate, dnf)) in coarse.drain(..).zip(coarse_dnfs.drain(..)).enumerate() {
-        let share = masses[i] / total;
-        if share <= 0.0 {
+        if masses[i] <= 0.0 {
             continue;
         }
-        if i != heaviest && share <= threshold * (counts[i] / hands) {
-            light_share += share;
+        all.push(candidate.clone());
+        all_dnfs.push(dnf.clone());
+        if i != heaviest && masses[i] / total <= threshold * (counts[i] / hands) {
+            share += masses[i] / total;
         } else {
+            kept_mass_full += masses[i];
             kept.push(candidate);
             kept_dnfs.push(dnf);
         }
     }
+    if share <= 0.0 {
+        *coarse = all;
+        *coarse_dnfs = all_dnfs;
+        return Ok(None);
+    }
     *coarse = kept;
     *coarse_dnfs = kept_dnfs;
-    Ok(light_share)
+    Ok(Some(Fold {
+        share,
+        all,
+        all_dnfs,
+        kept_mass_full,
+        ln_hands_full,
+    }))
 }
 
 /// A 53-bit uniform double in `[0, 1)` from one `rng.next_u64()`.
@@ -841,6 +971,18 @@ fn prepare_components(
     fixed: Hand,
     opts: &bridge_constraint::SampleOptions,
 ) -> Option<Vec<(Sampler, f64)>> {
+    prepare_components_with_mass(candidates, dnfs, pool, fixed, opts).map(|(c, _)| c)
+}
+
+/// [`prepare_components`], also returning the mass `Σ_i w_i · cnt_i` the shares were normalised
+/// by.
+fn prepare_components_with_mass(
+    candidates: &[Candidate],
+    dnfs: Option<&[Dnf]>,
+    pool: Hand,
+    fixed: Hand,
+    opts: &bridge_constraint::SampleOptions,
+) -> Option<(Vec<(Sampler, f64)>, f64)> {
     // One `prepare_many` call rather than a `Sampler::prepare` per candidate: every candidate
     // is prepared against the same `(pool, fixed)`, so terms with plain per-suit tables (all of
     // a re-prepared seat's coarse shape + HCP summaries) share one table build and their pair
@@ -865,7 +1007,7 @@ fn prepare_components(
     for (_, w) in &mut survivors {
         *w /= total;
     }
-    Some(survivors)
+    Some((survivors, total))
 }
 
 /// Draws a component index proportional to its weight (weights need not sum to 1: `total` is
@@ -977,43 +1119,38 @@ impl PreparedProposal for PreparedConstraint<'_> {
                 SeatPlan::Sampled {
                     coarse,
                     coarse_dnfs,
-                    light_share,
+                    fold,
                     ..
                 } if k != 0 => {
                     // §6.4 (c): re-prepared every draw, so use the coarse candidates; §6.4 (d):
-                    // only the kept ones, the light ones being folded into a uniform draw. The
-                    // prepared samplers are stashed in `REPREPARE_CACHE[k]` for the `log_prob`
-                    // call `sample_deals` makes on this same deal right after (see the
-                    // thread-local's doc comment above).
+                    // only the kept ones, the light ones being folded into a uniform draw, unless
+                    // this pool left the kept ones too little room (see `SeatMix`). The prepared
+                    // mixture is stashed in `REPREPARE_CACHE[k]` for the `log_prob` call
+                    // `sample_deals` makes on this same deal right after (see the thread-local's
+                    // doc comment above).
                     let hand = REPREPARE_CACHE.with(|cache| -> Option<Hand> {
                         let mut cache = cache.borrow_mut();
                         if cache.len() != m {
                             cache.clear();
                             cache.resize_with(m, || None);
                         }
-                        let heavy = prepare_components(
+                        let mix = SeatMix::prepare(
                             coarse,
-                            Some(coarse_dnfs),
+                            coarse_dnfs,
+                            fold.as_ref(),
                             pool,
                             fixed,
+                            known.needed(seat),
                             &self.sampler_opts,
                         );
-                        // The fold draw only consumes randomness when something was folded.
-                        let folded = *light_share > 0.0 && uniform01(rng) < *light_share;
-                        let hand = if folded {
-                            fixed.union(draw_subset(pool, known.needed(seat), rng))
-                        } else {
-                            let components = heavy.as_ref()?;
-                            let i = choose_component(components, rng);
-                            components[i].0.sample(rng)?.hand
-                        };
+                        let hand = mix.sample(pool, fixed, known.needed(seat), rng);
                         cache[k] = Some(SeatCache {
                             id: self.id,
                             pool,
                             fixed,
-                            heavy,
+                            mix,
                         });
-                        Some(hand)
+                        hand
                     });
                     hand?
                 }
@@ -1087,55 +1224,36 @@ impl PreparedProposal for PreparedConstraint<'_> {
                 SeatPlan::Sampled {
                     coarse,
                     coarse_dnfs,
-                    light_share,
+                    fold,
                     ..
                 } if k != 0 => {
                     // Sum over every component that could have produced `hand` (they overlap):
                     // the mixture density is only correct when every one is counted (§6.3).
-                    // §6.4 (c)/(d): replay the same coarse mixture `propose` drew this seat from —
+                    // §6.4 (c)/(d): replay the same mixture `propose` drew this seat from —
                     // reusing `REPREPARE_CACHE[k]` when it was left by a `propose` call of this
                     // same proposal on this thread for this exact `(pool, fixed)` (see the
                     // thread-local's doc comment above), rebuilding otherwise.
+                    let needed = known.needed(seat);
                     let ln_component = REPREPARE_CACHE.with(|cache| -> f64 {
                         let cache = cache.borrow();
-                        let hit = match cache.get(k) {
+                        match cache.get(k) {
                             Some(Some(entry))
                                 if entry.id == self.id
                                     && entry.pool == pool
                                     && entry.fixed == fixed =>
                             {
-                                Some(entry)
+                                entry.mix.ln_density(pool, needed, hand)
                             }
-                            _ => None,
-                        };
-                        let rebuilt;
-                        let heavy = match hit {
-                            Some(entry) => entry.heavy.as_deref(),
-                            None => {
-                                rebuilt = prepare_components(
-                                    coarse,
-                                    Some(coarse_dnfs),
-                                    pool,
-                                    fixed,
-                                    &self.sampler_opts,
-                                );
-                                rebuilt.as_deref()
-                            }
-                        };
-                        let mut density = match heavy {
-                            Some(components) => {
-                                (1.0 - light_share) * mixture_log_prob(components, hand).exp()
-                            }
-                            None => 0.0,
-                        };
-                        if *light_share > 0.0 {
-                            density +=
-                                light_share * (-ln_choose(pool.len(), known.needed(seat))).exp();
-                        }
-                        if density > 0.0 {
-                            density.ln()
-                        } else {
-                            f64::NEG_INFINITY
+                            _ => SeatMix::prepare(
+                                coarse,
+                                coarse_dnfs,
+                                fold.as_ref(),
+                                pool,
+                                fixed,
+                                needed,
+                                &self.sampler_opts,
+                            )
+                            .ln_density(pool, needed, hand),
                         }
                     });
                     if !ln_component.is_finite() {
@@ -1223,36 +1341,62 @@ mod tests {
                 SeatPlan::Sampled {
                     candidates,
                     coarse,
-                    light_share,
+                    fold,
                     ..
                 } => {
-                    // Every original candidate whose summary was kept, unmerged, plus the
-                    // uniform component the light ones were folded into.
-                    let heavy: Vec<Candidate> = candidates
+                    // Every original candidate, coarsened and unmerged; the kept ones are those
+                    // whose summary survived folding.
+                    let all: Vec<Candidate> = candidates
                         .iter()
                         .map(|c| Candidate {
                             constraint: coarsen(&c.constraint),
                             weight: c.weight,
                         })
+                        .collect();
+                    let kept: Vec<Candidate> = all
+                        .iter()
                         .filter(|c| {
                             coarse
                                 .iter()
                                 .any(|h| same_atom(&h.constraint, &c.constraint))
                         })
+                        .cloned()
                         .collect();
-                    let mut density =
-                        match prepare_components(&heavy, None, pool, fixed, &prepared.sampler_opts)
-                        {
-                            Some(components) => {
-                                (1.0 - light_share) * mixture_log_prob(&components, hand).exp()
+                    let needed = known.needed(seat);
+                    let opts = &prepared.sampler_opts;
+                    let full = |cands: &[Candidate]| match prepare_components(
+                        cands, None, pool, fixed, opts,
+                    ) {
+                        Some(components) => mixture_log_prob(&components, hand),
+                        None => f64::NEG_INFINITY,
+                    };
+                    match fold {
+                        None => full(&kept),
+                        Some(fold) => {
+                            // The fallback rule, recomputed from scratch.
+                            let mass_on = |p: Hand| {
+                                prepare_components_with_mass(&kept, None, p, fixed, opts)
+                                    .map_or(0.0, |(_, mass)| mass)
+                            };
+                            let full_pool = known.pool();
+                            let shrink = (ln_choose(pool.len(), needed)
+                                - ln_choose(full_pool.len(), needed))
+                            .exp();
+                            if mass_on(pool) < FOLD_FALLBACK_RATIO * shrink * mass_on(full_pool) {
+                                full(&all)
+                            } else {
+                                let components = prepare_components(&kept, None, pool, fixed, opts)
+                                    .expect("the kept mass is positive");
+                                let density = (1.0 - fold.share)
+                                    * mixture_log_prob(&components, hand).exp()
+                                    + fold.share * (-ln_choose(pool.len(), needed)).exp();
+                                if density > 0.0 {
+                                    density.ln()
+                                } else {
+                                    f64::NEG_INFINITY
+                                }
                             }
-                            None => 0.0,
-                        };
-                    density += light_share * (-ln_choose(pool.len(), known.needed(seat))).exp();
-                    if density > 0.0 {
-                        density.ln()
-                    } else {
-                        f64::NEG_INFINITY
+                        }
                     }
                 }
             };
@@ -1393,14 +1537,14 @@ mod tests {
                 candidates,
                 coarse,
                 coarse_direct,
-                light_share,
+                fold,
                 ..
             } = &entry.plan
             {
                 if k != 0 && k + 1 != prepared.order.len() {
                     merged |= coarse.len() < candidates.len() && !*coarse_direct;
                     direct |= *coarse_direct;
-                    light |= *light_share > 0.0;
+                    light |= fold.is_some();
                 }
             }
         }
@@ -1445,6 +1589,95 @@ mod tests {
                 assert_eq!(fast, f64::NEG_INFINITY, "support differs for {deal:?}");
             }
         }
+    }
+
+    /// §6.4 (d)'s fallback: North (drawn first) either holds the four deuces or has 22+ HCP; South
+    /// (re-prepared) is 19+ HCP with a light `ANY` folded out. After a 22+ North the kept
+    /// alternative has (almost) no room, so the draw must fall back to the full mixture; after
+    /// the deuces it keeps the folded one. Both must match the reference exactly.
+    #[test]
+    fn fold_fallback_matches_the_reference() {
+        let deuces = [Suit::Spades, Suit::Hearts, Suit::Diamonds, Suit::Clubs]
+            .into_iter()
+            .map(|suit| holds(suit, 0))
+            .collect();
+        let interpretation = Interpretation {
+            seats: [
+                vec![
+                    (atom(ShapeSet::ALL, 0..=37, deuces), 0.5, explanation()),
+                    (atom(ShapeSet::ALL, 22..=37, Vec::new()), 0.5, explanation()),
+                ],
+                vec![(HandConstraint::ANY, 1.0, explanation())],
+                vec![
+                    (atom(ShapeSet::ALL, 19..=37, Vec::new()), 1.0, explanation()),
+                    (HandConstraint::ANY, 1e-5, explanation()),
+                ],
+                vec![(HandConstraint::ANY, 1.0, explanation())],
+            ],
+            per_call: Vec::new(),
+            divergence: None,
+        };
+        let play_constraints = [
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+        ];
+        let ctx = SampleContext {
+            known: KnownCards::EMPTY,
+            interpretation: &interpretation,
+            play_constraints: &play_constraints,
+            play_soft: None,
+            bidding: None,
+        };
+        let prepared = ConstraintProposal::default()
+            .prepare_constraint(&ctx)
+            .expect("every seat has support");
+        let south = prepared
+            .order
+            .iter()
+            .position(|e| e.seat == Seat::South)
+            .expect("South is sampled");
+        assert!(
+            matches!(
+                &prepared.order[south].plan,
+                SeatPlan::Sampled { fold: Some(_), .. }
+            ),
+            "South's ANY must be folded"
+        );
+
+        let mut rng = crate::rng_for(0xF01D, 0);
+        let (mut folded, mut fallbacks) = (0, 0);
+        for _ in 0..600 {
+            let Some(deal) = prepared.propose(&mut rng) else {
+                continue;
+            };
+            REPREPARE_CACHE.with(|cache| match &cache.borrow()[south] {
+                Some(SeatCache {
+                    mix: SeatMix::Folded { .. },
+                    ..
+                }) => folded += 1,
+                Some(SeatCache {
+                    mix: SeatMix::Full(_),
+                    ..
+                }) => fallbacks += 1,
+                None => panic!("South's mixture was not cached"),
+            });
+            let fast = prepared.log_prob(&deal);
+            let reference = reference_log_prob(&prepared, &deal);
+            assert!(
+                fast.is_finite(),
+                "a proposed deal must have finite log_prob"
+            );
+            assert!(
+                (fast - reference).abs() < 1e-9,
+                "log_prob {fast} != reference {reference} for {deal:?}"
+            );
+        }
+        assert!(
+            folded > 50 && fallbacks > 50,
+            "folded {folded}, fallbacks {fallbacks}"
+        );
     }
 
     /// Regression: `REPREPARE_CACHE` used to be keyed only by seat position and `(pool, fixed)`,
