@@ -20,10 +20,24 @@
 //! Environment variables: `LEAD_SAMPLES` (default 100, samples per board for the real harness),
 //! `LEAD_BOARD_COUNT` (default 100, boards selected), `LEAD_BOARDS` (see above),
 //! `LEAD_UNIFORM=1` (use [`UniformProposal`] instead of [`ConstraintProposal`] for the main
-//! evaluation, not just baseline (a)), `BRIDGE_CORPUS_DIR` and `BRIDGE_SYSTEMS_DIR` (both follow
-//! `crates/bridge-format/tests/common/mod.rs` / `systems/README.md`'s convention: an explicit
-//! directory, or else relative to `CARGO_MANIFEST_DIR`).
+//! evaluation, not just baseline (a)), `LEAD_SPLIT` (`eval`, the default: boards from the corpus
+//! eval split of D20, the odd auction indices in the enumeration order of
+//! `crates/bridge-bidding/tests/reproduction.rs`'s `corpus_auctions`; `all`: the first boards in
+//! file order, as phase 3 selected them), `LEAD_POLICY` (`human`, the default, `system`, or
+//! `legacy1`: the retired priority softmax at τ = 1, `PolicyParams::legacy(1.0)`),
+//! `LEAD_INTERPRET` (`mirror`, the default: the proposal interprets the auction with the mirror of
+//! the human preset, or of the likelihood's own policy when that is `system`; `legacy`: the phase-3
+//! interpretation, `InterpretOptions::legacy()`), `LEAD_RESIDUAL` (default `1`: the constraint
+//! proposal uses residual rejection, `09-sample.md` §6.5; `0` turns it off), `BRIDGE_CORPUS_DIR`
+//! and `BRIDGE_SYSTEMS_DIR` (both follow `crates/bridge-format/tests/common/mod.rs` /
+//! `systems/README.md`'s convention: an explicit directory, or else relative to
+//! `CARGO_MANIFEST_DIR`).
+//!
+//! Baseline (a) does not depend on the policy, the interpretation or the proposal, so its
+//! per-board results are cached under `target/lead_eval/baseline_a-<samples>-<seed>-<split>/` and
+//! shared by every configuration.
 #![cfg(feature = "dds")]
+#![recursion_limit = "256"]
 
 mod common;
 
@@ -32,12 +46,17 @@ use std::time::Instant;
 
 use bridge::system::lexer::FsLoader;
 use bridge::system::{CompileOptions, NaturalInference};
-use bridge_bidding::{Interpretation, Table};
+use bridge_bidding::{
+    BidContext, ImplicitPass, InterpretOptions, Interpretation, PolicyParams, Scoring, Table,
+    interpret,
+};
 use bridge_constraint::{HandConstraint, KnownCards};
 use bridge_core::{Auction, Card, Contract, Deal};
 use bridge_format::pbn;
 use bridge_lead::{LeadAdvice, LeadOptions, LeadQuery, LeadScore, advise, advise_with_context};
-use bridge_sample::{ConstraintProposal, Proposal, SampleContext, UniformProposal};
+use bridge_sample::{
+    BiddingLikelihood, ConstraintProposal, Proposal, SampleContext, UniformProposal,
+};
 
 /// Cargo runs an integration test's binary with the *package* root (`crates/bridge-lead`) as its
 /// working directory, not the workspace root — so every workspace-relative path in this file
@@ -95,10 +114,34 @@ struct Board {
     contract: Contract,
 }
 
-/// The first `limit` boards, in deterministic file order, with a complete non-passed-out
-/// auction, a full deal and a contract.
-fn select_boards(corpus_dir: &Path, limit: usize) -> Vec<Board> {
+/// Which corpus boards are eligible (`LEAD_SPLIT`).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Split {
+    /// Every board, in file order (phase 3's selection).
+    All,
+    /// The D20 eval split: the odd indices of the corpus auction enumeration.
+    Eval,
+}
+
+impl Split {
+    fn name(self) -> &'static str {
+        match self {
+            Split::All => "all",
+            Split::Eval => "eval",
+        }
+    }
+}
+
+/// The first `limit` boards of `split`, in deterministic file order, with a complete
+/// non-passed-out auction, a full deal and a contract.
+///
+/// The split index counts every game that parses to a view with an auction, exactly as
+/// `crates/bridge-bidding/tests/reproduction.rs`'s `corpus_auctions` enumerates them (and
+/// `crates/bridge-sample/tests/ess_suite.rs`'s corpus cases), so the three agree on which
+/// auctions are tuning and which are evaluation data.
+fn select_boards(corpus_dir: &Path, limit: usize, split: Split) -> Vec<Board> {
     let mut boards = Vec::new();
+    let mut auction_index = 0usize;
     'files: for path in pbn_files(&corpus_dir.join("pbn")) {
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
@@ -106,11 +149,25 @@ fn select_boards(corpus_dir: &Path, limit: usize) -> Vec<Board> {
         let (file, _warnings) = pbn::parse_lenient(&bytes);
         let mut previous = None;
         for (game_index, game) in file.games.iter().enumerate() {
-            let Ok(view) = game.view(previous.as_ref()) else {
+            let view = game.view(previous.as_ref()).ok();
+            let Some(view) = view else {
+                // `corpus_auctions` forgets the previous view after a game that fails to parse;
+                // phase 3's selection (`All`) kept it, and keeps doing so.
+                if split == Split::Eval {
+                    previous = None;
+                }
                 continue;
             };
-            if let (Some(auction), Some(contract), Some(partial)) =
-                (&view.auction, view.contract, view.deal)
+            let in_split = match &view.auction {
+                Some(_) => {
+                    let this = auction_index;
+                    auction_index += 1;
+                    split == Split::All || this % 2 == 1
+                }
+                None => false,
+            };
+            if let (true, Some(auction), Some(contract), Some(partial)) =
+                (in_split, &view.auction, view.contract, view.deal)
             {
                 if auction.is_complete() && !auction.is_passed_out() {
                     if let Some(deal) = partial.complete() {
@@ -342,16 +399,124 @@ fn median(xs: &[f64]) -> f64 {
     }
 }
 
-/// Evaluates one board and returns its record (`status` is `"ok"` or `"skipped"`).
-fn evaluate_board(
+/// One evaluation configuration.
+struct Setup<'a> {
+    table: &'a Table,
+    proposal: &'a dyn Proposal,
+    dd: &'a dyn bridge::dd::DoubleDummy,
+    config: &'a serde_json::Value,
+    samples: usize,
+    /// The policy the deals are weighted by.
+    policy: PolicyParams,
+    /// How the proposal interprets the auction.
+    interpret: InterpretOptions,
+    /// Where baseline (a)'s per-board results are cached.
+    baseline_dir: &'a Path,
+}
+
+/// The advisor's result on `board` under `setup`: [`advise`] itself when the interpretation is
+/// the mirror of the likelihood's own policy (what `advise` always builds), otherwise the same
+/// pipeline through `advise_with_context` with the requested interpretation as the proposal.
+fn advise_board(setup: &Setup<'_>, board: &Board) -> Result<LeadAdvice, String> {
+    let opts = LeadOptions {
+        samples: setup.samples,
+        seed: 0,
+        top_k: 3,
+        policy: setup.policy,
+        interpret: setup.interpret,
+        ..LeadOptions::default()
+    };
+    let bid_ctx = BidContext {
+        scoring: Scoring::Imp,
+        natural: None,
+        implicit_pass: ImplicitPass::Complement,
+        policy: setup.policy,
+    };
+    let mirror = InterpretOptions::for_context(&bid_ctx);
+    let own_mirror = setup.interpret.mode == mirror.mode
+        && setup.interpret.policy == mirror.policy
+        && setup.interpret.implicit_pass == mirror.implicit_pass;
+    if own_mirror {
+        let query = LeadQuery {
+            auction: &board.auction,
+            leader_hand: board.deal.hand(board.contract.leader()),
+        };
+        return advise(setup.table, &query, setup.proposal, setup.dd, &opts)
+            .map_err(|e| e.to_string());
+    }
+    let leader = board.contract.leader();
+    let interpretation = interpret(setup.table, &board.auction, &setup.interpret);
+    let play_constraints = [
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+        HandConstraint::ANY,
+    ];
+    let ctx = SampleContext {
+        known: KnownCards::from_viewer(leader, board.deal.hand(leader)),
+        interpretation: &interpretation,
+        play_constraints: &play_constraints,
+        play_soft: None,
+        bidding: Some(BiddingLikelihood {
+            table: setup.table,
+            auction: &board.auction,
+            ctx: &bid_ctx,
+        }),
+    };
+    let vulnerable = board
+        .auction
+        .vulnerability()
+        .is_vulnerable(board.contract.declarer);
+    advise_with_context(
+        &ctx,
+        board.contract,
+        vulnerable,
+        setup.proposal,
+        setup.dd,
+        &opts,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Baseline (a)'s hit flags on `board` (`baseline_no_bidding_*`), from the cache in
+/// `setup.baseline_dir` when a record for this board and harness version is there, computed and
+/// cached otherwise.
+fn baseline_a_flags(
+    setup: &Setup<'_>,
     index: usize,
     board: &Board,
-    table: &Table,
-    proposal: &dyn Proposal,
-    dd: &dyn bridge::dd::DoubleDummy,
-    config: &serde_json::Value,
-    samples: usize,
-) -> serde_json::Value {
+    truth: &Truth,
+) -> Result<serde_json::Value, String> {
+    let path = setup.baseline_dir.join(format!("board_{index:03}.json"));
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+            if value["label"] == board.label.as_str() && value["record_version"] == RECORD_VERSION {
+                return Ok(value["flags"].clone());
+            }
+        }
+    }
+    let base = baseline_a(setup.dd, board, setup.samples, 0)?;
+    let flags = serde_json::json!({
+        "baseline_no_bidding_top1": base.leads.first().is_some_and(|l| hits_truth(l, truth)),
+        "baseline_no_bidding_top3": base.leads.iter().any(|l| hits_truth(l, truth)),
+        "baseline_no_bidding_top1_group":
+            base.leads.first().is_some_and(|l| hits_truth_group(l, truth)),
+        "baseline_no_bidding_top3_group": base.leads.iter().any(|l| hits_truth_group(l, truth)),
+    });
+    let record = serde_json::json!({
+        "label": board.label,
+        "record_version": RECORD_VERSION,
+        "flags": flags,
+    });
+    std::fs::write(&path, serde_json::to_string_pretty(&record).unwrap())
+        .map_err(|e| format!("writing {}: {e}", path.display()))?;
+    Ok(flags)
+}
+
+/// Evaluates one board and returns its record (`status` is `"ok"` or `"skipped"`).
+fn evaluate_board(index: usize, board: &Board, setup: &Setup<'_>) -> serde_json::Value {
+    let dd = setup.dd;
+    let config = setup.config;
     let start = Instant::now();
     let mut record = serde_json::json!({
         "index": index,
@@ -375,17 +540,7 @@ fn evaluate_board(
     record["baseline_random_top1"] = random_choice_baseline(m, 1).into();
     record["baseline_random_top3"] = random_choice_baseline(m, 3).into();
 
-    let query = LeadQuery {
-        auction: &board.auction,
-        leader_hand: board.deal.hand(board.contract.leader()),
-    };
-    let opts = LeadOptions {
-        samples,
-        seed: 0,
-        top_k: 3,
-        ..LeadOptions::default()
-    };
-    let advice = match advise(table, &query, proposal, dd, &opts) {
+    let advice = match advise_board(setup, board) {
         Ok(advice) => advice,
         Err(e) => return skip(record, format!("advise failed: {e}")),
     };
@@ -424,27 +579,21 @@ fn evaluate_board(
     record["ess_ratio"] = advice.sample_report.ess_ratio.into();
     record["produced"] = advice.sample_report.produced.into();
     record["attempts"] = advice.sample_report.attempts.into();
+    record["acceptance_rate"] = advice.sample_report.acceptance_rate.into();
+    record["ess_per_attempt"] = advice.sample_report.ess_per_attempt.into();
+    record["budget_exhausted"] = advice.sample_report.budget_exhausted.into();
     record["advise_seconds"] = start.elapsed().as_secs_f64().into();
 
-    match baseline_a(dd, board, samples, 0) {
-        Ok(base) => {
-            record["baseline_no_bidding_top1"] = base
-                .leads
-                .first()
-                .is_some_and(|l| hits_truth(l, &truth))
-                .into();
-            record["baseline_no_bidding_top3"] =
-                base.leads.iter().any(|l| hits_truth(l, &truth)).into();
-            record["baseline_no_bidding_top1_group"] = base
-                .leads
-                .first()
-                .is_some_and(|l| hits_truth_group(l, &truth))
-                .into();
-            record["baseline_no_bidding_top3_group"] = base
-                .leads
-                .iter()
-                .any(|l| hits_truth_group(l, &truth))
-                .into();
+    match baseline_a_flags(setup, index, board, &truth) {
+        Ok(flags) => {
+            for key in [
+                "baseline_no_bidding_top1",
+                "baseline_no_bidding_top3",
+                "baseline_no_bidding_top1_group",
+                "baseline_no_bidding_top3_group",
+            ] {
+                record[key] = flags[key].clone();
+            }
         }
         Err(e) => record["baseline_no_bidding_error"] = e.into(),
     }
@@ -510,6 +659,15 @@ fn summarise(records_dir: &Path, config: &serde_json::Value, total: usize) -> se
         "nontrivial_boards": nontrivial.len(),
         "samples_per_board": config["samples"],
         "proposal": config["proposal"],
+        "policy": config["policy"],
+        "interpret": config["interpret"],
+        "residual_rejection": config["residual_rejection"],
+        "split": config["split"],
+        "boards_budget_exhausted": ok.iter().filter(|r| flag(r, "budget_exhausted")).count(),
+        "median_acceptance_rate":
+            median(&ok.iter().map(|r| num(r, "acceptance_rate")).collect::<Vec<_>>()),
+        "median_advise_seconds":
+            median(&ok.iter().map(|r| num(r, "advise_seconds")).collect::<Vec<_>>()),
         "hit_rate_top1": rate(&ok, "top1_hit"),
         "hit_rate_top3": rate(&ok, "top3_hit"),
         "hit_rate_top1_nontrivial": rate(&nontrivial, "top1_hit"),
@@ -548,22 +706,72 @@ fn summarise(records_dir: &Path, config: &serde_json::Value, total: usize) -> se
 
 /// Bumped whenever a record's fields or their meaning change, so `summarise` never mixes records
 /// written by an older harness (2: the primary hit became representative-card-only, group hits
-/// and coverage were added).
-const RECORD_VERSION: u64 = 2;
+/// and coverage were added; 3: policy, interpretation, residual rejection and split joined the
+/// configuration, with acceptance and budget fields per board).
+const RECORD_VERSION: u64 = 3;
 
 const DEFAULT_SAMPLES: usize = 100;
 const DEFAULT_BOARD_COUNT: usize = 100;
 
+/// The settings that select a configuration (`LEAD_*`), with their defaults.
+#[derive(Clone, PartialEq, Debug)]
+struct Settings {
+    samples: usize,
+    uniform: bool,
+    seed: u64,
+    boards: usize,
+    /// `human`, `system` or `legacy1`.
+    policy: String,
+    /// `mirror` or `legacy`.
+    interpret: String,
+    residual: bool,
+    split: Split,
+}
+
+impl Default for Settings {
+    fn default() -> Settings {
+        Settings {
+            samples: DEFAULT_SAMPLES,
+            uniform: false,
+            seed: 0,
+            boards: DEFAULT_BOARD_COUNT,
+            policy: "human".to_string(),
+            interpret: "mirror".to_string(),
+            residual: true,
+            split: Split::Eval,
+        }
+    }
+}
+
 /// `lead_report.json` for the default configuration, `lead_report_<suffix>.json` otherwise, where
 /// the suffix lists only the settings that differ from the default (`n500`, `uniform`,
-/// `seed7`, `boards20`, joined by `-`).
-fn report_file_name(samples: usize, uniform: bool, seed: u64, boards: usize) -> String {
+/// `legacy1`, `legacyinterp`, `noresidual`, `all`, `seed7`, `boards20`, joined by `-`).
+fn report_file_name(settings: &Settings) -> String {
+    let Settings {
+        samples,
+        uniform,
+        seed,
+        boards,
+        ..
+    } = *settings;
     let mut parts = Vec::new();
     if samples != DEFAULT_SAMPLES {
         parts.push(format!("n{samples}"));
     }
     if uniform {
         parts.push("uniform".to_string());
+    }
+    if settings.policy != "human" {
+        parts.push(settings.policy.clone());
+    }
+    if settings.interpret != "mirror" {
+        parts.push(format!("{}interp", settings.interpret));
+    }
+    if !settings.residual {
+        parts.push("noresidual".to_string());
+    }
+    if settings.split != Split::Eval {
+        parts.push(settings.split.name().to_string());
     }
     if seed != 0 {
         parts.push(format!("seed{seed}"));
@@ -580,14 +788,32 @@ fn report_file_name(samples: usize, uniform: bool, seed: u64, boards: usize) -> 
 
 #[test]
 fn report_file_names() {
-    assert_eq!(report_file_name(100, false, 0, 100), "lead_report.json");
+    assert_eq!(report_file_name(&Settings::default()), "lead_report.json");
     assert_eq!(
-        report_file_name(500, false, 0, 100),
+        report_file_name(&Settings {
+            samples: 500,
+            ..Settings::default()
+        }),
         "lead_report_n500.json"
     );
     assert_eq!(
-        report_file_name(100, true, 3, 20),
+        report_file_name(&Settings {
+            uniform: true,
+            seed: 3,
+            boards: 20,
+            ..Settings::default()
+        }),
         "lead_report_uniform-seed3-boards20.json"
+    );
+    assert_eq!(
+        report_file_name(&Settings {
+            policy: "legacy1".to_string(),
+            interpret: "legacy".to_string(),
+            residual: false,
+            split: Split::All,
+            ..Settings::default()
+        }),
+        "lead_report_legacy1-legacyinterp-noresidual-all.json"
     );
 }
 
@@ -603,28 +829,82 @@ fn corpus_eval() {
         return;
     };
 
-    let samples = env_usize("LEAD_SAMPLES", DEFAULT_SAMPLES);
-    let board_count = env_usize("LEAD_BOARD_COUNT", DEFAULT_BOARD_COUNT);
-    let use_uniform = std::env::var("LEAD_UNIFORM").as_deref() == Ok("1");
+    let env =
+        |name: &str, default: &str| std::env::var(name).unwrap_or_else(|_| default.to_string());
+    let mut settings = Settings {
+        samples: env_usize("LEAD_SAMPLES", DEFAULT_SAMPLES),
+        uniform: std::env::var("LEAD_UNIFORM").as_deref() == Ok("1"),
+        seed: 0,
+        boards: env_usize("LEAD_BOARD_COUNT", DEFAULT_BOARD_COUNT),
+        policy: env("LEAD_POLICY", "human"),
+        interpret: env("LEAD_INTERPRET", "mirror"),
+        residual: env("LEAD_RESIDUAL", "1") != "0",
+        split: match env("LEAD_SPLIT", "eval").as_str() {
+            "all" => Split::All,
+            "eval" => Split::Eval,
+            other => panic!("LEAD_SPLIT must be eval or all, not {other}"),
+        },
+    };
+    let policy = match settings.policy.as_str() {
+        "human" => PolicyParams::human(),
+        "system" => PolicyParams::system_players(),
+        "legacy1" => PolicyParams::legacy(1.0),
+        other => panic!("LEAD_POLICY must be human, system or legacy1, not {other}"),
+    };
+    // The proposal's interpretation: the mirror of the likelihood's policy, except that the
+    // legacy softmax has no mirror of its own and borrows the human preset's.
+    let interpret_opts = match settings.interpret.as_str() {
+        "mirror" => {
+            let mirror_policy = if policy.legacy_temperature.is_some() {
+                PolicyParams::human()
+            } else {
+                policy
+            };
+            InterpretOptions {
+                policy: mirror_policy,
+                implicit_pass: ImplicitPass::Complement,
+                ..InterpretOptions::default()
+            }
+        }
+        "legacy" => InterpretOptions::legacy(),
+        other => panic!("LEAD_INTERPRET must be mirror or legacy, not {other}"),
+    };
 
-    let boards = select_boards(&dir, board_count);
+    let boards = select_boards(&dir, settings.boards, settings.split);
     assert!(!boards.is_empty(), "no eligible boards found under {dir:?}");
+    settings.boards = boards.len();
+    let samples = settings.samples;
 
     let system_path = systems_dir().join("sayc").join("sayc.bml");
     let table = compile_table(&system_path).expect("system compiles");
 
     let uniform = UniformProposal;
-    let constraint = ConstraintProposal::default();
-    let proposal: &dyn Proposal = if use_uniform { &uniform } else { &constraint };
+    let constraint = ConstraintProposal {
+        residual_rejection: settings.residual,
+        ..ConstraintProposal::default()
+    };
+    let proposal: &dyn Proposal = if settings.uniform {
+        &uniform
+    } else {
+        &constraint
+    };
     // Records are only merged into the summary when they were produced under this exact
     // configuration, so a stale record from a run with different settings is never mixed in.
-    let proposal_name = if use_uniform { "uniform" } else { "constraint" };
-    let seed = 0u64;
+    let proposal_name = if settings.uniform {
+        "uniform"
+    } else {
+        "constraint"
+    };
+    let seed = settings.seed;
     let config = serde_json::json!({
         "samples": samples,
         "proposal": proposal_name,
         "seed": seed,
         "boards_selected": boards.len(),
+        "policy": settings.policy,
+        "interpret": settings.interpret,
+        "residual_rejection": settings.residual && !settings.uniform,
+        "split": settings.split.name(),
         "record_version": RECORD_VERSION,
     });
 
@@ -632,23 +912,39 @@ fn corpus_eval() {
     // reference run cannot overwrite the default n = 100 run's evidence (review finding).
     let target_dir = workspace_root().join("target");
     let config_name = format!(
-        "n{samples}-{proposal_name}-seed{seed}-boards{}",
+        "n{samples}-{proposal_name}-{}-{}-{}-{}-seed{seed}-boards{}",
+        settings.policy,
+        settings.interpret,
+        if settings.residual {
+            "residual"
+        } else {
+            "plain"
+        },
+        settings.split.name(),
         boards.len()
     );
     let records_dir = target_dir.join("lead_eval").join(&config_name);
     std::fs::create_dir_all(&records_dir).expect("creating the per-configuration records dir");
-    let report_path = target_dir.join(report_file_name(samples, use_uniform, seed, boards.len()));
+    let baseline_dir = target_dir.join("lead_eval").join(format!(
+        "baseline_a-n{samples}-seed{seed}-{}-boards{}",
+        settings.split.name(),
+        boards.len()
+    ));
+    std::fs::create_dir_all(&baseline_dir).expect("creating the baseline (a) cache dir");
+    let report_path = target_dir.join(report_file_name(&settings));
+    let setup = Setup {
+        table: &table,
+        proposal,
+        dd: dd.as_ref(),
+        config: &config,
+        samples,
+        policy,
+        interpret: interpret_opts,
+        baseline_dir: &baseline_dir,
+    };
 
     for index in board_range(boards.len()) {
-        let record = evaluate_board(
-            index,
-            &boards[index],
-            &table,
-            proposal,
-            dd.as_ref(),
-            &config,
-            samples,
-        );
+        let record = evaluate_board(index, &boards[index], &setup);
         println!("{record}");
         std::fs::write(
             records_dir.join(format!("board_{index:03}.json")),
