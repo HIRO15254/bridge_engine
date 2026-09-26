@@ -6,10 +6,10 @@
 use std::cmp::Ordering;
 
 use bridge_core::{Bid, Call, Card, Hand, Strain};
-use bridge_system::exclusive::{condition_class, rank_cmp};
+use bridge_system::exclusive::{ExclusiveIndex, class_conditions, condition_class, rank_cmp};
 use bridge_system::lexer::MemLoader;
 use bridge_system::trie::{LookupKey, RelVul, TrieId};
-use bridge_system::{CompileOptions, SystemIR};
+use bridge_system::{CompileOptions, LintCode, Severity, SystemIR};
 
 const SOURCE: &str = "#+TITLE: exclusive test
 #+TIEBREAK: row-order
@@ -22,6 +22,7 @@ const SOURCE: &str = "#+TITLE: exclusive test
 1C-
 1D = 6+ hcp
 1H = 6+ hcp, 4+!h
+2C = 8+ hcp, 4+!h or 4+!s
 ";
 
 fn compile() -> SystemIR {
@@ -213,10 +214,7 @@ fn the_exclusive_index_does_not_change_the_serialised_ir() {
     assert_eq!(back.exclusive().group_count(), ir.exclusive().group_count());
 }
 
-/// The same defining property over every group of the real SAYC system (a few random hands per
-/// group), plus the tree-fallback share.
-#[test]
-fn sayc_groups_satisfy_the_first_satisfied_member_property() {
+fn compile_sayc() -> SystemIR {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../systems/sayc/sayc.bml");
     let text = std::fs::read_to_string(&path).expect("systems/sayc/sayc.bml");
     let opts = CompileOptions {
@@ -229,8 +227,21 @@ fn sayc_groups_satisfy_the_first_satisfied_member_property() {
         &bridge_system::lexer::FsLoader,
         &opts,
     );
+    ir
+}
+
+/// The same defining property over every group of the real SAYC system (a few random hands per
+/// group), plus the tree-fallback share.
+#[test]
+fn sayc_groups_satisfy_the_first_satisfied_member_property() {
+    let ir = compile_sayc();
+    assert!(
+        ir.exclusive_cell.get().is_some(),
+        "compile() builds the index eagerly"
+    );
     let started = std::time::Instant::now();
-    let index = ir.exclusive();
+    let index = ExclusiveIndex::build(&ir);
+    let index = &index;
     eprintln!(
         "SAYC exclusive index: {} groups, {} keys, built in {:?}",
         index.group_count(),
@@ -261,4 +272,199 @@ fn sayc_groups_satisfy_the_first_satisfied_member_property() {
         }
     }
     eprintln!("SAYC exclusive pieces: {pieces}, tree fallback: {trees}");
+}
+
+/// Checks `n` random `(position, hand)` pairs of SAYC against the defining property, computed
+/// independently from the trie: a key `(parent, class)` is drawn uniformly from the index, its
+/// sibling list is recomputed with `AuctionTrie::children` and sorted by `rank_cmp`, and for a
+/// uniform random hand
+/// - the hand lies in a piece of call `c` iff the first satisfied sibling has call `c`,
+/// - it lies in the complement iff no sibling is satisfied,
+/// - it lies in at most one piece of the whole group (so the pieces of one node, and of one
+///   call, are pairwise disjoint).
+///
+/// Returns `(pairs checked, pairs whose hand was in some piece)`.
+fn check_sayc_membership(n: usize, seed: u64) -> (usize, usize) {
+    let ir = compile_sayc();
+    let index = ir.exclusive();
+    let keys: Vec<_> = index.entries().collect();
+    assert!(!keys.is_empty());
+    let mut seed = seed;
+    let mut next = |bound: usize| -> usize {
+        seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = seed;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        ((z ^ (z >> 31)) % bound as u64) as usize
+    };
+    let mut hand_seed = 0xE5C1_0003u64;
+    let (mut mismatches, mut overlaps, mut complement_mismatches, mut inside) = (0, 0, 0, 0);
+    for _ in 0..n {
+        let (parent, class, group) = keys[next(keys.len())];
+        let (opener_pos, vul) = class_conditions(class);
+        let mut siblings = ir.index.children(parent, opener_pos, vul);
+        siblings.sort_by(|a, b| rank_cmp(&ir, *a, *b));
+        assert_eq!(
+            siblings, group.members,
+            "group members == ranked trie children"
+        );
+        let hand = random_hand(&mut hand_seed);
+        let first = siblings
+            .iter()
+            .find(|(_, node)| ir.node(*node).constraint.satisfies(hand))
+            .map(|(call, _)| *call);
+        let mut hits_total = 0;
+        for (call, pieces) in &group.per_call {
+            let hits = pieces
+                .iter()
+                .filter(|p| p.constraint.satisfies(hand))
+                .count();
+            hits_total += hits;
+            if (hits >= 1) != (first == Some(*call)) {
+                mismatches += 1;
+            }
+        }
+        if hits_total > 1 {
+            overlaps += 1;
+        }
+        if hits_total > 0 {
+            inside += 1;
+        }
+        if group.complement.satisfies(hand) != first.is_none() {
+            complement_mismatches += 1;
+        }
+    }
+    assert_eq!(mismatches, 0, "X_c membership mismatches");
+    assert_eq!(complement_mismatches, 0, "complement mismatches");
+    assert_eq!(overlaps, 0, "hands in two pieces of one group");
+    (n, inside)
+}
+
+/// Default-suite version of the lane-S acceptance check (1e4 pairs).
+#[test]
+fn sayc_exclusive_membership_random_positions() {
+    let (n, inside) = check_sayc_membership(10_000, 0x5EED_0001);
+    eprintln!("SAYC exclusive membership: {n} pairs, {inside} inside some piece, 0 mismatches");
+}
+
+/// The acceptance-size version: 1e5 random `(position, hand)` pairs (release:
+/// `cargo test -p bridge-system --release --test exclusive -- --ignored`).
+#[test]
+#[ignore = "1e5 pairs; run in release with --ignored"]
+fn sayc_exclusive_membership_random_positions_1e5() {
+    let started = std::time::Instant::now();
+    let (n, inside) = check_sayc_membership(100_000, 0x5EED_0002);
+    eprintln!(
+        "SAYC exclusive membership: {n} pairs, {inside} inside some piece, 0 mismatches, {:?}",
+        started.elapsed()
+    );
+}
+
+/// The index statistics and the build/compile cost on SAYC (reported; the tree fallback share
+/// is asserted to stay <= 1% of pieces).
+#[test]
+fn sayc_exclusive_index_stats() {
+    let started = std::time::Instant::now();
+    let ir = compile_sayc();
+    let compile = started.elapsed();
+    let started = std::time::Instant::now();
+    let rebuilt = ExclusiveIndex::build(&ir);
+    let build = started.elapsed();
+    let stats = rebuilt.stats(&ir);
+    assert_eq!(stats, ir.exclusive().stats(&ir));
+    eprintln!("SAYC compile (with index) {compile:?}, index build {build:?}: {stats:?}");
+    assert!(
+        stats.tree_pieces * 100 <= stats.pieces,
+        "tree fallback > 1%"
+    );
+    #[cfg(feature = "cache")]
+    {
+        let bytes = postcard::to_allocvec(&ir).expect("postcard encode");
+        // Without the two lint kinds derived from the index, the bytes are those of the
+        // phase-3 IR: the index itself is never serialised.
+        let mut stripped = ir.clone();
+        stripped.lints.retain(|l| {
+            !matches!(
+                l.code,
+                LintCode::ShadowedBranch | LintCode::OverlappingBranches
+            )
+        });
+        let without = postcard::to_allocvec(&stripped).expect("postcard encode");
+        eprintln!(
+            "SAYC postcard IR: {} bytes, {} without the ShadowedBranch/OverlappingBranches \
+             lints (IR_FORMAT {})",
+            bytes.len(),
+            without.len(),
+            bridge_system::IR_FORMAT
+        );
+    }
+}
+
+#[test]
+fn shadowed_and_overlapping_branch_lints() {
+    let opts = CompileOptions {
+        coverage_samples: 0,
+        ..CompileOptions::default()
+    };
+    let (ir, lints) = bridge_system::compile("inline.bml", SOURCE, &MemLoader::default(), &opts);
+    let calls_with = |code: LintCode| -> Vec<(Vec<Call>, String)> {
+        lints
+            .iter()
+            .filter(|l| l.code == code)
+            .map(|l| {
+                (
+                    ir.node(l.node.expect("node lint")).calls.clone(),
+                    l.message.clone(),
+                )
+            })
+            .collect()
+    };
+    let shadowed = calls_with(LintCode::ShadowedBranch);
+    let one_c = bid(1, Strain::Clubs);
+    // 1C-1H (single branch) and both branches of 1C-2C are covered by 1C-1D (6+ hcp).
+    assert!(
+        shadowed
+            .iter()
+            .any(|(c, m)| c.last() == Some(&bid(1, Strain::Hearts))
+                && c.first() == Some(&one_c)
+                && !m.contains("branch"))
+    );
+    assert_eq!(
+        shadowed
+            .iter()
+            .filter(|(c, _)| c.last() == Some(&bid(2, Strain::Clubs)))
+            .count(),
+        2
+    );
+    // No opening is shadowed (1C 12-21 is below the majors and 1NT, but has unbalanced
+    // hands with no five-card major, among others).
+    assert!(shadowed.iter().all(|(c, _)| c.len() > 1));
+    assert!(
+        lints
+            .iter()
+            .filter(|l| l.code == LintCode::ShadowedBranch)
+            .all(|l| l.severity == Severity::Warning)
+    );
+    // 4+ hearts or 4+ spades overlap on 4-4 majors.
+    let overlapping = calls_with(LintCode::OverlappingBranches);
+    assert_eq!(overlapping.len(), 1);
+    assert_eq!(overlapping[0].0.last(), Some(&bid(2, Strain::Clubs)));
+}
+
+/// The number of `ShadowedBranch` / `OverlappingBranches` lints SAYC compiles with (reported).
+#[test]
+fn sayc_exclusive_lint_counts() {
+    let ir = compile_sayc();
+    let count = |code: LintCode| ir.lints.iter().filter(|l| l.code == code).count();
+    let shadowed = count(LintCode::ShadowedBranch);
+    let overlapping = count(LintCode::OverlappingBranches);
+    let errors = ir
+        .lints
+        .iter()
+        .filter(|l| l.severity == Severity::Error)
+        .count();
+    eprintln!(
+        "SAYC lints: ShadowedBranch {shadowed}, OverlappingBranches {overlapping}, errors {errors}"
+    );
+    assert!(shadowed > 0);
 }
