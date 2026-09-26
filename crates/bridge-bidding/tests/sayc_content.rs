@@ -123,7 +123,8 @@ fn takeout_double_advance_invitational_jump_outranks_other_minimum_suits() {
     );
 }
 
-/// dropped.json #11 / NOTES.md #20: `(1S)-D-` was missing outright.
+/// dropped.json #11 / NOTES.md #20: `(1S)-D-` was missing outright. Since the phase-3 recheck
+/// (NOTES.md #C8) a major outranks a minor within a tier, so 4-4 in hearts and diamonds bids 2H.
 #[test]
 fn takeout_double_advance_of_1s_double_is_covered() {
     let table = common::compile_sayc("sayc.bml");
@@ -137,9 +138,8 @@ fn takeout_double_advance_of_1s_double_is_covered() {
     let choice = choose_bid(&table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
-        Some(bid(2, Strain::Diamonds)),
-        "advancing 1S-(D) with 4 diamonds (and 4 hearts, ranked below diamonds) must bid 2D: \
-         {choice:?}"
+        Some(bid(2, Strain::Hearts)),
+        "advancing 1S-(D) with 4 hearts and 4 diamonds must show the major, 2H: {choice:?}"
     );
 }
 
@@ -174,7 +174,8 @@ fn natural_response_after_1nt_is_overcalled_is_on_system() {
         Vulnerability::None,
         &[bid(1, Strain::NoTrump), bid(2, Strain::Spades)],
     );
-    let h2 = common::hand("AKQ432", "32", "432", "32");
+    // 12 hcp: a three-level new suit is forcing (10+) since the phase-3 recheck (NOTES.md #C8).
+    let h2 = common::hand("AKQ432", "32", "K32", "32");
     let choice2 = choose_bid(&table, h2, &a2, &ctx);
     assert_eq!(
         choice2.call(),
@@ -716,6 +717,56 @@ mod sayc_comp {
             }
         }
         assert!(failures.is_empty(), "wrong calls:\n{}", failures.join("\n"));
+    }
+
+    /// Phase-3 recheck (NOTES.md #C8): rows that caught every hand or were shadowed by a sibling.
+    /// Each case was mis-bid before the fix.
+    #[test]
+    fn recheck3_catch_all_and_shadowed_rows() {
+        check(&[
+            // Michaels against our opening: weak hands pass instead of cuebidding (GF 13+).
+            ("1H 2H", "432.432.J432.432", "P"),
+            ("1S 2S", "Q32.432.J432.432", "P"),
+            ("1C 2C", "32.J432.Q432.432", "P"),
+            ("1D 2D", "J432.32.Q432.432", "P"),
+            ("1H 2H", "A32.KQ32.KQ32.32", "3S"),
+            ("1H 2H", "432.KQ32.Q432.32", "3H"),
+            // Advancing a major Michaels: support the known major, 2NT only without it.
+            ("1H 2H P", "Q432.432.J432.32", "2S"),
+            ("1S 2S P", "32.Q432.J432.432", "3H"),
+            ("1H 2H P", "KQ32.A32.KQ32.32", "4S"),
+            ("1H 2H P", "32.Q432.KJ43.432", "2NT"),
+            // Advancing a takeout double: 12+ cuebids, majors before minors.
+            ("P P 1C X P", "A2.KQ98.AK32.432", "2C"),
+            ("P P 1C X P", "32.KQ98.AK32.432", "2C"),
+            ("P P 1C X P", "A2.32.KQJ73.A432", "2C"),
+            ("P P 1D X P", "32.KQ98.AK32.432", "2D"),
+            ("P P 1C X P", "32.Q983.K932.432", "1H"),
+            // The direct takeout double promises shortness in their suit.
+            ("1H", "K4.AQJ97.KJ32.32", "P"),
+            // 1NT-(2X): a bust five-card suit does not bid at the three level.
+            ("1NT 2D", "32.432.432.J9432", "P"),
+            ("1NT 2S", "32.432.J9432.432", "P"),
+            ("1NT 2S", "32.432.432.J9432", "P"),
+            ("1NT 2S", "32.K32.A32.KQ432", "3C"),
+            // The shutout raise 1M-4M is reachable at 6--9 hcp.
+            ("1H P", "3.KJ7632.Q9432.2", "4H"),
+            ("1H P", "3.KJ763.Q9432.52", "4H"),
+            ("1S P", "KJ763.3.Q9432.2", "4S"),
+            // Balancing: a five-card suit overcalls at the one level; the jump needs six.
+            ("1H P P", "KJ987.32.Q32.J32", "1S"),
+            ("1H P P", "KJ987.32.Q32.K32", "1S"),
+            ("1H P P", "KJ9876.32.Q32.32", "2S"),
+            // Over a minor: 5-4 and 5-5 with the spades at least as long bid 1S; 4-4 is up the line.
+            ("1C P", "KJ763.Q976.32.32", "1S"),
+            ("1D P", "KJ763.Q976.32.32", "1S"),
+            ("1C P", "KJ763.Q9762.3.32", "1S"),
+            ("1C P", "KJ76.Q976.432.32", "1H"),
+            // 2C-2D: 4-4-4-1 and 25+ hands without a five-card suit have a rebid.
+            ("2C P 2D P", "AKQ2.AKQ2.KQ32.2", "2NT"),
+            ("2C P 2D P", "AKQ2.AKQ2.AKQ2.2", "3NT"),
+            ("2C P 2D P", "AKQ2.AKQ2.AK2.K2", "3NT"),
+        ]);
     }
 
     /// Opener's rebid after a forcing one-level response: every strength band has a call, so a

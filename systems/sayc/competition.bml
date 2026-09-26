@@ -22,11 +22,13 @@ so a hand that qualifies for Michaels, the unusual notrump, the 1NT overcall or
 a weak jump overcall is shown that way rather than folded into the plainer,
 lower-priority `1Y`; the double is left as the catch-all for hands that do not
 fit a shapelier call (`NOTES.md` #14 covers the unusual notrump's own
-per-opening-suit shape).
+per-opening-suit shape). The double promises shortness in the opener's suit
+(a doubleton or less) unless it is too strong to overcall (17+): a 12--16 hand
+with three or more cards in their suit and no overcall passes (`NOTES.md` #C8).
 
 (1X)-
 1Y = {prio:2} 8--16 hcp, 4+#
-D = 12+ hcp
+D = 12--16 hcp and 0--2X or 17+ hcp
 
 (1m)-
 2m = {prio:3} !Michaels, 8+ hcp, 5+!h, 5+!s
@@ -116,9 +118,10 @@ is Stayman; everything else is natural, as if partner had opened 1NT.
 
 A double of an opening partscore bid (through 4!d) is for takeout; a double of an
 opening game bid (4!h or higher) is for penalty. A below-game jump response is
-invitational (5+ card suit); a plain new suit is minimum (4+ card suit, any
-strength -- advancer must find a call); to force, responder cuebids the
-opponent's suit. Both are written out per opening suit below (rather than with
+invitational (9--11, 5+ card suit); a plain new suit is minimum (4+ card
+suit, 0--11 -- advancer must find a call); to force, responder cuebids the
+opponent's suit (12+), which outranks every other advance. Within each tier a
+major is shown before a minor (`NOTES.md` #C8). Both are written out per opening suit below (rather than with
 the shared `Y`), because a shared `Y` binding cannot also state "and it is
 *this* suit specifically" (each expansion needs its own `#!x` length atom, not
 merely a distinct `{prio:N}`, or every unbid suit's row would compile to the
@@ -139,39 +142,39 @@ three-card unbid suit is left to pass.
 
 (1X)-D-
 1N = 8--10 hcp
-2X = F, 10+ hcp
+2X = {prio:10} F, 12+ hcp
 
 (1C)-D-
-2D = {prio:9} INV, 5+!d
-2H = {prio:8} INV, 5+!h
-2S = {prio:7} INV, 5+!s
-1D = {prio:6} 4+!d or 0--8 hcp and 3+!d and 0--3!h and 0--3!s
-1H = {prio:5} 4+!h or 0--8 hcp and 3+!h and 0--2!d and 0--3!s
-1S = {prio:4} 4+!s or 0--8 hcp and 3+!s and 0--2!d and 0--2!h
+2H = {prio:9} 9--11 hcp, 5+!h
+2S = {prio:8} 9--11 hcp, 5+!s
+2D = {prio:7} 9--11 hcp, 5+!d
+1H = {prio:6} 0--11 hcp, 4+!h or 0--8 hcp and 3+!h and 0--2!d and 0--3!s
+1S = {prio:5} 0--11 hcp, 4+!s or 0--8 hcp and 3+!s and 0--2!d and 0--2!h
+1D = {prio:4} 0--11 hcp, 4+!d or 0--8 hcp and 3+!d and 0--3!h and 0--3!s
 
 (1D)-D-
-2H = {prio:9} INV, 5+!h
-2S = {prio:8} INV, 5+!s
-3C = {prio:7} INV, 5+!c
-1H = {prio:6} 4+!h or 0--8 hcp and 3+!h and 0--3!s and 0--3!c
-1S = {prio:5} 4+!s or 0--8 hcp and 3+!s and 0--2!h and 0--3!c
-2C = {prio:4} 4+!c or 0--8 hcp and 3+!c and 0--2!h and 0--2!s
+2H = {prio:9} 9--11 hcp, 5+!h
+2S = {prio:8} 9--11 hcp, 5+!s
+3C = {prio:7} 9--11 hcp, 5+!c
+1H = {prio:6} 0--11 hcp, 4+!h or 0--8 hcp and 3+!h and 0--3!s and 0--3!c
+1S = {prio:5} 0--11 hcp, 4+!s or 0--8 hcp and 3+!s and 0--2!h and 0--3!c
+2C = {prio:4} 0--11 hcp, 4+!c or 0--8 hcp and 3+!c and 0--2!h and 0--2!s
 
 (1H)-D-
-2S = {prio:9} INV, 5+!s
-3C = {prio:8} INV, 5+!c
-3D = {prio:7} INV, 5+!d
-1S = {prio:6} 4+!s or 0--8 hcp and 3+!s and 0--3!c and 0--3!d
-2C = {prio:5} 4+!c or 0--8 hcp and 3+!c and 0--2!s and 0--3!d
-2D = {prio:4} 4+!d or 0--8 hcp and 3+!d and 0--2!s and 0--2!c
+2S = {prio:9} 9--11 hcp, 5+!s
+3C = {prio:8} 9--11 hcp, 5+!c
+3D = {prio:7} 9--11 hcp, 5+!d
+1S = {prio:6} 0--11 hcp, 4+!s or 0--8 hcp and 3+!s and 0--3!c and 0--3!d
+2C = {prio:5} 0--11 hcp, 4+!c or 0--8 hcp and 3+!c and 0--2!s and 0--3!d
+2D = {prio:4} 0--11 hcp, 4+!d or 0--8 hcp and 3+!d and 0--2!s and 0--2!c
 
 (1S)-D-
-3C = {prio:9} INV, 5+!c
-3D = {prio:8} INV, 5+!d
-3H = {prio:7} INV, 5+!h
-2C = {prio:6} 4+!c or 0--8 hcp and 3+!c and 0--3!d and 0--3!h
-2D = {prio:5} 4+!d or 0--8 hcp and 3+!d and 0--2!c and 0--3!h
-2H = {prio:4} 4+!h or 0--8 hcp and 3+!h and 0--2!c and 0--2!d
+3H = {prio:9} 9--11 hcp, 5+!h
+3C = {prio:8} 9--11 hcp, 5+!c
+3D = {prio:7} 9--11 hcp, 5+!d
+2H = {prio:6} 0--11 hcp, 4+!h or 0--8 hcp and 3+!h and 0--2!c and 0--2!d
+2C = {prio:5} 0--11 hcp, 4+!c or 0--8 hcp and 3+!c and 0--3!d and 0--3!h
+2D = {prio:4} 0--11 hcp, 4+!d or 0--8 hcp and 3+!d and 0--2!c and 0--3!h
 
 ** Negative doubles and responder's other calls after an overcall
 
@@ -605,29 +608,48 @@ file's). A 13+ hand with a doubleton or less in both majors bids 3NT.
 2S = {prio:1} 0--10 hcp and 3+!s and 0--2!h or 0--10 hcp and 4+!s and 3=!h
 2H = 0--12 hcp
 
+Over a major-suit Michaels cuebid (the other major and a minor), advancer
+supports the known major by strength -- the cheapest bid with 0--10 (0--12
+over 2!s, where the cheapest heart bid is already at the three level), a jump
+with 11--12, game with 13+ -- and with a doubleton or less in it bids the
+forcing 2NT to ask for the minor (`NOTES.md` #C8).
+
 (1H)-2H-(P)-
-2N = F
+4S = {prio:3} 13+ hcp, 3+!s
+3S = {prio:2} 11--12 hcp, 3+!s
+2S = {prio:1} 0--10 hcp, 3+!s
+2N = F, 0--2!s
 
 (1S)-2S-(P)-
-2N = F
+4H = {prio:3} 13+ hcp, 3+!h
+3H = {prio:1} 0--12 hcp, 3+!h
+2N = F, 0--2!h
+
+Opener's side: the cuebid of their known suit is a game-forcing raise (13+
+with support for opener's suit), a simple raise is 6--10, and a weak hand with
+nothing to say passes (`NOTES.md` #C8).
 
 1H-(2H)-
 D = 10+ hcp
-3S = F
+3S = {prio:2} F, 13+ hcp, 3+!h
+3H = {prio:1} 6--10 hcp, 3+!h
 
 1S-(2S)-
 D = 10+ hcp
-3H = F
+3H = {prio:2} F, 13+ hcp, 3+!s
+3S = {prio:1} 6--10 hcp, 3+!s
 
 1C-(2C)-
 D = 10+ hcp
-3H = F, 4+!h
-3S = F, 4+!s
+3H = {prio:2} F, 13+ hcp, 4+!h
+3S = {prio:2} F, 13+ hcp, 4+!s
+3C = {prio:1} 6--10 hcp, 5+!c
 
 1D-(2D)-
 D = 10+ hcp
-3H = F, 4+!h
-3S = F, 4+!s
+3H = {prio:2} F, 13+ hcp, 4+!h
+3S = {prio:2} F, 13+ hcp, 4+!s
+3D = {prio:1} 6--10 hcp, 4+!d
 
 1X-(2N)-
 D = 10+ hcp
@@ -763,16 +785,17 @@ outranks the double (review finding: with no exclusion the double, appearing
 first, otherwise won every tied-priority hand that also held a real 4-card
 suit, so a hand worth a genuine reopening overcall was shown as a takeout
 double instead); the jump overcall is given a distinct, lower-strength band
-(6--10, not 1Y's own 6--16) so it is a genuine preemptive jump with extra
-length, not merely "the same hand, one card longer" (review finding: sharing
-1Y's full range meant *any* 5+ card hand jumped, including strong ones that
-should overcall calmly at the one level instead).
+(6--10, not 1Y's own 6--16) and a six-card suit, like the direct seat's weak
+jump, so it is a genuine preemptive jump with extra length (review findings:
+sharing 1Y's full range meant *any* 5+ card hand jumped, and with a 5+ card
+suit every 6--10 five-card hand still jumped). The balancing double, like the
+direct one, promises shortness in their suit unless it is strong (17+).
 
 (1X)-P-(P)-
 1Y = {prio:1} 6--16 hcp, 4+#
-D = {prio:-1} 8+ hcp
+D = {prio:-1} 8--16 hcp and 0--2X or 17+ hcp
 1N = {prio:1} 10--15 hcp, bal, stopper
-2Y = {prio:2} 6--10 hcp, 5+#
+2Y = {prio:2} 6--10 hcp, 6+#
 
 ** Unmodeled interference reverts to natural bidding
 

@@ -22,11 +22,16 @@ pinch" -- and a hand too strong for the 16--18 3NT with no four-card major, whic
 the booklet leaves without a natural route (there is no forcing minor raise); it
 starts with 3NT, and slam exploration from there is left to judgment.
 
+Up the line applies to four-card suits: with five or more spades and at least
+as many spades as hearts (5-4, 5-5, 6-5 ...), responder bids the longer or
+higher suit, 1!s, so 1!h excludes those length pairs (written out as in
+`openings.bml`; NOTES.md #C8).
+
 ** After 1!c
 
 1C-
 1D = {prio:2} F, 6+ hcp, 4+!d
-1H = {prio:2} F, 6+ hcp, 4+!h
+1H = {prio:2} F, 6+ hcp, 4+!h 0--4!s/6!h 5!s/7+!h 5--6!s
 1S = {prio:2} F, 6+ hcp, 4+!s
 2N = F, 13--15 hcp, not 4+!h, not 4+!s
 1N = NF, 6--9 hcp, not 5+!c
@@ -37,7 +42,7 @@ starts with 3NT, and slam exploration from there is left to judgment.
 ** After 1!d
 
 1D-
-1H = {prio:2} F, 6+ hcp, 4+!h
+1H = {prio:2} F, 6+ hcp, 4+!h 0--4!s/6!h 5!s/7+!h 5--6!s
 1S = {prio:2} F, 6+ hcp, 4+!s
 2C = {prio:1} F, 10+ hcp, 4+!c
 2N = F, 13--15 hcp, not 4+!h, not 4+!s

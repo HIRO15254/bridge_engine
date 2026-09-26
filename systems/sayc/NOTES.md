@@ -292,9 +292,11 @@ comments in the `.bml` files.
     The jump overcall (`2Y`) shared `1Y`'s own full 6--16 hcp range with only
     the suit length differing, so *any* 5+ card hand jumped, strong ones
     included, rather than calmly overcalling at the one level; `2Y` now reads
-    a distinct, lower `6--10 hcp` band, making it a genuine preemptive jump
-    (extra length *and* a capped strength), not merely "the same hand, one
-    card longer."
+    a distinct, lower `6--10 hcp` band. That alone did not make it a
+    preemptive jump: with `5+#` every 6--10 hand with a five-card suit still
+    jumped, so the one-level balancing overcall with a five-card suit only
+    happened at 11+. The phase-3 recheck made it `6+#`, the same six-card
+    suit as the direct seat's weak jump (C8).
 
 24. **Weak-two responses wrote every new suit at the 3 level, even the ones
     ranked above the opening (`weak-twos.bml`; `dropped.json` #16).** After
@@ -355,7 +357,7 @@ N2. **Responder's ranges opposite 1NT, 2NT and 2C-2D-2NT (`notrump.bml`,
     strength: over 1NT, 2NT 8--9, 3NT 10--15, 4NT 16--17 (quantitative), 6NT
     18--19, and 4C only with 20+; over 2NT (20--21), 3NT 4--10, 4NT 11--12,
     6NT 13+, with no Gerber row (no range is left for it); over 2C-2D-2NT
-    (22--24), 3NT 3--8, 4NT 9--10, 6NT 11+, and 4C only with 13+. Stayman
+    (22--24), 3NT 3--8, 4NT 9--10, 6NT 11+, with no Gerber row. Stayman
     over 2NT needs 4+ hcp (3+ over 22--24), since a weaker hand passes.
     `4N = 16--17` over 1NT no longer has `{prio:1}`: it used to outrank
     Stayman, so a 16--17 hand with a four-card major never looked for the
@@ -602,3 +604,38 @@ C7. **Balancing over the opponents' 1NT is played like the direct seat (`competi
     overcalls are mostly illegal or wrong: `NoCandidate` rose from 2744 to 7673 in the
     same run. An empty `(1N)-P-(any)-` line makes those positions off-system (natural
     bidding), as C4 does for the suit openings.
+
+C8. **Phase-3 recheck: rows that caught every hand, or were shadowed by a sibling.**
+    - Takeout double (`competition.bml`): `(1X)- D = 12+ hcp` had no shape, so a
+      12--16 hand with five cards in the opener's suit doubled for takeout. It is now
+      `12--16 hcp and 0--2X or 17+ hcp`; the balancing double is `8--16 hcp and 0--2X
+      or 17+ hcp`. A hand with length in their suit and no overcall passes.
+    - Advancing a takeout double: the minimum rows had no HCP cap and outranked the
+      cuebid, so game-forcing hands made a minimum bid. The minimum rows' 4+ branch is
+      now 0--11, the jumps 9--11 with a 5+ card suit, and the cuebid `{prio:10} F,
+      12+ hcp` outranks both tiers. Within a tier a major now outranks a minor (over
+      1!c a 4-4 minor/major advancer used to bid 1!d).
+    - Michaels against our opening: `1M-(2M)- 3oM = F` and `1m-(2m)- 3M = F, 4+M` had
+      no strength, so every hand under 10 hcp made the game-forcing cuebid. The cuebids
+      now need 13+ (with support for opener's suit after a major Michaels) and outrank
+      the 10+ double; a 6--10 simple raise is added and weaker hands pass. Advancer
+      after `(1H)-2H-(P)` / `(1S)-2S-(P)` used to have only `2N = F`; the known major is
+      now supported by strength (cheapest bid, jump 11--12, game 13+) and 2NT needs a
+      doubleton or less in it.
+    - Balancing jump overcall: `6+#` (see #23).
+    - `1N-(2X)-` three-level new suits (`notrump.bml`, #21) were `NAT` only, so a
+      1-hcp hand with a five-card suit bid at the three level. They are now `{prio:1} F,
+      10+ hcp, 5+`: forcing, and preferred to the suitless `3X` cuebid, which would
+      otherwise win every such hand by row order. Weaker hands compete at the two
+      level (`2Y = NAT`) or pass.
+    - `1M-4M` (`responses-major.bml`): the shutout raise shared the default priority
+      with the single raise, which came first, so it was reachable only at 0--5 hcp.
+      It now has `{prio:1}`.
+    - Over 1!c/1!d (`responses-minor.bml`) 1!h came first, so 5-4 and 5-5 hands with
+      the spades at least as long bid 1!h. 1!h now excludes those length pairs (the
+      openings' length-pair encoding), so they bid 1!s; up the line still applies to
+      4-4.
+    - `2C-2D-` (`strong-2c.bml`): a 22+ hand with no five-card suit that was not
+      balanced (4-4-4-1), and every 25+ hand with no five-card suit, had no rebid and
+      passed the forcing 2!d. 2NT now also takes 22--24 hands with no five-card suit,
+      and 3NT takes 25+ hands with no five-card suit (or balanced).

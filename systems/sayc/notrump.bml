@@ -231,17 +231,21 @@ D = 8+ hcp, 4+#
 2N = 8--9 hcp, stopper
 3N = 10--15 hcp, stopper
 
+A new suit at the 3 level is forcing (10+, 5+ cards; NOTES.md #C8) and is
+preferred to the suitless cuebid; with less, responder competes at the 2 level
+or passes.
+
 1N-(2D)-
-3C = NAT
+3C = {prio:1} F, 10+ hcp, 5+!c
 
 1N-(2H)-
-3C = NAT
-3D = NAT
+3C = {prio:1} F, 10+ hcp, 5+!c
+3D = {prio:1} F, 10+ hcp, 5+!d
 
 1N-(2S)-
-3C = NAT
-3D = NAT
-3H = NAT
+3C = {prio:1} F, 10+ hcp, 5+!c
+3D = {prio:1} F, 10+ hcp, 5+!d
+3H = {prio:1} F, 10+ hcp, 5+!h
 
 A jump overcall to the 3 or 4 level leaves no room for Stayman or transfers:
 responder doubles with values, bids 3NT with a stopper, or bids a long suit of

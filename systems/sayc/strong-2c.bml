@@ -52,7 +52,9 @@ catch-all, since opener must bid something). NOTES.md "Notrump lane" #N4.
 
 *** After the 2!d waiting response
 
-Opener rebids 2NT with 22--24 HCP balanced, using the same Stayman and
+Opener rebids 2NT with 22--24 HCP balanced (or with no five-card suit, such as
+4-4-4-1, since 2!c is forcing and there is no better call), and 3NT with 25+ and
+no five-card suit (NOTES.md #C8), using the same Stayman and
 Jacoby-transfer structure as a 2NT opening (responder's ranges shifted for the
 stronger 22--24 opener: game from 3 hcp, the quantitative 4NT at 9--10, 6NT at
 11+). A suit rebid is forcing to 3 of opener's major or 4 of opener's minor:
@@ -61,7 +63,7 @@ with 8+ hcp, and otherwise makes the waiting 2NT (after a major) or 3NT (after
 a minor) rather than passing a forcing bid.
 
 2C-2D-
-2N = 22--24 hcp, bal
+2N = 22--24 hcp and bal or 22--24 hcp and 0--4!s and 0--4!h and 0--4!d and 0--4!c
   3C = !STAY, 3+ hcp, 4+!h or 4+!s
     3D = 0--3!s, 0--3!h
       3N = 3--8 hcp
@@ -141,6 +143,7 @@ a minor) rather than passing a forcing bid.
     6N = 23--24 hcp
   6N = 11+ hcp
     P = unlimited
+3N = 25+ hcp and bal or 25+ hcp and 0--4!s and 0--4!h and 0--4!d and 0--4!c
 2H = F, 5+!h
   3H = F, 3+!h
     4H = unlimited

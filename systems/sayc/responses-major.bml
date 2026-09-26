@@ -34,7 +34,7 @@ letting a 6--9 hcp hand with trump support raise instead of bidding notrump.
 1N = NF, 6--9 hcp, not 3+!h
 2H = 6--10 hcp, 3+!h
 3N = {prio:3} 15--17 hcp, bal, 2=!h
-4H = 0--9 hcp, 5+!h, 0--1!c or 0--1!d or 0--1!s
+4H = {prio:1} 0--9 hcp, 5+!h, 0--1!c or 0--1!d or 0--1!s
 
 ** After 1!s
 
@@ -50,4 +50,4 @@ letting a 6--9 hcp hand with trump support raise instead of bidding notrump.
 1N = NF, 6--9 hcp, not 3+!s
 2S = 6--10 hcp, 3+!s
 3N = {prio:3} 15--17 hcp, bal, 2=!s
-4S = 0--9 hcp, 5+!s, 0--1!c or 0--1!d or 0--1!h
+4S = {prio:1} 0--9 hcp, 5+!s, 0--1!c or 0--1!d or 0--1!h
