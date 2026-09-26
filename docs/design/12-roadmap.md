@@ -116,6 +116,8 @@
 
 ## 7. フェーズ 6: オープニングリードアドバイザ (別クレート)
 
+詳細設計は `14-lead.md`。
+
 | id | 内容 | 証明 / 完了基準 |
 | --- | --- | --- |
 | 6.1 | ライブラリ側: `Solutions::AllRanked` によるリード評価 API (`DoubleDummy::lead_scores`)、PBN オークションからの `Interpretation`、ESS 報告 | unit |

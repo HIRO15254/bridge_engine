@@ -1,0 +1,50 @@
+[package]
+name = "bridge-lead"
+description = "Opening-lead advisor: samples deals consistent with the auction and ranks leads by double-dummy defence tricks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = []
+# Enables the DDS-backed `bridge::dd::dds()` solver and the PBN-reading CLI/corpus harness.
+dds = ["bridge/dds", "dep:bridge-format"]
+# Parallelises the per-deal DD calls with rayon (order-preserving); also turns on
+# `bridge-sample`'s own parallel proposal sampling.
+parallel = ["bridge-sample/parallel", "dep:rayon"]
+
+[dependencies]
+bridge = { workspace = true }
+bridge-bidding = { workspace = true, features = ["std"] }
+bridge-constraint = { workspace = true, features = ["std"] }
+bridge-core = { workspace = true, features = ["std"] }
+bridge-sample = { workspace = true, features = ["std"] }
+bridge-format = { workspace = true, features = ["std"], optional = true }
+rayon = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# Only used by tests/common/mod.rs to hand-build a `SystemIR` (07-bidding.md §11), exactly as
+# `crates/bridge-bidding/tests/common/mod.rs` does; `bridge_system::compile` is not called from
+# any non-ignored test.
+bridge-system = { workspace = true, features = ["std"] }
+serde_json = { workspace = true }
+
+[[bin]]
+name = "lead-advisor"
+path = "src/bin/lead-advisor.rs"
+required-features = ["dds"]
+
+[[test]]
+name = "corpus_eval"
+path = "tests/corpus_eval.rs"
+required-features = ["dds"]
+
+[[test]]
+name = "dds_smoke"
+path = "tests/dds_smoke.rs"
+required-features = ["dds"]

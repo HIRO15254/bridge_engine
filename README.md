@@ -24,6 +24,7 @@ numeric completion criteria of each phase are in
 | `bridge-sample` | L4 | weighted deal sampling with pluggable proposals |
 | `bridge-dds` | | safe wrapper around the vendored DDS double-dummy solver (native only) |
 | `bridge` | | facade re-exporting everything |
+| `bridge-lead` | | opening-lead advisor: samples deals from the auction, ranks leads by double-dummy defence tricks (`lead-advisor` CLI, feature `dds`) |
 
 ## Building and testing
 
