@@ -522,8 +522,11 @@ fn run_case(table: &Table, case: &Case, known_none: bool, seed: u64, breakdown_o
         residual_rejection: false,
         ..ConstraintProposal::default()
     });
+    // `ESS_SUITE_RESIDUAL_MIN_ACCEPTANCE` overrides the residual variant's acceptance floor
+    // (tuning mode only; the eval report records the value used).
     let (residual_deals, residual) = run(&ConstraintProposal {
         residual_rejection: true,
+        residual_min_acceptance: residual_min_acceptance(),
         ..ConstraintProposal::default()
     });
     let deals = if ConstraintProposal::default().residual_rejection {
@@ -670,6 +673,15 @@ fn case_range() -> core::ops::Range<usize> {
     let a: usize = a.trim().parse().expect("ESS_SUITE_CASES start");
     let b: usize = b.trim().parse().expect("ESS_SUITE_CASES end");
     a..b.min(total)
+}
+
+/// The residual variant's `residual_min_acceptance`: `ESS_SUITE_RESIDUAL_MIN_ACCEPTANCE`, else
+/// the default.
+fn residual_min_acceptance() -> f64 {
+    std::env::var("ESS_SUITE_RESIDUAL_MIN_ACCEPTANCE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(ConstraintProposal::default().residual_min_acceptance)
 }
 
 /// `sysctl -n vm.loadavg` (macOS) or `/proc/loadavg` (Linux), trimmed; `None` elsewhere.
@@ -906,6 +918,11 @@ fn uniform_vs_constraint_ess_suite() {
         json_str(if mode == Mode::Eval { "eval" } else { "tune" })
     );
     let _ = writeln!(json, "  \"sample_seed\": {},", mode.sample_seed());
+    let _ = writeln!(
+        json,
+        "  \"residual_min_acceptance\": {},",
+        json_f64(residual_min_acceptance())
+    );
     let _ = writeln!(
         json,
         "  \"known\": {},",

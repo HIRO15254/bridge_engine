@@ -108,21 +108,37 @@ pub struct ConstraintProposal {
     /// rather than measured and changed here.
     pub max_retries: u32,
     /// Residual rejection (`09-sample.md` §6.5; default `false`): the residual last seat, which
-    /// receives whatever cards remain, is accepted with probability `a(h) = m(h) / U`, where
-    /// `m(h) = Σ_{i: h ∈ C_i} w_i` is the seat's own alternative mixture at its hand and `U` a
-    /// bound on `m` computed once in `prepare`, and `log_prob` adds `ln a`. `U` is the largest,
-    /// over the alternatives `i`, of the total weight of the alternatives whose (shape, HCP) grid
-    /// superset meets `i`'s: a valid bound whatever the alternatives, and equal to `max_i w_i`
-    /// when they are disjoint on the grid (the policy mirror's pieces).
+    /// receives whatever cards remain, is accepted with probability `a(h) = min(1, m(h) / T)`,
+    /// where `m(h) = Σ_{i: h ∈ C_i} w_i` is the seat's own alternative mixture at its hand and
+    /// `T` a threshold fixed once in `prepare`, and `log_prob` adds `ln a`.
     ///
     /// Without it the residual seat's whole likelihood factor lands in the importance weight;
     /// with it, the accepted deals' density is `π_others(d) · a(h_last) / P_acc`, with a
     /// deal-independent acceptance normaliser `P_acc` that self-normalised weights absorb, so the
-    /// estimator stays exact for any `a` in `(0, 1]` (the choice of `a` only moves variance
-    /// between the weights and the rejection rate). Rejected attempts are ordinary rejected
-    /// proposals: they count against `SampleOptions`' attempt budget and show up in
-    /// `SampleReport::acceptance_rate` and `ess_per_attempt`.
+    /// estimator stays exact for any fixed `T > 0`: the weight of an accepted deal carries
+    /// `max(m(h), T)` instead of `m(h)`, so `T` only moves variance between the weights and the
+    /// rejection rate. `T` is the smallest of
+    ///
+    /// - `U`, a bound on `m` over every hand (the largest, over the alternatives `i`, of the
+    ///   total weight of the alternatives whose (shape, HCP) grid superset meets `i`'s; `max_i
+    ///   w_i` for the policy mirror's disjoint pieces): above it rejection buys nothing;
+    /// - the largest `m` seen on [`RESIDUAL_PILOT_DRAWS`] pilot proposals (a fixed RNG stream, so
+    ///   `T` is a deterministic function of the context): above it every pilot weight is already
+    ///   flat;
+    /// - the `T` at which the pilot's mean acceptance falls to
+    ///   [`ConstraintProposal::residual_min_acceptance`], so a residual seat that rarely lands in
+    ///   its heavy alternatives does not exhaust the attempt budget.
+    ///
+    /// Rejected attempts are ordinary rejected proposals: they count against `SampleOptions`'
+    /// attempt budget and show up in `SampleReport::acceptance_rate` and `ess_per_attempt`. A
+    /// rejected attempt skips `log_prob` and the likelihood, so it costs less than a produced
+    /// deal; whether the trade pays depends on what a produced deal costs downstream (a
+    /// double-dummy solve in the lead advisor costs far more than an attempt).
     pub residual_rejection: bool,
+    /// The pilot acceptance residual rejection's threshold is kept above (default 0.125: at most
+    /// about 8 attempts per produced deal, well inside the default attempt budget of `20n`).
+    /// Higher values reject less, at the cost of flatter-weighted residual hands.
+    pub residual_min_acceptance: f64,
 }
 
 impl Default for ConstraintProposal {
@@ -130,6 +146,7 @@ impl Default for ConstraintProposal {
         ConstraintProposal {
             max_retries: 16,
             residual_rejection: false,
+            residual_min_acceptance: 0.125,
         }
     }
 }
@@ -339,23 +356,28 @@ impl ConstraintProposal {
             _ => None,
         };
 
-        // Residual rejection needs a bound on the last seat's mixture, computed once here.
-        let residual_bound = match order.last() {
-            Some(SeatEntry {
-                plan: SeatPlan::Sampled { candidates, .. },
-                ..
-            }) if self.residual_rejection && order.len() > 1 => Some(residual_bound(candidates)),
-            _ => None,
-        };
-
-        Ok(PreparedConstraint {
+        let mut prepared = PreparedConstraint {
             id: NEXT_PREPARED_ID.fetch_add(1, Ordering::Relaxed),
             ctx,
             sampler_opts,
             order,
             cached_first,
-            residual_bound,
-        })
+            residual_threshold: None,
+        };
+        // Residual rejection's threshold, fixed once here from a bound and a pilot run of the
+        // proposal without it.
+        if let Some(SeatEntry {
+            seat,
+            plan: SeatPlan::Sampled { candidates, .. },
+        }) = prepared.order.last()
+        {
+            if self.residual_rejection && prepared.order.len() > 1 {
+                let threshold =
+                    residual_threshold(&prepared, *seat, candidates, self.residual_min_acceptance);
+                prepared.residual_threshold = Some(threshold);
+            }
+        }
+        Ok(prepared)
     }
 }
 
@@ -407,8 +429,8 @@ fn truncate_by_mass(
     Ok(())
 }
 
-/// A bound `U ≥ m(h) = Σ_{i: h ∈ C_i} w_i` over every hand, for residual rejection's acceptance
-/// probability `m(h) / U` (see [`ConstraintProposal::residual_rejection`]).
+/// A bound `U ≥ m(h) = Σ_{i: h ∈ C_i} w_i` over every hand, the largest threshold residual
+/// rejection uses (see [`ConstraintProposal::residual_rejection`]).
 ///
 /// `U = max_i Σ_{j: sup_i ∩ sup_j ≠ ∅} w_j`, with `sup_i` the (shape, HCP) grid superset of
 /// candidate `i` (`bridge_constraint::grid::bounds`). It is a valid bound: for any hand `h` and
@@ -435,18 +457,71 @@ fn residual_bound(candidates: &[Candidate]) -> f64 {
     bound
 }
 
-/// `ln a(hand) = ln(m(hand) / bound)` of residual rejection (`-∞` outside every candidate). The
-/// bound makes `a ≤ 1` up to rounding, which the `min` absorbs.
-fn residual_ln_accept(candidates: &[Candidate], bound: f64, hand: Hand) -> f64 {
-    let m: f64 = candidates
+/// Pilot proposals [`residual_threshold`] draws (from a fixed RNG stream).
+pub(crate) const RESIDUAL_PILOT_DRAWS: usize = 128;
+
+/// Master seed of the pilot's RNG stream (only ever used here).
+const RESIDUAL_PILOT_SEED: u64 = 0x9E51_D0A1_0000_0001;
+
+/// `m(hand) = Σ_{i: hand ∈ C_i} w_i`.
+fn residual_mixture(candidates: &[Candidate], hand: Hand) -> f64 {
+    candidates
         .iter()
         .filter(|c| c.constraint.satisfies(hand))
         .map(|c| c.weight)
-        .sum();
-    if m <= 0.0 || bound <= 0.0 {
+        .sum()
+}
+
+/// Residual rejection's threshold `T` (see [`ConstraintProposal::residual_rejection`]):
+/// `min(U, max pilot m, T_min_acceptance)`, from [`RESIDUAL_PILOT_DRAWS`] proposals of `prepared`
+/// (whose own threshold is still `None`, so the pilot is the proposal without rejection).
+/// Deterministic: the pilot uses its own fixed RNG stream.
+fn residual_threshold(
+    prepared: &PreparedConstraint<'_>,
+    seat: Seat,
+    candidates: &[Candidate],
+    min_acceptance: f64,
+) -> f64 {
+    let bound = residual_bound(candidates);
+    let mut rng = crate::rng_for(RESIDUAL_PILOT_SEED, 0);
+    let mut masses: Vec<f64> = (0..RESIDUAL_PILOT_DRAWS)
+        .filter_map(|_| prepared.propose(&mut rng))
+        .map(|deal| residual_mixture(candidates, deal.hand(seat)))
+        .filter(|&m| m > 0.0)
+        .collect();
+    if masses.is_empty() {
+        return bound;
+    }
+    masses.sort_by(f64::total_cmp);
+    let max = masses[masses.len() - 1];
+    // Mean pilot acceptance at threshold `t`: non-increasing in `t`, 1 at `t = min m`.
+    let acceptance =
+        |t: f64| masses.iter().map(|&m| (m / t).min(1.0)).sum::<f64>() / masses.len() as f64;
+    let mut threshold = bound.min(max);
+    if acceptance(threshold) < min_acceptance {
+        // Bisect in the log domain between `min m` (acceptance 1) and `threshold`.
+        let (mut lo, mut hi) = (masses[0].ln(), threshold.ln());
+        for _ in 0..60 {
+            let mid = 0.5 * (lo + hi);
+            if acceptance(mid.exp()) >= min_acceptance {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        threshold = lo.exp();
+    }
+    threshold
+}
+
+/// `ln a(hand) = ln min(1, m(hand) / threshold)` of residual rejection (`-∞` outside every
+/// candidate).
+fn residual_ln_accept(candidates: &[Candidate], threshold: f64, hand: Hand) -> f64 {
+    let m = residual_mixture(candidates, hand);
+    if m <= 0.0 || threshold <= 0.0 {
         f64::NEG_INFINITY
     } else {
-        (m / bound).min(1.0).ln()
+        (m / threshold).min(1.0).ln()
     }
 }
 
@@ -723,9 +798,9 @@ struct PreparedConstraint<'c> {
     /// `Some` when `order`'s first entry is `Sampled` (its pool is the full pool and never
     /// shrinks before it is drawn, so it is prepared once here rather than in every `propose`).
     cached_first: Option<CachedFirst>,
-    /// `Some(U)` when residual rejection is on and the last seat is `Sampled`: the bound of
-    /// [`residual_bound`] on its mixture.
-    residual_bound: Option<f64>,
+    /// `Some(T)` when residual rejection is on and the last seat is `Sampled`: the threshold of
+    /// [`residual_threshold`].
+    residual_threshold: Option<f64>,
 }
 
 impl PreparedProposal for PreparedConstraint<'_> {
@@ -754,7 +829,7 @@ impl PreparedProposal for PreparedConstraint<'_> {
                     return None;
                 }
                 if let (Some(bound), SeatPlan::Sampled { candidates, .. }) =
-                    (self.residual_bound, &entry.plan)
+                    (self.residual_threshold, &entry.plan)
                 {
                     let a = residual_ln_accept(candidates, bound, hand).exp();
                     let u = (rng.next_u64() >> 11) as f64 * (1.0 / (1u64 << 53) as f64);
@@ -855,7 +930,7 @@ impl PreparedProposal for PreparedConstraint<'_> {
                     return f64::NEG_INFINITY;
                 }
                 if let (Some(bound), SeatPlan::Sampled { candidates, .. }) =
-                    (self.residual_bound, &entry.plan)
+                    (self.residual_threshold, &entry.plan)
                 {
                     ln_pi += residual_ln_accept(candidates, bound, hand);
                 }

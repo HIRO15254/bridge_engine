@@ -72,7 +72,9 @@ enum WestVariant {
     Disjoint,
 }
 
-/// West's alternatives and the residual bound `U` the proposal must compute for them.
+/// West's alternatives and the residual threshold `T` the proposal must pick for them: the
+/// bound `U`, since the pilot sees both mixture levels and its acceptance at `U` (at least 0.3)
+/// is above the default floor of 0.125.
 fn west_alternatives(variant: WestVariant) -> (Vec<(HandConstraint, f32)>, f64) {
     match variant {
         WestVariant::Overlapping => (
