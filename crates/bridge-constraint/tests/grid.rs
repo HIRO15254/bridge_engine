@@ -1,5 +1,5 @@
 //! The exact (shape, HCP) grid against `HandConstraint::satisfies` (docs/design/05-constraint.md
-//! §`grid.rs`; lane-S acceptance "S, grid"): over 200 random constraints (100 literal-free, 100
+//! §2.6; lane-S acceptance "S, grid"): over 200 random constraints (100 literal-free, 100
 //! with `cards`/`eval` literals or `Custom` predicates) and random 13-card hands,
 //!
 //! - a literal-free constraint's grid matches `satisfies` on every hand (0 mismatches), and its

@@ -28,8 +28,11 @@
 //!
 //! This is a measurement harness, not a correctness gate: neither design document sets a
 //! threshold here (unlike, say, the recognition-ratio tests) -- the numbers landing in
-//! `target/natural_metrics.json` are phase 3's completion criterion; tuning `NaturalParams`
-//! against them is phase 4's job. Run once in release:
+//! `target/natural_metrics.json` are phase 3's completion criterion. Phase 4.6 tuned the rule
+//! confidences and the level floor against them (`natural_tuning`, docs/design/06-system.md
+//! §8.6): measurement 2 also reports a contextual rate that samples the constraints `choose_bid`
+//! itself ranks, and the corpus is split by game index (even = tune, odd = eval) for true-deal
+//! agreement. Run once in release:
 //! `cargo test -p bridge-bidding --release --test natural_metrics -- --ignored --nocapture`.
 
 mod common;

@@ -15,7 +15,7 @@
 //!
 //! Used by the exclusive index (`bridge-system`: emptiness proofs), the natural exclusion and the
 //! run-time recomputation of exclusive regions in `bridge-bidding`
-//! (docs/design/05-constraint.md §`grid.rs`). This module unifies the two phase-4 prototypes'
+//! (docs/design/05-constraint.md §2.6). This module unifies the two phase-4 prototypes'
 //! grids: a fixed `[ShapeSet; 38]` array (C) with sub/sup bounds (B).
 
 use core::ops::RangeInclusive;
