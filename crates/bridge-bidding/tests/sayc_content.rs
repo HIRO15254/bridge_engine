@@ -562,4 +562,33 @@ mod sayc_comp {
             ("1D P 1S P 1NT P", "AJ75.Q72.832.T92", "P"),
         ]);
     }
+
+    /// Responses to a minor opening that had no call: the invitational 3=3=3=4 hand over 1C
+    /// (no four-card suit to show, too strong for 1NT, too weak for 2NT) raises with four
+    /// clubs, and a hand above the 16--18 3NT with no four-card major bids 3NT instead of
+    /// passing partner's opening.
+    #[test]
+    fn minor_opening_responses_cover_every_strength() {
+        check(&[
+            ("1C P", "K74.Q53.875.AQJ2", "3C"),
+            ("1C P", "AT8.A5.A9.AKT762", "3NT"),
+            ("1D P", "QJ.A64.AKQ82.A72", "3NT"),
+        ]);
+    }
+
+    /// Advancing a natural two-level overcall of the opponents' 1NT had no table, and natural
+    /// inference offered nothing to a hand of middling strength (`NoCandidate`): a raise with
+    /// a fit, game with an opening hand, and a raise or penalty double after opener's partner
+    /// competes.
+    #[test]
+    fn advances_of_an_overcall_of_their_1nt() {
+        check(&[
+            ("1NT 2C P", "K43.76.K82.Q8654", "3C"),
+            ("1NT 2C P", "AQ87.J2.QJT3.A62", "3NT"),
+            ("1NT 2H P", "A3.K952.AQ832.95", "4H"),
+            ("1NT 2C P", "KT832.QT5.7.JT96", "P"),
+            ("1NT 2D 2S", "K43.76.KQ82.Q865", "3D"),
+            ("1NT 2S 3C", "A3.K952.AQ832.95", "X"),
+        ]);
+    }
 }

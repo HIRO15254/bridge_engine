@@ -429,3 +429,17 @@ C4. **Interference this file does not model reverts to natural bidding, through 
     and the wildcard otherwise; a position with no rows is off-system, so the next call is
     chosen by natural inference, exactly as `interpret` reads it. On the 10^6-position
     harness this took `NoCandidate` from 22,583 to 7,619 in one step.
+
+C5. **Positions where natural inference had nothing to offer are written out.** At a
+    position with no table, the next call is chosen by natural inference; its pass rule
+    covers only a weak hand, so a hand of middling strength with no natural call had no
+    candidate at all (`NoCandidate`), the most frequent kind of hole left after C4. The
+    commonest such positions in these files now have tables of their own, so their implicit
+    pass is the complement of the rows and every hand has a call:
+    advancing a natural two-level overcall of the opponents' 1NT (a raise with 8--11 and a
+    fit, game with 12+, a six-card signoff, a raise or a penalty double if opener's partner
+    competes). Two response holes over a minor opening are closed as well: the invitational
+    3=3=3=4 hand over 1!c raises to 3!c with four clubs (the booklet's "one fewer in a
+    pinch"), and a hand above 3NT's 16--18 with no four-card major bids 3NT instead of passing
+    (the booklet has no forcing minor raise to start with instead). All ranges here are this
+    file's interpolation; the booklet gives none.

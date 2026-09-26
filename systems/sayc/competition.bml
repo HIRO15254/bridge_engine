@@ -549,6 +549,32 @@ opener's), and a two-level suit bid is a natural overcall with a five-card suit.
 D = {prio:1} 15+ hcp
 2X = 8--15 hcp, 5+#
 
+Advancing the natural two-level overcall (NOTES.md #C5): opposite a 15--17 opener
+there is no game unless advancer has an opening hand, so a fit with 8--11 raises
+to the three level (competing), game is bid with 12+ (the major with a fit,
+otherwise 3NT), a six-card suit of advancer's own with shortness in the
+overcall is a signoff, and anything else passes. If the opener's partner
+competes, advancer still raises with a fit and doubles for penalty with 10+.
+
+(1N)-2X-(P)-
+3X = 8--11 hcp, 3+X
+2Y = 0--11 hcp, 6+#, 0--1X
+
+(1N)-2M-(P)-
+4M = {prio:1} 12+ hcp, 3+M
+3N = 12+ hcp, 0--2M
+
+(1N)-2m-(P)-
+3N = {prio:1} 12+ hcp
+
+(1N)-2X-(2Y)-
+3X = {prio:1} 8--11 hcp, 3+X
+D = 10+ hcp
+
+(1N)-2Y-(3X)-
+3Y = {prio:1} 8--11 hcp, 3+Y
+D = 10+ hcp
+
 ** Balancing
 
 A reopening bid means much the same as a direct-seat bid, but it can be lighter,
