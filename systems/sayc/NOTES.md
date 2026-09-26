@@ -383,7 +383,8 @@ C2. **Every common competitive position has its own table, so a hand with nothin
     minor overcall), `1S-(3Y)-`, `1H-(3m)-`, `1m-(3Y)-` and `1X-(1N)-`; the rest are written
     out. The booklet's own numbers are used where it gives them (negative doubles through
     2!s, the cuebid as a limit raise or better, a jump raise as preemptive); the notrump
-    ranges (1NT 7--10, 2NT 11--12, 3NT 13--16 after an overcall; 3NT 12--16 over a preempt)
+    ranges (1NT 7--10, 2NT 11--12, 3NT 13+ after an overcall; 3NT 12+ over a preempt;
+    3NT is uncapped, since a stronger hand with a stopper and no fit has no other call)
     and the 10+ penalty double over a preempt are this file's interpolation.
     Responses to a double of our opening gained the single raise (6--9, 3+ for a major) and
     1NT (6--9); 2NT is now a limit raise or better *with four trumps* (it read `INV, 10+ hcp`

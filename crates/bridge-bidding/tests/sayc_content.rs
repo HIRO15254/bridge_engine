@@ -671,4 +671,14 @@ mod sayc_comp {
             ("1D 3C", "84.Q84.KJ72.Q632", "3D"),
         ]);
     }
+
+    /// Responder's 3NT after an overcall was capped at 16 (12--16 over a preempt), so a
+    /// stronger hand with a stopper and no fit passed the overcall.
+    #[test]
+    fn responder_3nt_after_an_overcall_is_uncapped() {
+        check(&[
+            ("1C 1H", "K6.A753.AK52.AT4", "3NT"),
+            ("1H 1S", "AKT6.A7.652.AKQ9", "3NT"),
+        ]);
+    }
 }

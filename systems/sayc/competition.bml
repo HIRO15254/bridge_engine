@@ -188,7 +188,7 @@ cuebid of the overcaller's suit is a limit raise or better in opener's suit; a
 single raise is 6--10 (3+ cards for a major, 4+ for a minor, one fewer than
 without interference); a jump raise is preemptive (4+ trumps for a major, 5+ for a
 minor); notrump is natural with a stopper in their suit (1NT 7--10 after a
-one-level overcall, 2NT 11--12, 3NT 13--16). With no call to make, responder
+one-level overcall, 2NT 11--12, 3NT 13+). With no call to make, responder
 passes: every table here is an exact system position, so its implicit pass is the
 complement of the rows below (NOTES.md #C2). Over a three-level preempt the
 double is for penalty (the booklet stops negative doubles at 2!s), and a raise or
@@ -230,7 +230,7 @@ D = 4=!h and 6+ hcp or 5+!h and 5--10 hcp
 D = 6+ hcp, 4+!c, 4+!d
 1N = 7--10 hcp, stopper
 2N = 11--12 hcp, stopper
-3N = 13--16 hcp, stopper
+3N = 13+ hcp, stopper
 
 1m-(1Y)-
 2Y = 11+ hcp, 4+m
@@ -238,7 +238,7 @@ D = 6+ hcp, 4+!c, 4+!d
 2m = 6--10 hcp, 4+m
 1N = 7--10 hcp, stopper
 2N = 11--12 hcp, stopper
-3N = 13--16 hcp, stopper
+3N = 13+ hcp, stopper
 
 *** Opener's rebid after a one-level response over an overcall
 
@@ -310,7 +310,7 @@ and so are the weak jump overcalls (`1C-(2Y)-`, `1D-(2M)-`, 1!h-(2!s)).
 2M = {prio:2} 6--10 hcp, 3+M
 2oM = {prio:1} F, 11+ hcp, 5+oM
 2N = {prio:1} 11--12 hcp, stopper
-3N = {prio:1} 13--16 hcp, stopper
+3N = {prio:1} 13+ hcp, stopper
 D = 8+ hcp, 0--2M
 
 1S-(2H)-
@@ -320,7 +320,7 @@ D = 8+ hcp, 0--2M
 3C = {prio:1} F, 11+ hcp, 5+!c
 3D = {prio:1} F, 11+ hcp, 5+!d
 2N = {prio:1} 11--12 hcp, stopper
-3N = {prio:1} 13--16 hcp, stopper
+3N = {prio:1} 13+ hcp, stopper
 D = 8+ hcp, 0--2!s
 
 1D-(2C)-
@@ -331,7 +331,7 @@ D = {prio:2} 8+ hcp, 4+!h or 4+!s
 3D = {prio:1} 5--9 hcp, 5+!d
 2D = {prio:1} 6--10 hcp, 4+!d
 2N = 11--12 hcp, stopper
-3N = 13--16 hcp, stopper
+3N = 13+ hcp, stopper
 
 1C-(2Y)-
 2Z = {prio:2} F, 11+ hcp, 5+#
@@ -339,7 +339,7 @@ D = {prio:1} 7+ hcp, not 4+!c
 3Y = 11+ hcp, 4+!c
 3C = 6--10 hcp, 5+!c
 2N = 11--12 hcp, stopper
-3N = 13--16 hcp, stopper
+3N = 13+ hcp, stopper
 
 1D-(2M)-
 2Z = {prio:2} F, 11+ hcp, 5+#
@@ -347,7 +347,7 @@ D = {prio:1} 7+ hcp, not 4+!d
 3M = 11+ hcp, 4+!d
 3D = 6--10 hcp, 4+!d
 2N = 11--12 hcp, stopper
-3N = 13--16 hcp, stopper
+3N = 13+ hcp, stopper
 
 1H-(2S)-
 3S = {prio:3} 11+ hcp, 3+!h
@@ -356,7 +356,7 @@ D = {prio:1} 7+ hcp, not 4+!d
 3C = {prio:1} F, 11+ hcp, 5+!c
 3D = {prio:1} F, 11+ hcp, 5+!d
 2N = {prio:1} 11--12 hcp, stopper
-3N = {prio:1} 13--16 hcp, stopper
+3N = {prio:1} 13+ hcp, stopper
 D = 7+ hcp, 0--2!h
 
 *** After a three-level preempt
@@ -364,28 +364,28 @@ D = 7+ hcp, 0--2!h
 1S-(3Y)-
 4S = {prio:2} 11+ hcp, 3+!s
 3S = {prio:2} 7--10 hcp, 3+!s
-3N = {prio:1} 12--16 hcp, stopper
+3N = {prio:1} 12+ hcp, stopper
 D = 10+ hcp
 
 1H-(3m)-
 4H = {prio:2} 11+ hcp, 3+!h
 3H = {prio:2} 7--10 hcp, 3+!h
-3N = {prio:1} 12--16 hcp, stopper
+3N = {prio:1} 12+ hcp, stopper
 D = 10+ hcp
 
 1H-(3S)-
 4H = {prio:2} 10+ hcp, 3+!h
-3N = {prio:1} 12--16 hcp, stopper
+3N = {prio:1} 12+ hcp, stopper
 D = 10+ hcp
 
 1m-(3Y)-
-3N = {prio:1} 12--16 hcp, stopper
+3N = {prio:1} 12+ hcp, stopper
 D = 10+ hcp
 
 1D-(3C)-
 3H = {prio:2} F, 11+ hcp, 5+!h
 3S = {prio:2} F, 11+ hcp, 5+!s
-3N = {prio:1} 12--16 hcp, stopper
+3N = {prio:1} 12+ hcp, stopper
 3D = {prio:1} 7--10 hcp, 4+!d
 D = 10+ hcp
 
