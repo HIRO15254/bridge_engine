@@ -179,7 +179,11 @@ fn enumerate_three_way_splits(pool: Hand, pool_cards: &[Card]) -> Vec<(Hand, Han
 /// `log_prob_consistency` above.
 #[test]
 fn middle_seat_coarse_log_prob_consistency() {
-    check_three_seat_consistency(&three_seat_interpretation(), 20260926);
+    check_three_seat_consistency(
+        &three_seat_interpretation(),
+        20260926,
+        &ConstraintProposal::default(),
+    );
 }
 
 /// High-card points of `hand` (A = 4, K = 3, Q = 2, J = 1).
@@ -257,12 +261,36 @@ fn middle_seat_merged_summaries_log_prob_consistency() {
     check_three_seat_consistency(
         &three_seat_merged_summary_interpretation(south_fixed),
         20260927,
+        &ConstraintProposal::default(),
     );
 }
 
-/// Enumerates every 3/3/3 split of [`three_seat_pool_context`]'s pool, checks that
-/// `exp(log_prob)` sums to 1 over them, and checks 10^5 proposals against it by chi-square.
-fn check_three_seat_consistency(interpretation: &Interpretation, seed: u64) {
+/// §6.4 (d)'s light folding (light alternatives replaced by one uniform component with a fixed
+/// draw probability) must keep `log_prob` exact too. An infinite threshold folds every
+/// alternative but the heaviest: the merged summary is kept and the low-HCP one is folded.
+#[test]
+fn middle_seat_light_tier_log_prob_consistency() {
+    let (known, _) = three_seat_pool_context();
+    let south_fixed = known.known[Seat::South.index() as usize];
+    check_three_seat_consistency(
+        &three_seat_merged_summary_interpretation(south_fixed),
+        20260928,
+        &ConstraintProposal {
+            light_threshold: f64::INFINITY,
+            ..ConstraintProposal::default()
+        },
+    );
+}
+
+/// Enumerates every 3/3/3 split of [`three_seat_pool_context`]'s pool, sums `exp(log_prob)` over
+/// them (the probability a proposal succeeds: 1 unless a light-tier draw can fail), checks that
+/// 10^5 proposals fail at that rate, and checks the successful ones against `exp(log_prob)` by
+/// chi-square.
+fn check_three_seat_consistency(
+    interpretation: &Interpretation,
+    seed: u64,
+    proposal: &ConstraintProposal,
+) {
     let (known, pool) = three_seat_pool_context();
     let play_constraints = [
         HandConstraint::ANY,
@@ -278,7 +306,6 @@ fn check_three_seat_consistency(interpretation: &Interpretation, seed: u64) {
         bidding: None,
     };
 
-    let proposal = ConstraintProposal::default();
     let prepared = proposal
         .prepare(&ctx)
         .expect("prepare succeeds: every seat has support");
@@ -306,18 +333,20 @@ fn check_three_seat_consistency(interpretation: &Interpretation, seed: u64) {
     let log_probs: Vec<f64> = deals.iter().map(|d| prepared.log_prob(d)).collect();
     let total: f64 = log_probs.iter().map(|lp| lp.exp()).sum();
     assert!(
-        (total - 1.0).abs() < 1e-9,
-        "Σ exp(log_prob) over the enumerated support = {total}, expected 1"
+        total > 0.0 && total < 1.0 + 1e-9,
+        "Σ exp(log_prob) over the enumerated support = {total}, expected a probability"
     );
 
-    let n = 100_000u64;
+    let attempts = 100_000u64;
     let mut rng = rng_for(seed, 0);
     let mut observed = vec![0u64; deals.len()];
     let mut unmatched = 0u64;
-    for _ in 0..n {
-        let deal = prepared
-            .propose(&mut rng)
-            .expect("this context always has support");
+    let mut failed = 0u64;
+    for _ in 0..attempts {
+        let Some(deal) = prepared.propose(&mut rng) else {
+            failed += 1;
+            continue;
+        };
         match deals.iter().position(|d| d == &deal) {
             Some(i) => observed[i] += 1,
             None => unmatched += 1,
@@ -328,7 +357,19 @@ fn check_three_seat_consistency(interpretation: &Interpretation, seed: u64) {
         "every proposed deal must be one of the 1680 enumerated splits"
     );
 
-    let expected: Vec<f64> = log_probs.iter().map(|lp| lp.exp() * n as f64).collect();
+    let fail_rate = (1.0 - total).max(0.0);
+    let sigma = (attempts as f64 * fail_rate * (1.0 - fail_rate)).sqrt();
+    assert!(
+        (failed as f64 - attempts as f64 * fail_rate).abs() <= 5.0 * sigma + 1e-6,
+        "{failed} of {attempts} proposals failed, expected about {}",
+        attempts as f64 * fail_rate
+    );
+    let n = attempts - failed;
+
+    let expected: Vec<f64> = log_probs
+        .iter()
+        .map(|lp| lp.exp() / total * n as f64)
+        .collect();
     let mut used_observed = Vec::new();
     let mut used_expected = Vec::new();
     for (i, &e) in expected.iter().enumerate() {
