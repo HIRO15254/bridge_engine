@@ -10,8 +10,13 @@
 //! representable exactly; [`bounds`] returns a guaranteed subset (`sub`) and superset (`sup`) for
 //! them instead, and `sub == sup` holds exactly when the constraint is literal-free.
 //!
-//! Used by the natural exclusion and the run-time recomputation of exclusive regions in
-//! `bridge-bidding` (docs/design/05-constraint.md, `grid.rs`).
+//! [`subtract_grid`] builds the over-covering flat "proposal form" of a region minus a grid, and
+//! [`is_literal_free`] tells whether a constraint is exactly representable.
+//!
+//! Used by the exclusive index (`bridge-system`: emptiness proofs), the natural exclusion and the
+//! run-time recomputation of exclusive regions in `bridge-bidding`
+//! (docs/design/05-constraint.md §2.6). This module unifies the two phase-4 prototypes'
+//! grids: a fixed `[ShapeSet; 38]` array (C) with sub/sup bounds (B).
 
 use core::ops::RangeInclusive;
 use std::sync::OnceLock;
@@ -382,6 +387,66 @@ pub fn bounds(c: &HandConstraint) -> GridBounds {
             sub: HcpShapeGrid::EMPTY,
             sup: HcpShapeGrid::ALL,
         },
+    }
+}
+
+/// `true` when every atom of `c` is literal-free (shapes and HCP only) and `c` has no `Custom`
+/// predicate: exactly the constraints [`HcpShapeGrid::of_exact`] represents (without building
+/// the grid).
+pub fn is_literal_free(c: &HandConstraint) -> bool {
+    match c {
+        HandConstraint::Atom(a) => a.cards.is_empty() && a.eval.is_empty(),
+        HandConstraint::Or(children) | HandConstraint::And(children) => {
+            children.iter().all(is_literal_free)
+        }
+        HandConstraint::Not(inner) => is_literal_free(inner),
+        HandConstraint::Custom(_) => false,
+    }
+}
+
+/// An over-covering flat form of `branch ∧ ¬minus` for a proposal (the "proposal form" of the
+/// natural exclusion, docs/design/07-bidding.md §4.1): `branch` is taken by its superset bound,
+/// `minus` is the region to remove (typically the union of the *subset* bounds of the
+/// higher-ranked candidates, so the removal never takes away a hand the exact set keeps).
+///
+/// - A literal-free `branch`: the flat atoms of `grid(branch) ∖ minus` ([`HcpShapeGrid::to_atoms`]
+///   with `cap`), exact when at most `cap` runs remain.
+/// - An atom with `cards`/`eval` literals: the same atoms, each carrying the atom's literals (so
+///   the result is `branch ∧ ¬minus` exactly when at most `cap` runs remain).
+/// - Anything else (literals under `And`/`Or`/`Not`, or `Custom`): `And([branch, flat])` where
+///   `flat` is the atoms of `sup(branch) ∖ minus`; `branch` is returned unchanged when `minus`
+///   removes nothing.
+///
+/// Always a superset of `branch ∧ ¬minus`; `Or([])` (no hand) when no feasible cell is left.
+pub fn subtract_grid(branch: &HandConstraint, minus: &HcpShapeGrid, cap: usize) -> HandConstraint {
+    let (region, template, conjoin) = match branch {
+        HandConstraint::Atom(a) => (
+            HcpShapeGrid::of_atom_box(a),
+            Atom {
+                shapes: ShapeSet::ALL,
+                hcp: 0..=HCP_MAX,
+                cards: a.cards.clone(),
+                eval: a.eval.clone(),
+            },
+            false,
+        ),
+        other => match HcpShapeGrid::of_exact(other) {
+            Some(g) => (g, Atom::ANY, false),
+            None => (bounds(other).sup, Atom::ANY, true),
+        },
+    };
+    let rest = region.diff(minus);
+    if rest.is_empty_hands() {
+        return HandConstraint::Or(Vec::new());
+    }
+    if conjoin && rest == region {
+        return branch.clone();
+    }
+    let flat = rest.to_constraint(&template, cap);
+    if conjoin {
+        HandConstraint::And(vec![branch.clone(), flat])
+    } else {
+        flat
     }
 }
 
