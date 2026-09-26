@@ -29,7 +29,7 @@
 | BML コンパイル時間 (`sayc.bml`、外部ファイル最大のもの) | `bridge-system` `tests/compile_time.rs` | 統合 | < 1 s |
 | ナチュラル推定 3 測定 (§6) | `bridge-system` `tests/natural_metrics.rs` | `#[ignore]`、JSON 出力 | 数値が出る |
 | **双方向整合性** `forward_consistency` (§2) | `bridge-bidding` `tests/consistency.rs` | `#[ignore]` release、10^6 配牌、`strict` | 違反 0。`NoCandidate`/`ImplicitPass` はノード別集計 → `target/coverage_report.json` |
-| 再現率 `reproduction_rate` (§3) | 同 | `#[ignore]`、コーパス 500 オークション × 1000 サンプル | ノード別に報告 (フェーズ 4 で中央値 ≥ 0.6) |
+| 再現率 `sayc_reproduction_rate` (§3) | `bridge-bidding` `tests/reproduction.rs` | `#[ignore]` release。(i) 生成フィクスチャ 100 本、(ii) コーパス評価用分割の SAYC 再現可能部分集合、(iii) 旧定義 500 本、(iv) コール単位の一致率 | (i) と (ii) の中央値 ≥ 0.6 (フェーズ 4)。(iii)(iv) は報告 |
 | `policy_argmax_matches_choose_bid` | `bridge-bidding` `tests/policy.rs` | unit、τ = 0.01、10^5 局面 | 100% |
 | `illegal_call_is_lint` | `bridge-bidding` `tests/choose.rs` | unit (合成 `SystemIR` に不正な継続) | `Diagnostic::IllegalSystemCall`、パニックなし |
 | `weights_sum_to_one`、`and_combination_drops_contradictions`、`seat_without_calls_is_any` | `bridge-bidding` `tests/interpret.rs` | unit | 全通過 |
@@ -111,32 +111,62 @@ fn forward_consistency() {
 
 ## 3. 再現率テスト (仕様 §10 逆方向)
 
-```rust
-#[test]
-#[ignore = "needs BRIDGE_CORPUS_DIR"]
-fn reproduction_rate() {
-    let Some(dir) = corpus_dir() else { return };
-    let table = common::sayc_table();
-    let bid_ctx = BidContext { implicit_pass: ImplicitPass::Complement, ..common::bid_ctx() };
-    let mut report = ReproductionReport::new();
-    for auction in corpus_auctions(&dir).take(500) {
-        let interp = interpret(&table, &auction, &InterpretOptions::default());
-        let ctx = SampleContext { known: KnownCards::EMPTY, interpretation: &interp,
-                                  play_constraints: &[HandConstraint::ANY; 4], play_soft: None, bidding: None };
-        let opts = SampleOptions { seed: SEED, ..SampleOptions::default() };
-        let (deals, _) = sample_deals(&ctx, &ConstraintProposal::default(), 1000, &opts).unwrap();
-        let reproduced = deals.iter()
-            .filter(|d| replay(&table, &d.deal, auction.dealer(), auction.vulnerability(), &bid_ctx).auction == auction)
-            .count();
-        report.record(&auction, &interp, reproduced as f64 / 1000.0);
-    }
-    report.write_json("target/reproduction_report.json").unwrap();
-}
-```
+§2 は「`choose_bid` が選んだコールを `interpret` が説明できるか」(定義が狭すぎないか) を見る。再現率テストはその逆で、「あるオークションの解釈が受け入れる配牌を `replay` すると、同じオークションに戻るか」を見る。再現率が低いのは、解釈が緩すぎるか、そのオークションをシステムが競らないかのどちらかである。実装は `crates/bridge-bidding/tests/reproduction.rs` で、結果は `target/reproduction_report.json` に書く。
 
-再現率が低いノードは「解釈が緩すぎる」ノードで、下流のサンプリング精度が落ちる箇所と一致する。報告はノード別 (最後に Exact 解決したノード) と `ResolutionKind` 別の中央値・分位点。閾値はフェーズごとに文書化し、フェーズ 4 で中央値 ≥ 0.6 を完了条件にする。
+### 3.1 報告する 4 つの数値 (フェーズ 4 で再定義、15-phase4-plan の基準 (b))
 
-実装 (`crates/bridge-bidding/tests/reproduction.rs`) は `ConstraintProposal` が未実装 (フェーズ 5) のため、同じ分布を棄却法で作る: 一様な配牌を引き、4 シートすべての手が strict な解釈 (`InterpretOptions { strict: true, .. }` での `Interpretation::satisfied_by`) を満たすものだけを残す (1 オークションにつき最大 1000 配牌、引くのは最大 200,000 回)。率は残った配牌のうち `replay` がオークションを再現した割合 (重みなしの素の割合) で、見出しは残った配牌が 30 以上のオークションでの中央値。見出しに入るかどうかは残った配牌の数だけで決まり、再現したかどうかには依存しない (多くの配牌が再現するパスアウトのオークションで確かめるテスト `headline_counts_an_auction_that_many_deals_reproduce` がある)。以前の見出し (`sequence_log_likelihood` で重み付けした率の、ESS ≥ 30 のオークションでの中央値) は誤りだった: `choose_bid` が選ばないコールには方策が `epsilon / n_legal` の質量しか与えないので、再現する配牌が 1 つあればその重みが他を桁違いに上回り ESS ≈ 1 になる。ESS が高いのはどの配牌も再現しないときだけで、ESS ≥ 30 のフィルタは再現率 0 のオークションを構成上選んでいた (フェーズ 3 再レビュー 3)。この重み付き率はオークションごとに `weighted_rate` と `any_reproduced` として残すが、0/1 に近い統計量なので見出しには使わない。`SAYC_REPRO_LIMIT` でオークション数を絞れる。2026-09-27 (再レビュー 3 の修正後) の実測: 500 オークション中、配牌が 30 以上残ったのは 234 件 (0 件が 193、1〜29 件が 73、1000 件に達したのが 33) で、その素の再現率の中央値 0.0 (0 より大きいのは 83 件、p90 0.353、最大 1.0)。最終コールの `ResolutionKind` 別では `Natural` 220 件の中央値 0.0、`Exact` 14 件の中央値 0.419。尤度重み付きの一様サンプルが 1 つでも再現したオークションは 500 件中 25 件 (5%)。約 40 秒 (8 スレッド)。解釈を満たす手で測っても `Natural` で終わるオークションはほとんど再現しないので、率の低さは提案分布のせいではなく、システム外の部分の解釈 (ナチュラル推定) が緩いか、`choose_bid` の再生と食い違うことによる。どちらが主かはこの数値だけでは分けられない。
+コーパス (2019 年の世界選手権決勝) は主にストロング・クラブや 2/1 で競られている。それを SAYC として読むのはモデルの誤指定なので、コーパスだけの閾値はシステムの被覆率やサンプラーの質ではなく、コーパスのシステム構成を測ってしまう。そこで、SAYC が正しいモデルになる集合 (生成) を見出しにし、コーパスには対応する部分集合を定める。両方を毎回報告する。
+
+| 部 | 集合 | 方策の preset | 解釈 | 完了条件 |
+| --- | --- | --- | --- | --- |
+| (i) 生成 | 固定フィクスチャ `tests/data/repro_generated.txt` の SAYC オークション 100 本 | `system_players()` | `InterpretOptions::for_context` (鏡像) | 中央値 ≥ 0.6 |
+| (ii) コーパス部分集合 | 評価用分割 (奇数番目) のうち、真の配牌を `replay` すると記録どおりのオークションになるもの。件数も報告 | `human()` | 同上 | 中央値 ≥ 0.6 (件数を併記) |
+| (iii) 旧定義 | コーパスの先頭 500 本 (両分割)。フェーズ 3 の定義をそのまま継続 | `system_players()` | `InterpretOptions::legacy()` | 報告のみ |
+| (iv) コール単位の一致率 | 評価用分割の全コール。真の配牌の持ち主の手で `choose_bid` が記録どおりのコールを選ぶ率。システム位置とナチュラル位置に分ける | `human()` | ― | 報告のみ |
+
+- (iv) の位置の分類は `choose_bid` 自身の判定に合わせる。ナチュラル推定と暗黙パスを切った `BidContext` で `choose_bid` を呼び、システムのコールを選ぶか、合法なシステム候補を `Rejected::Unsatisfied` で退けた位置をシステム位置とする (合法なシステム候補が 1 つ以上ある位置)。それ以外はナチュラル位置。`NoCandidate` は不一致として数え、`gaps` にも記録する。
+- (i) には、フィクスチャのうち真の配牌から今のシステムで再現しなくなった本数 (`fixture_drift`) も出す。フィクスチャは凍結するので、ずれは失敗ではなく情報である。
+
+### 3.2 サンプラー
+
+配牌の引き方は `Sampler` 列挙で切り替える。どの部も共通の関数 `evaluate(sampler, table, ctx, auction, opts, seed)` を通り、各配牌の重み w について「再現した配牌の重み / 重みの合計」を率とする。見出しの中央値に入れるのは、ESS = (Σw)² / Σw² が 30 以上のオークションだけである。このフィルタは配牌の数 (重み) だけを見て、再現したかどうかは見ない。
+
+- `Sampler::StrictRejection { target, max_draws }` (フェーズ 4 の見出し)：一様な配牌を引き、4 シートすべての手が strict な解釈 (`InterpretOptions { strict: true, .. }` での `Interpretation::satisfied_by`、Fallback の片を除く) を満たすものだけを残す。重みはすべて 1 なので、ESS は残った配牌の数に等しい。既定は目標 1000 配牌、上限 5,000,000 回。オークション全体の strict な解釈を満たす一様配牌は 1e-4 程度しかなく、フェーズ 3 の上限 200,000 回では生成 100 本のうち 44 本が 30 配牌に届かなかった。1 回の抽選と判定は約 50 ns なので、5e6 回でも 1 オークション・1 スレッドあたり 0.25 秒程度で済む。
+- `Sampler::Weighted { proposal, n }`：`sample_deals` で提案分布から n 配牌を引き、方策の尤度 (`BiddingLikelihood`) / 提案密度で重み付けする。`ProposalKind::Uniform` はフェーズ 3 の「尤度重み付きの一様サンプル」で、(iii) の `weighted_uniform` にだけ使う。`choose_bid` が選ばないコールには方策が ε/n の床しか与えないので、再現する配牌が 1 つあればその重みが桁違いに大きくなり ESS ≈ 1 になる。このため 0/1 に近い統計量で、見出しには使わない (フェーズ 3 再レビュー 3。以前の見出し「この重み付き率の、ESS ≥ 30 のオークションでの中央値」は、構成上、再現率 0 のオークションだけを選んでいた)。
+- (iii) の旧定義は、見出しのサンプラーが何であってもフェーズ 3 のサンプラー (`LEGACY_SAMPLER` = 棄却、目標 1000、上限 200,000) に固定する。
+
+**フェーズ 5 での差し替え**：`ConstraintProposal` と `AuctionPolicy` による重み付けが入ったら、`headline_sampler()` の既定を `Sampler::Weighted { proposal: ProposalKind::Constraint, n: 1000 }` に変える。変更はこの 1 か所だけで済む。解釈はすでに尤度と同じ `BidContext` から `InterpretOptions::for_context` で作っており、`evaluate` は重みを扱い、報告には ESS と試行数が既に入っている。`BiddingLikelihood` の中身を `AuctionPolicy::log_likelihood` に替えるのは `bridge-sample` 側 (レーン P) で、この harness は変えなくてよい。先に試すときは `SAYC_REPRO_SAMPLER=constraint` で切り替えられる (フェーズ 4 の系統では `ConstraintProposal::prepare` が `todo!()` なので panic する)。鏡像の提案が q ∝ L を満たせば重みはほぼ一定になり、ESS ≥ 30 のフィルタは棄却法の「30 配牌以上」と同じ意味になる。
+
+### 3.3 生成フィクスチャとコーパス分割
+
+- **生成フィクスチャ** (`tests/data/repro_generated.txt`)：1 行 1 本のタブ区切りで、`id  dealer  vul  deal (PBN、N から)  calls (空白区切り)` の形。`#` 行は注釈。乱数の種は `0x5A1C4001` で、配牌 i は `auction_seed(GEN_SEED, i)`。ボード番号 i + 1 からディーラーとバルネラビリティを決め、`system_players()`、SAYC のナチュラル推定、`ImplicitPass::Complement` で `replay` する。パスアウトと、最終コントラクトが 5 レベルを超えるものは捨てる (レベル下限が入るまでは、ナチュラル推定の 7 レベルへの暴走が混ざるため。09-sample §10.2 の ESS スイートと同じ規則)。いまの SAYC では 247 配牌のうちパスアウト 6、5 レベル超 141 を捨てて 100 本になった。
+- 再生成は `SAYC_REPRO_WRITE_FIXTURE=1 cargo test --release -p bridge-bidding --test reproduction -- --ignored write_generated_fixture`。環境変数なしで走らせると、ファイルと今のシステムの生成結果が何本食い違うかを表示するだけで、ファイルは書き換えない。**このフィクスチャは暫定**で、フェーズ 4 の統合時、レーン S (レベル下限) とレーン D (SAYC の行の追加) が入った後に 1 回だけ再凍結する。以後は方策を変えてもケース集合は変えない (D20)。
+- 既定スイートでは `generated_fixture_is_well_formed` (100 本、id が一意、完了済み、パスアウトなし、5 レベル以下、書き出しと読み込みで一致) と、生成器の決定性、分割規則、棄却と重み付きの両方のサンプラー、(iv) の位置分類を確かめる (debug で約 3〜5 秒)。フィクスチャの配牌が今のシステムで再現するかどうかは既定スイートでは確かめない (再凍結前に SAYC を変えると落ちてしまうため)。
+- **コーパスの列挙と分割**：`corpus/data/pbn` 以下の `.pbn` をパスでソートし、ファイル内の順に、`GameView` がオークションを解決したゲームだけを数える (2 つの `Optimum*Table.pbn` と `-` のゲームは入らない。view の解釈に失敗すると `#` の継承をリセットする)。この列挙番号が偶数なら調整用、奇数なら評価用 (D20)。いまのコーパスでは 625 本、評価用 312 本で、評価用はすべて真の配牌を持つ。
+
+### 3.4 実行と環境変数
+
+`cargo test --release -p bridge-bidding --all-features --test reproduction -- --ignored sayc_reproduction_rate --nocapture`。(ii)〜(iv) はコーパス (`BRIDGE_CORPUS_DIR` または `corpus/data`) が無ければ飛ばす。重さの調整は次の環境変数で行う。
+
+| 変数 | 既定 | 意味 |
+| --- | --- | --- |
+| `SAYC_REPRO_PARTS` | 全部 | `generated,corpus,legacy,agreement` のうち走らせる部 |
+| `SAYC_REPRO_SAMPLER` | `rejection` | 見出しのサンプラー (`rejection` / `constraint` / `uniform`) |
+| `SAYC_REPRO_TARGET` / `SAYC_REPRO_MAX_DRAWS` | 1000 / 5,000,000 | 棄却法の目標配牌数と抽選上限 |
+| `SAYC_REPRO_GENERATED` | 100 | (i) で使うフィクスチャの本数 |
+| `SAYC_REPRO_CORPUS_LIMIT` | 全部 | (ii) で標本を取る部分集合の本数 |
+| `SAYC_REPRO_LIMIT` | 500 | (iii) のオークション数 |
+
+報告には開始時と終了時の loadavg を入れる。
+
+### 3.5 実測
+
+2026-09-27、フェーズ 4 の API 系統 (wip/p4-api 4b131db + レーン R)。この系統では `InterpretMode::Mirror` がまだフェーズ 3 の Step A を走らせるので、strict な解釈はフェーズ 3 の緩いもののままである。数値は統合時 (レーン S・B・D の後、フィクスチャの再凍結の後) に測り直す。全 4 部で 76.8 秒、8 スレッド、loadavg 10.08 → 18.17 (他の 4 レーンと共用の 10 コア機)。
+
+- (i) 生成 100 本：30 配牌以上残ったのは 95 本 (0 本が 1、1〜29 本が 4、1000 本に達したのが 50、残った配牌数の中央値 984.5、p10 135)。率の中央値 **0.129** (平均 0.236、p10 0.016、p90 0.645、0 より大きいのが 94 本、0.6 以上が 13 本)。最終コールの種別では `Natural` 93 本の中央値 0.127、`Exact` 2 本の中央値 0.508。`fixture_drift` 0。19.9 秒。SAYC 自身が競ったオークションでも率が低いのは、strict な解釈 (ノードの制約そのもの) が、`choose_bid` なら別のコールを選ぶ手を受け入れているためである。システムの排他領域 X_c (レーン B) で上がるはずの数値で、鏡像の効果を測る基準値になる。
+- (ii) コーパス部分集合：評価用 312 本のうち、真の配牌で SAYC どおりに再現するのは **4 本 (1.3%)** だけだった (パスアウト 1 本、`P 1NT P P P`、`P P 1NT P P P`、`P P P 1NT P 2C P 2S P 3NT P P P`)。率はそれぞれ 1.0 / 0.404 / 0.387 / 0.159 で、中央値 0.3955。4 本では中央値に意味が無く、コーパスが SAYC で競られていないことの方を示している。
+- (iii) 旧定義 (500 本)：30 配牌以上が 233 本 (0 本が 198、1〜29 本が 69、1000 本が 33)、率の中央値 0.0 (0 より大きいのが 83 本、p90 0.378)。種別では `Natural` 219 本の中央値 0.0、`Exact` 14 本の中央値 0.4145。尤度重み付きの一様サンプルが 1 つでも再現したのは 500 本中 24 本、その ESS の中央値 2.98。56.4 秒。フェーズ 3 の値 (234 本、中央値 0.0、`Exact` 0.419、25 本) とほぼ同じで、差は方策が τ = 1 のソフトマックスから決定的な方策に変わったことによる。
+- (iv) 一致率 (評価用 312 本、3464 コール)：システム位置 930/1505 = **0.618** (うち `NoCandidate` 6)、ナチュラル位置 882/1959 = **0.450** (同 9)、全体 1812/3464 = 0.523。
 
 ## 4. サンプラー厳密性テスト (`bridge-constraint`)
 
