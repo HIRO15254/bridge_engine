@@ -25,11 +25,19 @@
 //! ## Samplers
 //!
 //! Deals come from a [`Sampler`]. On the phase-4 line `ConstraintProposal` is still `todo!()`, so
-//! the headline sampler is [`Sampler::StrictRejection`]: uniform deals are kept when every seat's
-//! hand satisfies the strict (non-`Fallback`) interpretation, up to a kept target and a draw cap;
-//! every kept deal has weight 1, the rate is the raw fraction that replays, and an auction enters
-//! the median when at least [`MIN_ESS`] deals were kept. The filter looks only at the kept count,
-//! never at the replay outcome.
+//! the headline sampler is [`Sampler::StrictRejection`] with [`RejectionWeight::Policy`]: uniform
+//! deals are kept when every seat's hand satisfies the strict (non-`Fallback`) interpretation, up
+//! to a kept target and a draw cap, and each kept deal is weighted by the policy likelihood
+//! `AuctionPolicy::log_likelihood` of the auction. A uniform proposal restricted to the strict
+//! support has a constant density there, so this weight is the exact importance weight of the
+//! posterior `p(deal | auction) ∝ L(deal)` restricted to that support (the dropped mass is the
+//! `Fallback` pieces'). Under `system_players` the likelihood is flat on the strict support and
+//! the weights are all equal; under `human` the natural deviation pieces `Y_c` carry the smaller
+//! weight `δ`, which unit weights would overcount. The rate is the weighted fraction that
+//! replays (the unit-weight fraction is reported next to it as `unweighted_rate`), and an auction
+//! enters the median when its ESS `(Σw)² / Σw²` is at least [`MIN_ESS`]. The filter looks only at
+//! the weights, never at the replay outcome. [`RejectionWeight::Unit`] (every kept deal weight 1)
+//! is the phase-3 definition and is used only by the legacy part.
 //!
 //! [`Sampler::Weighted`] draws with `sample_deals` from a proposal and weights each deal by the
 //! policy likelihood (`BiddingLikelihood`) over the proposal density; its rate is the weighted
@@ -51,8 +59,9 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use bridge_bidding::{
-    BidChoice, BidContext, ChoiceSource, ImplicitPass, InterpretOptions, Interpretation, NodeId,
-    PolicyParams, Rejected, ResolutionKind, Scoring, Table, choose_bid, interpret, replay,
+    AuctionPolicy, BidChoice, BidContext, ChoiceSource, ImplicitPass, InterpretOptions,
+    Interpretation, NodeId, PolicyParams, Rejected, ResolutionKind, Scoring, Table, choose_bid,
+    interpret, replay,
 };
 use bridge_constraint::{HandConstraint, KnownCards};
 use bridge_core::{Auction, Call, Deal, Seat, Vulnerability};
@@ -88,6 +97,7 @@ const MAX_DRAWS: usize = 5_000_000;
 const LEGACY_SAMPLER: Sampler = Sampler::StrictRejection {
     target: 1000,
     max_draws: 200_000,
+    weight: RejectionWeight::Unit,
 };
 /// Deals per auction of the weighted samplers.
 const WEIGHTED_N: usize = 1000;
@@ -107,12 +117,26 @@ enum ProposalKind {
     Constraint,
 }
 
+/// The weight a [`Sampler::StrictRejection`] gives each kept deal.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RejectionWeight {
+    /// Every kept deal weighs 1 (the phase-3 definition; the legacy part only).
+    Unit,
+    /// `exp(ln L(deal) - max)` with `L` = `AuctionPolicy::log_likelihood` under the evaluated
+    /// context: the importance weight of the posterior restricted to the strict support.
+    Policy,
+}
+
 /// How deals are drawn for one auction.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Sampler {
-    /// Uniform deals kept when every seat strictly satisfies the interpretation (weight 1), until
-    /// `target` are kept or `max_draws` were drawn.
-    StrictRejection { target: usize, max_draws: usize },
+    /// Uniform deals kept when every seat strictly satisfies the interpretation, until `target`
+    /// are kept or `max_draws` were drawn, weighted by `weight`.
+    StrictRejection {
+        target: usize,
+        max_draws: usize,
+        weight: RejectionWeight,
+    },
     /// `n` deals from `sample_deals` with `proposal`, weighted by the policy likelihood of the
     /// auction over the proposal density.
     Weighted { proposal: ProposalKind, n: usize },
@@ -121,9 +145,18 @@ enum Sampler {
 impl Sampler {
     fn label(&self) -> String {
         match self {
-            Sampler::StrictRejection { target, max_draws } => format!(
+            Sampler::StrictRejection {
+                target,
+                max_draws,
+                weight,
+            } => format!(
                 "strict rejection: uniform deals kept when every seat satisfies the strict \
-                 interpretation (target {target}, cap {max_draws} draws)"
+                 interpretation (target {target}, cap {max_draws} draws), {}",
+                match weight {
+                    RejectionWeight::Unit => "every kept deal weight 1",
+                    RejectionWeight::Policy =>
+                        "each kept deal weighted by the policy likelihood (AuctionPolicy)",
+                }
             ),
             Sampler::Weighted { proposal, n } => format!(
                 "{proposal:?} proposal, {n} deals weighted by the policy likelihood \
@@ -133,7 +166,8 @@ impl Sampler {
     }
 
     /// Draws deals for `auction`. `opts` is the interpretation the proposal reads (the rejection
-    /// sampler makes it strict itself); `ctx` is the policy the weights use.
+    /// sampler makes it strict itself); `ctx` is the policy the weights use (for the rejection
+    /// sampler, only with [`RejectionWeight::Policy`]).
     fn draw(
         &self,
         table: &Table,
@@ -143,7 +177,11 @@ impl Sampler {
         seed: u64,
     ) -> Drawn {
         match *self {
-            Sampler::StrictRejection { target, max_draws } => {
+            Sampler::StrictRejection {
+                target,
+                max_draws,
+                weight,
+            } => {
                 let strict = InterpretOptions {
                     strict: true,
                     ..*opts
@@ -160,6 +198,17 @@ impl Sampler {
                         .all(|&seat| interp.satisfied_by(seat, deal.hand(seat)))
                     {
                         deals.push((deal, 1.0));
+                    }
+                }
+                if weight == RejectionWeight::Policy && !deals.is_empty() {
+                    let policy = AuctionPolicy::new(table, auction, ctx);
+                    let log_l: Vec<f64> = deals
+                        .iter()
+                        .map(|(d, _)| policy.log_likelihood(d))
+                        .collect();
+                    let max = log_l.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                    for ((_, w), l) in deals.iter_mut().zip(&log_l) {
+                        *w = (l - max).exp();
                     }
                 }
                 Drawn {
@@ -235,6 +284,7 @@ fn headline_sampler() -> Sampler {
         Ok("rejection") | Err(_) => Sampler::StrictRejection {
             target: env_usize("SAYC_REPRO_TARGET", TARGET_ACCEPTED),
             max_draws: env_usize("SAYC_REPRO_MAX_DRAWS", MAX_DRAWS),
+            weight: RejectionWeight::Policy,
         },
         Ok(other) => {
             panic!("SAYC_REPRO_SAMPLER={other}: expected rejection, constraint or uniform")
@@ -242,7 +292,7 @@ fn headline_sampler() -> Sampler {
     }
 }
 
-/// The deals drawn for one auction, with weights relative to the largest (1.0 for rejection).
+/// The deals drawn for one auction, with weights relative to the largest.
 struct Drawn {
     deals: Vec<(Deal, f64)>,
     /// Uniform draws (rejection) or proposal attempts (weighted).
@@ -257,10 +307,12 @@ struct Outcome {
     /// Deals drawn (kept, for rejection).
     kept: usize,
     attempts: usize,
-    /// `(sum w)^2 / sum w^2`; equals `kept` for rejection.
+    /// `(sum w)^2 / sum w^2`; equals `kept` when every weight is equal.
     ess: f64,
     /// Weighted fraction of the deals whose replay reproduces the auction; `None` if none drawn.
     rate: Option<f64>,
+    /// The same fraction with every drawn deal weighing 1 (the phase-3 statistic).
+    unweighted_rate: Option<f64>,
     any_reproduced: bool,
     error: Option<String>,
 }
@@ -276,18 +328,19 @@ fn evaluate(
 ) -> Outcome {
     let drawn = sampler.draw(table, ctx, auction, opts, seed);
     let (mut sum, mut sum_sq, mut reproduced) = (0.0f64, 0.0f64, 0.0f64);
-    let mut any_reproduced = false;
+    let mut reproduced_count = 0usize;
     for (deal, w) in &drawn.deals {
         sum += w;
         sum_sq += w * w;
         let replayed = replay(table, deal, auction.dealer(), auction.vulnerability(), ctx);
         if replayed.auction == *auction {
             reproduced += w;
-            any_reproduced = true;
+            reproduced_count += 1;
         }
     }
+    let kept = drawn.deals.len();
     Outcome {
-        kept: drawn.deals.len(),
+        kept,
         attempts: drawn.attempts,
         ess: if sum_sq > 0.0 {
             sum * sum / sum_sq
@@ -295,7 +348,8 @@ fn evaluate(
             0.0
         },
         rate: (sum > 0.0).then(|| reproduced / sum),
-        any_reproduced,
+        unweighted_rate: (kept > 0).then(|| reproduced_count as f64 / kept as f64),
+        any_reproduced: reproduced_count > 0,
         error: drawn.error,
     }
 }
@@ -399,7 +453,7 @@ struct CorpusGame {
 /// order. This enumeration order defines the corpus split (D20): even index = tune, odd = eval.
 /// The two `Optimum*Table.pbn` reference files (no `Auction` section) and any truncated/`-` game
 /// contribute nothing. A view that fails to interpret resets `#` inheritance.
-fn corpus_games(dir: &Path) -> Vec<CorpusGame> {
+fn corpus_auctions(dir: &Path) -> Vec<CorpusGame> {
     let mut games = Vec::new();
     for path in pbn_files(&dir.join("pbn")) {
         let Ok(bytes) = std::fs::read(&path) else {
@@ -613,8 +667,8 @@ fn quantile(values: &[f64], p: f64) -> f64 {
     v[rank.min(v.len() - 1)]
 }
 
-/// The headline of one part: the median rate over the auctions with ESS (kept count, for
-/// rejection) >= [`MIN_ESS`], and how many there are.
+/// The headline of one part: the median rate over the auctions with ESS (the kept count, for
+/// unit weights) >= [`MIN_ESS`], and how many there are.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Headline {
     auctions: usize,
@@ -664,6 +718,11 @@ fn part_json(sampler: &Sampler, preset: &str, interpret_mode: &str, records: &[R
         .filter(|r| r.outcome.ess >= MIN_ESS)
         .filter_map(|r| r.outcome.rate)
         .collect();
+    let unweighted: Vec<f64> = records
+        .iter()
+        .filter(|r| r.outcome.ess >= MIN_ESS)
+        .filter_map(|r| r.outcome.unweighted_rate)
+        .collect();
     let target = match sampler {
         Sampler::StrictRejection { target, .. } => *target,
         Sampler::Weighted { n, .. } => *n,
@@ -682,6 +741,7 @@ fn part_json(sampler: &Sampler, preset: &str, interpret_mode: &str, records: &[R
         "rate_p90": quantile(&counted, 0.9),
         "rate_nonzero": counted.iter().filter(|&&r| r > 0.0).count(),
         "rate_at_least_0_6": counted.iter().filter(|&&r| r >= 0.6).count(),
+        "median_unweighted_rate": median(&unweighted),
         "any_reproduced": count(&|r| r.outcome.any_reproduced),
         "errors": count(&|r| r.outcome.error.is_some()),
         "kept": {
@@ -705,6 +765,7 @@ fn part_json(sampler: &Sampler, preset: &str, interpret_mode: &str, records: &[R
             "attempts": r.outcome.attempts,
             "ess": r.outcome.ess,
             "rate": r.outcome.rate,
+            "unweighted_rate": r.outcome.unweighted_rate,
             "any_reproduced": r.outcome.any_reproduced,
             "error": r.outcome.error,
         })).collect::<Vec<_>>(),
@@ -713,9 +774,19 @@ fn part_json(sampler: &Sampler, preset: &str, interpret_mode: &str, records: &[R
 
 fn headline_line(name: &str, records: &[Record]) -> String {
     let h = headline(records);
+    let unweighted: Vec<f64> = records
+        .iter()
+        .filter(|r| r.outcome.ess >= MIN_ESS)
+        .filter_map(|r| r.outcome.unweighted_rate)
+        .collect();
     format!(
-        "{name}: {} auction(s), {} with >= {MIN_ESS} kept/ESS, median rate {:.4}, median kept {:.0}",
-        h.auctions, h.counted, h.median_rate, h.median_kept
+        "{name}: {} auction(s), {} with ESS >= {MIN_ESS}, median rate {:.4} (unweighted {:.4}), \
+         median kept {:.0}",
+        h.auctions,
+        h.counted,
+        h.median_rate,
+        median(&unweighted),
+        h.median_kept
     )
 }
 
@@ -880,7 +951,7 @@ fn sayc_reproduction_rate() {
         report.insert("generated".into(), part);
     }
 
-    let corpus = common::corpus_dir().map(|dir| (dir.clone(), corpus_games(&dir)));
+    let corpus = common::corpus_dir().map(|dir| (dir.clone(), corpus_auctions(&dir)));
     match &corpus {
         None => lines.push("corpus directory not found: parts (ii)-(iv) skipped".into()),
         Some((dir, games)) => {
@@ -915,8 +986,9 @@ fn sayc_reproduction_rate() {
                 let sampled = &reproducible[..limit.min(reproducible.len())];
                 // The headline reads the corpus with the human preset (D18). Its strict support
                 // also holds the natural deviation pieces Y_c (weight delta) at on-system
-                // positions, which an unweighted sampler overweights, so the same subset is also
-                // reported under the system-players preset.
+                // positions; the policy-weighted rejection sampler weights them by the
+                // likelihood (unit weights would overcount them, see `unweighted_rate`). The
+                // same subset is also reported under the system-players preset.
                 let run = |ctx: &BidContext<'_>| {
                     let opts = InterpretOptions::for_context(ctx);
                     par_map(sampled, |i, g| {
@@ -1159,7 +1231,10 @@ fn passed_out() -> Auction {
 }
 
 /// The headline is not tied to the rate: an auction many deals reproduce (SAYC passed out, where
-/// every kept deal has four hands that open nothing) counts in it with a high rate.
+/// every kept deal has four hands that open nothing) counts in it with a high rate. Under
+/// `system_players` the strict mirror support of an auction is exactly the set of deals the
+/// policy bids that way, so every kept deal replays (a looser interpretation would fail this),
+/// and the likelihood is flat on it, so the policy weights are all equal.
 #[test]
 fn headline_counts_an_auction_that_many_deals_reproduce() {
     let table = common::compile_sayc("sayc.bml");
@@ -1168,6 +1243,7 @@ fn headline_counts_an_auction_that_many_deals_reproduce() {
     let sampler = Sampler::StrictRejection {
         target: 60,
         max_draws: 20_000,
+        weight: RejectionWeight::Policy,
     };
     let outcome = evaluate(
         &sampler,
@@ -1182,9 +1258,15 @@ fn headline_counts_an_auction_that_many_deals_reproduce() {
         "only {} deals kept",
         outcome.kept
     );
-    assert_eq!(outcome.ess, outcome.kept as f64);
+    assert!(
+        (outcome.ess - outcome.kept as f64).abs() < 1e-6,
+        "ESS {} with {} kept: system_players weights are not flat",
+        outcome.ess,
+        outcome.kept
+    );
     let rate = outcome.rate.expect("some deal kept");
-    assert!(rate > 0.5, "passed-out rate {rate}");
+    assert!(rate >= 0.99, "passed-out rate {rate}");
+    assert_eq!(outcome.unweighted_rate, Some(rate));
 
     let rec = |rate: Option<f64>, kept: usize| Record {
         id: String::new(),
@@ -1196,6 +1278,7 @@ fn headline_counts_an_auction_that_many_deals_reproduce() {
             attempts: 0,
             ess: kept as f64,
             rate,
+            unweighted_rate: rate,
             any_reproduced: false,
             error: None,
         },
@@ -1203,6 +1286,104 @@ fn headline_counts_an_auction_that_many_deals_reproduce() {
     let h = headline(&[rec(Some(rate), outcome.kept), rec(Some(0.0), 5)]);
     assert_eq!(h.counted, 1);
     assert_eq!(h.median_rate, rate);
+}
+
+/// Under `human` (δ > 0) the strict support also holds the natural deviation pieces `Y_c`, whose
+/// likelihood is the smaller `δ` share. The policy-weighted rejection sampler weights each kept
+/// deal by `exp(ln L - max)` of `AuctionPolicy`, so the weights vary (ESS < kept) and the rate
+/// is the likelihood-weighted one; unit weights keep the same deals but overcount the deviation
+/// pieces, whose deals the policy mostly bids differently. On the passed-out auction the
+/// weighted rate is well above the unweighted one (about 0.83 against 0.55 at 1000 kept deals).
+#[test]
+fn policy_weighted_rejection_follows_the_likelihood() {
+    let table = common::compile_sayc("sayc.bml");
+    let ctx = bid_ctx(&table, PolicyParams::human());
+    let auction = passed_out();
+    let opts = InterpretOptions::for_context(&ctx);
+    let sampler = |weight| Sampler::StrictRejection {
+        target: 200,
+        max_draws: 50_000,
+        weight,
+    };
+    let unit = sampler(RejectionWeight::Unit).draw(&table, &ctx, &auction, &opts, 13);
+    let policy = sampler(RejectionWeight::Policy).draw(&table, &ctx, &auction, &opts, 13);
+    assert_eq!(unit.deals.len(), 200);
+    assert!(unit.deals.iter().all(|(_, w)| *w == 1.0));
+    let likelihood = AuctionPolicy::new(&table, &auction, &ctx);
+    let log_l: Vec<f64> = policy
+        .deals
+        .iter()
+        .map(|(d, _)| likelihood.log_likelihood(d))
+        .collect();
+    let max = log_l.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    for (((du, _), (dp, w)), l) in unit.deals.iter().zip(&policy.deals).zip(&log_l) {
+        assert_eq!(du, dp, "both weightings keep the same deals");
+        assert!((w - (l - max).exp()).abs() < 1e-12, "weight {w} vs L {l}");
+    }
+
+    let unit = evaluate(
+        &sampler(RejectionWeight::Unit),
+        &table,
+        &ctx,
+        &auction,
+        &opts,
+        13,
+    );
+    let weighted = evaluate(
+        &sampler(RejectionWeight::Policy),
+        &table,
+        &ctx,
+        &auction,
+        &opts,
+        13,
+    );
+    assert_eq!(weighted.unweighted_rate, unit.rate);
+    assert!(
+        weighted.ess < weighted.kept as f64 - 1.0,
+        "ESS {}",
+        weighted.ess
+    );
+    let (w, u) = (
+        weighted.rate.expect("deals kept"),
+        unit.rate.expect("deals kept"),
+    );
+    assert!(w > u + 0.1, "weighted rate {w} vs unweighted {u}");
+}
+
+/// Every generated fixture auction's true deal lies in the strict mirror support at every seat
+/// (the interpretation never under-covers the deal that produced the auction). A regression here
+/// would silently drive part (i)'s kept counts toward zero. Cases whose deal no longer replays to
+/// the recorded auction (fixture drift, after a SAYC change before the re-freeze) are skipped.
+#[test]
+fn generated_true_deals_lie_in_the_strict_mirror() {
+    let table = common::compile_sayc("sayc.bml");
+    let ctx = bid_ctx(&table, PolicyParams::system_players());
+    let strict = InterpretOptions {
+        strict: true,
+        ..InterpretOptions::for_context(&ctx)
+    };
+    let mut checked = 0usize;
+    for case in load_fixture() {
+        let dealer = case.auction.dealer();
+        let vul = case.auction.vulnerability();
+        if replay(&table, &case.deal, dealer, vul, &ctx).auction != case.auction {
+            continue;
+        }
+        checked += 1;
+        let interp = interpret(&table, &case.auction, &strict);
+        for seat in Seat::ALL {
+            assert!(
+                interp.satisfied_by(seat, case.deal.hand(seat)),
+                "{}: the true {seat:?} hand is outside the strict mirror of {}",
+                case.id,
+                case.auction
+            );
+        }
+    }
+    assert!(
+        checked >= GENERATED_COUNT / 2,
+        "only {checked} cases replay"
+    );
 }
 
 /// The weighted path (the phase-5 headline with `ConstraintProposal`) runs end to end with the
