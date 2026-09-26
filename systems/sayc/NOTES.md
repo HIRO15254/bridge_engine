@@ -450,3 +450,18 @@ C5. **Positions where natural inference had nothing to offer are written out.** 
     a raise, 2NT 12--14 or 3NT 18--21 with a stopper, and otherwise the cheapest rebid of the
     opening suit. Each new table's position also gets an `(any)` line (C4), since otherwise
     a further bid by the opponents would be read against the new table as if they had passed.
+
+C6. **More positions natural inference could not answer (`competition.bml`, `rebids.bml`).**
+    Continuing C5 down the frequency-ranked `NoCandidate` list: opener after responder's
+    game-forcing fourth suit (1!s-2!c-2!h-3!d: a second five-card suit, 3NT with a diamond
+    stopper, three-card club support, else 3!s) and jump preference (1!s-2!c-2!h-3!s: game
+    with 12--15, a 4!c slam try with more); advancer after opener's partner bids over the
+    overcall (a raise with a fit, at the three level when the cheap raise is gone, a
+    preemptive jump with four trumps, the cuebid with 11+ below the overcall's suit, a
+    penalty double of 2NT); advancer after a 1NT overcall is taken out (3NT with 10+, a
+    penalty double with 8--9); a raise after a negative double of a two-level overcall;
+    advancer's choice of major after a minor-suit Michaels cuebid (game 13+, a jump with
+    11--12, spades with three or more and a doubleton heart or four spades and three hearts,
+    hearts otherwise, 3NT with 13+ and no major fit); and a raise of a sandwich-seat
+    overcall when the opponents bid again. As before, the ranges are interpolations: the
+    booklet describes none of these auctions.

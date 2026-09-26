@@ -609,4 +609,49 @@ mod sayc_comp {
             ("1C 1D 1S 3D", "KT87.KQ.Q7.Q9763", "3S"),
         ]);
     }
+
+    /// Opener's call after responder's game-forcing fourth suit (1S-2C-2H-3D) or jump
+    /// preference (1S-2C-2H-3S) had no table, so opener could pass a game force.
+    #[test]
+    fn opener_continues_after_responders_game_force() {
+        check(&[
+            ("1S P 2C P 2H P 3D P", "KQ965.AJT54.9.A4", "3H"),
+            ("1S P 2C P 2H P 3D P", "AQJ76.K87.Q72.K5", "3NT"),
+            ("1S P 2C P 2H P 3D P", "AKJ76.Q87.72.KQ5", "4C"),
+            ("1S P 2C P 2H P 3S P", "KQ965.AJT54.9.A4", "4S"),
+            ("1S P 2C P 2H P 3S P", "AKQ76.AK87.72.K5", "4C"),
+        ]);
+    }
+
+    /// Advancing an overcall after opener's partner has bid (a new suit, 2NT, the cuebid, a
+    /// jump raise), after a 1NT overcall is taken out, after a negative double of a two-level
+    /// overcall, and after a minor-suit Michaels cuebid: each had no table, and natural
+    /// inference had no call for a hand of middling strength (`NoCandidate`).
+    #[test]
+    fn advances_after_opener_s_partner_bids() {
+        check(&[
+            ("1D 1H 2NT", "K865.J974.K75.96", "3H"),
+            ("1H 1S 3H", "K865.974.K75.965", "3S"),
+            ("1D 1H 2C", "AK65.974.K75.965", "2H"),
+            ("1C 1D 2H", "65.974.KJ75.Q965", "3D"),
+            ("1C 1NT 2D", "Q865.97.K75.K965", "X"),
+            ("1C 1NT 2D", "J865.97.K75.Q965", "P"),
+            ("1D 2C X", "65.974.KJ75.Q965", "3C"),
+            ("1C 2C P", "8654.Q74.K75.965", "2S"),
+            ("1C 2C P", "865.Q74.K753.965", "2H"),
+            ("1C 2C P", "K86.A2.KQ75.9652", "3S"),
+        ]);
+    }
+
+    /// Advancing a sandwich-seat overcall after the opponents bid again: a raise with
+    /// three-card support.
+    #[test]
+    fn advances_of_a_sandwich_overcall() {
+        check(&[
+            ("1C P 1D 1H 2D", "K865.974.K75.965", "2H"),
+            ("1D P 1S 2H 2S", "K65.974.KJ75.965", "3H"),
+            ("1D P 1H 2C 2H", "K65.97.KJ75.9652", "3C"),
+            ("1H P 2H 2S 3H", "K65.97.KJ75.9652", "3S"),
+        ]);
+    }
 }

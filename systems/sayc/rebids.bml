@@ -273,6 +273,22 @@ suit is the minimum with nothing else to show (NOTES.md #C1).
 2N = 10--12 hcp, not 4+!h
 3D = {prio:-1} F, 13+ hcp
 
+Both of responder's game-forcing calls here leave opener with a call to make
+(NOTES.md #C6). After the fourth suit (3!d), opener shows a second five-card
+suit, a diamond stopper for 3NT, or three-card club support, and otherwise
+rebids spades; after the jump preference (3!s, a fit), opener signs off in game
+with a minimum and makes a slam try with more.
+
+1S-2C-2H-3D-
+3H = {prio:3} 5+!h
+3N = {prio:2} stopper in !d
+4C = {prio:1} 3+!c
+3S = 12+ hcp
+
+1S-2C-2H-3S-
+4C = {prio:1} 16+ hcp
+4S = 12--15 hcp
+
 ** After a raise or a notrump response
 
 After a single raise of a major, opener passes a minimum, invites with a

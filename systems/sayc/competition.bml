@@ -527,6 +527,68 @@ D = 11+ hcp
 3Y = 6--13 hcp, 3+Y
 4Y = {prio:1} 14+ hcp, 3+Y
 
+When opener's partner bids a new suit or notrump over the overcall, or raises,
+advancer still competes with a fit, a level higher when the bid has taken the
+cheap raise away; a double of 2NT is for penalty, and after a 1NT overcall
+advancer bids game with 10+ (the overcall shows 15--18) and doubles with 8--9
+(NOTES.md #C6). Everything else passes.
+
+(1X)-1Y-(2N)-
+3Y = 0--10 hcp, 4+Y
+D = 10+ hcp
+
+(1X)-1Y-(2Y)-
+3Y = 0--10 hcp, 4+Y
+
+(1X)-1Y-(3X)-
+3Y = 6--10 hcp, 4+Y
+D = 12+ hcp
+
+(1X)-1Z-(2Y)-
+3Z = {prio:1} PRE, 0--10 hcp, 4+Z
+2Z = 6--10 hcp, 3+Z
+
+(1Y)-1Z-(2X)-
+2Y = {prio:2} 11+ hcp, 3+Z
+3Z = {prio:1} PRE, 0--10 hcp, 4+Z
+2Z = 6--10 hcp, 3+Z
+
+(1X)-1Y-(2Z)-
+3Y = 6--10 hcp, 4+Y
+
+(1X)-1N-(2Y)-
+3N = {prio:1} 10+ hcp
+D = 8+ hcp
+
+(1X)-1N-(2X)-
+3N = {prio:1} 10+ hcp
+D = 8+ hcp
+
+A negative double of our two-level overcall leaves advancer free to raise with
+support (three cards for the simple overcall, three for the weak jump, where a
+raise only extends the preempt); a pass otherwise.
+
+(1Y)-2X-(D)-
+3X = 6--12 hcp, 3+X
+
+(1X)-2Y-(D)-
+3Y = 0--13 hcp, 3+Y
+
+Over a minor-suit Michaels cuebid (both majors), advancer must choose a major:
+game with 13+, a jump with 11--12, and otherwise the cheaper call, spades with
+spade length and a doubleton or less in hearts, hearts with everything else
+(the booklet only states that advancer picks the suit; the ranges are this
+file's). A 13+ hand with a doubleton or less in both majors bids 3NT.
+
+(1m)-2m-(P)-
+4H = {prio:3} 13+ hcp, 3+!h
+4S = {prio:3} 13+ hcp, 3+!s, 0--2!h
+3N = {prio:2} 13+ hcp, 0--2!h, 0--2!s
+3H = {prio:2} 11--12 hcp, 3+!h
+3S = {prio:2} 11--12 hcp, 3+!s, 0--2!h
+2S = {prio:1} 0--10 hcp and 3+!s and 0--2!h or 0--10 hcp and 4+!s and 3=!h
+2H = 0--12 hcp
+
 (1H)-2H-(P)-
 2N = F
 
@@ -596,6 +658,28 @@ D = 12+ hcp, 0--3X, 0--3Y
 
 (1X)-P-(3X)-
 D = 13+ hcp, 0--2X
+
+After a sandwich overcall, advancer raises with three-card support when opener
+or opener's partner bids again, and otherwise passes (NOTES.md #C6).
+
+(1X)-P-(1Y)-1Z-(2Y)-
+2Z = 6--10 hcp, 3+Z
+
+(1X)-P-(1Y)-1Z-(2X)-
+2Z = 6--10 hcp, 3+Z
+
+(1X)-P-(1Y)-1Z-(1N)-
+2Z = 6--10 hcp, 3+Z
+D = 10+ hcp
+
+(1X)-P-(1Z)-2Y-(2Z)-
+3Y = 6--10 hcp, 3+Y
+
+(1Y)-P-(1Z)-2X-(2Z)-
+3X = 6--10 hcp, 3+X
+
+(1X)-P-(2X)-2Y-(3X)-
+3Y = 6--10 hcp, 3+Y
 
 ** Over the opponents' 1NT opening
 
