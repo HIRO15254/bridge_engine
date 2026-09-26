@@ -138,15 +138,13 @@ pub struct CallInterpretation {
     /// hand `h` of the calling seat (exactly for literal-free pieces; pieces with `cards`/`eval`
     /// literals may only over-cover, never under-cover).
     ///
-    /// Naive; replaced in phase 4 lane B: the current (legacy) Step A does not calibrate its
-    /// weights and always records `0.0`.
+    /// [`InterpretMode::Legacy`] does not calibrate its weights and records `0.0`.
     pub log_scale: f64,
     /// `true` when the policy never makes this call at its position for any hand (its exclusive
     /// system region and natural region are both empty); the call is then read by its
     /// `Fallback` pieces only.
     ///
-    /// Naive; replaced in phase 4 lane B: the current (legacy) Step A never detects this and
-    /// always records `false`.
+    /// [`InterpretMode::Legacy`] never detects this and records `false`.
     pub shadowed: bool,
 }
 
@@ -213,9 +211,6 @@ pub enum InterpretMode {
     /// exclusive region), `N_nat` (no natural candidate) and `ANY`, weighted from
     /// [`InterpretOptions::policy`] so that the density of a call's pieces is its policy
     /// probability up to the recorded [`CallInterpretation::log_scale`].
-    ///
-    /// Naive; replaced in phase 4 lane B: until lane B lands, `Mirror` runs the same legacy
-    /// Step A as [`InterpretMode::Legacy`].
     #[default]
     Mirror,
     /// The phase-3 interpretation: each call's node (or lenient/natural reading) with the
