@@ -565,7 +565,7 @@ mod notrump_lane {
     fn weak_hand_passes_weak_two() {
         assert_call(
             "2D P",
-            "8742.T9843.7.J9",
+            "8742.T9843.72.J9",
             "P",
             true,
             "a 1 hcp hand passes 2D",
@@ -634,7 +634,7 @@ mod notrump_lane {
         );
         assert_call(
             "3C P",
-            "8742.T9843.7.J9",
+            "8742.T9843.72.J9",
             "P",
             true,
             "a 1 hcp hand passes 3C",
