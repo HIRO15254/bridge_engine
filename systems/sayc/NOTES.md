@@ -596,3 +596,9 @@ C7. **Balancing over the opponents' 1NT is played like the direct seat (`competi
     two-level overcall, with the same advances (raise 8--11, 4M or 3NT with 12+, a
     six-card signoff, a raise or penalty double if opener's partner competes) and an
     `(any)` line.
+    Lenient matching reads an uncovered call of the opponents as a pass, so without
+    more the new `(1N)-P-(P)-` table also captured our seat after *their* 1NT
+    responses (1NT-P-2!d transfer, 1NT-P-2!c Stayman), where its double and two-level
+    overcalls are mostly illegal or wrong: `NoCandidate` rose from 2744 to 7673 in the
+    same run. An empty `(1N)-P-(any)-` line makes those positions off-system (natural
+    bidding), as C4 does for the suit openings.

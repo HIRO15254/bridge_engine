@@ -1044,5 +1044,26 @@ mod sayc_comp {
             // 4 hcp: pass.
             ("P 1NT P P 2H P", "9652.J4.Q873.862", "P"),
         ]);
+        // The balancing table must not capture the opponents' own 1NT responses (lenient
+        // matching reads an uncovered response as a pass): after their 1NT-2D transfer or
+        // 1NT-2C Stayman our seat bids naturally, not from `(1N)-P-(P)-`.
+        let table = common::compile_sayc("sayc.bml");
+        let ctx = ctx(&table);
+        for (calls, hand) in [
+            ("P 1NT P 2D", "974.652.753.AKQ2"),
+            ("P 1NT P 2C 2H 2S", "98432.8.632.K865"),
+        ] {
+            let mut a = Auction::new(Seat::North, Vulnerability::None);
+            for c in calls.split_whitespace() {
+                a = a
+                    .with(c.parse::<Call>().expect("valid call"))
+                    .expect("legal call");
+            }
+            let h: Hand = hand.parse().expect("valid hand");
+            assert!(
+                choose_bid(&table, h, &a, &ctx).call().is_some(),
+                "[{calls}] {hand}: no call"
+            );
+        }
     }
 }
