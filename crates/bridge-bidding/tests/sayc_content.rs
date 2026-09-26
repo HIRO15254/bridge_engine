@@ -484,4 +484,57 @@ mod sayc_comp {
             ("1S X", "Q432.2.J9432.K32", "3S"),
         ]);
     }
+    /// harness_review.json #4: advancing a takeout double with a weak hand and no four-card
+    /// unbid suit bids the cheapest unbid suit with three cards instead of converting the
+    /// double for penalties with a few small trumps.
+    #[test]
+    fn takeout_double_minimum_advance_without_a_four_card_suit() {
+        check(&[
+            ("1C X P", "K42.J72.Q93.8765", "1D"),
+            ("1H X P", "K42.8765.Q93.J76", "1S"),
+            ("1S X P", "Q432.J72.K93.765", "2C"),
+        ]);
+    }
+
+    /// Advancing a one-level overcall had only the cuebid, so every other hand passed: raises,
+    /// notrump with a stopper, and the cuebid as a limit raise or better. After the cuebid the
+    /// overcaller always has a call.
+    #[test]
+    fn advances_of_an_overcall_and_the_overcallers_rebid() {
+        check(&[
+            ("1C 1H P", "K32.Q32.K432.432", "2H"),
+            ("1C 1H P", "K32.Q2.K432.Q432", "1NT"),
+            ("1C 1S P", "KJ32.A2.K432.432", "2C"),
+            ("1C 1H P 2C P", "K2.AJ832.Q32.432", "2H"),
+            ("1C 1H P 2C P", "A2.AKJ32.K32.432", "3H"),
+            ("1C 1H X 2C P", "K2.AJ832.Q32.432", "2H"),
+        ]);
+    }
+
+    /// The sandwich position (both opponents have bid, partner passed) resolved against the
+    /// balancing table "as if" responder had passed, so most hands had no call: a natural
+    /// overcall between the opponents' suits, a takeout double of the two unbid suits, and a
+    /// pass otherwise.
+    #[test]
+    fn sandwich_position_after_opening_and_response() {
+        check(&[
+            ("P 1D P 1S", "32.AQJ732.K2.K32", "2H"),
+            ("1C P 1H", "AQ32.32.KJ32.K32", "X"),
+            ("P P P 1S P 2C", "T72.K96.QT75.743", "P"),
+            ("1S P 3S", "2.AJ62.KQ86.A753", "X"),
+            ("1S P 3S", "98.AT6532.54.Q76", "P"),
+        ]);
+    }
+
+    /// Interference the file does not model reverts to natural bidding (the booklet's own rule)
+    /// instead of being read against the uncontested table, where a weak hand had no call.
+    /// Also the natural defense to a 1NT opening.
+    #[test]
+    fn unmodeled_interference_is_natural_and_1nt_defense() {
+        check(&[
+            ("1C 1D 2C", "T53.983.K8.J7632", "P"),
+            ("1NT", "AQJ32.K32.432.32", "2S"),
+            ("1NT", "AQ3.KJ3.AQ32.K32", "X"),
+        ]);
+    }
 }

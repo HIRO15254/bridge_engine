@@ -382,3 +382,42 @@ C2. **Every common competitive position has its own table, so a hand with nothin
     with no fit, which the equal-strength redouble always outranked, so it was never bid),
     and the preemptive jump raise needs four trumps for a major and five or six for a minor
     (it required a six-card suit before, which is a jump *shift*'s length, not a raise's).
+
+C3. **Advances, the sandwich seat, and a minimum takeout-double advance
+    (`competition.bml`; `harness_review.json` #4).** Advancing a one-level overcall had only
+    the cuebid row, so every other hand passed; it now has the raise (7--10, 3+ cards), the
+    preemptive jump raise, a new suit, and notrump with a stopper, and the cuebid is the
+    limit raise or better with a fit. After the cuebid (forcing) the overcaller has a call
+    with every hand: 2NT with 13+ and a stopper, a jump in the suit with 13+ otherwise, and
+    the minimum rebid of the suit. When both opponents have bid and partner has passed (the
+    "sandwich" seat), the position used to be read against the balancing table as if
+    responder had passed, leaving most hands without a call; it now has a takeout double of
+    the two unbid suits (12+, at most three cards in either of theirs), a natural overcall
+    and 1NT. These tables name the overcall's suit with whichever variable sits between
+    (or below, or above) the two suits the opponents bid -- `Y` only binds above `X` and `Z`
+    above `Y`, so "a suit between their two suits" is `Y` in `(1X)-P-(1Z)-` and "a suit below
+    both" is `X` in `(1Y)-P-(1Z)-`. When advancing a takeout double, a weak (0--8) hand with no
+    four-card unbid suit now bids the cheapest unbid suit where it holds three cards (the
+    second branch of each minimum-advance row) instead of passing, which converted the
+    double for penalties holding four small trumps; a pass is left only for a hand with
+    length in opener's suit and no three-card unbid suit. The booklet gives no numbers for
+    these advances; the ranges are this file's interpolation from the direct-seat ones.
+    The opponents' 1NT opening is defended naturally (penalty double 15+, natural
+    two-level overcalls with a five-card suit), which the booklet implies by describing no
+    conventional defense.
+
+C4. **Interference this file does not model reverts to natural bidding, through `(any)`
+    wildcard positions with no rows (`competition.bml`).** For every table whose next call
+    belongs to the opponents (the uncontested responses and rebids, the advances, the
+    overcaller's rebid), an opponent's bid or double at that point was read "as if they had
+    passed" (`resolve_lenient`), against the uncontested table. That table's rows were then
+    partly illegal and partly inappropriate, most hands fit none of them, and there is no
+    implicit pass at a lenient match, so `choose_bid` returned `NoCandidate`; each table added
+    for the uncontested auction made this worse. The booklet's own rule is that
+    interference cancels the partnership's agreements and bids become natural, so the end
+    of `competition.bml` lists these positions as history lines ending in `(any)` (the
+    `OppClass::AnyCall` wildcard, an extension token) with no rows under them. The trie
+    follows the exact edge (the pass that the table after it describes) when there is one
+    and the wildcard otherwise; a position with no rows is off-system, so the next call is
+    chosen by natural inference, exactly as `interpret` reads it. On the 10^6-position
+    harness this took `NoCandidate` from 22,583 to 7,619 in one step.

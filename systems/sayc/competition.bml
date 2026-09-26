@@ -49,9 +49,6 @@ D = 12+ hcp
 (1S)-
 2N = {prio:3} !UNT, 5+!c, 5+!d
 
-(1X)-1Y-
-2X = F
-
 *** Simple overcalls of a lower-ranking suit
 
 `1Y` above only reaches suits ranked higher than the opening (`Y` binds above
@@ -111,6 +108,9 @@ is Stayman; everything else is natural, as if partner had opened 1NT.
 
 (1X)-1N-
 2C = !STAY NF, 8+ hcp, 4+!h or 4+!s
+2Y = 0--7 hcp, 5+#
+2N = 8--9 hcp
+3N = 10--15 hcp
 
 ** Takeout doubles
 
@@ -130,7 +130,12 @@ Simple overcalls of a lower-ranking suit` above): its minimum call is a
 invitational jump in any suit outranks a plain minimum call in any other suit
 (the same "more descriptive call wins" convention as `NOTES.md` #7): a hand
 with invitational values and a 5+ card suit shows that directly rather than
-settling for a cheap minimum bid in a different, shorter suit.
+settling for a cheap minimum bid in a different, shorter suit. A weak hand
+(0--8) with no four-card unbid suit still has to take the double out rather
+than convert it for penalties holding a few small trumps: it bids the cheapest
+unbid suit in which it holds three cards (each minimum row's second branch,
+`NOTES.md` #C3); only a hand with length in the opener's suit and no
+three-card unbid suit is left to pass.
 
 (1X)-D-
 1N = 8--10 hcp
@@ -140,33 +145,33 @@ settling for a cheap minimum bid in a different, shorter suit.
 2D = {prio:9} INV, 5+!d
 2H = {prio:8} INV, 5+!h
 2S = {prio:7} INV, 5+!s
-1D = {prio:6} unlimited, 4+!d
-1H = {prio:5} unlimited, 4+!h
-1S = {prio:4} unlimited, 4+!s
+1D = {prio:6} 4+!d or 0--8 hcp and 3+!d and 0--3!h and 0--3!s
+1H = {prio:5} 4+!h or 0--8 hcp and 3+!h and 0--2!d and 0--3!s
+1S = {prio:4} 4+!s or 0--8 hcp and 3+!s and 0--2!d and 0--2!h
 
 (1D)-D-
 2H = {prio:9} INV, 5+!h
 2S = {prio:8} INV, 5+!s
 3C = {prio:7} INV, 5+!c
-1H = {prio:6} unlimited, 4+!h
-1S = {prio:5} unlimited, 4+!s
-2C = {prio:4} unlimited, 4+!c
+1H = {prio:6} 4+!h or 0--8 hcp and 3+!h and 0--3!s and 0--3!c
+1S = {prio:5} 4+!s or 0--8 hcp and 3+!s and 0--2!h and 0--3!c
+2C = {prio:4} 4+!c or 0--8 hcp and 3+!c and 0--2!h and 0--2!s
 
 (1H)-D-
 2S = {prio:9} INV, 5+!s
 3C = {prio:8} INV, 5+!c
 3D = {prio:7} INV, 5+!d
-1S = {prio:6} unlimited, 4+!s
-2C = {prio:5} unlimited, 4+!c
-2D = {prio:4} unlimited, 4+!d
+1S = {prio:6} 4+!s or 0--8 hcp and 3+!s and 0--3!c and 0--3!d
+2C = {prio:5} 4+!c or 0--8 hcp and 3+!c and 0--2!s and 0--3!d
+2D = {prio:4} 4+!d or 0--8 hcp and 3+!d and 0--2!s and 0--2!c
 
 (1S)-D-
 3C = {prio:9} INV, 5+!c
 3D = {prio:8} INV, 5+!d
 3H = {prio:7} INV, 5+!h
-2C = {prio:6} unlimited, 4+!c
-2D = {prio:5} unlimited, 4+!d
-2H = {prio:4} unlimited, 4+!h
+2C = {prio:6} 4+!c or 0--8 hcp and 3+!c and 0--3!d and 0--3!h
+2D = {prio:5} 4+!d or 0--8 hcp and 3+!d and 0--2!c and 0--3!h
+2H = {prio:4} 4+!h or 0--8 hcp and 3+!h and 0--2!c and 0--2!d
 
 ** Negative doubles and responder's other calls after an overcall
 
@@ -237,9 +242,9 @@ D = 6+ hcp, 4+!c, 4+!d
 
 *** After a two-level overcall
 
-`1M-(2m)-` is a simple overcall of a lower minor over a major opening, `1X-(2Y)-`
-(`Y` above `X`) a jump overcall; the remaining simple two-level overcalls,
-1!s-(2!h) and 1!d-(2!c), are written out.
+`1M-(2m)-` is a simple overcall of a lower minor over a major opening; the
+remaining simple two-level overcalls, 1!s-(2!h) and 1!d-(2!c), are written out,
+and so are the weak jump overcalls (`1C-(2Y)-`, `1D-(2M)-`, 1!h-(2!s)).
 
 1M-(2m)-
 3m = {prio:3} 11+ hcp, 3+M
@@ -270,11 +275,19 @@ D = {prio:2} 8+ hcp, 4+!h or 4+!s
 2N = 11--12 hcp, stopper
 3N = 13--16 hcp, stopper
 
-1m-(2Y)-
+1C-(2Y)-
 2Z = {prio:2} F, 11+ hcp, 5+#
-D = {prio:1} 7+ hcp, not 4+m
-3Y = 11+ hcp, 4+m
-3m = 6--10 hcp, 4+m
+D = {prio:1} 7+ hcp, not 4+!c
+3Y = 11+ hcp, 4+!c
+3C = 6--10 hcp, 5+!c
+2N = 11--12 hcp, stopper
+3N = 13--16 hcp, stopper
+
+1D-(2M)-
+2Z = {prio:2} F, 11+ hcp, 5+#
+D = {prio:1} 7+ hcp, not 4+!d
+3M = 11+ hcp, 4+!d
+3D = 6--10 hcp, 4+!d
 2N = 11--12 hcp, stopper
 3N = 13--16 hcp, stopper
 
@@ -386,7 +399,75 @@ which suit that is depends on what their cuebid showed, so it is spelled out per
 opening suit below rather than with a variable (see NOTES.md #14).
 
 (1X)-1Y-(P)-
-2X = F
+2X = {prio:3} F, 11+ hcp, 3+Y
+3Y = {prio:2} PRE, 4+Y
+2Y = {prio:2} 7--10 hcp, 3+Y
+1Z = {prio:1} NF, 8+ hcp, 5+#
+1N = 8--11 hcp, stopper
+2N = 12--14 hcp, stopper
+3N = 15+ hcp, stopper
+
+After the cuebid, the overcaller rebids the suit with a minimum (the booklet's
+cuebid asks about the overcall's quality, and a minimum overcall has nothing
+else to say), bids 2NT with extra values and a stopper, and jumps in the suit
+with extra values otherwise; the three calls cover every hand, since the
+cuebid is forcing. The same answers apply when opener's partner has doubled
+in between.
+
+(1X)-1Y-(P)-2X-(P)-
+2N = {prio:2} 13+ hcp, stopper
+3Y = {prio:1} 13+ hcp
+2Y = 0--12 hcp
+
+(1X)-1Y-(D)-2X-(P)-
+2N = {prio:2} 13+ hcp, stopper
+3Y = {prio:1} 13+ hcp
+2Y = 0--12 hcp
+
+When opener's partner bids over the overcall, advancer still raises with
+three-card support (a jump raise is preemptive with four), cuebids opener's
+suit with a fit and game interest, and doubles a 1NT or 2-level response for
+penalty; otherwise advancer passes.
+
+(1X)-1Y-(1Z)-
+2X = {prio:2} 11+ hcp, 3+Y
+3Y = {prio:1} PRE, 4+Y
+2Y = 6--10 hcp, 3+Y
+1N = 8--11 hcp, stopper
+
+(1X)-1Y-(1N)-
+3Y = {prio:1} PRE, 4+Y
+2Y = 6--10 hcp, 3+Y
+D = 9+ hcp
+
+(1X)-1Y-(2X)-
+3Y = {prio:1} PRE, 4+Y
+2Y = 6--10 hcp, 3+Y
+D = 11+ hcp
+
+A two-level overcall is advanced the same way, a level higher: a raise with
+three-card support, a cuebid with a fit and game interest, notrump with a
+stopper. A weak jump overcall is raised with three-card support (to game with a
+good hand), and 2NT is a forcing inquiry.
+
+(1Y)-2X-(P)-
+3Y = {prio:2} F, 12+ hcp, 3+X
+3X = {prio:1} 6--11 hcp, 3+X
+2N = 11--13 hcp, stopper
+3N = 14+ hcp, stopper
+
+(1X)-2Y-(P)-
+4Y = {prio:2} 14+ hcp, 3+Y
+3Y = {prio:1} 6--13 hcp, 3+Y
+2N = F, 15+ hcp
+
+(1Y)-2X-(2Y)-
+3X = 6--12 hcp, 3+X
+D = 11+ hcp
+
+(1X)-2Y-(3X)-
+3Y = 6--13 hcp, 3+Y
+4Y = {prio:1} 14+ hcp, 3+Y
 
 (1H)-2H-(P)-
 2N = F
@@ -415,6 +496,59 @@ D = 10+ hcp
 1X-(2N)-
 D = 10+ hcp
 
+** Sandwich position: both opponents have bid
+
+After an opening and a response by the opponents (partner having passed), a
+double is for takeout of the two unbid suits (12+, at most three cards in either
+of their suits), a suit bid is a natural overcall with a five-card suit (10+ at
+the two level), and 1NT is a natural 15--18 with a stopper. A double of their 1NT
+response is for penalty. Several tables share one position here because each
+names the overcall's suit by a different variable: `Y` in `(1X)-P-(1Y)-` is
+above the response is `Z` in `(1X)-P-(1Z)-` (between opener and responder) and so
+on, a `Y` binding only reaching suits above `X` (NOTES.md #C3).
+
+(1X)-P-(1Y)-
+D = 12+ hcp, 0--3X, 0--3Y
+1Z = {prio:1} 8--16 hcp, 5+#
+1N = {prio:1} 15--18 hcp, bal, stopper
+
+(1X)-P-(1Z)-
+2Y = {prio:1} 10--16 hcp, 5+#
+
+(1Y)-P-(1Z)-
+2X = {prio:1} 10--16 hcp, 5+#
+
+(1X)-P-(1N)-
+D = 15+ hcp
+2Y = 8--16 hcp, 5+#
+
+(1Y)-P-(1N)-
+2X = 8--16 hcp, 5+#
+
+(1X)-P-(2X)-
+D = 12+ hcp, 0--3X
+2Y = {prio:1} 8--16 hcp, 5+#
+
+(1Y)-P-(2X)-
+D = 12+ hcp, 0--3X, 0--3Y
+2Z = {prio:1} 10--16 hcp, 5+#
+
+(1Z)-P-(2X)-
+2Y = {prio:1} 10--16 hcp, 5+#
+
+(1X)-P-(3X)-
+D = 13+ hcp, 0--2X
+
+** Over the opponents' 1NT opening
+
+The booklet gives no conventional defense to a 1NT opening, so it is played
+natural: a double is for penalty (15+, a hand at least as good as the
+opener's), and a two-level suit bid is a natural overcall with a five-card suit.
+
+(1N)-
+D = {prio:1} 15+ hcp
+2X = 8--15 hcp, 5+#
+
 ** Balancing
 
 A reopening bid means much the same as a direct-seat bid, but it can be lighter,
@@ -433,3 +567,54 @@ should overcall calmly at the one level instead).
 D = {prio:-1} 8+ hcp
 1N = {prio:1} 10--15 hcp, bal, stopper
 2Y = {prio:2} 6--10 hcp, 5+#
+
+** Unmodeled interference reverts to natural bidding
+
+The booklet's general rule (quoted at the top of this file) is that an
+opponent's bid or double cancels the partnership's conventions and bids revert
+to natural. Where the opponents interfere at a point this file has no table
+for, the history lines below give that interference a position of its own with
+no rows, marked by the `(any)` wildcard (any call other than the pass the
+following tables already describe). A position with no rows is off-system, so
+the next call is bid by natural inference -- rather than read "as if they had
+passed" against the uncontested table, where most hands fit no row once the
+interference has made some of its calls illegal and the rest inappropriate
+(NOTES.md #C4).
+
+1X-(any)-
+
+1X-1Y-(any)-
+
+1X-1N-(any)-
+
+1Y-2X-(any)-
+
+1X-2X-(any)-
+
+1X-3X-(any)-
+
+1X-2N-(any)-
+
+1X-1Y-1N-(any)-
+
+1Y-1Z-2X-(any)-
+
+1Z-2X-2Y-(any)-
+
+(1X)-1Y-(any)-
+
+(1X)-1N-(any)-
+
+(1Y)-2X-(any)-
+
+(1X)-2Y-(any)-
+
+(1X)-2X-(any)-
+
+(1X)-D-(any)-
+
+(1X)-P-(any)-
+
+(1X)-1Y-(P)-2X-(any)-
+
+(1X)-1Y-(D)-2X-(any)-
