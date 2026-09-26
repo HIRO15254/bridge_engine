@@ -159,7 +159,7 @@ fn run_fast_likelihood(n_auctions: usize, deals: usize, seed: u64) -> (usize, us
             let mut ds: Vec<bridge_core::Deal> =
                 (0..deals).map(|_| random_deal(&mut rng)).collect();
             if let Some(d) = deal {
-                ds.push(d.clone());
+                ds.push(*d);
             }
             for d in &ds {
                 let want = sequence_log_likelihood(&table, d, auction, &ctx);
