@@ -500,6 +500,7 @@ mod post_compile_tests {
             },
             balancing_shift: -3,
             implicit_raise_support: true,
+            level_floor: Default::default(),
         }
     }
 
@@ -617,6 +618,7 @@ mod post_compile_tests {
                 nodes: self.nodes,
                 index: AuctionTrie::new(),
                 lints: Vec::new(),
+                exclusive_cell: Default::default(),
             }
         }
     }

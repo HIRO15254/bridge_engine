@@ -81,6 +81,13 @@ pub struct Lookup {
     pub by_depth: SmallVec<[Option<NodeId>; 16]>,
     /// The trie node reached at `matched_depth` (for `children`).
     pub end: TrieId,
+    /// The trie node reached at `matched_depth - 1`: the position whose `children` are the
+    /// siblings of the last matched call (the root when nothing matched, where it equals `end`).
+    /// Tracked inside the walk at no extra cost, so a caller never has to re-resolve the
+    /// one-call-shorter key to find the siblings; every attempt returned by
+    /// [`AuctionTrie::resolve_lenient`] carries it too. Used with
+    /// [`crate::exclusive::ExclusiveIndex`] to find the sibling group of a call.
+    pub parent: TrieId,
     /// Number of wildcard edges taken (0 = pure exact match).
     pub via_class: u8,
 }
@@ -182,6 +189,7 @@ impl AuctionTrie {
         let root = Self::root_id(key.we_opened);
         let mut cur = root;
         let mut end = root;
+        let mut parent = root;
         let mut matched_depth = 0usize;
         let mut via_class = 0u8;
         let mut by_depth: SmallVec<[Option<NodeId>; 16]> = smallvec![None; key.calls.len()];
@@ -213,6 +221,7 @@ impl AuctionTrie {
                 break;
             }
 
+            parent = cur;
             cur = child_id;
             end = child_id;
             matched_depth = i + 1;
@@ -225,6 +234,7 @@ impl AuctionTrie {
             matched_depth,
             by_depth,
             end,
+            parent,
             via_class,
         }
     }

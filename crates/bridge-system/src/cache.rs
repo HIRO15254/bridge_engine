@@ -204,6 +204,7 @@ mod tests {
             nodes: Vec::new(),
             index: crate::trie::AuctionTrie::new(),
             lints: Vec::new(),
+            exclusive_cell: Default::default(),
         };
         sentinel.meta.name = "SENTINEL: planted directly, never compiled".to_string();
         sentinel.meta.ir_format = IR_FORMAT;

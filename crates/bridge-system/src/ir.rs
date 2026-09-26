@@ -40,12 +40,28 @@ pub struct SystemIR {
     pub index: AuctionTrie,
     /// Diagnostics produced at compile time.
     pub lints: Vec<Lint>,
+    /// Derived, lazily built index of exclusive regions ([`SystemIR::exclusive`]). Not
+    /// serialised (`IR_FORMAT` and the serialised bytes do not depend on it); a struct literal
+    /// sets it to `ExclusiveCell::default()`. After mutating `nodes` or `index` of an IR whose
+    /// index was already built, call [`ExclusiveCell::clear`](crate::exclusive::ExclusiveCell::clear).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub exclusive_cell: crate::exclusive::ExclusiveCell,
 }
 
 impl SystemIR {
     /// The node with the given id.
     pub fn node(&self, id: NodeId) -> &Node {
         &self.nodes[id.0 as usize]
+    }
+
+    /// The derived index of exclusive (rank-aware) regions of every position's candidates
+    /// (docs/design/15-phase4-plan.md D19): built on first use and cached in
+    /// [`SystemIR::exclusive_cell`].
+    ///
+    /// Naive; replaced in phase 4 lane S: lane S builds it eagerly at the end of `compile()`;
+    /// a deserialised or hand-built IR still builds it on first access.
+    pub fn exclusive(&self) -> &crate::exclusive::ExclusiveIndex {
+        self.exclusive_cell.get_or_build(self)
     }
 
     /// The row with the given id.
@@ -399,6 +415,7 @@ mod tests {
             },
             balancing_shift: -3,
             implicit_raise_support: true,
+            level_floor: Default::default(),
         }
     }
 
@@ -432,6 +449,7 @@ mod tests {
             nodes: Vec::new(),
             index,
             lints: Vec::new(),
+            exclusive_cell: Default::default(),
         }
     }
 

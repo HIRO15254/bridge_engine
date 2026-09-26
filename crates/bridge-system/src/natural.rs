@@ -46,6 +46,49 @@ pub struct NaturalParams {
     pub balancing_shift: i8,
     /// A raise of partner's suit implies support even without text.
     pub implicit_raise_support: bool,
+    /// Level-aware strength floor for natural continuation bids (see [`LevelFloor`]). Not
+    /// serialised (the serialised IR bytes and `IR_FORMAT` do not depend on it): a deserialised
+    /// IR carries `LevelFloor::default()`.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub level_floor: LevelFloor,
+}
+
+/// Combined HCP a partnership needs before a natural *continuation* bid at a given level is a
+/// contract rather than a runaway escalation (docs/design/06-system.md §8, "level floor").
+///
+/// When [`NaturalInference::infer`] reads a natural bid at level `L` in strain `s` by a player
+/// who, or whose partner, has already acted, and `CallContext::partner_constraint` is known, it
+/// adds `own HCP >= combined(L, s) - min HCP(partner_constraint)` to the inferred constraint. An
+/// opening, a first action with partner silent, and a context without a partner constraint get
+/// no floor. A `0` entry means "no floor at this level".
+///
+/// Naive; replaced in phase 4 lane S: the default is all zeros (no floor, the phase-3
+/// behaviour); lane S installs prototype C's table (suits 3→18, 4→22, 5→26, 6→31, 7→35;
+/// notrump 3→24, 4→28, 5→30, 6→32, 7→36) and tunes it on the corpus tune split.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct LevelFloor {
+    /// Combined HCP for a suit bid at levels 1..=7 (index `level - 1`).
+    pub suit: [u8; 7],
+    /// Combined HCP for a notrump bid at levels 1..=7 (index `level - 1`).
+    pub nt: [u8; 7],
+}
+
+impl LevelFloor {
+    /// No floor at any level.
+    pub const NONE: LevelFloor = LevelFloor {
+        suit: [0; 7],
+        nt: [0; 7],
+    };
+
+    /// The combined HCP required for a bid at `level` (`1..=7`) in a suit (`nt == false`) or
+    /// notrump; `0` (no floor) for an out-of-range level.
+    pub fn combined(&self, level: u8, nt: bool) -> u8 {
+        let table = if nt { &self.nt } else { &self.suit };
+        match level {
+            1..=7 => table[level as usize - 1],
+            _ => 0,
+        }
+    }
 }
 
 /// Response parameters.
@@ -115,6 +158,7 @@ impl Default for NaturalParams {
             advance: AdvanceParams::default(),
             balancing_shift: -3,
             implicit_raise_support: true,
+            level_floor: LevelFloor::default(),
         }
     }
 }
@@ -640,6 +684,43 @@ pub struct Inference {
     pub explanation: String,
 }
 
+/// Context of a natural call that [`classify`] cannot derive from the auction alone: what the
+/// caller's interpretation of partner's calls says (docs/design/07-bidding.md §2.2). The default
+/// is "nothing known" (`None`, `false`), which is what a bare `classify` gives.
+#[derive(Clone, Debug, Default)]
+pub struct PartnerContext {
+    /// Fills [`CallContext::partner_constraint`].
+    pub partner_constraint: Option<HandConstraint>,
+    /// Fills [`CallContext::forcing_situation`].
+    pub forcing_situation: bool,
+}
+
+/// One natural reading of a candidate call, without the explanation string (see
+/// [`NaturalInference::infer_batch`]).
+#[derive(Clone, Debug)]
+pub struct NaturalCandidate {
+    /// The call.
+    pub call: Call,
+    /// The inferred constraint.
+    pub constraint: HandConstraint,
+    /// Confidence in `0..=1`.
+    pub confidence: f32,
+    /// The rule that fired (`"fallback"` when none did).
+    pub rule: &'static str,
+}
+
+impl NaturalCandidate {
+    /// The rank priority `round(confidence·100)` (what `choose_bid` sorts natural candidates by).
+    pub fn priority(&self) -> i16 {
+        (self.confidence * 100.0).round() as i16
+    }
+
+    /// `true` when no natural rule fired (the call is not a natural candidate).
+    pub fn is_fallback(&self) -> bool {
+        self.rule == "fallback"
+    }
+}
+
 /// The natural-inference engine.
 #[derive(Clone, Debug)]
 pub struct NaturalInference {
@@ -685,7 +766,78 @@ impl NaturalInference {
             .or_else(|| rule_cue(p, ctx))
             .or_else(|| rule_pass_forcing(ctx))
             .or_else(|| rule_pass_default(p, ctx))
+            .map(|inf| apply_level_floor(&p.level_floor, ctx, inf))
             .unwrap_or_else(rule_fallback)
+    }
+
+    /// [`NaturalInference::infer`] for every call of `calls` as the next call after `auction`
+    /// by `owner`, with `partner`'s context filled in: one [`NaturalCandidate`] per input call,
+    /// in input order. The constraint, confidence and rule of each result are identical to
+    /// `infer` on `classify(&auction.with(call), auction.len(), owner)` with
+    /// `partner_constraint`/`forcing_situation` taken from `partner`; no explanation string is
+    /// built. A call that is not legal after `auction` yields the `fallback` result (`ANY`,
+    /// rule `"fallback"`).
+    ///
+    /// Naive; replaced in phase 4 lane S: this loops over `classify` + `infer` per call; lane S
+    /// classifies the shared history once.
+    pub fn infer_batch(
+        &self,
+        auction: &Auction,
+        owner: Seat,
+        partner: &PartnerContext,
+        calls: &[Call],
+    ) -> Vec<NaturalCandidate> {
+        let index = auction.len();
+        calls
+            .iter()
+            .map(|&call| {
+                let inf = match auction.with(call) {
+                    Ok(next) => {
+                        let mut ctx = classify(&next, index, owner);
+                        ctx.partner_constraint = partner.partner_constraint.clone();
+                        ctx.forcing_situation = partner.forcing_situation;
+                        self.infer(&ctx)
+                    }
+                    Err(_) => rule_fallback(),
+                };
+                NaturalCandidate {
+                    call,
+                    constraint: inf.constraint,
+                    confidence: inf.confidence,
+                    rule: inf.rule,
+                }
+            })
+            .collect()
+    }
+
+    /// The natural candidates for `owner`'s next call after `auction` (every legal call whose
+    /// inference is not the `fallback` rule), sorted in the natural rank order
+    /// [`crate::exclusive::natural_rank_cmp`]: `round(confidence·100)` descending, then
+    /// `tie_break` when it is `LowestCall`/`HighestCall`, then call index ascending. The natural
+    /// policy picks the first candidate the hand satisfies; `choose_bid`'s natural branch and the
+    /// natural exclusion of `interpret` both use this order. `partner` supplies the context that
+    /// `classify` cannot derive from the auction alone (see [`NaturalInference::infer_batch`]).
+    pub fn ranked_candidates(
+        &self,
+        auction: &Auction,
+        owner: Seat,
+        partner: &PartnerContext,
+        tie_break: crate::TieBreak,
+    ) -> Vec<NaturalCandidate> {
+        let calls: Vec<Call> = auction.legal_calls().collect();
+        let mut out: Vec<NaturalCandidate> = self
+            .infer_batch(auction, owner, partner, &calls)
+            .into_iter()
+            .filter(|c| !c.is_fallback())
+            .collect();
+        out.sort_by(|a, b| {
+            crate::exclusive::natural_rank_cmp(
+                tie_break,
+                (a.call, a.priority()),
+                (b.call, b.priority()),
+            )
+        });
+        out
     }
 
     /// Candidate calls with their natural constraints and priorities, for `choose_bid` when the
@@ -707,6 +859,39 @@ impl NaturalInference {
         }
         out
     }
+}
+
+/// Applies `floor` to a natural bid's inference (see [`LevelFloor`]): a continuation bid (the
+/// caller or partner has acted) at a level with a non-zero combined target, with a known
+/// `partner_constraint`, also requires `own HCP >= combined - partner's minimum HCP`.
+fn apply_level_floor(floor: &LevelFloor, ctx: &CallContext, mut inf: Inference) -> Inference {
+    let Some(bid) = ctx.call.bid() else {
+        return inf;
+    };
+    if !ctx.owner_acted && ctx.partner_actions == 0 {
+        return inf;
+    }
+    let combined = floor.combined(bid.level(), bid.strain() == Strain::NoTrump);
+    if combined == 0 {
+        return inf;
+    }
+    let Some(partner) = ctx.partner_constraint.as_ref() else {
+        return inf;
+    };
+    let partner_min = *partner.hcp_range().start();
+    let own_min = combined.saturating_sub(partner_min);
+    if own_min <= *inf.constraint.hcp_range().start() {
+        return inf;
+    }
+    inf.constraint = inf
+        .constraint
+        .and(HandConstraint::Atom(Atom::ANY.with_hcp(own_min..=37)));
+    inf.explanation = format!(
+        "{} (level {}: {own_min}+ hcp)",
+        inf.explanation,
+        bid.level()
+    );
+    inf
 }
 
 /// Rough combined-points target for game: the §8.3 `cue` formula's `gf_total`, and the upper
@@ -1680,6 +1865,83 @@ mod tests {
     use bridge_core::Vulnerability;
 
     use super::*;
+
+    #[test]
+    fn infer_batch_and_ranked_candidates_agree_with_infer() {
+        let engine = NaturalInference::default();
+        let auction = Auction::from_calls(
+            Seat::North,
+            Vulnerability::None,
+            [Call::Bid(Bid::new(1, Strain::Hearts).unwrap()), Call::Pass],
+        )
+        .unwrap();
+        let owner = auction.next_seat();
+        let partner = PartnerContext::default();
+        let calls: Vec<Call> = auction.legal_calls().collect();
+        let batch = engine.infer_batch(&auction, owner, &partner, &calls);
+        assert_eq!(batch.len(), calls.len());
+        for (call, got) in calls.iter().zip(&batch) {
+            let ctx = classify(&auction.with(*call).unwrap(), auction.len(), owner);
+            let want = engine.infer(&ctx);
+            assert_eq!(got.call, *call);
+            assert_eq!(got.rule, want.rule);
+            assert_eq!(got.confidence, want.confidence);
+            assert_eq!(
+                format!("{:?}", got.constraint),
+                format!("{:?}", want.constraint)
+            );
+        }
+        let ranked = engine.ranked_candidates(&auction, owner, &partner, crate::TieBreak::RowOrder);
+        let mut expected = engine.candidates(&auction, owner);
+        // `candidates` lists legal calls in call-index order; a stable sort by priority
+        // descending is the natural rank order under `RowOrder`.
+        expected.sort_by_key(|c| std::cmp::Reverse(c.2));
+        assert_eq!(
+            ranked
+                .iter()
+                .map(|c| (c.call, c.priority()))
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|(c, _, p)| (*c, *p))
+                .collect::<Vec<_>>()
+        );
+        assert!(!ranked.is_empty());
+    }
+
+    #[test]
+    fn level_floor_is_a_no_op_by_default_and_applies_when_set() {
+        assert_eq!(LevelFloor::default(), LevelFloor::NONE);
+        let floor = LevelFloor {
+            suit: [0, 0, 18, 22, 26, 31, 35],
+            nt: [0, 0, 24, 28, 30, 32, 36],
+        };
+        assert_eq!(floor.combined(4, false), 22);
+        assert_eq!(floor.combined(3, true), 24);
+        assert_eq!(floor.combined(8, true), 0);
+        // 1H P 2H P 3H: opener invites after a raise, a level-3 continuation.
+        let calls = [
+            Call::Bid(Bid::new(1, Strain::Hearts).unwrap()),
+            Call::Pass,
+            Call::Bid(Bid::new(2, Strain::Hearts).unwrap()),
+            Call::Pass,
+            Call::Bid(Bid::new(3, Strain::Hearts).unwrap()),
+        ];
+        let auction = Auction::from_calls(Seat::North, Vulnerability::None, calls).unwrap();
+        let mut ctx = classify(&auction, 4, Seat::North);
+        ctx.partner_constraint = Some(HandConstraint::Atom(Atom::ANY.with_hcp(0..=9)));
+        let plain = NaturalInference::default().infer(&ctx);
+        let params = NaturalParams {
+            level_floor: floor,
+            ..NaturalParams::default()
+        };
+        let floored = NaturalInference::new(params).infer(&ctx);
+        assert_eq!(plain.rule, floored.rule);
+        assert_ne!(plain.rule, "fallback");
+        // 18 combined minus partner's 0: at least 18 of our own.
+        assert!(*floored.constraint.hcp_range().start() >= 18);
+        assert!(*plain.constraint.hcp_range().start() < 18);
+    }
 
     /// Regression for the hold-out measurement's finding (see `opening_level_hcp`'s doc comment):
     /// rebidding one's own suit after a *weak two* opening must be judged against `weak_two`'s

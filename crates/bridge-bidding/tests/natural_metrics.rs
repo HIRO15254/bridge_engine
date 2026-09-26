@@ -302,6 +302,7 @@ fn empty_system() -> SystemIR {
         nodes: Vec::new(),
         index: AuctionTrie::new(),
         lints: Vec::new(),
+        exclusive_cell: Default::default(),
     }
 }
 

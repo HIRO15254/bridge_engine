@@ -88,6 +88,7 @@ pub fn compile(
         nodes: expansion.nodes,
         index: expansion.trie,
         lints,
+        exclusive_cell: Default::default(),
     };
     crate::lint::run_post_compile_checks(&mut ir, opts);
 

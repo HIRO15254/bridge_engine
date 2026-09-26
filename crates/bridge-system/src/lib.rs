@@ -20,6 +20,7 @@ pub mod ast;
 #[cfg(feature = "cache")]
 pub mod cache;
 pub mod compile;
+pub mod exclusive;
 pub mod lexer;
 pub mod lint;
 pub mod natural;
@@ -30,12 +31,16 @@ pub mod trie;
 mod ir;
 
 pub use compile::{CompileOptions, compile};
+pub use exclusive::{ExclusiveGroup, ExclusiveIndex, ExclusivePiece};
 pub use ir::{
     Alertability, BalancedDef, ConventionDefaults, Forcing, Node, NodeFlags, NodeId, Recognition,
     Row, RowId, StrengthVocab, SystemIR, SystemMeta, TieBreak,
 };
 pub use lint::{Lint, LintCode, Severity};
-pub use natural::{CallContext, CallKind, Inference, NaturalInference, NaturalParams, Role};
+pub use natural::{
+    CallContext, CallKind, Inference, LevelFloor, NaturalCandidate, NaturalInference,
+    NaturalParams, PartnerContext, Role,
+};
 pub use pattern::{Binding, CallPattern, Level, OppClass, Side, SidedPattern, StrainSet, Var};
 pub use trie::{AuctionTrie, Lookup, LookupKey, RelVul, Resolution};
 
