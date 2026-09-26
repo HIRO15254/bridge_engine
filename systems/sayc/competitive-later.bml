@@ -2008,26 +2008,6 @@ Responder then passes.
   #PASTE after-chain
 #PASTE pass-chain
 
-1C-1N-(D)-
-2C = {prio:1} 12--16 hcp, 6+!c
-  #PASTE after-chain
-#PASTE pass-chain
-
-1C-1N-(2D)-
-3C = {prio:1} 12--16 hcp, 6+!c
-  #PASTE after-chain
-#PASTE pass-chain
-
-1C-1N-(2H)-
-3C = {prio:1} 12--16 hcp, 6+!c
-  #PASTE after-chain
-#PASTE pass-chain
-
-1C-1N-(2S)-
-3C = {prio:1} 12--16 hcp, 6+!c
-  #PASTE after-chain
-#PASTE pass-chain
-
 1C-1H-(D)-
 2H = {prio:3} 12--15 hcp, 4+!h
   #PASTE after-chain
@@ -2085,26 +2065,6 @@ Responder then passes.
   #PASTE after-chain
 #PASTE pass-chain
 
-1C-1N-(D)-
-2C = {prio:1} 12--16 hcp, 6+!c
-  #PASTE after-chain
-#PASTE pass-chain
-
-1C-1N-(2D)-
-3C = {prio:1} 12--16 hcp, 6+!c
-  #PASTE after-chain
-#PASTE pass-chain
-
-1C-1N-(2H)-
-3C = {prio:1} 12--16 hcp, 6+!c
-  #PASTE after-chain
-#PASTE pass-chain
-
-1C-1N-(2S)-
-3C = {prio:1} 12--16 hcp, 6+!c
-  #PASTE after-chain
-#PASTE pass-chain
-
 1C-1S-(D)-
 2S = {prio:3} 12--15 hcp, 4+!s
   #PASTE after-chain
@@ -2148,26 +2108,6 @@ Responder then passes.
 4S = {prio:3} 19+ hcp, 4+!s
   #PASTE after-chain
 3C = {prio:2} 12--16 hcp, 6+!c
-  #PASTE after-chain
-#PASTE pass-chain
-
-1C-1N-(D)-
-2C = {prio:1} 12--16 hcp, 6+!c
-  #PASTE after-chain
-#PASTE pass-chain
-
-1C-1N-(2D)-
-3C = {prio:1} 12--16 hcp, 6+!c
-  #PASTE after-chain
-#PASTE pass-chain
-
-1C-1N-(2H)-
-3C = {prio:1} 12--16 hcp, 6+!c
-  #PASTE after-chain
-#PASTE pass-chain
-
-1C-1N-(2S)-
-3C = {prio:1} 12--16 hcp, 6+!c
   #PASTE after-chain
 #PASTE pass-chain
 
@@ -2228,26 +2168,6 @@ Responder then passes.
   #PASTE after-chain
 #PASTE pass-chain
 
-1D-1N-(D)-
-2D = {prio:1} 12--16 hcp, 6+!d
-  #PASTE after-chain
-#PASTE pass-chain
-
-1D-1N-(2C)-
-2D = {prio:1} 12--16 hcp, 6+!d
-  #PASTE after-chain
-#PASTE pass-chain
-
-1D-1N-(2H)-
-3D = {prio:1} 12--16 hcp, 6+!d
-  #PASTE after-chain
-#PASTE pass-chain
-
-1D-1N-(2S)-
-3D = {prio:1} 12--16 hcp, 6+!d
-  #PASTE after-chain
-#PASTE pass-chain
-
 1D-1S-(D)-
 2S = {prio:3} 12--15 hcp, 4+!s
   #PASTE after-chain
@@ -2291,26 +2211,6 @@ Responder then passes.
 4S = {prio:3} 19+ hcp, 4+!s
   #PASTE after-chain
 3D = {prio:2} 12--16 hcp, 6+!d
-  #PASTE after-chain
-#PASTE pass-chain
-
-1D-1N-(D)-
-2D = {prio:1} 12--16 hcp, 6+!d
-  #PASTE after-chain
-#PASTE pass-chain
-
-1D-1N-(2C)-
-2D = {prio:1} 12--16 hcp, 6+!d
-  #PASTE after-chain
-#PASTE pass-chain
-
-1D-1N-(2H)-
-3D = {prio:1} 12--16 hcp, 6+!d
-  #PASTE after-chain
-#PASTE pass-chain
-
-1D-1N-(2S)-
-3D = {prio:1} 12--16 hcp, 6+!d
   #PASTE after-chain
 #PASTE pass-chain
 
@@ -2360,6 +2260,46 @@ Responder then passes.
   #PASTE after-chain
 #PASTE pass-chain
 
+1C-1N-(D)-
+2C = {prio:1} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1N-(2D)-
+3C = {prio:1} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1N-(2H)-
+3C = {prio:1} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1N-(2S)-
+3C = {prio:1} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1N-(D)-
+2D = {prio:1} 12--16 hcp, 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1N-(2C)-
+2D = {prio:1} 12--16 hcp, 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1N-(2H)-
+3D = {prio:1} 12--16 hcp, 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1N-(2S)-
+3D = {prio:1} 12--16 hcp, 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
 1H-1N-(D)-
 2H = {prio:1} 12--16 hcp, 6+!h
   #PASTE after-chain
@@ -2377,6 +2317,26 @@ Responder then passes.
 
 1H-1N-(2S)-
 3H = {prio:1} 12--16 hcp, 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-1N-(D)-
+2S = {prio:1} 12--16 hcp, 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-1N-(2C)-
+2S = {prio:1} 12--16 hcp, 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-1N-(2D)-
+2S = {prio:1} 12--16 hcp, 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-1N-(2H)-
+2S = {prio:1} 12--16 hcp, 6+!s
   #PASTE after-chain
 #PASTE pass-chain
 

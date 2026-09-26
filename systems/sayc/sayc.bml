@@ -45,4 +45,6 @@ and the choices this file makes there.
 
 #INCLUDE competitive-later.bml
 
+#INCLUDE competitive-extra.bml
+
 #INCLUDE continuations.bml

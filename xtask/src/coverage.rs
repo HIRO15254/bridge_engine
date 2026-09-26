@@ -144,9 +144,15 @@ pub fn run(args: &[&str]) -> Result<std::process::ExitCode> {
 
     let lints_json = lint_report(&ir, &lints);
     if let Ok(show) = std::env::var("COVERAGE_SHOW") {
-        show_group(&ir, &show);
+        for calls in show.split(';') {
+            show_group(&ir, calls);
+        }
     }
-    eprintln!("coverage: compiled sayc.bml in {compile_ms:.0} ms; lints {lints_json}");
+    eprintln!(
+        "coverage: compiled sayc.bml in {compile_ms:.0} ms ({} rows, {} nodes); lints {lints_json}",
+        ir.rows.len(),
+        ir.nodes.len()
+    );
     let exclusive_json = exclusive_report(&ir);
 
     let t = Instant::now();
@@ -342,7 +348,8 @@ fn rel_vul(auction: &Auction, seat: Seat) -> RelVul {
 
 /// Authoring aid (`COVERAGE_SHOW="1D 1H P P"`, calls from the dealer, North dealing, none
 /// vulnerable): prints the sibling group the next seat chooses from, best rank first, with
-/// each member's priority, source line and whether the exclusive index shadows it.
+/// each member's priority, source line and whether the exclusive index shadows it. Several
+/// auctions may be given, separated by `;`.
 fn show_group(ir: &SystemIR, calls: &str) {
     let mut auction = Auction::new(Seat::North, Vulnerability::None);
     for token in calls.split_whitespace() {
