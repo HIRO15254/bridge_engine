@@ -1073,7 +1073,7 @@ fn rule_open_1m(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infere
     );
     Some(Inference {
         constraint,
-        confidence: 0.6,
+        confidence: 0.55,
         rule: "open_1m",
         explanation: expl!(
             ex,
@@ -1211,7 +1211,7 @@ fn rule_open_preempt(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<I
     );
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        confidence: 0.55,
         rule: "open_preempt",
         explanation: expl!(
             ex,
@@ -1281,7 +1281,7 @@ fn rule_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infer
     );
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        confidence: 0.35,
         rule: "overcall",
         explanation: expl!(
             ex,
@@ -1318,7 +1318,7 @@ fn rule_jump_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<
     );
     Some(Inference {
         constraint,
-        confidence: 0.4,
+        confidence: 0.5,
         rule: "jump_overcall",
         explanation: expl!(
             ex,
@@ -1399,7 +1399,7 @@ fn rule_takeout_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
 
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        confidence: 0.45,
         rule: "takeout_x",
         explanation: expl!(ex, "takeout double: {}+ hcp", min_hcp.start()),
     })
@@ -1452,7 +1452,7 @@ fn rule_negative_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inf
     let constraint = majors.and(HandConstraint::Atom(Atom::ANY.with_hcp(min_hcp..=37)));
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        confidence: 0.4,
         rule: "negative_x",
         explanation: expl!(ex, "negative double: {min_hcp}+ hcp, 4+ card unbid major"),
     })
@@ -1479,7 +1479,7 @@ fn rule_raise(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inferenc
         HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, min_len..=13));
     Some(Inference {
         constraint,
-        confidence: 0.6,
+        confidence: 0.45,
         rule: "raise",
         explanation: expl!(
             ex,
@@ -1552,7 +1552,7 @@ fn rule_new_suit_resp_2(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Optio
     );
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        confidence: 0.6,
         rule: "new_suit_resp_2",
         explanation: expl!(
             ex,
@@ -1734,7 +1734,7 @@ fn rule_reverse(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infere
         .and(second);
     Some(Inference {
         constraint,
-        confidence: 0.4,
+        confidence: 0.55,
         rule: "reverse",
         explanation: expl!(
             ex,
@@ -1772,7 +1772,7 @@ fn rule_rebid_nt(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infer
             }
             .with_hcp(hcp.clone()),
         ),
-        confidence: 0.5,
+        confidence: 0.45,
         rule: "rebid_nt",
         explanation: expl!(
             ex,
@@ -1807,7 +1807,7 @@ fn rule_rebid_new_suit(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option
     };
     Some(Inference {
         constraint: HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, 4..=13)),
-        confidence: 0.4,
+        confidence: 0.35,
         rule: "rebid_new_suit",
         explanation: expl!(
             ex,
@@ -1897,13 +1897,15 @@ fn rule_pass_default(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<I
     if ctx.call != Call::Pass {
         return None;
     }
-    // An unbounded pass is satisfied by every hand, so it must rank below every bid rule
-    // (`choose_bid` breaks equal priorities by call order, where `Pass` comes first): at 0.4 it
-    // would shadow the 0.4 rules (`reverse`, `rebid_new_suit`, `jump_overcall`) entirely. A
+    // An unbounded pass is satisfied by every hand, so it shadows every rule it ties or
+    // outranks (`choose_bid` breaks equal priorities by call order, where `Pass` comes first).
+    // At 0.3 (phase 4.6, tuned on the corpus tune split; 06-system.md §8.6) it ranks below every
+    // bid rule except `cue` and `penalty_x`, which it ties and therefore shadows: the natural
+    // policy passes rather than cue-bids or doubles for penalty when nothing else fits. A
     // limited pass is disjoint from the bids it declines, so it keeps 0.4.
     let (constraint, confidence) = match pass_default_max_hcp(p, ctx) {
         Some(hi) => (HandConstraint::Atom(Atom::ANY.with_hcp(0..=hi)), 0.4),
-        None => (HandConstraint::ANY, 0.2),
+        None => (HandConstraint::ANY, 0.3),
     };
     Some(Inference {
         constraint,
