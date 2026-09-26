@@ -20,14 +20,15 @@
 
 ```rust
 // crates/bridge-lead/src/lib.rs (再エクスポート)
-pub use bridge_bidding::{InterpretOptions, Table};
-pub use bridge_sample::{Proposal, SampleOptions, UniformProposal};
+pub use bridge_bidding::{InterpretOptions, PolicyParams, Table};
+pub use bridge_sample::{ConstraintProposal, Proposal, SampleOptions, UniformProposal};
 pub use bridge::dd::{DdError, DoubleDummy};
 
 pub struct LeadOptions {
     pub samples: usize,              // 既定 200
     pub seed: u64,                   // sample.seed を上書きする単一の種
-    pub interpret: InterpretOptions,
+    pub policy: PolicyParams,        // 尤度の方策。既定 PolicyParams::human() (フェーズ 4)
+    pub interpret: InterpretOptions, // policy と implicit_pass は尤度のもので上書きされる (§3 手順 3)
     pub sample: SampleOptions,       // seed 以外のフィールド (attempts, threads) を使う
     pub top_k: usize,                // 既定 3
     pub scoring: LeadScoring,
@@ -78,7 +79,12 @@ pub fn advise(
     dd: &dyn DoubleDummy,
     opts: &LeadOptions,
 ) -> Result<LeadAdvice, LeadError>;
+
+/// リード助言用の提案: 残差棄却ありの ConstraintProposal、受理率の下限 0.125 (サンプラーの既定は 0.5)
+pub fn lead_proposal() -> ConstraintProposal;
 ```
+
+`lead_proposal` の下限を既定より下げるのは、生成した配牌 1 つごとに DD 解析 (試行 1 回よりはるかに高い) が走るので、試行を増やしてでも重みを平らにしたほうが得だから (09-sample.md §6.5)。CLI (`lead-advisor`) とコーパス評価はこれを使う。
 
 `LeadOptions.seed` と `LeadOptions.sample.seed` が両方あるのは冗長に見えるが、意図的である: 呼び出し側は `seed` だけを設定すればよく、`advise` が内部で `SampleOptions { seed: opts.seed, ..opts.sample }` を組み立てて `sample_deals` に渡す。`opts.sample` は attempts/threads だけを運ぶ器になる。
 
@@ -86,8 +92,8 @@ pub fn advise(
 
 1. **契約とリーダー**: `!auction.is_complete()` なら `IncompleteAuction`。`auction.contract()` が `None` (パスアウト) なら `PassedOut`。そうでなければ `contract = auction.contract().unwrap()`, `declarer = contract.declarer`, `leader = contract.leader()` (`declarer.next()`、`bridge-core` にすでにある), `trump = contract.bid.strain()`。
 2. **手の検査**: `query.leader_hand.len() != 13` なら `WrongHandSize`。
-3. **解釈**: `known = KnownCards::from_viewer(leader, query.leader_hand)`。プレイは未開始なので `play_constraints = [HandConstraint::ANY; 4]`, `play_soft = None`。`interpretation = bridge_bidding::interpret(table, query.auction, &opts.interpret)`。
-4. **文脈**: `bid_ctx = BidContext { scoring: Scoring::Imp, natural: None, implicit_pass: ImplicitPass::Complement, policy: PolicyParams::default() }` を `advise` の中だけで組み立てる (`Scoring` は `07-bidding.md` により v1 では素通しなので任意の値でよく、`natural: None` は `sequence_log_likelihood` が `table.natural` を自動補完するので同じ結果になる)。`ctx = SampleContext { known, interpretation: &interpretation, play_constraints: &play_constraints, play_soft: None, bidding: Some(BiddingLikelihood { table, auction: query.auction, ctx: &bid_ctx }) }`。
+3. **解釈**: `known = KnownCards::from_viewer(leader, query.leader_hand)`。プレイは未開始なので `play_constraints = [HandConstraint::ANY; 4]`, `play_soft = None`。`bid_ctx = BidContext { scoring: Scoring::Imp, natural: None, implicit_pass: ImplicitPass::Complement, policy: opts.policy }` を `advise` の中だけで組み立て (`Scoring` は `07-bidding.md` により v1 では素通しなので任意の値でよく、`natural: None` は尤度が `table.natural` を自動補完するので同じ結果になる)、`interpretation = bridge_bidding::interpret(table, query.auction, &InterpretOptions { policy, implicit_pass, ..opts.interpret })` とする。`policy` と `implicit_pass` は `InterpretOptions::for_context(&bid_ctx)` のもので、解釈は常に尤度の方策の鏡像になる (D19、09-sample.md §3.1)。方策の既定が `PolicyParams::human()` なのは、実際の卓ではシステム外のナチュラルなコールが多く (コーパスのオークションの大半)、`system_players()` ではそれがほぼ不可能な逸脱として読まれるため。
+4. **文脈**: `ctx = SampleContext { known, interpretation: &interpretation, play_constraints: &play_constraints, play_soft: None, bidding: Some(BiddingLikelihood { table, auction: query.auction, ctx: &bid_ctx }) }`。尤度は `AuctionPolicy::log_likelihood` (D18) で計算される。
 5. **サンプリング**: `sample_opts = SampleOptions { seed: opts.seed, ..opts.sample }`、`(deals, report) = sample_deals(&ctx, proposal, opts.samples, &sample_opts)?`。
 6. **DD 解析**: `deals` の各要素について `dd.lead_scores(&weighted.deal, trump, leader)` を呼ぶ。`leader` の手は既知で固定なので、返る 13 枚の集合はどのサンプルでも同一である (facade の `lead_scores` は「リーダーの手の枚数だけ返す」契約、`crates/bridge/tests/dds.rs` の `assert_eq!(scores.len(), 13, ..)` で確認済み)。`parallel` feature では `deals.par_iter()` (rayon) で解析し、`collect::<Result<Vec<_>, _>>()` で順序を保ったまま集める (`.collect()` は要素順を保証する)。エラーは最初の 1 件を `LeadError::Dd` として伝播する。
 7. **集計**: 正規化重み `w_i = WeightedDeal::normalized_weights(&deals)` (前段の `report.ess` と同じ対数重みから計算されるので、カードごとに作り直さない)。カード `c` ごとに:
@@ -107,16 +113,16 @@ pub fn advise(
 
 - **単体テスト** (`tests/`、非 `#[ignore]`、本レーンで実行できるもの): 契約/リーダー導出、エラー系 (未完了、パスアウト、手の枚数違い)、集計の数式 (手計算値との一致)、同値グループ化、決定性 (同じ seed で同一の `LeadAdvice`、`parallel` feature 有無で同一)。DDS を使わないダミーの `DoubleDummy` 実装 (`tests/common/mod.rs` の `FakeDd`: リーダーの手だけから決まる決定的なルールで守備トリック数を返す。配牌の残り 39 枚に依存しないので、期待値が厳密に手計算できる) を使う。オークションとシステムは `bridge-system` を dev-dependency にして `bridge-bidding/tests/common/mod.rs` と同じ手法 (`SystemBuilder` 相当) で手組みする (単体テストは特定システムの入札表に依存させないため。実システムは下のコーパス評価で使う)。
 - **DDS smoke テスト** (`--features dds`、非 `#[ignore]`、少数サンプル): 固定の配牌とオークションで `bridge::dd::dds()` を呼び、実際に解ける (`None` ならスキップ、ベンダリング済みなら solve する) ことを確認する。
-- **コーパス評価ハーネス** (`tests/corpus_eval.rs`、`#[ignore]`、`--features dds`): `corpus/data/pbn` 以下を再帰的に探索したファイルをパス順にソートし、その順で「完了したオークション・完全な配牌・パスアウトでない契約」を持つボードを先頭から 100 件選ぶ (決定的だがシードは使わない。現状のコーパスでは `OptimumPlayTable.pbn` の 1 件と Bermuda Bowl 2019 決勝の 4 ファイル (32 + 32 + 32 + 3 件) になり、複数イベントにまたがる層化抽出は未決事項に残す)。各ボードで:
+- **コーパス評価ハーネス** (`tests/corpus_eval.rs`、`#[ignore]`、`--features dds`): `corpus/data/pbn` 以下を再帰的に探索したファイルをパス順にソートし、その順で「完了したオークション・完全な配牌・パスアウトでない契約」を持つボードを先頭から 100 件選ぶ (決定的だがシードは使わない)。フェーズ 4 からは既定で D20 の評価分割 (11-testing.md §13: `corpus_auctions` の列挙で奇数番目) から選ぶ (`LEAD_SPLIT=eval`)。`LEAD_SPLIT=all` はフェーズ 3 までと同じ選び方 (分割なし、§4.1 の 100 ボード。現状のコーパスでは `OptimumPlayTable.pbn` の 1 件と Bermuda Bowl 2019 決勝の 4 ファイル) で、比較の連続性のために残す。複数イベントにまたがる層化抽出は未決事項に残す。設定は環境変数で選ぶ: `LEAD_POLICY` (`human` 既定、`system`、`legacy1` = 退役したソフトマックス `PolicyParams::legacy(1.0)`)、`LEAD_INTERPRET` (`mirror` 既定: 尤度の方策の鏡像、`legacy1` では鏡像が無いので `human` の鏡像を提案に使う。`legacy`: フェーズ 3 の解釈 `InterpretOptions::legacy()`)、`LEAD_RESIDUAL` (既定 `1`: 提案は `lead_proposal()`、`0` で残差棄却なし)。解釈が尤度の方策の鏡像なら `advise` そのものを、そうでなければ同じパイプラインを `advise_with_context` で呼ぶ。各ボードで:
   - `truth`: 実際の配牌に対する `dd.lead_scores` の全 13 枚のスコアと、その最大値を達成するカード集合。
-  - `advice`: `systems/sayc/sayc.bml` (`BRIDGE_SYSTEMS_DIR` 環境変数、既定はワークスペース直下の `systems/`) を `bridge_system::compile` (facade 経由 `bridge::system::compile`) でコンパイルし、`bridge_sample::ConstraintProposal` を使った `advise(...)` (サンプル数は環境変数 `LEAD_SAMPLES`、既定 100)。release で数分かかるため `#[ignore]` (実行方法は §4.1)。環境変数 `LEAD_UNIFORM=1` は本評価 (`advice`) のサンプリングだけを `ConstraintProposal` から `UniformProposal` に差し替える (ビディング尤度による重み付けはそのまま残る)。ベースライン (a) はこのフラグと無関係に、`advise` と同じ集計パイプライン (`advise_with_context`、`#[doc(hidden)]`) を `UniformProposal` かつ `bidding: None` (解釈は空、`ANY` 相当) で呼んで毎回別途計算する。
+  - `advice`: `systems/sayc/sayc.bml` (`BRIDGE_SYSTEMS_DIR` 環境変数、既定はワークスペース直下の `systems/`) を `bridge_system::compile` (facade 経由 `bridge::system::compile`) でコンパイルし、`lead_proposal()` を使った `advise(...)` (サンプル数は環境変数 `LEAD_SAMPLES`、既定 100)。release で数分かかるため `#[ignore]` (実行方法は §4.1)。環境変数 `LEAD_UNIFORM=1` は本評価 (`advice`) のサンプリングだけを `ConstraintProposal` から `UniformProposal` に差し替える (ビディング尤度による重み付けはそのまま残る)。ベースライン (a) はこのフラグと無関係に、`advise` と同じ集計パイプライン (`advise_with_context`、`#[doc(hidden)]`) を `UniformProposal` かつ `bidding: None` (解釈は空、`ANY` 相当) で呼んで計算する。方策・解釈・提案に依存しないので、ボードごとの結果を `target/lead_eval/baseline_a-n{samples}-seed{seed}-{split}-boards{N}/` にキャッシュし、設定をまたいで共有する。
   - `hit` (主指標): 上位 k (k = 1, 3) のグループの**代表カード** (実際にリードするカード) に `truth` の要素が 1 つでも入っているか。同じ判定関数 (`hits_truth`) をベースライン (a) にも使う。ベースライン (b) も k 枚の単独カードを選ぶので同じ土俵で比較できる。
   - `group_hit` (副指標): グループの `equivalents` まで含めて数えた命中 (`hits_truth_group`)。上位 k のグループは k 枚より多くのカードを覆う (このコーパスでは上位 3 で平均 5.4 枚、上位 1 で 2.0 枚) ので、(b) と比べるときは k ではなく覆った枚数で (b) を評価した `baseline_random_covered_*` と比べる。各ボードの記録に `top{1,3}_cards_covered` を残す。
   - `tricks_lost`: 上位 1 のカードが**実際の配牌**で達成する守備トリック数 (`truth.all_scores` から引く) と `truth.max` の差。サンプルにわたる推定平均 (`mean_defence_tricks`) ではなく、選んだカードの実測値を使う (推定バイアスではなく選択の結果を測るため)。`mean_estimation_error_top1` として `|mean_defence_tricks − 実測値|` も別途報告する。
-  - ボードごとの結果は設定ごとのディレクトリ `target/lead_eval/n{samples}-{proposal}-seed{seed}-boards{N}/board_NNN.json` に書き、実行のたびにそのディレクトリの記録のうち同じ設定 (サンプル数・提案・seed・選択ボード数・記録形式の版 `record_version`) のものすべてから、その設定のレポートを作り直す。レポート名は既定設定 (n = 100、`ConstraintProposal`、seed 0、100 ボード) なら `target/lead_report.json`、それ以外は既定と異なる項目を並べた `target/lead_report_<suffix>.json` (例: `lead_report_n500.json`)。設定の違う実行が互いの記録やレポートを上書きしない。`LEAD_BOARDS=a..b` (選択ボードの半開区間) で分割実行でき、`boards_with_records == boards_selected` になれば完全。実配牌の DD 解析や `advise` がエラー (`NoSamples` など) になったボードはパニックせず、理由付きで `skipped` に記録して命中率の分母から外す。
+  - ボードごとの結果は設定ごとのディレクトリ `target/lead_eval/n{samples}-{proposal}-{policy}-{interpret}-{residual|plain}-{split}-seed{seed}-boards{N}/board_NNN.json` に書き、実行のたびにそのディレクトリの記録のうち同じ設定 (サンプル数・提案・方策・解釈・残差棄却と下限・分割・seed・選択ボード数・記録形式の版 `record_version`、現在 3) のものすべてから、その設定のレポートを作り直す。レポート名は既定設定 (n = 100、`ConstraintProposal`、`human`、鏡像、残差棄却あり、評価分割、seed 0、100 ボード) なら `target/lead_report.json`、それ以外は既定と異なる項目を並べた `target/lead_report_<suffix>.json` (例: `lead_report_n500.json`、`lead_report_legacy1.json`、`lead_report_all.json`)。記録には受理率、試行あたり ESS、予算切れも残す。設定の違う実行が互いの記録やレポートを上書きしない。`LEAD_BOARDS=a..b` (選択ボードの半開区間) で分割実行でき、`boards_with_records == boards_selected` になれば完全。実配牌の DD 解析や `advise` がエラー (`NoSamples` など) になったボードはパニックせず、理由付きで `skipped` に記録して命中率の分母から外す。
   - 出力 `target/lead_report.json` (ワークスペース直下の `target/`、`CARGO_MANIFEST_DIR` からの相対ではない): 上位 1/3 命中率 (主指標と副指標 `group_hit_rate_*`、それぞれ全ボードと、DD 同値クラスが 2 つ以上ある「非自明」ボードに絞った版の両方)、上位 1/3 が覆う平均カード枚数、上位 1 の選択が最適から失う実測の平均 DD トリック数、平均推定誤差、ESS の統計 (平均・中央値・最小・最大、ESS/n ≥ 0.5 のボード数、ESS < 5 のボード数)、ボードあたりの時間、スキップしたボードと理由、ベースライン (a) 無ビディング情報 (`UniformProposal`、解釈なし、`advise` と同じグループ化と命中判定) と (b) ランダム選択 (リーダーの**カード**13 枚から `k` 枚を無作為に選んだときに最適カードを 1 枚以上含む超幾何確率 `1 − C(13−m, k) / C(13, k)`、`m` は `truth` の最適カード枚数。DD 同値クラスの個数ではない — このコーパスは 1 ボードあたり最大 3 クラスしかなく、クラス単位で 3 つ選べば常に 1.0 になってしまうため。副指標との比較用に `k` を覆った枚数にした版も出す) の 2 つ。
 
-### 4.1 測定結果 (2026-09-27、`wip/p6int`)
+### 4.1 測定結果 (2026-09-27、`wip/p6int`、フェーズ 3 の方策と解釈)
 
 実行: `cargo test -p bridge-lead --release --features dds,parallel --test corpus_eval -- --ignored --nocapture` (10 コアの macOS、他のワークフローと同時実行)。SAYC (`systems/sayc/sayc.bml`) を 4 席共通に使い、`ConstraintProposal`、seed 0。3 回の実行で結果はビット一致 (決定性)。命中率は主指標 (代表カード)。ボードごとの記録は `target/lead_eval/n100-constraint-seed0-boards100/` と `target/lead_eval/n500-constraint-seed0-boards100/` に並んで残る。
 
@@ -146,11 +152,41 @@ pub fn advise(
 - n を 5 倍にすると上位 1 は 4 ポイント上がるが上位 3 は 1 ポイント下がり、ESS/n はむしろ下がる (重みの裾が重い)。サンプル数ではなく提案と目標の乖離が律速。
 - ランダム選択でも上位 3 が 0.879 になるのは、このコーパスでは最善カードが平均して多い (同値カードが多い) ため。命中率は必ずベースラインとの差で読む。
 
+### 4.2 フェーズ 4 の測定結果 (2026-09-27、`wip/p4-P`)
+
+実行: 上と同じコマンド (10 コアの macOS、他のワークフローと同時実行、loadavg 5〜23)。n = 100、seed 0、100 ボード、スキップ 0。解釈は方策の鏡像 (D19)、尤度は D18 の方策 (`AuctionPolicy`)、提案は `lead_proposal()` (残差棄却、下限 0.125)。`human()` はレーン D の最尤推定が入る前の仮値 (ε = 0.01、δ = 0.3)。決定的で、同じ設定を 2 回回した結果はビット一致。
+
+評価分割 (既定、`LEAD_SPLIT=eval`) の 100 ボード。非自明ボード 71。ベースライン (a) 上位 1 / 3 = 0.74 / 0.91、(b) = 0.659 / 0.879。
+
+| 設定 | 上位 1 | 上位 3 | 上位 1 / 3 (非自明) | ESS 中央値 / 最小 | ESS < 5 のボード | 受理率の中央値 | 上位 1 の実測損失 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **`human`、鏡像、残差棄却 (既定)** | **0.78** | **0.94** | 0.690 / 0.915 | **85.7** / 2.0 | 2 | 0.378 | 0.24 |
+| `system`、鏡像、残差棄却 | 0.79 | 0.97 | 0.704 / 0.958 | 87.8 / 1.0 | 2 | 0.395 | 0.23 |
+| `human`、鏡像、残差棄却なし | 0.76 | 0.91 | 0.662 / 0.873 | 35.0 / 1.0 | 11 | 1.0 | 0.29 |
+| `legacy1` (τ = 1)、`human` の鏡像、残差棄却 | 0.76 | 0.94 | 0.662 / 0.915 | 53.9 / 1.0 | 15 | 0.378 | 0.28 |
+| `legacy1`、フェーズ 3 の解釈、残差棄却 | 0.76 | 0.87 | 0.662 / 0.817 | 6.2 / 1.0 | 46 | 0.669 | 0.29 |
+
+フェーズ 3 の 100 ボード (`LEAD_SPLIT=all`、§4.1 と同じボード)。非自明ボード 70。ベースライン (a) 上位 1 / 3 = 0.81 / 0.90 (§4.1 の 0.808 / 0.899 と同じボード、スキップが無くなったので 100 件)、(b) = 0.659 / 0.881。
+
+| 設定 | 上位 1 | 上位 3 | ESS 中央値 | ESS < 5 のボード |
+| --- | --- | --- | --- | --- |
+| `human`、鏡像、残差棄却 | **0.88** | 0.92 | 84.7 | 4 |
+| `legacy1`、`human` の鏡像、残差棄却 | 0.82 | 0.93 | 52.7 | 11 |
+
+所見:
+
+- **判定 (計画の P、リード助言)**: 既定の設定で上位 3 = 0.94 ≥ 0.90、上位 1 = 0.78 ≥ 同じボードのベースライン (a) 0.74 (フェーズ 3 のボードでは 0.88 ≥ 0.81、計画に書かれた 0.808 も上回る)、ESS 中央値 85.7 ≥ 20 (フェーズ 3 は 4.0)。§4.1 で上位 1 が (a) を下回っていた原因 (ESS の低さ) は解消した。
+- **hard (D18) と τ = 1 のソフトマックスの比較**: 同じ提案 (`human` の鏡像) で比べると、上位 1 は hard が 0.78 対 0.76 (評価分割)、0.88 対 0.82 (フェーズ 3 のボード) で、hard が悪くなることはない。計画の再検討条件 (hard が上位 1 で 0.02 を超えて悪い) には当たらないので D18 は維持する。τ = 1 は重みの裾が重く、ESS 中央値が 54 と hard の 86 より低い。`legacy_temperature` はこの比較の役目を終えたので、統合後に削除してよい (15-phase4-plan.md の未決事項 3)。
+- 残差棄却は ESS 中央値を 35 → 86 に上げ、上位 1 / 3 を 0.02 / 0.03 上げる。受理率 0.38 で試行は約 2.6 倍になるが、時間の大半は DD 解析なので 1 ボードあたりの時間はほぼ変わらない (0.5〜1.4 s、負荷による)。
+- `system` プリセットが評価分割では `human` の仮値よりわずかに良い (上位 3 で 0.97)。`human()` の値がレーン D の最尤推定に置き換わったら再測定する。
+- フェーズ 3 の解釈 (`InterpretOptions::legacy()`) のままでは、同じ τ = 1 の尤度でも ESS 中央値 6.2 で上位 3 が 0.87 に落ちる。改善は鏡像の解釈 (D19) によるもので、方策の形 (D18) の寄与は上位 1 の差の分。
+
 ## 5. 未決事項
 
 | # | 項目 | 現状 |
 | --- | --- | --- |
-| 1 | 上位 3 命中率の閾値 X (`12-roadmap.md` §7、6.2) | 測定済み (§4.1: n = 100 で 0.939、ベースライン (a) 0.899、(b) 0.879)。X は未決定。候補は「上位 3 ≥ 0.90 かつベースライン (a) 以上」。上位 1 が (a) を下回る問題は ESS (フェーズ 5.3) の解決待ち |
+| 1 | 上位 3 命中率の閾値 X (`12-roadmap.md` §7、6.2) | 計画 (15-phase4-plan.md、フェーズ 6) で「100 ボードで上位 3 ≥ 0.90 かつ上位 1 ≥ ベースライン (a)、`human` プリセット」に固定。フェーズ 4 の測定 (§4.2) で達成: 評価分割で 0.94 / 0.78 (a: 0.74)。`human()` の最尤推定値が入った統合時に再測定する |
+| 5 | `human()` の値 | 仮値 (ε = 0.01、δ = 0.3)。レーン D のチューニング分割での最尤推定に置き換える (D18、D20) |
 | 2 | `LeadScoring::Score` の得点表を `bridge-core` に上げて共有するか | 現状は `bridge-lead` 内に複製 (非公開)。他クレートが得点計算を必要にした時点で `bridge-core` へ移す |
 | 3 | 真の IMP/Matchpoints (他契約との比較) | 対象外。他契約の DD 値の総当たりが要り、フェーズ 6 の範囲を超える |
 | 4 | `LeadOptions.sample.seed` を無視して `opts.seed` で上書きする API は分かりにくいという指摘 | 現状の決定。単一の `seed` を露出したいという設計上の理由を doc コメントに明記する |
