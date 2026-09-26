@@ -217,7 +217,7 @@ impl Sampler {
 
 `deal` から同じ `σ` とプール列を再現し、`k = 1..=m−1` について `π_k(h_{σ_k}) = Σ_{i: h ∈ C_{σ_k,i}} v_i · exp(S^{(k)}_{σ_k,i}.log_prob(h))` を計算し、`ln π = Σ_k ln π_k` とする。項レベルに展開すると `π_k(h) = Σ_{(i,l): h ∈ a_{i,l}} u_{i,l} / cnt_{i,l}` であり、**重なる DNF 項・重なる代替をすべて足す**。混合密度は `h` を生成し得た全成分を数えなければ正しくない。最後の席は残りで決まるので対数領域で 0 を加える。いずれかの `π_k = 0`、または最後の席の検査に落ちる `deal` は −∞。
 
-`log_prob` は実際の提案分布に対して厳密であり、これが ESS を正直な数値にする。`propose` が準備した席 2 以降の `S^{(k)}` は、同じスレッドで直後に呼ばれる同じ配牌の `log_prob` のためにスレッドローカルに残し、`(pool, fixed)` が一致すれば再利用する（一致しなければ再準備するので結果は常に厳密）。このため配牌ごとの `prepare` は §6.4 の見積りどおり 1 回分で済み、トレイト拡張（`propose_with_log_prob`）は足さない（§10.1）。
+`log_prob` は実際の提案分布に対して厳密であり、これが ESS を正直な数値にする。`propose` が準備した席 2 以降の `S^{(k)}` は、同じスレッドで直後に呼ばれる同じ配牌の `log_prob` のためにスレッドローカルに残し、書き込んだ提案の id（`prepare` ごとに一意な連番。アドレスは解放後に再利用されうるので使わない）と `(pool, fixed)` の両方が一致したときだけ再利用する（一致しなければ自分の粗い候補から再準備するので、別の提案の配牌を同じスレッドで採点しても結果は常に厳密）。このため配牌ごとの `prepare` は §6.4 の見積りどおり 1 回分で済み、トレイト拡張（`propose_with_log_prob`）は足さない（§10.1）。
 
 ### 6.4 性能リスクと対策（計画 §8.3、R4）
 
@@ -298,6 +298,7 @@ pub fn rng_for(master: u64, index: u64) -> SampleRng {
 | `middle_seat_multi_component_and_last_seat_rejection_log_prob_consistency` | `tests/log_prob.rs` | 未知 9 枚、再 prepare される中間席が生き残る 2 成分混合（coarsen で潰れない HCP 窓）を持ち、最終席が `Sampled` で棄却もあり得る文脈での同じ χ² 比較 | `Σ exp(log_prob) ≤ 1`、最終席のみの不整合で厳密に `-inf`、棄却されない |
 | `middle_seat_merged_summaries_log_prob_consistency` | `tests/log_prob.rs` | 未知 9 枚、再 prepare される中間席に要約が一致する 2 代替 + 別の HCP 窓の代替（§10.1 (i) の併合経路）での全列挙 + χ² | `Σ exp(log_prob) = 1`、棄却されない |
 | `log_prob_matches_the_unmerged_reference` | unit（`constraint_proposal.rs`） | 実 SAYC に似た 4 席の文脈で、併合・`ANY` 直接配り・スレッドローカルキャッシュを使う `log_prob` を、要約を 1 つずつ毎回 prepare する参照実装と比較（提案配牌と一様配牌の両方） | 差 < 1e-9、支持集合一致 |
+| `log_prob_ignores_another_proposals_cache_entries` | unit（`constraint_proposal.rs`） | 中間席の重みだけが違う 2 つの提案を同じスレッドで交互に使い、`a.propose` 直後の `b.log_prob` を参照実装と比較（キャッシュが提案 id で区別されることの回帰） | 差 < 1e-9 |
 | `uniform_log_prob_constant` | unit | 全提案で `log_prob` が等しく、`Σ exp(log_prob)` が全列挙で 1 | |
 | `ess_formula` | unit | 手計算の小例（等重み n 個 → ESS = n、1 個だけ重い → ESS ≈ 1） | |
 | `normalized_weights_sum_to_one` | unit | | 1 ± 1e-12 |

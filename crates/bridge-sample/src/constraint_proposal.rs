@@ -36,6 +36,7 @@
 //! to exercise them.
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use bridge_constraint::{Atom, Dnf, DnfOptions, HandConstraint, Sampler};
 use bridge_core::{Deal, Hand, Seat};
@@ -54,16 +55,19 @@ use crate::{PreparedProposal, Proposal, SampleContext, SampleError};
 //
 // A thread-local, not a field on `PreparedConstraint`, because `PreparedProposal` must stay
 // `Send + Sync` (it is shared as `&(dyn PreparedProposal + Send + Sync)` across rayon's pool in
-// `Threads::Auto`, per `lib.rs`'s `run_parallel`); a `RefCell` field would break `Sync`. Keying by
-// thread instead of by `(proposal, seat)` is safe because within one thread, `propose` always
-// *writes* every re-prepared seat's cache slot before `log_prob` for the same deal *reads* it: a
-// slot describes at most one `(pool, fixed)` at a time, and `log_prob` checks that pair matches
-// before trusting the cached components, so a mismatch (a different deal, a different proposal
-// reusing the thread, or `log_prob` called with no preceding `propose` on this thread — e.g. every
-// direct unit test) just falls back to rebuilding, never returns a wrong density.
-/// One re-prepared seat's cached `(pool, fixed, components)`, keyed by seat position in
-/// `REPREPARE_CACHE`.
-type CachedSeatComponents = Option<(Hand, Hand, Vec<(Sampler, f64)>)>;
+// `Threads::Auto`, per `lib.rs`'s `run_parallel`); a `RefCell` field would break `Sync`. Each slot
+// records which `PreparedConstraint` wrote it (its `id`, unique per `prepare_constraint` call and
+// never reused, unlike an address) together with the `(pool, fixed)` it was built for, and
+// `log_prob` trusts a slot only when all three match its own. Anything else — a different deal, a
+// different proposal on the same thread (e.g. scoring one proposal's deal under another), or
+// `log_prob` with no preceding `propose` on this thread — falls back to rebuilding from its own
+// coarse candidates, so the cache never changes the density `log_prob` returns.
+/// One re-prepared seat's cached `(proposal id, pool, fixed, components)`, keyed by seat position
+/// in `REPREPARE_CACHE`.
+type CachedSeatComponents = Option<(u64, Hand, Hand, Vec<(Sampler, f64)>)>;
+
+/// Source of [`PreparedConstraint::id`]: a fresh value per `prepare_constraint` call.
+static NEXT_PREPARED_ID: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     static REPREPARE_CACHE: RefCell<Vec<CachedSeatComponents>> =
@@ -310,6 +314,7 @@ impl ConstraintProposal {
         };
 
         Ok(PreparedConstraint {
+            id: NEXT_PREPARED_ID.fetch_add(1, Ordering::Relaxed),
             ctx,
             sampler_opts,
             order,
@@ -547,6 +552,9 @@ fn draws_direct(entry: &SeatEntry, k: usize) -> bool {
 }
 
 struct PreparedConstraint<'c> {
+    /// Unique per `prepare_constraint` call; tags this proposal's `REPREPARE_CACHE` entries so
+    /// another proposal on the same thread never reads them.
+    id: u64,
     ctx: &'c SampleContext<'c>,
     sampler_opts: bridge_constraint::SampleOptions,
     /// Seats needing cards, most constrained first (§6.1 point 3); the last entry is the
@@ -616,7 +624,7 @@ impl PreparedProposal for PreparedConstraint<'_> {
                         )?;
                         let i = choose_component(&components, rng);
                         let hand = components[i].0.sample(rng)?.hand;
-                        cache[k] = Some((pool, fixed, components));
+                        cache[k] = Some((self.id, pool, fixed, components));
                         Some(hand)
                     });
                     hand?
@@ -691,13 +699,18 @@ impl PreparedProposal for PreparedConstraint<'_> {
                     // Sum over every component that could have produced `hand` (they overlap):
                     // the mixture density is only correct when every one is counted (§6.3).
                     // §6.4 (c): replay the same coarse candidates `propose` drew this seat from —
-                    // reusing `REPREPARE_CACHE[k]` when it was left by a matching `propose` call
-                    // on this thread for this exact `(pool, fixed)` (see the thread-local's doc
-                    // comment above), rebuilding otherwise.
+                    // reusing `REPREPARE_CACHE[k]` when it was left by a `propose` call of this
+                    // same proposal on this thread for this exact `(pool, fixed)` (see the
+                    // thread-local's doc comment above), rebuilding otherwise.
                     let ln_component = REPREPARE_CACHE.with(|cache| -> f64 {
                         let cache = cache.borrow();
-                        if let Some(Some((cached_pool, cached_fixed, components))) = cache.get(k) {
-                            if *cached_pool == pool && *cached_fixed == fixed {
+                        if let Some(Some((cached_id, cached_pool, cached_fixed, components))) =
+                            cache.get(k)
+                        {
+                            if *cached_id == self.id
+                                && *cached_pool == pool
+                                && *cached_fixed == fixed
+                            {
                                 return mixture_log_prob(components, hand);
                             }
                         }
@@ -979,6 +992,74 @@ mod tests {
                 assert_eq!(fast, f64::NEG_INFINITY, "support differs for {deal:?}");
             }
         }
+    }
+
+    /// Regression: `REPREPARE_CACHE` used to be keyed only by seat position and `(pool, fixed)`,
+    /// so `b.log_prob(d)` right after `a.propose()` on the same thread read `a`'s mixture at the
+    /// re-prepared middle seat whenever both proposals had the same seat order. The two proposals
+    /// here differ only in South's (re-prepared) alternative weights.
+    #[test]
+    fn log_prob_ignores_another_proposals_cache_entries() {
+        let interpretation_a = sayc_like_interpretation();
+        let mut interpretation_b = sayc_like_interpretation();
+        let south = &mut interpretation_b.seats[Seat::South.index() as usize];
+        let n = south.len() as f32;
+        for (i, alt) in south.iter_mut().enumerate() {
+            // Reverse the weight ordering: the last alternatives now dominate.
+            alt.1 = (i as f32 + 1.0) / (n * (n + 1.0) / 2.0);
+        }
+        let play_constraints = [
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+        ];
+        let ctx_a = SampleContext {
+            known: KnownCards::EMPTY,
+            interpretation: &interpretation_a,
+            play_constraints: &play_constraints,
+            play_soft: None,
+            bidding: None,
+        };
+        let ctx_b = SampleContext {
+            interpretation: &interpretation_b,
+            ..ctx_a
+        };
+        let a = ConstraintProposal::default()
+            .prepare_constraint(&ctx_a)
+            .expect("every seat has support");
+        let b = ConstraintProposal::default()
+            .prepare_constraint(&ctx_b)
+            .expect("every seat has support");
+        let order = |p: &PreparedConstraint<'_>| p.order.iter().map(|e| e.seat).collect::<Vec<_>>();
+        assert_eq!(
+            order(&a),
+            order(&b),
+            "the fixture needs both proposals to share one seat order"
+        );
+
+        let mut rng = crate::rng_for(0xCAC4E, 0);
+        let mut checked = 0;
+        for _ in 0..200 {
+            let Some(deal) = a.propose(&mut rng) else {
+                continue;
+            };
+            let got = b.log_prob(&deal);
+            let reference = reference_log_prob(&b, &deal);
+            if reference.is_finite() {
+                assert!(
+                    (got - reference).abs() < 1e-9,
+                    "b.log_prob {got} != reference {reference} after a.propose for {deal:?}"
+                );
+            } else {
+                assert_eq!(got, f64::NEG_INFINITY, "support differs for {deal:?}");
+            }
+            // And `a` still reads its own entries correctly after `b` ran.
+            let own = a.log_prob(&deal);
+            assert!((own - reference_log_prob(&a, &deal)).abs() < 1e-9);
+            checked += 1;
+        }
+        assert!(checked > 50, "only {checked} proposals succeeded");
     }
 
     /// `ConstraintProposal::prepare` is public and can be called directly, without going through
