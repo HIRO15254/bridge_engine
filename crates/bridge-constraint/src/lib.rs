@@ -20,6 +20,7 @@ mod atom;
 mod constraint;
 mod dnf;
 mod error;
+pub mod grid;
 mod known;
 pub mod sampler;
 
@@ -29,5 +30,6 @@ pub use bridge_eval::{DistMethod, Half, LtcMethod};
 pub use constraint::{CustomPred, HandConstraint};
 pub use dnf::{Dnf, DnfOptions, DnfTerm, Overflow};
 pub use error::{DnfError, KnownCardsError, PrepareError};
+pub use grid::{GridBounds, HcpShapeGrid};
 pub use known::KnownCards;
 pub use sampler::{Sample, SampleOptions, Sampler};
