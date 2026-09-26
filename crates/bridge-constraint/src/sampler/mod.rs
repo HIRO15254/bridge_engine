@@ -34,6 +34,17 @@ use bridge_core::Hand;
 use crate::{Dnf, DnfOptions, DnfTerm, HandConstraint, PrepareError};
 use rand_util::random_below;
 
+/// Hands `shared`'s frozen pair maps to every term of `samplers` that was prepared against them
+/// (`term::SharedPlain`); must run before any of them is sampled from.
+fn attach_shared(samplers: &mut [Sampler], shared: term::SharedPlain) {
+    let maps = shared.freeze();
+    for sampler in samplers {
+        for t in &mut sampler.terms {
+            t.attach_shared(&maps);
+        }
+    }
+}
+
 /// The argument checks shared by [`Sampler::prepare`] and [`Sampler::prepare_many`].
 fn check_pool_and_fixed(pool: Hand, fixed: Hand) -> Result<(), PrepareError> {
     if !pool.is_disjoint(fixed) {
@@ -116,7 +127,9 @@ impl Sampler {
     ) -> Result<Sampler, PrepareError> {
         check_pool_and_fixed(pool, fixed)?;
         let mut shared = term::SharedPlain::new(pool, fixed);
-        Sampler::prepare_shared(constraint, pool, fixed, opts, &mut shared)
+        let mut sampler = Sampler::prepare_shared(constraint, pool, fixed, opts, &mut shared)?;
+        attach_shared(core::slice::from_mut(&mut sampler), shared);
+        Ok(sampler)
     }
 
     /// Prepares one sampler per constraint, all against the same `pool` and `fixed`, in order.
@@ -138,10 +151,12 @@ impl Sampler {
     ) -> Result<Vec<Sampler>, PrepareError> {
         check_pool_and_fixed(pool, fixed)?;
         let mut shared = term::SharedPlain::new(pool, fixed);
-        constraints
+        let mut samplers = constraints
             .into_iter()
             .map(|c| Sampler::prepare_shared(c, pool, fixed, opts, &mut shared))
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+        attach_shared(&mut samplers, shared);
+        Ok(samplers)
     }
 
     /// [`Sampler::prepare_many`] for constraints already in disjunctive normal form: each `dnf`
@@ -162,7 +177,8 @@ impl Sampler {
     ) -> Result<Vec<Sampler>, PrepareError> {
         check_pool_and_fixed(pool, fixed)?;
         let mut shared = term::SharedPlain::new(pool, fixed);
-        dnfs.into_iter()
+        let mut samplers = dnfs
+            .into_iter()
             .map(|dnf| {
                 let samplable = dnf.terms.iter().all(|t| t.custom.is_empty());
                 Sampler::prepare_terms(
@@ -174,7 +190,9 @@ impl Sampler {
                     &mut shared,
                 )
             })
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+        attach_shared(&mut samplers, shared);
+        Ok(samplers)
     }
 
     fn prepare_shared(

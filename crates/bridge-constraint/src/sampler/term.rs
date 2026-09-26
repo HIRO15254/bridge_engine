@@ -20,8 +20,8 @@ use bridge_eval::{DistMethod, LtcMethod, SUIT, holding_hcp, shape_points};
 
 use super::rand_util::{SplitMix64, random_below};
 use super::suit_table::{
-    DENSE_NK_NO_X, DENSE_NK_WITH_X, PAIR_HCP_MAX, PAIR_X_MAX, PairConv, PairMap, SparseVec,
-    SuitTable, full_suit, pack_key, unpack_key,
+    DENSE_NK_NO_X, DENSE_NK_WITH_X, PAIR_HCP_MAX, PairConv, PairMap, SparseVec, SuitTable,
+    full_suit, pack_key, unpack_key,
 };
 use crate::{Atom, CardRequirement, DnfTerm, Metric};
 
@@ -53,6 +53,15 @@ impl SharedPlain {
             pair01: PairMap::new(),
             pair23: PairMap::new(),
         }
+    }
+}
+
+impl SharedPlain {
+    /// Hands the pair maps built so far to the terms that used them (see
+    /// [`PreparedTerm::attach_shared`]); called once, after every term sharing this cache has
+    /// been prepared.
+    pub(crate) fn freeze(self) -> (Arc<PairMap>, Arc<PairMap>) {
+        (Arc::new(self.pair01), Arc::new(self.pair23))
     }
 }
 
@@ -119,10 +128,10 @@ impl AnyTerm {
 /// feasible shape, and the feasible shapes themselves with their weights and HCP windows.
 struct GeneralTerm {
     suits: [Arc<SuitTable>; 4],
-    /// Pair convolutions for `(len_clubs, len_diamonds)` pairs used by some feasible shape.
-    pair01: PairMap,
-    /// Pair convolutions for `(len_hearts, len_spades)` pairs used by some feasible shape.
-    pair23: PairMap,
+    /// Pair convolutions for `(len_clubs, len_diamonds)` pairs (covering every feasible shape)
+    /// and for `(len_hearts, len_spades)` pairs. `None` only transiently, for a term sharing a
+    /// [`SharedPlain`]'s maps between `PreparedTerm::prepare` and `PreparedTerm::attach_shared`.
+    pairs: Option<(Arc<PairMap>, Arc<PairMap>)>,
     /// Feasible shapes with their weights and HCP windows.
     shapes: Vec<(Shape, u64, (u8, u8))>,
     cum: Vec<u64>,
@@ -138,12 +147,14 @@ impl GeneralTerm {
         let (shape, weight, (hlo, hhi)) = self.shapes[shape_idx];
         let lens = shape.lens();
         let (l0, l1, l2, l3) = (lens[0], lens[1], lens[2], lens[3]);
-        let pair01 = self
-            .pair01
+        let (maps01, maps23) = self
+            .pairs
+            .as_ref()
+            .expect("attach_shared runs before a term is ever drawn from");
+        let pair01 = maps01
             .get(l0, l1)
             .expect("built for every feasible shape in `prepare`");
-        let pair23 = self
-            .pair23
+        let pair23 = maps23
             .get(l2, l3)
             .expect("built for every feasible shape in `prepare`");
         let (xlo, xhi) = self.x_window;
@@ -152,7 +163,7 @@ impl GeneralTerm {
         // `n01(a) * BoxSum23(window - a)`.
         let mut remaining = random_below(rng, weight);
         let mut chosen_a = None;
-        for &(key_a, n_a) in &pair01.p.0 {
+        for &(key_a, n_a) in pair01.p {
             let (ah, ax) = unpack_key(key_a);
             let sub_a = pair23.box_sum(
                 i64::from(hlo) - i64::from(ah),
@@ -180,7 +191,7 @@ impl GeneralTerm {
         let x_hi_b = i64::from(xhi) - i64::from(ax);
         let mut remaining_b = random_below(rng, sub_a);
         let mut chosen_b = None;
-        for &(key_b, n_b) in &pair23.p.0 {
+        for &(key_b, n_b) in pair23.p {
             let (bh, bx) = unpack_key(key_b);
             if i64::from(bh) < h_lo_b
                 || i64::from(bh) > h_hi_b
@@ -282,66 +293,7 @@ fn find_count(counts: &SparseVec, key: u16) -> Option<u64> {
     counts.0.iter().find(|&&(k, _)| k == key).map(|&(_, n)| n)
 }
 
-impl PairConv {
-    /// Convolves two suits' `(len_a, len_b)` count vectors: for every pair of entries, the
-    /// combined `(hcp, x)` accumulates `n_a * n_b`. Also builds the 2-D prefix sums used by
-    /// [`PairConv::box_sum`].
-    ///
-    /// `with_x` is whether the term carries an additive feature at all (K=2); when it does not
-    /// (K=1), every entry's `x` is 0 (`SuitTable`'s key was packed with `x = 0` throughout), so
-    /// the `x` axis needs only 1 slot instead of the generous `PAIR_X_MAX + 1` upper bound - a
-    /// term.rs caller with no additive feature builds `height * 1` arrays here instead of
-    /// `height * (PAIR_X_MAX + 1)`, and the nested loops below are `O(height)` instead of
-    /// `O(height * (PAIR_X_MAX + 1))`.
-    fn build(a: &SuitTable, b: &SuitTable, len_a: u8, len_b: u8, with_x: bool) -> PairConv {
-        let width = if with_x { PAIR_X_MAX as usize + 1 } else { 1 };
-        let height = PAIR_HCP_MAX as usize + 1;
-        let mut acc = vec![0u64; height * width];
-        for &(key_a, n_a) in &a.counts[len_a as usize].0 {
-            let (ha, xa) = unpack_key(key_a);
-            for &(key_b, n_b) in &b.counts[len_b as usize].0 {
-                let (hb, xb) = unpack_key(key_b);
-                let h = ha as usize + hb as usize;
-                let x = xa as usize + xb as usize;
-                if h >= height || x >= width {
-                    // Both suits together cannot exceed the generous PAIR_HCP_MAX/PAIR_X_MAX
-                    // bounds in practice; skip defensively rather than panic.
-                    continue;
-                }
-                acc[h * width + x] += n_a * n_b;
-            }
-        }
-
-        let mut p = Vec::with_capacity(acc.iter().filter(|&&n| n > 0).count());
-        for h in 0..height {
-            for x in 0..width {
-                let n = acc[h * width + x];
-                if n > 0 {
-                    p.push((pack_key(h as u8, x as u8), n));
-                }
-            }
-        }
-
-        // Turn `acc` into its own 2-D prefix sum in place (one allocation instead of two, per
-        // §10). Within row `h`, `acc[h*width+x]` still holds the raw count when it is read into
-        // `row` (only lower-`x` slots of this same row have been overwritten so far), and
-        // `acc[(h-1)*width+x]` was already turned into a prefix sum on the previous `h` iteration.
-        for h in 0..height {
-            let mut row = 0u64;
-            for x in 0..width {
-                row += acc[h * width + x];
-                let up = if h == 0 { 0 } else { acc[(h - 1) * width + x] };
-                acc[h * width + x] = up + row;
-            }
-        }
-
-        PairConv {
-            p: SparseVec(p),
-            prefix: acc.into_boxed_slice(),
-            width,
-        }
-    }
-
+impl PairConv<'_> {
     /// `Σ_{h' <= hcp_hi, x' <= x_hi} count`, `0` when either bound is negative.
     fn cdf(&self, hcp_hi: i64, x_hi: i64) -> u64 {
         if hcp_hi < 0 || x_hi < 0 {
@@ -504,7 +456,14 @@ fn suit_lens(hand: Hand) -> [u8; 4] {
     ]
 }
 
-fn shape_weight(pair01: &PairConv, pair23: &PairConv, hlo: u8, hhi: u8, xlo: u8, xhi: u8) -> u64 {
+fn shape_weight(
+    pair01: PairConv<'_>,
+    pair23: PairConv<'_>,
+    hlo: u8,
+    hhi: u8,
+    xlo: u8,
+    xhi: u8,
+) -> u64 {
     if pair23.width == 1 {
         // No additive feature (every `x` is 0 and the window is `(0, 0)`): `pair23.prefix` is a
         // plain 1-D CDF over HCP, so each box sum is two lookups instead of four.
@@ -517,7 +476,7 @@ fn shape_weight(pair01: &PairConv, pair23: &PairConv, hlo: u8, hhi: u8, xlo: u8,
             }
         };
         let mut weight = 0u64;
-        for &(key, n) in &pair01.p.0 {
+        for &(key, n) in pair01.p {
             let (ah, _) = unpack_key(key);
             let hi = i64::from(hhi) - i64::from(ah);
             if hi < 0 {
@@ -530,7 +489,7 @@ fn shape_weight(pair01: &PairConv, pair23: &PairConv, hlo: u8, hhi: u8, xlo: u8,
         return weight;
     }
     let mut weight = 0u64;
-    for &(key, n) in &pair01.p.0 {
+    for &(key, n) in pair01.p {
         let (ah, ax) = unpack_key(key);
         let sub = pair23.box_sum(
             i64::from(hlo) - i64::from(ah),
@@ -718,11 +677,13 @@ impl PreparedTerm {
         let fixed_lens = suit_lens(fixed);
         let pool_lens = suit_lens(pool);
 
+        // A plain term that is exact builds (or finds) its convolutions in `shared`, whose maps
+        // it receives in `attach_shared` once every term sharing them is prepared. A term that
+        // needs the burn-in probe below must be drawable right away, so it keeps its own maps.
+        let share_pairs = plain && !needs_full_check;
         let mut pair01 = PairMap::new();
         let mut pair23 = PairMap::new();
-        // Plain terms build (or find) their convolutions in `shared`; the ones a feasible shape
-        // actually uses are copied (as `Arc`s) into this term's own maps after the loop.
-        let (build01, build23) = if plain {
+        let (build01, build23) = if share_pairs {
             (&mut shared.pair01, &mut shared.pair23)
         } else {
             (&mut pair01, &mut pair23)
@@ -768,12 +729,8 @@ impl PreparedTerm {
 
             let (l0, l1, l2, l3) = (lens[0], lens[1], lens[2], lens[3]);
             let with_x = classified.additive.is_some();
-            let p01 = build01.get_or_build(l0, l1, || {
-                PairConv::build(&suits[0], &suits[1], l0, l1, with_x)
-            });
-            let p23 = build23.get_or_build(l2, l3, || {
-                PairConv::build(&suits[2], &suits[3], l2, l3, with_x)
-            });
+            let p01 = build01.get_or_build(&suits[0], &suits[1], l0, l1, with_x);
+            let p23 = build23.get_or_build(&suits[2], &suits[3], l2, l3, with_x);
 
             let weight = shape_weight(p01, p23, lo, hi, x_window.0, x_window.1);
             if weight > 0 {
@@ -781,21 +738,11 @@ impl PreparedTerm {
             }
         }
 
-        if plain {
-            for &(shape, _, _) in &shapes {
-                let [l0, l1, l2, l3] = shape.lens();
-                let p01 = shared
-                    .pair01
-                    .get_arc(l0, l1)
-                    .expect("built above for every feasible shape");
-                pair01.insert(l0, l1, p01);
-                let p23 = shared
-                    .pair23
-                    .get_arc(l2, l3)
-                    .expect("built above for every feasible shape");
-                pair23.insert(l2, l3, p23);
-            }
-        }
+        let pairs = if share_pairs {
+            None
+        } else {
+            Some((Arc::new(pair01), Arc::new(pair23)))
+        };
 
         let mut cum = Vec::with_capacity(shapes.len());
         let mut running = 0u64;
@@ -813,8 +760,7 @@ impl PreparedTerm {
             any: None,
             general: Some(GeneralTerm {
                 suits,
-                pair01,
-                pair23,
+                pairs,
                 shapes,
                 cum,
                 x_window,
@@ -861,6 +807,16 @@ impl PreparedTerm {
         prepared
     }
 
+    /// Gives a term prepared with shared pair maps (see [`SharedPlain`]) the frozen maps; a no-op
+    /// for every other term.
+    pub(crate) fn attach_shared(&mut self, maps: &(Arc<PairMap>, Arc<PairMap>)) {
+        if let Some(general) = &mut self.general {
+            if general.pairs.is_none() {
+                general.pairs = Some((Arc::clone(&maps.0), Arc::clone(&maps.1)));
+            }
+        }
+    }
+
     /// Draws one hand from this term (before residual checks).
     pub(crate) fn draw<R: rand_core::Rng + ?Sized>(&self, rng: &mut R) -> Hand {
         if let Some(any) = &self.any {
@@ -875,6 +831,7 @@ impl PreparedTerm {
 
 #[cfg(test)]
 mod tests {
+    use super::super::suit_table::PAIR_X_MAX;
     use super::*;
 
     fn suit_table_hcp_only(pool: Holding) -> SuitTable {
@@ -887,7 +844,7 @@ mod tests {
         )
     }
 
-    /// `PairConv::build`'s `with_x: false` path (`width == 1`, used whenever a term carries no
+    /// `PairMap::get_or_build`'s `with_x: false` path (`width == 1`, used whenever a term carries no
     /// additive feature) must give exactly the same `box_sum` results a real K=1 caller can ever
     /// observe as the always-full-width (`with_x: true`) path would - every such caller only ever
     /// queries with `x_lo == x_hi == 0` (`GeneralTerm`'s `x_window` is `(0, 0)` with no additive
@@ -900,8 +857,10 @@ mod tests {
 
         for len_a in 0..=7u8 {
             for len_b in 0..=5u8 {
-                let narrow = PairConv::build(&a, &b, len_a, len_b, false);
-                let full = PairConv::build(&a, &b, len_a, len_b, true);
+                let mut narrow_map = PairMap::new();
+                let mut full_map = PairMap::new();
+                let narrow = narrow_map.get_or_build(&a, &b, len_a, len_b, false);
+                let full = full_map.get_or_build(&a, &b, len_a, len_b, true);
                 assert_eq!(narrow.width, 1);
                 assert_eq!(full.width, PAIR_X_MAX as usize + 1);
                 // The sparse (key, count) list itself must match exactly: every real entry has
@@ -945,7 +904,8 @@ mod tests {
 
         for len_a in 0..=7u8 {
             for len_b in 0..=5u8 {
-                let pair = PairConv::build(&a, &b, len_a, len_b, true);
+                let mut map = PairMap::new();
+                let pair = map.get_or_build(&a, &b, len_a, len_b, true);
                 assert_eq!(pair.width, PAIR_X_MAX as usize + 1);
 
                 for hlo in [0u8, 3, 10] {
