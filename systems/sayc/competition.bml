@@ -146,36 +146,44 @@ three-card unbid suit is left to pass.
 2X = {prio:10} F, 12+ hcp
 
 (1C)-D-
+#COPY adv-dbl-1c
 2H = {prio:9} 9--11 hcp, 5+!h
 2S = {prio:8} 9--11 hcp, 5+!s
 2D = {prio:7} 9--11 hcp, 5+!d
 1H = {prio:6} 0--11 hcp, 4+!h or 0--8 hcp and 3+!h and 0--2!d and 0--3!s
 1S = {prio:5} 0--11 hcp, 4+!s or 0--8 hcp and 3+!s and 0--2!d and 0--2!h
 1D = {prio:4} 0--11 hcp, 4+!d or 0--8 hcp and 3+!d and 0--3!h and 0--3!s
+#ENDCOPY
 
 (1D)-D-
+#COPY adv-dbl-1d
 2H = {prio:9} 9--11 hcp, 5+!h
 2S = {prio:8} 9--11 hcp, 5+!s
 3C = {prio:7} 9--11 hcp, 5+!c
 1H = {prio:6} 0--11 hcp, 4+!h or 0--8 hcp and 3+!h and 0--3!s and 0--3!c
 1S = {prio:5} 0--11 hcp, 4+!s or 0--8 hcp and 3+!s and 0--2!h and 0--3!c
 2C = {prio:4} 0--11 hcp, 4+!c or 0--8 hcp and 3+!c and 0--2!h and 0--2!s
+#ENDCOPY
 
 (1H)-D-
+#COPY adv-dbl-1h
 2S = {prio:9} 9--11 hcp, 5+!s
 3C = {prio:8} 9--11 hcp, 5+!c
 3D = {prio:7} 9--11 hcp, 5+!d
 1S = {prio:6} 0--11 hcp, 4+!s or 0--8 hcp and 3+!s and 0--3!c and 0--3!d
 2C = {prio:5} 0--11 hcp, 4+!c or 0--8 hcp and 3+!c and 0--2!s and 0--3!d
 2D = {prio:4} 0--11 hcp, 4+!d or 0--8 hcp and 3+!d and 0--2!s and 0--2!c
+#ENDCOPY
 
 (1S)-D-
+#COPY adv-dbl-1s
 3H = {prio:9} 9--11 hcp, 5+!h
 3C = {prio:8} 9--11 hcp, 5+!c
 3D = {prio:7} 9--11 hcp, 5+!d
 2H = {prio:6} 0--11 hcp, 4+!h or 0--8 hcp and 3+!h and 0--2!c and 0--2!d
 2C = {prio:5} 0--11 hcp, 4+!c or 0--8 hcp and 3+!c and 0--3!d and 0--3!h
 2D = {prio:4} 0--11 hcp, 4+!d or 0--8 hcp and 3+!d and 0--2!c and 0--3!h
+#ENDCOPY
 
 ** Negative doubles and responder's other calls after an overcall
 

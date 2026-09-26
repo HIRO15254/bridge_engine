@@ -43,4 +43,6 @@ and the choices this file makes there.
 
 #INCLUDE competitive-rebids.bml
 
+#INCLUDE competitive-later.bml
+
 #INCLUDE continuations.bml
