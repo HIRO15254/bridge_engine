@@ -30,6 +30,6 @@ pub use bridge_eval::{DistMethod, Half, LtcMethod};
 pub use constraint::{CustomPred, HandConstraint};
 pub use dnf::{Dnf, DnfOptions, DnfTerm, Overflow};
 pub use error::{DnfError, KnownCardsError, PrepareError};
-pub use grid::{GridBounds, HcpShapeGrid};
+pub use grid::{GridBounds, HcpShapeGrid, is_literal_free, subtract_grid};
 pub use known::KnownCards;
 pub use sampler::{Sample, SampleOptions, Sampler};
