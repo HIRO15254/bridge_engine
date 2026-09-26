@@ -62,10 +62,10 @@ pub struct NaturalParams {
 /// opening, a first action with partner silent, and a context without a partner constraint get
 /// no floor. A `0` entry means "no floor at this level".
 ///
-/// Naive; replaced in phase 4 lane S: the default is all zeros (no floor, the phase-3
-/// behaviour); lane S installs prototype C's table (suits 3→18, 4→22, 5→26, 6→31, 7→35;
-/// notrump 3→24, 4→28, 5→30, 6→32, 7→36) and tunes it on the corpus tune split.
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
+/// The default is [`LevelFloor::STANDARD`] (prototype C's table, kept after the phase-4.6
+/// tuning on the corpus tune split); [`LevelFloor::NONE`] restores the phase-3 behaviour. The
+/// field is not serialised, so a deserialised IR gets the default table too.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct LevelFloor {
     /// Combined HCP for a suit bid at levels 1..=7 (index `level - 1`).
     pub suit: [u8; 7],
@@ -73,11 +73,26 @@ pub struct LevelFloor {
     pub nt: [u8; 7],
 }
 
+impl Default for LevelFloor {
+    /// [`LevelFloor::STANDARD`].
+    fn default() -> LevelFloor {
+        LevelFloor::STANDARD
+    }
+}
+
 impl LevelFloor {
-    /// No floor at any level.
+    /// No floor at any level (the phase-3 behaviour).
     pub const NONE: LevelFloor = LevelFloor {
         suit: [0; 7],
         nt: [0; 7],
+    };
+
+    /// The default table: levels 1-2 need nothing extra; a suit continuation at level 3 needs
+    /// 18 combined HCP (a minimum opening opposite a minimum response), 4 → 22, 5 → 26,
+    /// 6 → 31, 7 → 35; notrump 3 → 24, 4 → 28, 5 → 30, 6 → 32, 7 → 36.
+    pub const STANDARD: LevelFloor = LevelFloor {
+        suit: [0, 0, 18, 22, 26, 31, 35],
+        nt: [0, 0, 24, 28, 30, 32, 36],
     };
 
     /// The combined HCP required for a bid at `level` (`1..=7`) in a suit (`nt == false`) or
@@ -925,6 +940,31 @@ impl NaturalInference {
         out
     }
 
+    /// The natural implicit `Pass` (docs/design/07-bidding.md §5.2 step 3, 06-system.md §8):
+    /// with `ImplicitPass::Complement`, a hand that satisfies none of the natural candidates
+    /// passes. `ranked` is [`NaturalInference::ranked_candidates`]'s output. Returns `None` when
+    /// `Pass` is itself a ranked candidate (its own rule then describes it); otherwise a
+    /// candidate for `Pass` whose constraint is `¬(C_1 ∨ … ∨ C_k)` over the ranked candidates
+    /// (`ANY` when there are none), with confidence `0` and rule [`IMPLICIT_PASS_RULE`]. It ranks
+    /// after every natural candidate (`choose_bid` gives it priority `i16::MIN + 1`); since it
+    /// is disjoint from them by construction, its region is also its exclusive region.
+    pub fn implicit_pass(ranked: &[NaturalCandidate]) -> Option<NaturalCandidate> {
+        if ranked.iter().any(|c| c.call == Call::Pass) {
+            return None;
+        }
+        let constraint = ranked
+            .iter()
+            .map(|c| c.constraint.clone())
+            .reduce(HandConstraint::or)
+            .map_or(HandConstraint::ANY, HandConstraint::not);
+        Some(NaturalCandidate {
+            call: Call::Pass,
+            constraint,
+            confidence: 0.0,
+            rule: IMPLICIT_PASS_RULE,
+        })
+    }
+
     /// Candidate calls with their natural constraints and priorities, for `choose_bid` when the
     /// auction is off-system (§8.3, last paragraph).
     pub fn candidates(&self, auction: &Auction, owner: Seat) -> Vec<(Call, HandConstraint, i16)> {
@@ -1033,7 +1073,7 @@ fn rule_open_1m(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infere
     );
     Some(Inference {
         constraint,
-        confidence: 0.6,
+        confidence: 0.55,
         rule: "open_1m",
         explanation: expl!(
             ex,
@@ -1171,7 +1211,7 @@ fn rule_open_preempt(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<I
     );
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        confidence: 0.55,
         rule: "open_preempt",
         explanation: expl!(
             ex,
@@ -1241,7 +1281,7 @@ fn rule_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infer
     );
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        confidence: 0.35,
         rule: "overcall",
         explanation: expl!(
             ex,
@@ -1278,7 +1318,7 @@ fn rule_jump_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<
     );
     Some(Inference {
         constraint,
-        confidence: 0.4,
+        confidence: 0.5,
         rule: "jump_overcall",
         explanation: expl!(
             ex,
@@ -1359,7 +1399,7 @@ fn rule_takeout_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
 
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        confidence: 0.45,
         rule: "takeout_x",
         explanation: expl!(ex, "takeout double: {}+ hcp", min_hcp.start()),
     })
@@ -1412,7 +1452,7 @@ fn rule_negative_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inf
     let constraint = majors.and(HandConstraint::Atom(Atom::ANY.with_hcp(min_hcp..=37)));
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        confidence: 0.4,
         rule: "negative_x",
         explanation: expl!(ex, "negative double: {min_hcp}+ hcp, 4+ card unbid major"),
     })
@@ -1439,7 +1479,7 @@ fn rule_raise(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inferenc
         HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, min_len..=13));
     Some(Inference {
         constraint,
-        confidence: 0.6,
+        confidence: 0.45,
         rule: "raise",
         explanation: expl!(
             ex,
@@ -1512,7 +1552,7 @@ fn rule_new_suit_resp_2(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Optio
     );
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        confidence: 0.6,
         rule: "new_suit_resp_2",
         explanation: expl!(
             ex,
@@ -1694,7 +1734,7 @@ fn rule_reverse(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infere
         .and(second);
     Some(Inference {
         constraint,
-        confidence: 0.4,
+        confidence: 0.55,
         rule: "reverse",
         explanation: expl!(
             ex,
@@ -1732,7 +1772,7 @@ fn rule_rebid_nt(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infer
             }
             .with_hcp(hcp.clone()),
         ),
-        confidence: 0.5,
+        confidence: 0.45,
         rule: "rebid_nt",
         explanation: expl!(
             ex,
@@ -1767,7 +1807,7 @@ fn rule_rebid_new_suit(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option
     };
     Some(Inference {
         constraint: HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, 4..=13)),
-        confidence: 0.4,
+        confidence: 0.35,
         rule: "rebid_new_suit",
         explanation: expl!(
             ex,
@@ -1857,13 +1897,15 @@ fn rule_pass_default(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<I
     if ctx.call != Call::Pass {
         return None;
     }
-    // An unbounded pass is satisfied by every hand, so it must rank below every bid rule
-    // (`choose_bid` breaks equal priorities by call order, where `Pass` comes first): at 0.4 it
-    // would shadow the 0.4 rules (`reverse`, `rebid_new_suit`, `jump_overcall`) entirely. A
+    // An unbounded pass is satisfied by every hand, so it shadows every rule it ties or
+    // outranks (`choose_bid` breaks equal priorities by call order, where `Pass` comes first).
+    // At 0.3 (phase 4.6, tuned on the corpus tune split; 06-system.md §8.6) it ranks below every
+    // bid rule except `cue` and `penalty_x`, which it ties and therefore shadows: the natural
+    // policy passes rather than cue-bids or doubles for penalty when nothing else fits. A
     // limited pass is disjoint from the bids it declines, so it keeps 0.4.
     let (constraint, confidence) = match pass_default_max_hcp(p, ctx) {
         Some(hi) => (HandConstraint::Atom(Atom::ANY.with_hcp(0..=hi)), 0.4),
-        None => (HandConstraint::ANY, 0.2),
+        None => (HandConstraint::ANY, 0.3),
     };
     Some(Inference {
         constraint,
@@ -1914,6 +1956,12 @@ fn pass_default_max_hcp(p: &NaturalParams, ctx: &CallContext) -> Option<u8> {
 
 /// The rule name of the "no rule matched" result.
 pub const FALLBACK_RULE: &str = "fallback";
+
+/// The rule name of the natural implicit `Pass` ([`NaturalInference::implicit_pass`]).
+pub const IMPLICIT_PASS_RULE: &str = "implicit_pass";
+
+/// The explanation of the natural implicit `Pass`.
+pub const IMPLICIT_PASS_EXPLANATION: &str = "pass: no natural call fits this hand";
 /// The confidence of the "no rule matched" result.
 const FALLBACK_CONFIDENCE: f32 = 0.05;
 
@@ -2071,12 +2119,70 @@ mod tests {
     }
 
     #[test]
-    fn level_floor_is_a_no_op_by_default_and_applies_when_set() {
-        assert_eq!(LevelFloor::default(), LevelFloor::NONE);
-        let floor = LevelFloor {
-            suit: [0, 0, 18, 22, 26, 31, 35],
-            nt: [0, 0, 24, 28, 30, 32, 36],
+    fn implicit_pass_is_the_complement_of_the_ranked_candidates() {
+        let engine = NaturalInference::default();
+        // 1S P: responder has natural candidates, Pass among them (pass_default).
+        let a = Auction::from_calls(
+            Seat::North,
+            Vulnerability::None,
+            [Call::Bid(Bid::new(1, Strain::Spades).unwrap()), Call::Pass],
+        )
+        .unwrap();
+        let ranked = engine.ranked_candidates(
+            &a,
+            Seat::South,
+            &PartnerContext::default(),
+            crate::TieBreak::RowOrder,
+        );
+        if ranked.iter().any(|c| c.call == Call::Pass) {
+            assert!(NaturalInference::implicit_pass(&ranked).is_none());
+        }
+        let without_pass: Vec<NaturalCandidate> = ranked
+            .into_iter()
+            .filter(|c| c.call != Call::Pass)
+            .collect();
+        let pass = NaturalInference::implicit_pass(&without_pass).expect("Pass not listed");
+        assert_eq!(pass.call, Call::Pass);
+        assert_eq!(pass.rule, IMPLICIT_PASS_RULE);
+        assert!(!pass.is_fallback());
+        let mut seed = 0x1a55u64;
+        for _ in 0..2000 {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let hand = test_hand(seed);
+            let any = without_pass.iter().any(|c| c.constraint.satisfies(hand));
+            assert_eq!(pass.constraint.satisfies(hand), !any);
+        }
+        let none = NaturalInference::implicit_pass(&[]).unwrap();
+        assert!(matches!(none.constraint, HandConstraint::Atom(ref a) if *a == Atom::ANY));
+    }
+
+    /// A pseudo-random 13-card hand from `seed` (partial Fisher-Yates on a splitmix stream).
+    fn test_hand(seed: u64) -> bridge_core::Hand {
+        let mut z = seed;
+        let mut next = || {
+            z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut x = z;
+            x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            x ^ (x >> 31)
         };
+        let mut cards: Vec<u8> = (0..52).collect();
+        let mut hand = bridge_core::Hand::EMPTY;
+        for i in 0..13 {
+            let j = i + (next() % (52 - i as u64)) as usize;
+            cards.swap(i, j);
+            hand = hand.with(bridge_core::Card::from_index(cards[i]).unwrap());
+        }
+        hand
+    }
+
+    #[test]
+    fn level_floor_is_standard_by_default_and_none_disables_it() {
+        assert_eq!(LevelFloor::default(), LevelFloor::STANDARD);
+        assert_eq!(NaturalParams::default().level_floor, LevelFloor::STANDARD);
+        let floor = LevelFloor::STANDARD;
         assert_eq!(floor.combined(4, false), 22);
         assert_eq!(floor.combined(3, true), 24);
         assert_eq!(floor.combined(8, true), 0);
@@ -2091,12 +2197,12 @@ mod tests {
         let auction = Auction::from_calls(Seat::North, Vulnerability::None, calls).unwrap();
         let mut ctx = classify(&auction, 4, Seat::North);
         ctx.partner_constraint = Some(HandConstraint::Atom(Atom::ANY.with_hcp(0..=9)));
-        let plain = NaturalInference::default().infer(&ctx);
-        let params = NaturalParams {
-            level_floor: floor,
+        let plain = NaturalInference::new(NaturalParams {
+            level_floor: LevelFloor::NONE,
             ..NaturalParams::default()
-        };
-        let floored = NaturalInference::new(params).infer(&ctx);
+        })
+        .infer(&ctx);
+        let floored = NaturalInference::default().infer(&ctx);
         assert_eq!(plain.rule, floored.rule);
         assert_ne!(plain.rule, "fallback");
         // 18 combined minus partner's 0: at least 18 of our own.

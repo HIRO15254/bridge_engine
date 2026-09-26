@@ -381,6 +381,8 @@ impl Binding {
 
 `get_sequence` の移植: 具体経路を歩き、次のコールの側が直前のコールの側と同じなら反対側に `Pass` を挿入する。競り合いなしの `1N` → `2C` → `2D` は `1N (P) 2C (P) 2D` の 5 コールになる (BSS `001NP2CP2D` と一致)。暗黙パスはトライノードを持つが **`Node` は持たない** (行が無いので): `Lookup.by_depth[i] == None`。したがって `Node.calls` はオープニング以降の実際のコール 1 つにつき具体 `Call` を 1 つ持つ。
 
+**補集合の前計算 (フェーズ 4)。** 上の「暗黙パス」(展開時にトライへ挿入する相手側の `Pass`) とは別に、`choose_bid` の `ImplicitPass::Complement` が合成する `Pass` は「兄弟のどれも満たさない手」を示す。この補集合は §5.4 の派生索引が、兄弟グループ × 条件クラスごとに `ExclusiveGroup::complement` として前計算する。形は素な原子の平坦な `Or` で、48 原子を超えるときだけ木 `Not(Or(...))` に退避する (集合としては同じ)。グリッド (`05-constraint.md` §2.6) で空と証明できる補集合は `Or([])` にする。SAYC では 714 グループのうち 711 が平坦、3 が木である。
+
 ### 4.4 先頭パス、席、バルネラビリティ (D17)
 
 **先頭パスは決して経路の一部にしない。** 条件として扱う。
@@ -582,6 +584,18 @@ pub struct ConventionDefaults { pub transfer_len: u8 /* 5 */, pub stayman_major:
 - `volume_log2`: `TieBreak::Narrowest` 用の制約体積の推定値。コンパイル時に決定的に計算する。`constraint.to_dnf()` の各項 `t` について `w_t = (hcp_hi − hcp_lo + 1) × |t.atom.shapes|` (`hcp` は `shapes.min_hcp()..=shapes.max_hcp()` でクランプ) とし、`volume_log2 = round(log2(Σ_t w_t))` を `i16` に収める。空なら `i16::MIN`。シェイプごとの手数による重み付けは 未決 (厳密な `Sampler::count()` は 20〜60 μs/項なので 1 秒のコンパイル予算に入らない可能性がある)。
 
 ---
+
+### 5.4 派生索引 `exclusive` (`exclusive.rs`、フェーズ 4)
+
+`SystemIR` は、システムコールの排他領域の索引 `ExclusiveIndex` を派生データとして持つ。
+
+- **置き場所**: `SystemIR.exclusive_cell: OnceLock<ExclusiveIndex>` (`#[serde(skip)]`)。参照は `SystemIR::exclusive()` で行う。`compile()` の最後 (コンパイル後検査 §9.3 の直前) に先行して構築するので、コンパイル直後の IR では初回参照のコストは無い。直列化から復元した IR と手組みの IR は、初回参照時に構築する。
+- **直列化しない**: 直列化形式と `IR_FORMAT` (1) は変えない。索引を除いた SAYC の postcard は 826,962 バイトで、フェーズ 3 と同一である。§9.2 の新しい Lint 2 種が `lints` に入る分だけ 845,860 バイト (+18,898、+2.3%) になる。プロトタイプ A のように索引まで直列化すると 1.24 MB (1.51 倍) になり、wasm の転送量に効くので避けた。
+- **排他領域の定義**: 位置 (親 `TrieId`、条件クラス) で、`choose_bid` がコール c を選ぶ手の集合を X_c とする。X_c は、rank 順 (`exclusive::rank_cmp`: priority 降順 → `SystemMeta::tie_break` → コール index 昇順) で最初に満たされるメンバーのコールが c である手の集合である。各枝の片 (`ExclusivePiece`) は、同じノードの先の枝と上位のメンバー全部を `subtract` で引いたものである。`subtract` は原子レベルの厳密な差集合で、結果は素な原子の平坦な `Or` (上限 48 原子) になる。上限を超えたときだけ木 `And([base, Not(Or(minus))])` に退避する。したがって片は互いに素である。DNF が空の片と、グリッドで空と証明できる片 (`exclusive::grid_proves_empty`) は落とす。
+- **条件クラス**: `(opener_pos − 1) | we << 2 | they << 3` の 16 通りで、`AuctionTrie::children` が席・バル条件で絞る単位と同じである。子が席・バル条件を持たない位置 (`AuctionTrie::children_are_conditioned` が偽) では子の計算を 1 回で済ませ、16 キーを同じグループに向ける。同じメンバー列を持つグループは重複除去する。
+- **API**: `ExclusiveIndex::build(&ir)`、`group(parent, class)`、`entries()` (キーとグループの列挙)、`stats(&ir) -> ExclusiveStats`、`exclusive::grid_proves_empty(c)`、`AuctionTrie::has_children(at)` / `children_are_conditioned(at)`。
+- **実測 (SAYC)**: 714 グループ、11,424 キー、2,270 メンバー、2,794 枝、2,545 片、木へ退避した片 3 (0.12%)、平坦な原子 3,931、木の補集合 3、決して選ばれないコール 238。構築時間と compile 全体に占める割合は 次のとおり (release、best of 3、`tests/compile_time.rs` の `sayc_exclusive_index_share`)。索引の構築は 9.2〜9.5 ms で、compile 全体 161〜167 ms の約 5.7% (loadavg 7〜8)。フェーズ 3 の基点 (0f63599) の compile は同じ負荷で 152 ms なので、増分はほぼ索引の構築分であり、§9.3 の検査 8 の費用は測定誤差に収まる。
+- **検証** (`tests/exclusive.rs`): ランダムな (キー、手) の組で、手が X_c に入ることと「rank 順で最初に満たすメンバーのコールが c」であることが一致するか、補集合と片が素か、1 グループで手の入る片が高々 1 つかを確かめる。既定スイートは 1e4 組、`#[ignore]` 版は 1e5 組で、どちらも不一致 0 (1e5 組のうち X_c に入る組は 71,028、release で 283 ms)。
 
 ## 6. `AuctionTrie` (`trie.rs`)
 
@@ -908,7 +922,9 @@ pub struct NaturalParams {
     pub advance: AdvanceParams,
     pub balancing_shift: i8,                             // -3 (HCP shift in the balancing seat)
     pub implicit_raise_support: bool,                    // true
+    #[serde(skip)] pub level_floor: LevelFloor,          // LevelFloor::STANDARD (§8.6; not serialised)
 }
+pub struct LevelFloor { pub suit: [u8; 7], pub nt: [u8; 7] }   // combined HCP by level 1..=7; 0 = no floor
 pub struct ResponseParams {
     pub new_suit_1: (u8, u8),                            // (4, 6)   (min length, min hcp)
     pub new_suit_2: (u8, u8),                            // (5, 10)
@@ -977,7 +993,13 @@ impl NaturalInference {
     pub fn infer(&self, ctx: &CallContext) -> Inference;                 // first matching rule
     /// Candidate (call, constraint, priority) triples for choose_bid when off-system.
     pub fn candidates(&self, auction: &Auction, owner: Seat) -> Vec<(Call, HandConstraint, i16)>;
+    // Phase 4 (§8.6):
+    pub fn infer_batch(&self, auction: &Auction, owner: Seat, partner: &PartnerContext, calls: &[Call]) -> Vec<NaturalCandidate>;
+    pub fn ranked_candidates(&self, auction: &Auction, owner: Seat, partner: &PartnerContext, tie_break: TieBreak) -> Vec<NaturalCandidate>;
+    pub fn implicit_pass(ranked: &[NaturalCandidate]) -> Option<NaturalCandidate>;
 }
+pub struct PartnerContext { pub partner_constraint: Option<HandConstraint>, pub forcing_situation: bool }
+pub struct NaturalCandidate { pub call: Call, pub constraint: HandConstraint, pub confidence: f32, pub rule: &'static str }
 impl Default for NaturalInference { /* NaturalParams::default() */ }
 ```
 
@@ -994,31 +1016,33 @@ impl Default for NaturalInference { /* NaturalParams::default() */ }
 | 規則 | 述語 | 制約 (`NaturalParams` から) | confidence |
 | --- | --- | --- | --- |
 | `open_1M` | `Opener`, `Bid{new_suit}`, `level 1`, メジャー | `suit_len[s] ≥ open_1major_len` ∧ `hcp = opening_hcp` | 0.6 |
-| `open_1m` | `Opener`, `level 1`, マイナー | `suit_len[s] ≥ open_1m_len` ∧ `hcp = opening_hcp` | 0.6 |
+| `open_1m` | `Opener`, `level 1`, マイナー | `suit_len[s] ≥ open_1m_len` ∧ `hcp = opening_hcp` | 0.55 (旧 0.6) |
 | `open_nt` | `Opener`, `nt`, レベル `L` が `nt` 表にある | `hcp = nt[L]` ∧ `shapes = BALANCED` | 0.7 |
 | `open_weak2` | `Opener`, `level 2`, スート ≠ C | `suit_len[s] ≥ weak_two.0` ∧ `hcp = weak_two.1` | 0.5 |
 | `open_2c` | `Opener`, `2C` | `hcp ≥ strong_two_c` (シェイプなし) | 0.5 |
-| `open_preempt` | `Opener`, `level 3..=5`, スート | `suit_len[s] ≥ preempt[L].1` ∧ `hcp = preempt[L].2` | 0.5 |
+| `open_preempt` | `Opener`, `level 3..=5`, スート | `suit_len[s] ≥ preempt[L].1` ∧ `hcp = preempt[L].2` | 0.55 (旧 0.5) |
 | `open_pass` | `Opener` の席の `Pass` (パス済みでない、かつまだ誰もビッドしていない: `last_bid == None`。オープナーの後のパスはここに来ない) | `hcp ≤ opening_hcp.start − 1` | 0.5 |
-| `overcall` | `Overcaller` の最初のアクション (`!owner_acted`), `new_suit` (相手スートのキュービッドを除く), `jump == 0` | `suit_len[s] ≥ overcall[l].0` ∧ `hcp = overcall[l].1` (`l` = 0: 1 レベル、1: 2 レベル以上); `Balancer` は下限に `balancing_shift` | 0.5 |
-| `jump_overcall` | `Overcaller` の最初のアクション, `new_suit`, `jump == 1` | `suit_len[s] ≥ overcall[2].0` ∧ `hcp = overcall[2].1` | 0.4 |
+| `overcall` | `Overcaller` の最初のアクション (`!owner_acted`), `new_suit` (相手スートのキュービッドを除く), `jump == 0` | `suit_len[s] ≥ overcall[l].0` ∧ `hcp = overcall[l].1` (`l` = 0: 1 レベル、1: 2 レベル以上); `Balancer` は下限に `balancing_shift` | 0.35 (旧 0.5) |
+| `jump_overcall` | `Overcaller` の最初のアクション, `new_suit`, `jump == 1` | `suit_len[s] ≥ overcall[2].0` ∧ `hcp = overcall[2].1` | 0.5 (旧 0.4) |
 | `nt_overcall` | `Overcaller` の最初のアクション, 最安の NT (`jump == 0`) で 2 レベル以下 (1 レベルのオープンに 1N、ウィーク・ツーに 2N) | `hcp = nt_overcall` ∧ `BALANCED` ∧ `Stopper(their suit)` | 0.6 |
-| `takeout_x` | `Double(Takeout)`: パートナー未ビッド、相手のスートが 2 レベル以下 | `hcp ≥ takeout_double.0` ∧ `suit_len[their] ≤ takeout_double.1` ∧ 未ビッドスート各 `≥ takeout_double.2` (未ビッドが 3 つ以上なら `Or` で 2 つ以上を要求) | 0.5 |
+| `takeout_x` | `Double(Takeout)`: パートナー未ビッド、相手のスートが 2 レベル以下 | `hcp ≥ takeout_double.0` ∧ `suit_len[their] ≤ takeout_double.1` ∧ 未ビッドスート各 `≥ takeout_double.2` (未ビッドが 3 つ以上なら `Or` で 2 つ以上を要求) | 0.45 (旧 0.5) |
 | `penalty_x` | `Double(Penalty)`: パートナーの最後のビッドが NT、相手が NT または 4 レベル以上、または我々がスートを合意済み | `hcp ≥ 10` ∧ `suit_len[their] ≥ 4` | 0.3 |
-| `negative_x` | `Double(Negative)`: パートナーがスートを開き RHO が 2 レベル以下でオーバーコール | 未ビッドメジャー `≥ 4` (`Or`) ∧ `hcp ≥ response.new_suit_1.1 + 2 × (level − 1)` | 0.5 |
-| `raise` | パートナーが先にビッドしたスート `s` を我々がビッド | `suit_len[s] ≥ raise.0` ∧ 役割/レベル別の `hcp` (`Responder`: `response.raise.1` 単純、`response.jump_raise.1` ジャンプ、ゲームレイズ `13+`; `Advancer`: `advance.raise`; `Opener`: `rebid.raise` / `rebid.jump_raise`) | 0.6 |
+| `negative_x` | `Double(Negative)`: パートナーがスートを開き RHO が 2 レベル以下でオーバーコール | 未ビッドメジャー `≥ 4` (`Or`) ∧ `hcp ≥ response.new_suit_1.1 + 2 × (level − 1)` | 0.4 (旧 0.5) |
+| `raise` | パートナーが先にビッドしたスート `s` を我々がビッド | `suit_len[s] ≥ raise.0` ∧ 役割/レベル別の `hcp` (`Responder`: `response.raise.1` 単純、`response.jump_raise.1` ジャンプ、ゲームレイズ `13+`; `Advancer`: `advance.raise`; `Opener`: `rebid.raise` / `rebid.jump_raise`) | 0.45 (旧 0.6) |
 | `new_suit_resp_1` | `Responder`, `new_suit`, `level 1` | `suit_len[s] ≥ response.new_suit_1.0` ∧ `hcp ≥ response.new_suit_1.1` | 0.5 |
-| `new_suit_resp_2` | `Responder`, `new_suit`, `level 2`, `jump == 0` | `suit_len[s] ≥ response.new_suit_2.0` (5) ∧ `hcp ≥ response.new_suit_2.1` (10); `jump == 1` は `hcp ≥ response.jump_shift` | 0.5 |
+| `new_suit_resp_2` | `Responder`, `new_suit`, `level 2`, `jump == 0` | `suit_len[s] ≥ response.new_suit_2.0` (5) ∧ `hcp ≥ response.new_suit_2.1` (10); `jump == 1` は `hcp ≥ response.jump_shift` | 0.6 (旧 0.5) |
 | `resp_nt` | `Responder`, `nt`, レベル `L` | `hcp = response.nt[L]` (1N はシェイプなし、2N/3N は `BALANCED` 寄り: 4 メジャー否定は v2) | 0.5 |
 | `rebid_own` | `Opener`, `rebid_own` | `suit_len[s] ≥ 6` ∧ `hcp = opening_hcp` (`jump == 1` なら `rebid.jump_rebid`)。1 スートのオープン後に合意済みスート (自分が先にビッドしパートナーがサポートしたスート) を再び上げる場合は別枝: 長さはオープンの最小長 (2 番目のスートなら 4)、`hcp` は競り合いなしのジャンプなしが `rebid.jump_rebid` (ゲームトライ)、競り合いでは `opening_hcp`、ジャンプは `rebid.jump_rebid.start..=opening_hcp.end` | 0.5 |
-| `reverse` | `Opener`, `reverse` (最初のスートの 2 レベルより上の新スート) | `hcp ≥ rebid.reverse` ∧ 最初のスート `≥ 5` ∧ 2 番目 `≥ 4` | 0.4 |
-| `rebid_nt` | `Opener` (1 スートのオープン後), `nt`, 2 レベル以下、合意スートなし | `BALANCED` ∧ `hcp = rebid.nt_1` (`jump == 0`) / `rebid.nt_2` (`jump == 1`)。それより大きいジャンプは `fallback` | 0.5 |
-| `rebid_new_suit` | `Opener` (1 スートのオープン後), `new_suit` (リバースでない。`reverse` が先に当たる) | `suit_len[s] ≥ 4` ∧ `hcp = opening_hcp.start..=rebid.jump_raise.end` (`jump ≥ 1` のジャンプシフトは `hcp ≥ rebid.jump_rebid.end + 1`) | 0.4 |
+| `reverse` | `Opener`, `reverse` (最初のスートの 2 レベルより上の新スート) | `hcp ≥ rebid.reverse` ∧ 最初のスート `≥ 5` ∧ 2 番目 `≥ 4` | 0.55 (旧 0.4) |
+| `rebid_nt` | `Opener` (1 スートのオープン後), `nt`, 2 レベル以下、合意スートなし | `BALANCED` ∧ `hcp = rebid.nt_1` (`jump == 0`) / `rebid.nt_2` (`jump == 1`)。それより大きいジャンプは `fallback` | 0.45 (旧 0.5) |
+| `rebid_new_suit` | `Opener` (1 スートのオープン後), `new_suit` (リバースでない。`reverse` が先に当たる) | `suit_len[s] ≥ 4` ∧ `hcp = opening_hcp.start..=rebid.jump_raise.end` (`jump ≥ 1` のジャンプシフトは `hcp ≥ rebid.jump_rebid.end + 1`) | 0.35 (旧 0.4) |
 | `advance_new_suit` | `Advancer` の最初のアクション, パートナーの最初のアクションがビッド (テイクアウトダブルへの応答は除く), `new_suit`, `jump == 0` | `suit_len[s] ≥ advance.new_suit.0` ∧ `hcp ≥ advance.new_suit.1` | 0.5 |
 | `cue` | 相手のスートのビッド | シェイプなし; `Opener`/`Responder` で `partner_constraint` があれば `hcp ≥ gf_total − partner_min` (`gf_total = 25`)、それ以外 (`Advancer`/`Overcaller`/`Balancer`、または `partner_constraint` なし) は `advance.cue`; `flags.artificial` | 0.3 |
 | `pass_forcing` | `Pass` かつ `forcing_situation` (矛盾) | `hcp = 0..=0` (充足不能に近い制約。L3 が ε 混合で重みを下げる) | 0.1 |
-| `pass_default` | `Pass` | 上限は、自分がまだアクションしておらず (`!owner_acted`) パートナーの非パスがオープン/オーバーコールの 1 回だけ (`partner_actions == 1`) のときだけ付き、パートナーのコールで決まる: `Responder` で 1 レベルのスートオープン → `hcp ≤ response.new_suit_1.1 − 1`、1N/2N オープン → `hcp ≤ gf_total − nt[L].end − 1` (1N なら 7); `Advancer` でジャンプでない 1〜2 レベルのスートオーバーコール → `hcp ≤ advance.raise.1.start − 1`、NT オーバーコール → `hcp ≤ gf_total − nt_overcall.end − 1`。それ以外 (ウィーク・ツー、プリエンプト、2C、ダブル、ジャンプオーバーコール、2 回目以降のパス、`Opener`/`Overcaller` のパス) は `ANY` | 上限付き 0.4、`ANY` は 0.2 (どの手も満たすパスが、同じ優先度の規則 (`reverse` など) を `choose_bid` のコール順タイブレークで常に負かさないように) |
+| `pass_default` | `Pass` | 上限は、自分がまだアクションしておらず (`!owner_acted`) パートナーの非パスがオープン/オーバーコールの 1 回だけ (`partner_actions == 1`) のときだけ付き、パートナーのコールで決まる: `Responder` で 1 レベルのスートオープン → `hcp ≤ response.new_suit_1.1 − 1`、1N/2N オープン → `hcp ≤ gf_total − nt[L].end − 1` (1N なら 7); `Advancer` でジャンプでない 1〜2 レベルのスートオーバーコール → `hcp ≤ advance.raise.1.start − 1`、NT オーバーコール → `hcp ≤ gf_total − nt_overcall.end − 1`。それ以外 (ウィーク・ツー、プリエンプト、2C、ダブル、ジャンプオーバーコール、2 回目以降のパス、`Opener`/`Overcaller` のパス) は `ANY` | 上限付き 0.4、`ANY` は 0.3 (旧 0.2。どの手も満たすパスは、同じ優先度の規則を `choose_bid` のコール順タイブレークで常に負かす。0.3 は `cue` と `penalty_x` だけと同点で、この 2 規則を意図して覆う。§8.6) |
 | `fallback` | 上記のどれにも該当しない | `ANY` | 0.05 |
+
+confidence 列の値はフェーズ 4.6 で調整したもので、「旧」はフェーズ 3 の値である (§8.6)。確信度は rank の priority `round(confidence × 100)` としてしか使わないので、値そのものより順序に意味がある。
 
 `Balancer` は対応する `Overcaller` 規則を使い、HCP 下限に `balancing_shift` を加える。`candidates(auction, owner)` は合法コールの各々に `classify` + `infer` を適用し、`priority = round(confidence × 100)` を付けて返す (`fallback` 行のコールは除く)。
 
@@ -1041,6 +1065,107 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
 | 3 | コーパス充足率 | フェーズ 1 の PBN コーパス (deal 付きオークション) の各コールについて、実際の手が `C_nat` を満たす率と `volume_log2` の散布 (パレート: 緩い推定は充足率 100% で体積が大きい) | 規則別の (充足率, log 体積) 点列 |
 
 3 つとも `criterion` を使わない `--ignored` 統合テスト (`tests/natural_metrics.rs`) で、`target/natural_metrics.json` に出す。`NaturalParams` の変種を掃引できる。`sayc.bml` は自作なので測定 1 は循環の懸念があり、外部ファイルが取得できる環境では jdh8/gpaulissen を優先し、`sayc.bml` の結果は別枠で報告する。測定 3 はコーパスの取得 (フェーズ 1) に依存し、それまでは 1, 2 だけを回す。
+
+### 8.6 フェーズ 4 の追加 (順位、一括推定、レベル下限、暗黙パス、4.6 の調整)
+
+**順位 (`ranked_candidates`)。** ナチュラル候補は、合法コールのうち `fallback` でないものを、`exclusive::natural_rank_cmp` の順に並べたものである。順は priority `round(confidence × 100)` 降順 → `tie_break` (`LowestCall` / `HighestCall` のときだけ効く) → コール index 昇順。ナチュラル方策は、手が最初に満たす候補を選ぶ。`choose_bid` のナチュラル分岐と `interpret` のナチュラル排他は、どちらもこの順を使う。`partner` (`PartnerContext`) は、`classify` がオークションだけからは作れない `partner_constraint` / `forcing_situation` を与える。`choose_bid` は、プレフィックスの解釈からこれを埋める (`07-bidding.md` §2.2)。
+
+**一括推定 (`infer_batch`)。** 同じ履歴に対する複数のコールの推定を 1 回の呼び出しで行う。
+
+- `classify` の履歴依存部分 (役割、ビッド済みスート、パートナーの行動など) は 1 回だけ計算し、コールごとには `kind` / `call` / `level` だけを差し替える。
+- パートナー文脈は 1 回だけ設定し、継続オークションは作らず、説明文字列も作らない。
+- 結果の制約・確信度・規則は、各コールについて `classify(&auction.with(call), …)` + `infer` と同一でなければならない。合法でないコールは `fallback` (`ANY`、確信度 0.05) を返す。
+- 同一性の確認:
+  - `tests/natural_batch.rs`: 固定 6 + 乱数 60 オークション × 3 パートナー文脈 × 2 エンジンで、114,570 組。
+  - `bridge-bidding` の `natural_metrics.rs`: `#[ignore]` 版は生成 1000 + コーパス 500 オークションで、1,025,270 組。
+- 速度 (`1NT P 2C` の後の合法 31 コール、release、best of 3、loadavg 6.5):
+
+  | 方法 | 時間 |
+  | --- | --- |
+  | コールごとの `classify` + `infer` | 13.2 μs |
+  | `infer_batch` | 2.46 μs |
+  | `ranked_candidates` (並べ替えまで含む) | 2.87 μs |
+
+  目標の 4 μs 以下を満たす。
+
+**レベル下限 (`NaturalParams.level_floor`)。** 3 レベル以上のナチュラルな継続ビッドに、パートナーシップの合計 HCP の下限を課す。対象は、自分かパートナーが既に行動していて、`partner_constraint` が分かっている場合に限る。このとき、自分の HCP ≥ combined(level, NT) − パートナーの最小 HCP を推定制約に `And` する。
+
+- 既定の表 `LevelFloor::STANDARD` (プロトタイプ C の値):
+  - スート: 3 → 18、4 → 22、5 → 26、6 → 31、7 → 35
+  - NT: 3 → 24、4 → 28、5 → 30、6 → 32、7 → 36
+- 表の値 0 は「下限なし」を意味する。`LevelFloor::NONE` はフェーズ 3 の挙動に戻す。
+- オープニング、パートナーが無言のまま自分が初めて行動する場合、`partner_constraint` が無い場合 (素の `classify`) は、下限を課さない。したがって §8.5 の測定 1 と 3 (素の `classify` + `infer`) は、下限の影響を受けない。
+- `level_floor` は `#[serde(skip)]` である。直列化形式と `IR_FORMAT` は変わらず、復元した IR は既定の表を持つ。
+- 検証 (`natural_metrics.rs` の `level_floor_limits_replay_escalation_2000`): 固定シードの生成配牌 2000 を SAYC + ナチュラル補完で `replay` した。最終コントラクトのレベル分布は次のとおり。
+
+  | 条件 | 分布 [パスアウト, 1..7] | 7 レベル | 6 レベル以上 |
+  | --- | --- | --- | --- |
+  | 下限なし、旧確信度 | [32, 48, 208, 256, 139, 45, 12, 1260] | 63.0% | 63.6% |
+  | 下限なし、4.6 の確信度 | [32, 92, 379, 573, 396, 131, 28, 369] | 18.5% | 19.9% |
+  | 既定の表、4.6 の確信度 | [32, 95, 608, 855, 290, 100, 18, 2] | 0.1% | 1.0% |
+
+  基準 (7 レベル ≤ 1%、6 レベル以上 ≤ 5%) を満たす。既定スイートでは 200 配牌版を回す。
+
+**ナチュラル暗黙パス (`NaturalInference::implicit_pass`)。** `ImplicitPass::Complement` のもとで、どのナチュラル候補も満たさない手はパスする (`07-bidding.md` §5.2 の手順 3)。
+
+- `Pass` 自体が候補に入っているときは、その規則がパスを説明するので `None` を返す。
+- それ以外では、候補の和の否定 ¬(C_1 ∨ … ∨ C_k) を制約とする `Pass` を返す (候補が無ければ `ANY`)。
+  - 確信度は 0、規則名は `IMPLICIT_PASS_RULE` (`"implicit_pass"`)、説明は「pass: no natural call fits this hand」。
+  - この `Pass` は全候補の後に位置し、構成上どの候補とも素なので、その領域はそのまま排他領域になる。
+
+**フェーズ 4.6 の調整。** 対象は、規則の確信度 (priority としてだけ効く) とレベル下限の表である。規則の制約 (HCP 範囲など) は変えないので、測定 1 と 3 は構成上変わらない。調整後の全測定で、測定 1 の全グループと測定 3 の全規則が、調整前と同一であることを確かめた。
+
+- データの分割 (`15-phase4-plan.md` D20):
+  - コーパス (27 ファイル、724 ゲーム、8,169 コール) を列挙の添字で分ける。偶数が調整用、奇数が評価用。
+  - 測定 2 の 600 決定点も、添字の偶奇で調整用と評価用の半分に分ける。
+- 目的関数 (調整用だけで計算する) は次の 2 つの平均。
+  - コーパス調整用分割での実配牌一致率: 実際の手でナチュラル方策が選ぶコールと、実際のコールが一致する率。候補を 1 つも満たさなければパスと見なす。
+  - 測定 2 の文脈付き一致率 (下記) の調整用半分。
+- 探索: 規則 × 旧確信度ごとの priority を 0, 5, …, 100 の範囲で座標降下する。改善が厳密なときだけ値を置き換え、同点なら今の値に近い方を採る。レベル下限は、表 5 種 (下限なし、STANDARD、STANDARD ± 2、4 レベルから) のそれぞれで調整して比べた。
+- `natural_tuning` (`#[ignore]`) は次の 2 点を確かめる。
+  - 予測が `choose_bid` と一致すること (旧定義の全手、既定の priority で、下限なしと STANDARD の両方)。
+  - 部分的に戻したときの目的関数 (環境変数 `TUNE_FIX`)。
+
+測定 2 の定義についての注意: フェーズ 3 の定義は、手を素の `candidates` (パートナー文脈なし) の制約から引く。一方 `choose_bid` は、パートナー文脈付きの制約 (レベル下限込み) で順位を付ける。このため下限を入れると、`choose_bid` が決して選ばない手 (例: 下限を満たさない 4♠) を引いて外れに数え、一致率が 0.331 → 0.301 に下がる。そこで「文脈付き」の定義を加えた。こちらは `choose_bid` 自身が並べる制約から手を引く (`ReproductionReport.contextual_agreement_rate`)。下限なしでは、2 つの定義は同じ制約から引く (乱数列だけが違う)。
+
+結果 (release、loadavg 7〜9):
+
+| 設定 | 測定 2 (旧定義) 全体 / 評価半分 | 測定 2 (文脈付き) 全体 / 評価半分 | 実配牌一致率 調整用 / 評価用 |
+| --- | --- | --- | --- |
+| フェーズ 3 (下限なし、旧確信度) | 0.331 / 0.334 | 0.333 / 0.335 | 0.461 / 0.478 |
+| STANDARD、旧確信度 | 0.301 / 0.300 | 0.375 / 0.376 | 0.523 / 0.541 |
+| STANDARD、4.6 の確信度 (採用) | 0.338 / 0.336 | 0.415 / 0.415 | 0.599 / 0.618 |
+| 下限なし、4.6 の確信度 (参考) | 0.373 / 0.375 | 0.374 / 0.376 | 0.559 / 0.577 |
+
+`natural_inference_metrics` 本体での値 (測定 2 は 600 決定点、8,326 候補): 旧定義 0.338 (下限だけを入れた状態では 0.301、フェーズ 3 は 0.329)、文脈付き 0.415。
+
+採用した変更 (確信度、括弧内は旧値):
+
+| 規則 | 新 (旧) | 規則 | 新 (旧) |
+| --- | --- | --- | --- |
+| `raise` | 0.45 (0.6) | `new_suit_resp_2` | 0.6 (0.5) |
+| `rebid_nt` | 0.45 (0.5) | `rebid_new_suit` | 0.35 (0.4) |
+| `negative_x` | 0.4 (0.5) | `takeout_x` | 0.45 (0.5) |
+| `overcall` | 0.35 (0.5) | `jump_overcall` | 0.5 (0.4) |
+| `reverse` | 0.55 (0.4) | `open_1m` | 0.55 (0.6) |
+| `open_preempt` | 0.55 (0.5) | `pass_default` の `ANY` | 0.3 (0.2) |
+
+- 最大の寄与は `pass_default` の `ANY` を 0.3 に上げたことである。これで `cue` と `penalty_x` (どちらも 0.3) より前に来る (同点では `Pass` がコール順で勝つ)。
+  - 調整直後の確信度でこの 1 つだけを 0.2 に戻すと、実配牌一致率 (評価用) が 0.611 から 0.553 に落ちる。
+  - 人間は、他に合うコールが無いときキュービッドやペナルティ・ダブルではなくパスする。
+- 座標降下は `new_suit_resp_1` を 0.5 → 0.4 (初回) / 0.25 (再調整)、`resp_nt` を 0.5 → 0.55 にも動かした。これは 1 レベルの新スート応答より 1NT 応答を優先する順で、標準的な応答順と逆になる。調整用の目的関数では 0.5073 対 0.5066 と差が誤差程度なので、採らずに旧値 (ともに 0.5) を残した。
+- レベル下限の表は STANDARD のままにした。調整用の目的関数は、STANDARD が 0.5066、STANDARD+2 が 0.5099、STANDARD−2 が 0.5026、4 レベルからが 0.5071、下限なしが 0.4655 で、下限なし以外の差は 0.004 以内である。一方 STANDARD+2 は旧定義の測定 2 を 0.011 下げる。
+
+受け入れ基準 (レーン S「ナチュラル」):
+
+- (a) 3 測定のどれも 0.01 を超えて下がらないこと。満たす。
+  - 測定 1 と 3 は同一である。
+  - 測定 2 は、旧定義で 0.329 → 0.338、文脈付きで 0.415 に上がった。
+- (b) 決定点の一致率が 0.329 から 0.02 以上上がること。
+  - 文脈付きの定義では 0.415 (+0.086) で満たす。
+  - 旧定義では 0.338 (+0.009) で満たさない。理由は上の注意のとおりで、旧定義は下限が除外する手を引いて外れに数えるので、下限だけで −0.030 になる。同じ確信度で下限を外すと、旧定義でも 0.373 (+0.044) になる。
+  - レベル下限はリプレイの暴走を止めるために必要なので、下限を入れたまま文脈付きの定義で評価する。
+- 実配牌一致率 (評価用分割) は、フェーズ 3 の 0.478 から 0.618 に上がった。
 
 ---
 
@@ -1101,10 +1226,12 @@ impl LintSummary { pub fn of(lints: &[Lint]) -> LintSummary; }
 | constraint | `DnfTruncated` | Warning (`strict_dnf` なら Error) | `to_dnf` が `max_terms` (256) を超えて `residual` に退避した |
 | coverage | `MissingOpeningCoverage` | Warning | どのオープニングも満たさない (パス以外の) 手の割合 |
 | coverage | `MissingResponseCoverage` | Info | あるノードの子のどれも満たさない手の割合 |
+| exclusive | `ShadowedBranch` | Warning | 上位の兄弟 (と同じノードの先の枝) に全域を覆われ、`choose_bid` が決して選ばない枝 (§9.3 の 8) |
+| exclusive | `OverlappingBranches` | Info | 同じノードの枝どうしが重なり、排他索引が後の枝を素化した (§9.3 の 8) |
 
-### 9.3 コンパイル後の七つの検査
+### 9.3 コンパイル後の八つの検査
 
-parse / expansion の Lint は各段階が発生時に出す。`lint.rs` は完成した IR に対して次の 7 検査を順に走らせる (`bridge-constraint` の DNF / 交差が要る)。
+parse / expansion の Lint は各段階が発生時に出す。`lint.rs` は完成した IR に対して次の 8 検査を順に走らせる (`bridge-constraint` の DNF / 交差が要る)。
 
 1. **充足可能性**: 全ノードで `constraint.is_satisfiable()` (DNF に非空の `Atom` が無い)。偽なら `UnsatisfiableConstraint` (Error)。ノードは残してフラグを付け、L3 は `Diagnostic::UnsatisfiableNode` として飛ばす。
 2. **自分の履歴との整合**: ノードの `side` と同じ側の祖先ノード (`path` 上) の制約を `And` して `is_satisfiable()`。偽なら `ContradictsOwnHistory` (Warning。例: `1N 15-17` の後のリビッドが `18+` を示す)。
@@ -1113,6 +1240,8 @@ parse / expansion の Lint は各段階が発生時に出す。`lint.rs` は完�
 5. **認識率**: §7.7 の閾値判定で `LowRecognition` (非空かつ `ratio < threshold`。`constraint_bearing == false` の純コンベンション行は Info)、付随して `EmptyDescription` / `UnrecognizedFragment` / `SoftConstraint` / `AssumedContext` / `DnfTruncated`。
 6. **兄弟の曖昧さ** (同じ親、同じ側、同じ条件): DNF の Atom 上の記号的検査。`A ⊆ B` は A の各 Atom が B のいずれかの Atom に含まれること (`hcp` / `shapes` / `suit_len` は区間・ビット集合の包含、`cards` / `eval` は集合比較)。先の兄弟に含まれる後の兄弟は `SiblingSubset` (Warning。`priority` が異なれば Info)。Atom 対の交差が非空なら `SiblingOverlap` (Info。ナチュラル系では非常に多いので Info のみ)。DNF の項数上限 256 を超える場合は検査を省略し Info を出す。
 7. **カバレッジ** (任意、`CompileOptions.coverage_samples` (既定 10,000、0 で無効)): 手を一様に引き、各 `SeatCond` (`opener_pos` 1..=4) について `hcp ≥ opening_min` なのに `Pass` 以外のどのオープニングノードも満たさない手の割合を `MissingOpeningCoverage` (Warning) に添える。同様に子を持つ各ノードについて、親文脈から (一様に) レスポンダーの手を引き、どの子も満たさない割合を `MissingResponseCoverage` (Info) に添える (L3 の `NoCandidate` 集計のコンパイル時版)。サンプル数はノード数に応じて `min(coverage_samples, 10^6 / nodes)` に落とす。閾値は設けず割合を報告するだけで、判断は `coverage_report.json` (`11-testing.md` §2) と合わせて行う。
+
+8. **排他領域** (フェーズ 4、`check_exclusive_branches`): §5.4 の索引を読む。(a) ある (ノード, 枝) の片がどのグループにも無く、そのノードを含む全グループで「枝 − 上位」がグリッドで空と証明できる (`grid_proves_empty`) とき `ShadowedBranch` (Warning)。枝単独で空のもの (検査 1 の対象) は除く。メッセージは「never chosen: higher-ranked siblings cover it」(複数枝なら「branch j/n never chosen: …」)。(b) 同じノードの枝 j と k の sup グリッドが実行可能なセルで交わるとき `OverlappingBranches` (Info)。行ごとに (j, k) 1 件にまとめる。SAYC では `ShadowedBranch` 249 件、`OverlappingBranches` 90 件 (行ごとにまとめる前は 186 件)、Error 0 件。
 
 検査 6 と 7 は `Sampler::prepare` (20〜60 μs) を使うので、コンパイル 1 秒の予算を圧迫する場合は `coverage_samples = 0` で 7 を無効化できる (`load_or_compile` のキャッシュがあれば実質 1 回だけ)。
 
@@ -1219,8 +1348,9 @@ systems/
 | `compile/desc/tokens.rs` | `SuitRef`、`Token`、`StrengthWord`、`QualityWord`、`recognize` (Pass 1 の語彙) |
 | `compile/desc/context.rs` | `Source`、`Provenance`、`RowContext`、`resolve` (Pass 2) |
 | `compile/desc/recognition.rs` | `compute`、`STOPWORDS` |
-| `natural.rs` | `NaturalParams` (+ `ResponseParams`, `RebidParams`, `AdvanceParams`), `Role`, `DoubleKind`, `CallKind`, `CallContext`, `classify`, `Inference`, `NaturalInference` |
-| `lint.rs` | `Severity`, `LintCode`, `Lint`, `LintSummary`、七つの検査 |
+| `natural.rs` | `NaturalParams` (+ `ResponseParams`, `RebidParams`, `AdvanceParams`, `LevelFloor`), `Role`, `DoubleKind`, `CallKind`, `CallContext`, `classify`, `Inference`, `NaturalInference`, `PartnerContext`, `NaturalCandidate` (§8.6) |
+| `exclusive.rs` | `ExclusiveIndex`, `ExclusiveGroup`, `ExclusivePiece`, `ExclusiveStats`, `rank_cmp`, `natural_rank_cmp`, `subtract`, `grid_proves_empty` (§5.4、フェーズ 4) |
+| `lint.rs` | `Severity`, `LintCode`, `Lint`, `LintSummary`、八つの検査 |
 | `cache.rs` | `SystemCache` (feature `cache`) |
 
 feature: `default = ["std"]`, `std`, `serde = ["dep:serde", ..]`, `cache = ["std", "serde", "dep:postcard", "dep:blake3"]`。依存: `bridge-core`, `bridge-eval`, `bridge-constraint`, `winnow 1.0`, `smallvec`, `thiserror 2`, `tracing 0.1`, `serde` (optional), `postcard` / `blake3` (optional、`cache`)。dev: `insta`。`lib.rs` の公開面: `compile::{CompileOptions, compile}`、`ir::*`、`lint::{Lint, LintCode, Severity}`、`natural::{CallContext, CallKind, Inference, NaturalInference, NaturalParams, Role}`、`pattern::*`、`trie::{AuctionTrie, Lookup, LookupKey, RelVul, Resolution}` に加え、`ast`, `cache`, `compile`, `lexer`, `lint`, `natural`, `parser`, `pattern`, `trie` は `pub mod`。

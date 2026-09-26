@@ -28,7 +28,7 @@
 //! contains is counted once, in the higher member's piece). A call whose pieces are all empty
 //! is *shadowed*: the policy never makes it at this position.
 //!
-//! Build: [`crate::compile`] builds the index eagerly at the end of compilation (SAYC: about
+//! Build: [`crate::compile()`] builds the index eagerly at the end of compilation (SAYC: about
 //! 714 groups, 2.5k pieces, a handful of tree fallbacks, well under 15 ms release) and stores it
 //! in the cell; a deserialised or hand-built IR builds it on the first [`SystemIR::exclusive`]
 //! call. Per trie position the sibling list is computed once when no child entry carries a

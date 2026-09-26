@@ -96,3 +96,30 @@ fn compiling_sayc_is_fast() {
         path.display()
     );
 }
+
+/// Best-of-3 release timing of the whole SAYC compile and of rebuilding its exclusive index
+/// alone (the index is built eagerly at the end of `compile()`, docs/design/06-system.md §5.4):
+/// `cargo test -p bridge-system --release --test compile_time -- --ignored --nocapture
+/// sayc_exclusive_index_share`.
+#[test]
+#[ignore = "timing; run in release with --ignored --nocapture"]
+fn sayc_exclusive_index_share() {
+    let opts = CompileOptions::default();
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../systems/sayc/sayc.bml");
+    let mut compile_best = Duration::MAX;
+    let mut index_best = Duration::MAX;
+    for _ in 0..3 {
+        let started = Instant::now();
+        let ir = common::compile_guarded(&path, &opts).expect("sayc.bml compiles");
+        compile_best = compile_best.min(started.elapsed());
+        let started = Instant::now();
+        let index = bridge_system::ExclusiveIndex::build(&ir);
+        index_best = index_best.min(started.elapsed());
+        assert_eq!(index.stats(&ir).groups, ir.exclusive().stats(&ir).groups);
+    }
+    eprintln!(
+        "sayc: compile {compile_best:?}, exclusive index build {index_best:?} ({:.1}% of the \
+         compile; best of 3)",
+        100.0 * index_best.as_secs_f64() / compile_best.as_secs_f64()
+    );
+}
