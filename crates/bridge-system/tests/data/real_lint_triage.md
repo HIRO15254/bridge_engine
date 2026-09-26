@@ -50,7 +50,7 @@ Note: this round's `partner_bid_this_suit`/`agreed_suit_or_partner_last` fix (cl
 Note: this round's NAT explicit-wins fix (class a, see below) removed 3 entries this group used to carry (`gjp/common/1C.bml:54`, `gjp/common/1H-1S.bml:36`, `gjp/common/1M-1N.bml:27`) -- each was really the same NAT-vs-explicit-length bug as the fixed cases, not a genuine parenthetical-aside contradiction.
 
 
-### 3. [c] Pass-2 context resolution does not yet model this combination of context-dependent words/fragments for this row; recorded as a known gap rather than chased further this round.
+### 3. [c] Vocabulary gap: a phrase that is not about this hand's own holding (a description of partner's hand, a named contract, a literal shape pattern) is read as a literal on this hand.
 
 
 3 occurrence(s):
@@ -61,6 +61,12 @@ Note: this round's NAT explicit-wins fix (class a, see below) removed 3 entries 
 | `gjp/common/1C.bml:38` | UnsatisfiableConstraint | 6!c, 6-9 HCP, expects to win 3NT opposite a strong balanced hand |
 | `gjp/common/1C.bml:247` | UnsatisfiableConstraint | 5422, 4M, FG |
 | `gjp/common/2N-Puppet.bml:36` | UnsatisfiableConstraint | no 4M, no interest in playing 4!s opposite 5!s-4!h |
+
+Root causes (corrected by the phase-3 recheck; earlier rounds filed all three as an unspecified "Pass-2 context resolution" gap):
+
+- `1C.bml:38`: `opposite a strong balanced hand` describes partner, but `balanced` is ANDed into this hand as BAL, which contradicts the row's own `6!c`. Reproduced in isolation: `3H = 6!h, 6-9 HCP, opposite a balanced hand` is unsatisfiable, `3D = 6!d, 6-9 HCP, expects to win 3NT` is not. Same family as the see-reference/callref handling: `opposite <partner description>` should be opaque.
+- `1C.bml:247`: a literal digit shape (`5422`) is read in fixed S-H-D-C order (5 spades, 4 hearts), not as a pattern; with M bound to spades it contradicts the row's own `4M`.
+- `2N-Puppet.bml:36`: `playing 4!s` names a contract but is read as an exact 4-card spade length, which contradicts the row's own `no 4M` when M is spades.
 
 Note: this round's NAT explicit-wins fix (class a, see below) removed `gjp/common/1H-1S.bml:46` from this group -- it was the same NAT-vs-explicit-length bug, not a genuine Pass-2 gap.
 
@@ -160,7 +166,10 @@ Note: `jdh8/wj.bml:74` is a genuine root-level row (`wj.bml`'s own opening-bids 
 Reclassified this round from (c) "a known gap in call-legality resolution for a repeated (R) step" to (b): the call is illegal under every expansion regardless of that resolution, since a player redoubling his own side's own double is never legal in the first place (`systems/vendor/data/gjp/common/1N.bml:161-163`: `1N-(P)-2C-(D)` / `P = ...` / `(R) = Stayman again, INV+` -- the `(D)`/`(R)` parentheses put the double and the redouble on the *same* side).
 
 
-### 12. [c] The file's free-text intro paragraph before the first auction table is parsed as a row with an empty description; an empty description should compile to Atom::ANY (trivially satisfiable) but this row ends up Unsatisfiable instead -- recorded as a parser-classification gap rather than fixed this round.
+### 12. [c] Vocabulary gap: a prose line is parsed as a row, and its unrecognized `after <call>` qualifiers let two different lengths for the same suit be ANDed.
+
+
+The line is `1m-2m is inverted minor and FG. Promises 5 cards after 1!c and 4 cards after 1!d.`. Its description is not empty (an empty description does compile to `Atom::ANY`); the contradiction is `5 cards` AND `4 cards` for the same suit, because the `after <call>` qualifiers that would put them in separate branches are not recognized. Reproduced in isolation: `1m-2m is inverted minor and FG.` compiles without an Error; `1m-2m Promises 5 cards after 1!c and 4 cards after 1!d.` gives both UnsatisfiableConstraint Errors. (Corrected by the phase-3 recheck; the earlier reason blamed an empty description.)
 
 
 1 occurrence(s):
@@ -191,6 +200,8 @@ These used to appear above (or would have, had `tests/compile_real.rs` attribute
 - **NAT explicit-wins (`compile/desc/mod.rs`, `compile/desc/context.rs`)**: `docs/design/06-system.md` §7.5 states NAT's own suit length gives way to an explicit length the row states for the same suit ("衝突は明示が勝つ", the rule the strength-word fix above already generalizes from NAT -- but NAT itself never implemented it). `resolve_natural` always ANDed `suit_len[call's suit] >= natural_suit_length` (5 by default for most roles/levels) even when the row stated its own, shorter length explicitly. Fixed by dropping NAT's atom when the description also carries an explicit `SuitLen`/`Shape` fragment pinning the same suit. Regression test: `compile::desc::tests::explicit_suit_length_wins_over_nats_own_assumed_minimum`. Removed 5 real-file Errors: `gjp/common/1C.bml:54`, `gjp/common/1H-1S.bml:36` and `:46`, `gjp/common/1M-1N.bml:27`, `gjp/common/1m-2m.bml:9` (this last one had also been misclassified as class (b): the file's header prose "promises 5+ clubs" was never the actual contradiction -- the row's own `at least 4!c, NAT` triggered this same NAT bug regardless of the header).
 - **`tests/compile_real.rs` / `tests/common/mod.rs` file attribution**: a lint's `span.file` (a `FileId`) names the file it actually came from, but the test built its comparison key from the *root* file's own path paired with `span.line`, so every Error raised inside an `#INCLUDE`d file was attributed to whichever root happened to pull it in, at that root's own line count -- a line number belonging to a different file, sometimes past that file's own length (e.g. `jdh8/blue.bml` is 118 lines; the old file wrongly cited `blue.bml:214`, really `jdh8/blue/1C.bml:214`). The same source Error was also counted once per root that includes it. Fixed by resolving `span.file` through the loader's own file table (`tests/common/mod.rs`'s new `compile_guarded_with_files`) and by a separate `lexer::normalize_path` bug this surfaced: normalizing an absolute `#INCLUDE` target's resolved path silently dropped its leading `/` (the same code path that drops a `.`/empty segment also dropped the leading-slash artifact of an absolute path), corrupting every included file's recorded path whenever the root path was itself absolute (the normal case for `FsLoader`). Regression test: `lexer::tests::included_files_keep_the_root_paths_leading_slash`. This dropped the reported count from "100 Errors across 28 files" (never a real number -- see below) to the true **64 Errors across 21 files**.
 
+
+- **Explicit-wins rules respect negation, possibility and `Or` (phase-3 recheck; `compile/desc/mod.rs`'s `stated_alongside`, `compile/desc/context.rs`'s `ExplicitFacts`)**: the NAT, strength-word and SPL explicit-wins rules above scanned the flat token list, so a negated fragment (`GF, not 20+ HCP`), a possibility (`GF, may have 11 HCP`, `NAT, maybe 4!c`) or a fragment in another `Or` branch (`weak or 16+ HCP`, `NAT, 6+!d or 4!s`) also switched the context word off and silently widened the row, sometimes to no constraint at all. Now only a fragment conjoined with the word (same `And`, not negated, not a possibility; an `Or` counts only when every branch states it) does. `gjp/common/1C.bml:54` (`2M = FG, NAT (maybe 3 cards only)`) now keeps NAT's major length and still compiles without an Error. Making the rule stricter restored the `Or` branches of gjp's `2C = 1) weak-two in !d 2) 25+ NT 3) FG ...`, whose 5..=37 hull then made `MAX` in `weak-two, ..., MAX` rows (`gjp/common/2C.bml:59,66-69`, `2D.bml:56-57`) resolve far above a weak two; fixed by re-basing `MIN`/`MAX` on a conjoined category word (`weak`, `PRE`, `NEG`, `strong`) when halving the tracked range lands entirely outside it. Regression tests: `compile::desc::tests::{strength_word_keeps_its_range_unless_a_number_is_stated_alongside_it, nat_keeps_its_length_unless_a_length_is_stated_alongside_it, gjp_nat_with_a_possible_short_suit_keeps_a_length, max_is_rebased_on_a_conjoined_category_word}`. Net change to the Error set: none.
 
 ## What "100 Errors across 28 files" actually was
 

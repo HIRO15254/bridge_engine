@@ -72,38 +72,38 @@ pub fn compile_description(text: &str, ctx: &RowContext<'_>, meta: &SystemMeta) 
             }
         })
         .collect();
-    let (atoms, provs) = context::resolve(&pass1_tokens, ctx, meta);
+    // Whether a fragment matching `pred` is *stated alongside* the token at `k` (an index into
+    // `pass1_tokens`): see [`stated_alongside`].
+    let stated_with: &context::StatedWith<'_> =
+        &|k, pred| stated_alongside(&top_clause, &fragments, token_indices[k], pred);
+    let (atoms, provs) = context::resolve(&pass1_tokens, ctx, meta, stated_with);
     let any = || HandConstraint::Atom(Atom::ANY);
     // Pass 2 can resolve a context-dependent strength word (`INV`, `MIN`, `S/T`, …) to an HCP
     // range that contradicts a number the author wrote out explicitly in the same description
     // (`docs/design/06-system.md` §7.5's "衝突は明示が勝つ" rule, generalized from `NAT` to every
     // `Strength` word): e.g. jdh8's `3C = INV, 7+!c, 4--7 HCP` states its own 4--7 HCP range, so
     // `INV`'s context-derived range must not be ANDed against it (that would make the row
-    // unsatisfiable whenever the two disagree). An explicit `Hcp`/`Points` fragment anywhere in
-    // the description means every `Strength` word's HCP contribution is dropped (treated as
-    // `Atom::ANY`, which `build` already elides): the explicit number is what the author meant to
-    // constrain the hand by, and the strength word's own atom would only ever narrow or
-    // contradict it. This does not touch a `Strength` word's other effects (`NodeFlags` from
-    // `derive_flags`, e.g. `GF` still implies `Forcing::ToGame`), only the HCP atom this pass
-    // would otherwise have produced from it.
-    let has_explicit_number = pass1_tokens
+    // unsatisfiable whenever the two disagree). A `Strength` word's HCP atom is dropped (treated
+    // as `Atom::ANY`, which `build` already elides) only when an explicit `Hcp`/`Points` fragment
+    // is stated alongside *that* word ([`stated_alongside`]: conjoined with it, neither negated
+    // nor a mere possibility): `GF, not 20+ HCP` keeps `GF` (the negation narrows it to 13..=19),
+    // `GF, may have 11 HCP` keeps `GF` (a possibility states nothing), and `weak or 16+ HCP` keeps
+    // `weak` (the number describes the other branch). This does not touch a `Strength` word's
+    // other effects (`NodeFlags` from `derive_flags`, e.g. `GF` still implies `Forcing::ToGame`),
+    // only the HCP atom this pass would otherwise have produced from it.
+    let is_number = |t: &Token| matches!(t, Token::Hcp(_) | Token::Points(_));
+    let atoms: Vec<HandConstraint> = pass1_tokens
         .iter()
-        .any(|t| matches!(t, Token::Hcp(_) | Token::Points(_)));
-    let atoms: Vec<HandConstraint> = if has_explicit_number {
-        pass1_tokens
-            .iter()
-            .zip(atoms)
-            .map(|(tok, atom)| {
-                if matches!(tok, Token::Strength(_)) {
-                    any()
-                } else {
-                    atom
-                }
-            })
-            .collect()
-    } else {
-        atoms
-    };
+        .zip(atoms)
+        .enumerate()
+        .map(|(k, (tok, atom))| {
+            if matches!(tok, Token::Strength(_)) && stated_with(k, &is_number) {
+                any()
+            } else {
+                atom
+            }
+        })
+        .collect();
 
     // `QUANT INV to 6NT`: the `INV` word only says that `QUANT` is an invitation (to a slam, not
     // to game), so its game-invitational HCP range must not be ANDed against `QUANT`'s slam-invite
@@ -129,6 +129,19 @@ pub fn compile_description(text: &str, ctx: &RowContext<'_>, meta: &SystemMeta) 
         atoms
     };
 
+    // `MIN`/`MAX` halve the hand's own range so far (`own_hcp`). When the description itself
+    // names a category for that range (`weak-two, MAX`: the maximum of a weak two), and the half
+    // of the tracked range is disjoint from it (the tracked range is the hull of an opening's
+    // `Or` branches, e.g. gjp's `2C = 1) weak-two in !d 2) 25+ NT 3) FG`, whose hull 5..=37 has
+    // its upper half nowhere near a weak two), the word is re-based on the stated category, so
+    // `MAX` means the top of the weak-two range rather than contradicting it.
+    let atoms = rebase_relative_strength(
+        &pass1_tokens,
+        atoms,
+        &|k| conjoined_leaves(&top_clause, &fragments, token_indices[k]),
+        &token_indices,
+    );
+
     // Known beats assumed: when the strength words of one description resolve to disjoint HCP
     // ranges and some of them rest on an assumed context (partner's or this player's range was
     // unknown, §7.5's defaults), the assumed ones are dropped rather than making the row
@@ -146,25 +159,29 @@ pub fn compile_description(text: &str, ctx: &RowContext<'_>, meta: &SystemMeta) 
     // `suit_len[call's suit] >= natural_suit_length` (5 by default), even when the row states its
     // own length for that suit explicitly (e.g. gjp's `NAT, normally 4!s`, or an `at least 4!c`
     // read as an exact 4). An explicit `SuitLen`/`Shape` fragment that pins the length of NAT's
-    // own suit means the author already said what that length is; `NAT`'s assumed minimum must
-    // not additionally AND against it (unsatisfiable whenever the two disagree, e.g. a 5+ default
-    // against a stated 4).
-    let nat_suit_pinned_explicitly =
-        own_suit(ctx).is_some_and(|suit| pass1_tokens.iter().any(|t| suit_len_pins(t, suit, ctx)));
-    let atoms: Vec<HandConstraint> = if nat_suit_pinned_explicitly {
-        pass1_tokens
-            .iter()
-            .zip(atoms)
-            .map(|(tok, atom)| {
-                if matches!(tok, Token::Natural) {
-                    any()
-                } else {
-                    atom
-                }
-            })
-            .collect()
-    } else {
-        atoms
+    // own suit and is stated alongside the `NAT` word ([`stated_alongside`]) means the author
+    // already said what that length is; `NAT`'s assumed minimum must not additionally AND against
+    // it (unsatisfiable whenever the two disagree, e.g. a 5+ default against a stated 4). A
+    // negated length (`NAT, not 4!c`), a possibility (`NAT, may be 3!c`) or a length in only one
+    // `Or` branch (`NAT, 6+!d or 4!s` for a 2D bid) does not say what the length is, so `NAT`
+    // keeps its atom there.
+    let atoms: Vec<HandConstraint> = match own_suit(ctx) {
+        None => atoms,
+        Some(suit) => {
+            let pins = |t: &Token| suit_len_pins(t, suit, ctx);
+            pass1_tokens
+                .iter()
+                .zip(atoms)
+                .enumerate()
+                .map(|(k, (tok, atom))| {
+                    if matches!(tok, Token::Natural) && stated_with(k, &pins) {
+                        any()
+                    } else {
+                        atom
+                    }
+                })
+                .collect()
+        }
     };
 
     let mut resolved: Vec<Option<(HandConstraint, Provenance)>> = vec![None; fragments.len()];
@@ -288,6 +305,174 @@ pub fn compile_description(text: &str, ctx: &RowContext<'_>, meta: &SystemMeta) 
         flags,
         recognition,
         lints,
+    }
+}
+
+/// Whether some fragment matching `pred` is *stated alongside* fragment `target`: it sits in a
+/// conjunction with `target` (an `And` ancestor of `target` has a sibling subtree that
+/// [`states`] it), so it holds in every branch in which `target` holds. A fragment in a sibling
+/// `Or` branch of `target` does not count (`weak or 16+ HCP`), nor does a negated or
+/// possibility-hedged one (see [`states`]). `docs/design/06-system.md` §7.5's "衝突は明示が勝つ"
+/// rule uses this to decide when an explicit fragment overrides a context word's own atom.
+fn stated_alongside(
+    top: &Clause,
+    fragments: &[Fragment],
+    target: usize,
+    pred: &context::TokenPred<'_>,
+) -> bool {
+    /// `None` when `target` is not below `clause`; otherwise whether a matching fragment is
+    /// stated alongside it within `clause`.
+    fn walk(
+        clause: &Clause,
+        fragments: &[Fragment],
+        target: usize,
+        pred: &context::TokenPred<'_>,
+    ) -> Option<bool> {
+        match clause {
+            Clause::Leaf(idx) => (*idx == target).then_some(false),
+            Clause::And(items) => items.iter().enumerate().find_map(|(k, item)| {
+                walk(item, fragments, target, pred).map(|found| {
+                    found
+                        || items
+                            .iter()
+                            .enumerate()
+                            .any(|(j, other)| j != k && states(other, fragments, pred))
+                })
+            }),
+            Clause::Or(items) => items
+                .iter()
+                .find_map(|item| walk(item, fragments, target, pred)),
+        }
+    }
+    walk(top, fragments, target, pred).unwrap_or(false)
+}
+
+/// The fragments that hold whenever fragment `target` does: every leaf reachable from a sibling
+/// of an `And` ancestor of `target` through `And` nodes only (a leaf under a sibling `Or` is one
+/// possibility among several, so it is left out), skipping negated and possibility-hedged ones.
+fn conjoined_leaves(top: &Clause, fragments: &[Fragment], target: usize) -> Vec<usize> {
+    fn and_leaves(clause: &Clause, fragments: &[Fragment], out: &mut Vec<usize>) {
+        match clause {
+            Clause::Leaf(idx) => {
+                let f = &fragments[*idx];
+                if !f.negated && !f.possibility {
+                    out.push(*idx);
+                }
+            }
+            Clause::And(items) => items.iter().for_each(|c| and_leaves(c, fragments, out)),
+            Clause::Or(_) => {}
+        }
+    }
+    fn contains(clause: &Clause, target: usize) -> bool {
+        match clause {
+            Clause::Leaf(idx) => *idx == target,
+            Clause::And(items) | Clause::Or(items) => items.iter().any(|c| contains(c, target)),
+        }
+    }
+    let mut out = Vec::new();
+    let mut node = top;
+    loop {
+        match node {
+            Clause::Leaf(_) => break,
+            Clause::And(items) => {
+                let Some(k) = items.iter().position(|c| contains(c, target)) else {
+                    break;
+                };
+                for (j, item) in items.iter().enumerate() {
+                    if j != k {
+                        and_leaves(item, fragments, &mut out);
+                    }
+                }
+                node = &items[k];
+            }
+            Clause::Or(items) => match items.iter().find(|c| contains(c, target)) {
+                Some(next) => node = next,
+                None => break,
+            },
+        }
+    }
+    out
+}
+
+/// Re-bases a `MIN`/`MAX` word on the range a conjoined category word (`weak`, `PRE`, `NEG`,
+/// `strong`) states, when halving the tracked own range put it entirely outside that category
+/// (see the call site). `leaves_of(k)` lists the fragment indices conjoined with token `k`;
+/// `token_indices` maps token indices to fragment indices.
+fn rebase_relative_strength(
+    tokens: &[Token],
+    mut atoms: Vec<HandConstraint>,
+    leaves_of: &dyn Fn(usize) -> Vec<usize>,
+    token_indices: &[usize],
+) -> Vec<HandConstraint> {
+    let hcp_of = |atom: &HandConstraint| match atom {
+        HandConstraint::Atom(a) if *a != Atom::ANY => Some(a.hcp.clone()),
+        _ => None,
+    };
+    for k in 0..tokens.len() {
+        let is_min = match tokens[k] {
+            Token::Strength(StrengthWord::Min) => true,
+            Token::Strength(StrengthWord::Max) => false,
+            _ => continue,
+        };
+        let Some(own) = hcp_of(&atoms[k]) else {
+            continue;
+        };
+        let leaves = leaves_of(k);
+        let mut base: Option<core::ops::RangeInclusive<u8>> = None;
+        for (j, tok) in tokens.iter().enumerate() {
+            let category = matches!(
+                tok,
+                Token::Strength(
+                    StrengthWord::Weak
+                        | StrengthWord::Preemptive
+                        | StrengthWord::Negative
+                        | StrengthWord::Strong
+                )
+            );
+            if !category || !leaves.contains(&token_indices[j]) {
+                continue;
+            }
+            if let Some(r) = hcp_of(&atoms[j]) {
+                base = Some(match base {
+                    None => r,
+                    Some(b) => *b.start().max(r.start())..=*b.end().min(r.end()),
+                });
+            }
+        }
+        let Some(base) = base else {
+            continue;
+        };
+        let disjoint = own.start() > base.end() || base.start() > own.end();
+        if base.start() > base.end() || !disjoint {
+            continue;
+        }
+        let (lo, hi) = (*base.start(), *base.end());
+        let mid = lo + (hi - lo) / 2;
+        let half = if is_min {
+            lo..=mid
+        } else {
+            (mid + 1).min(hi)..=hi
+        };
+        atoms[k] = HandConstraint::Atom(Atom {
+            hcp: half,
+            ..Atom::ANY
+        });
+    }
+    atoms
+}
+
+/// Whether `clause` definitely states a fragment matching `pred`: a leaf that matches and is
+/// neither negated (`not 20+ HCP` states the opposite) nor possibility-hedged (`may have 11 HCP`
+/// states nothing, §7.6); an `And` with any such child; an `Or` all of whose branches state one
+/// (`4!s or 5!s` still pins the spade length, `6+!d or 4!s` does not pin diamonds).
+fn states(clause: &Clause, fragments: &[Fragment], pred: &context::TokenPred<'_>) -> bool {
+    match clause {
+        Clause::Leaf(idx) => {
+            let f = &fragments[*idx];
+            !f.negated && !f.possibility && matches!(&f.kind, FragmentKind::Token(t) if pred(t))
+        }
+        Clause::And(items) => items.iter().any(|c| states(c, fragments, pred)),
+        Clause::Or(items) => !items.is_empty() && items.iter().all(|c| states(c, fragments, pred)),
     }
 }
 
@@ -870,6 +1055,122 @@ mod tests {
                 .start()
                 > 4
         );
+    }
+
+    // Recheck regression: the explicit-wins rules used to scan the flat token list, so a negated,
+    // possibility-hedged or other-branch number switched a strength word's HCP atom off and left
+    // the row far wider than written (`GF, not 20+ HCP` came out 0..=19, `GF, may have 11 HCP`
+    // and `weak or 16+ HCP` unconstrained).
+    #[test]
+    fn strength_word_keeps_its_range_unless_a_number_is_stated_alongside_it() {
+        let binding = Binding::default();
+        let c = ctx(&binding, Call::Pass, Role::Responder);
+        let meta = SystemMeta::default();
+        let negated = compile_description("GF, not 20+ hcp", &c, &meta);
+        assert_eq!(negated.constraint.hcp_range(), 13..=19);
+        let possibility = compile_description("GF, may have 11 hcp", &c, &meta);
+        assert_eq!(possibility.constraint.hcp_range(), 13..=37);
+        let other_branch = compile_description("weak or 16+ hcp", &c, &meta);
+        assert!(
+            !matches!(&other_branch.constraint, HandConstraint::Atom(a) if *a == Atom::ANY),
+            "`weak` must keep its range in its own Or branch"
+        );
+        // 12 hcp is neither weak nor 16+.
+        let middle = hand("A32", "K32", "Q32", "KJ32");
+        assert!(!other_branch.constraint.satisfies(middle));
+        // Sanity: a number stated alongside the word still wins.
+        let stated = compile_description("GF, 10+ hcp", &c, &meta);
+        assert_eq!(stated.constraint.hcp_range(), 10..=37);
+    }
+
+    // Recheck regression: `NAT`'s own-suit length used to be dropped by any length token for the
+    // suit anywhere in the description, including a negated one, a possibility and one in a
+    // single `Or` branch, so a natural 2C could hold 0-3 clubs.
+    #[test]
+    fn nat_keeps_its_length_unless_a_length_is_stated_alongside_it() {
+        let binding = Binding::default();
+        let meta = SystemMeta::default();
+        let two_c = ctx(
+            &binding,
+            Call::Bid(Bid::new(2, Strain::Clubs).unwrap()),
+            Role::Responder,
+        );
+        let clubs = bridge_core::Suit::Clubs;
+        let bare = compile_description("NAT", &two_c, &meta)
+            .constraint
+            .suit_len(clubs);
+        assert!(*bare.start() >= 4);
+        for text in ["NAT, may be 3!c", "NAT, maybe 4!c"] {
+            let compiled = compile_description(text, &two_c, &meta);
+            assert_eq!(compiled.constraint.suit_len(clubs), bare, "{text}");
+        }
+        let negated = compile_description("NAT, not 4!c", &two_c, &meta);
+        assert!(*negated.constraint.suit_len(clubs).start() >= 5);
+
+        let two_d = ctx(
+            &binding,
+            Call::Bid(Bid::new(2, Strain::Diamonds).unwrap()),
+            Role::Responder,
+        );
+        let or_branch = compile_description("NAT, 6+!d or 4!s", &two_d, &meta);
+        let void_in_diamonds = hand("AK32", "", "QJ432", "K432");
+        assert!(!or_branch.constraint.satisfies(void_in_diamonds));
+        // Every branch pinning the suit still counts as stating its length.
+        let all_branches = compile_description("NAT, 3!d or 4!d", &two_d, &meta);
+        assert_eq!(
+            all_branches
+                .constraint
+                .suit_len(bridge_core::Suit::Diamonds),
+            3..=4
+        );
+    }
+
+    // Recheck regression for gjp/common/1C.bml:54 `2M = FG, NAT (maybe 3 cards only)`: the
+    // possibility used to drop NAT's length, leaving the row with no length in the bid major.
+    #[test]
+    fn gjp_nat_with_a_possible_short_suit_keeps_a_length() {
+        let binding = Binding::default();
+        let meta = SystemMeta::default();
+        let two_s = ctx(
+            &binding,
+            Call::Bid(Bid::new(2, Strain::Spades).unwrap()),
+            Role::Responder,
+        );
+        let compiled = compile_description("FG, NAT (maybe 3 cards only)", &two_s, &meta);
+        assert!(
+            *compiled
+                .constraint
+                .suit_len(bridge_core::Suit::Spades)
+                .start()
+                >= 4
+        );
+    }
+
+    // gjp/common/2C.bml:59/66-69: opener's tracked range is the hull (5..=37) of the `2C` row's
+    // `weak-two / 25+ NT / FG` branches, so `MAX` of it lies far above a weak two. Once the
+    // explicit-wins rules stopped wiping that row's branches out, `weak-two, MAX` became
+    // unsatisfiable; `MAX` must mean the top of the weak two it is conjoined with.
+    #[test]
+    fn max_is_rebased_on_a_conjoined_category_word() {
+        let binding = Binding::default();
+        let meta = SystemMeta::default();
+        let mut c = ctx(
+            &binding,
+            Call::Bid(Bid::new(2, Strain::Spades).unwrap()),
+            Role::Opener,
+        );
+        c.own_hcp = Some(5..=37);
+        let weak = compile_description("weak", &c, &meta)
+            .constraint
+            .hcp_range();
+        let max = compile_description("weak, MAX", &c, &meta);
+        assert!(max.constraint.is_satisfiable());
+        let r = max.constraint.hcp_range();
+        assert_eq!(*r.end(), *weak.end());
+        assert!(*r.start() > *weak.start());
+        // Without a category word, `MAX` still halves the tracked range.
+        let bare = compile_description("MAX", &c, &meta).constraint.hcp_range();
+        assert_eq!(bare, 22..=37);
     }
 
     #[test]

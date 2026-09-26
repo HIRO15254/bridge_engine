@@ -83,8 +83,10 @@ pub struct RowContext<'a> {
 ///
 /// One literal (an [`Atom`], or for a stopper the §7.4 `Or` of honour-and-length atoms) and one
 /// [`Provenance`] are produced per input token, in the same order, so a caller holding the
-/// original [`super::clause::Fragment`]s can zip them back together by index. `tokens` is the
-/// whole description, so a splinter can see what the author stated explicitly elsewhere in it.
+/// original [`super::clause::Fragment`]s can zip them back together by index. `stated_with(k,
+/// pred)` says whether a token matching `pred` is stated alongside token `k` (conjoined with it,
+/// neither negated nor a possibility), so a splinter can see what the author stated explicitly
+/// next to it.
 /// `Provenance::span` is left as `(0, 0)` here: this function is not given fragment spans (only
 /// bare tokens), so `compile_description` (which does have them) overwrites each entry's `span`
 /// with the originating fragment's span before the provenance is used for lints or tracing.
@@ -92,17 +94,18 @@ pub fn resolve(
     tokens: &[Token],
     ctx: &RowContext<'_>,
     meta: &SystemMeta,
+    stated_with: &StatedWith<'_>,
 ) -> (Vec<HandConstraint>, Vec<Provenance>) {
-    let facts = ExplicitFacts::of(tokens, ctx);
     let mut literals = Vec::with_capacity(tokens.len());
     let mut provs = Vec::with_capacity(tokens.len());
-    for token in tokens {
+    for (k, token) in tokens.iter().enumerate() {
         let (literal, prov) = match token {
             Token::Stopper(suitref) => match resolve_single_suit(*suitref, ctx) {
                 Some(suit) => (stopper_constraint(suit), explicit()),
                 None => (HandConstraint::ANY, context_prov(true)),
             },
             Token::Splinter(short, mini) => {
+                let facts = ExplicitFacts::of(&|pred| stated_with(k, pred), ctx);
                 let (atom, prov) = resolve_splinter(*short, *mini, &facts, ctx, meta);
                 (HandConstraint::Atom(atom), prov)
             }
@@ -117,8 +120,19 @@ pub fn resolve(
     (literals, provs)
 }
 
-/// What the description states explicitly elsewhere, for the "衝突は明示が勝つ" rule of
-/// compound words (`SPL`).
+/// A predicate over tokens.
+pub type TokenPred<'a> = dyn Fn(&Token) -> bool + 'a;
+/// Whether a token matching the predicate is stated alongside one fixed token.
+pub type Stated<'a> = dyn Fn(&TokenPred<'_>) -> bool + 'a;
+/// Whether a token matching the predicate is stated alongside the token at the given index
+/// (see `compile_description`'s `stated_alongside`).
+pub type StatedWith<'a> = dyn Fn(usize, &TokenPred<'_>) -> bool + 'a;
+
+/// What the description states explicitly alongside a compound word (`SPL`), for the
+/// "衝突は明示が勝つ" rule. `stated` answers whether a fragment matching a predicate is stated
+/// alongside the word (conjoined with it, neither negated nor a possibility; see
+/// `compile_description`'s `stated_alongside`), so a negated, hedged or other-branch fragment
+/// never switches a part of the word off.
 struct ExplicitFacts {
     /// An explicit `Hcp`/`Points` fragment.
     strength: bool,
@@ -129,11 +143,9 @@ struct ExplicitFacts {
 }
 
 impl ExplicitFacts {
-    fn of(tokens: &[Token], ctx: &RowContext<'_>) -> ExplicitFacts {
-        let strength = tokens
-            .iter()
-            .any(|t| matches!(t, Token::Hcp(_) | Token::Points(_)));
-        let shortness = tokens.iter().any(|t| match t {
+    fn of(stated: &Stated<'_>, ctx: &RowContext<'_>) -> ExplicitFacts {
+        let strength = stated(&|t| matches!(t, Token::Hcp(_) | Token::Points(_)));
+        let shortness = stated(&|t| match t {
             Token::Shortness(..) => true,
             Token::SuitLen(_, r) => *r.end() <= 1,
             _ => false,
@@ -141,9 +153,7 @@ impl ExplicitFacts {
         let lengths = [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades]
             .into_iter()
             .filter(|&suit| {
-                tokens
-                    .iter()
-                    .any(|t| matches!(t, Token::SuitLen(..)) && suit_len_pins(t, suit, ctx))
+                stated(&|t| matches!(t, Token::SuitLen(..)) && suit_len_pins(t, suit, ctx))
             })
             .collect();
         ExplicitFacts {
@@ -863,7 +873,7 @@ mod tests {
         ctx: &RowContext<'_>,
         meta: &SystemMeta,
     ) -> (Vec<Atom>, Vec<Provenance>) {
-        let (literals, provs) = resolve(tokens, ctx, meta);
+        let (literals, provs) = resolve(tokens, ctx, meta, &|_, pred| tokens.iter().any(pred));
         let atoms = literals
             .into_iter()
             .map(|l| match l {
