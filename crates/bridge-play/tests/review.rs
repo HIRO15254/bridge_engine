@@ -741,6 +741,16 @@ fn signal_positions_table() {
             &["H5", "H2", "HQ", "HA", "D2", "D3", "DA", "S2"],
             &[(Seat::West, "H5", "lead")],
         ),
+        (
+            // Only the first card to partner's lead of a suit is attitude: East holds Q83 under
+            // West's AK, encourages with the H8 and must follow with the H3, which is the rest of
+            // the holding, not a second (cancelling) signal.
+            "attitude only on the first card of the suit",
+            Strain::Spades,
+            &["HA", "H2", "H8", "H4", "HK", "H5", "H3", "H6"],
+            // (The HA lead carries no constraint under these agreements, so it logs no event.)
+            &[(Seat::East, "H8", "signal:attitude")],
+        ),
     ];
     for (what, strain, cards, expected) in rows {
         let h = history(*strain, Seat::West, cards);

@@ -142,9 +142,13 @@ pub fn interpret_play(
             let si = seat.index() as usize;
             let won_trick = trick.winner == Some(seat);
 
-            // Attitude: 3rd hand (this defender's partner led) follows with a spot, and does not
-            // win the trick.
+            // Attitude: 3rd hand (this defender's partner led) follows with a spot, does not win
+            // the trick, and has not played this suit before. Only the first card to partner's
+            // lead of a suit is a signal; later ones are the rest of the holding (e.g. the low
+            // card completing a high-low) and would otherwise cancel it. `suit_cards` is filled
+            // below, after this check, so it still holds only the seat's earlier cards.
             if leader_is_defender
+                && suit_cards[si][card.suit().index() as usize].is_empty()
                 && i == 2
                 && trick.winner.is_some()
                 && !won_trick
