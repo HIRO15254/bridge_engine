@@ -122,7 +122,7 @@ pub struct ConstraintProposal {
     /// - `U`, a bound on `m` over every hand (the largest, over the alternatives `i`, of the
     ///   total weight of the alternatives whose (shape, HCP) grid superset meets `i`'s; `max_i
     ///   w_i` for the policy mirror's disjoint pieces): above it rejection buys nothing;
-    /// - the largest `m` seen on [`RESIDUAL_PILOT_DRAWS`] pilot proposals (a fixed RNG stream, so
+    /// - the largest `m` seen on 128 pilot proposals (a fixed RNG stream, so
     ///   `T` is a deterministic function of the context): above it every pilot weight is already
     ///   flat;
     /// - the `T` at which the pilot's mean acceptance falls to
