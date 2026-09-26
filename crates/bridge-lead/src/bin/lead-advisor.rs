@@ -13,6 +13,10 @@
 //! [`bridge_sample::ConstraintProposal`] (the default) for [`bridge_sample::UniformProposal`].
 //! Both proposals still need a compiled system, because [`bridge_bidding::interpret`] and the
 //! bidding-likelihood importance weights read it regardless of which proposal draws the deals.
+//!
+//! Each PBN result is labelled `board N (game I, room R)`: match files hold both rooms' games under
+//! one board number. The exit status is non-zero when any query produced no advice (the other
+//! queries' advice is still printed).
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -21,7 +25,7 @@ use bridge::system::lexer::FsLoader;
 use bridge::system::{CompileOptions, NaturalInference};
 use bridge_bidding::Table;
 use bridge_core::{Auction, Call, Hand, Seat, Vulnerability};
-use bridge_format::pbn;
+use bridge_format::pbn::{self, TagValue};
 use bridge_lead::{LeadAdvice, LeadError, LeadOptions, LeadQuery};
 use bridge_sample::{ConstraintProposal, Proposal, UniformProposal};
 
@@ -135,7 +139,7 @@ fn queries_from_pbn(path: &str, board: Option<u16>) -> Result<Vec<Query>, String
     let (file, _warnings) = pbn::parse_lenient(&bytes);
     let mut queries = Vec::new();
     let mut previous = None;
-    for game in &file.games {
+    for (game_index, game) in file.games.iter().enumerate() {
         let view = game.view(previous.as_ref());
         let view = match view {
             Ok(v) => v,
@@ -155,10 +159,7 @@ fn queries_from_pbn(path: &str, board: Option<u16>) -> Result<Vec<Query>, String
                 if auction.is_complete() && !auction.is_passed_out() {
                     if let Some(deal) = partial.complete() {
                         queries.push(Query {
-                            label: view
-                                .board
-                                .map(|b| format!("board {b}"))
-                                .unwrap_or_else(|| "(no board number)".to_string()),
+                            label: game_label(view.board, game_index, room(game)),
                             auction: auction.clone(),
                             leader_hand: deal.hand(contract.leader()),
                         });
@@ -169,6 +170,30 @@ fn queries_from_pbn(path: &str, board: Option<u16>) -> Result<Vec<Query>, String
         previous = Some(view);
     }
     Ok(queries)
+}
+
+/// The game's `[Room]` tag (e.g. `Open`/`Closed`), when it has a literal value.
+fn room(game: &pbn::Game) -> Option<&str> {
+    match game.get("Room") {
+        Some(TagValue::Str(s) | TagValue::Default(s)) if !s.is_empty() => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+/// A result label that tells the two rooms of a match board apart: match PBN files hold the
+/// open- and closed-room games under the same board number, so the board number alone is
+/// ambiguous. The game index matches the corpus harness's labels (`tests/corpus_eval.rs`).
+fn game_label(board: Option<u16>, game_index: usize, room: Option<&str>) -> String {
+    let mut label = match board {
+        Some(b) => format!("board {b} (game {game_index}"),
+        None => format!("(no board number) (game {game_index}"),
+    };
+    if let Some(room) = room {
+        label.push_str(", room ");
+        label.push_str(room);
+    }
+    label.push(')');
+    label
 }
 
 fn query_from_args(args: &Args) -> Result<Query, String> {
@@ -250,6 +275,7 @@ fn run() -> Result<(), String> {
         );
     };
 
+    let mut failures = 0usize;
     for query in &queries {
         let lead_query = LeadQuery {
             auction: &query.auction,
@@ -260,9 +286,21 @@ fn run() -> Result<(), String> {
             Err(LeadError::PassedOut | LeadError::IncompleteAuction) => {
                 // Already filtered out for the PBN path; only reachable for `--hand`/`--auction`.
                 eprintln!("{}: auction has no opening lead", query.label);
+                failures += 1;
             }
-            Err(e) => eprintln!("{}: {e}", query.label),
+            Err(e) => {
+                eprintln!("{}: {e}", query.label);
+                failures += 1;
+            }
         }
+    }
+    // Any query without advice makes the whole run fail, so scripts can tell a partial or empty
+    // result from a complete one (the successful queries' advice is still printed above).
+    if failures > 0 {
+        return Err(format!(
+            "{failures} of {} queries produced no advice",
+            queries.len()
+        ));
     }
     Ok(())
 }
