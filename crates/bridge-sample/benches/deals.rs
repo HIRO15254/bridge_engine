@@ -10,7 +10,9 @@
 //! (`SampleContext::bidding`): a Stayman sequence to game, a competitive raise to game, and a
 //! four-seat competitive auction where every seat has made at least one call. These are the
 //! target's own "real auction" cases, closer to how the library is actually used than the
-//! synthetic ones.
+//! synthetic ones. They are interpreted as the mirror of `PolicyParams::system_players()`
+//! (`InterpretOptions::for_context`), and weighted with that policy's `AuctionPolicy`
+//! likelihood; each is also benched with residual rejection (`single_thread_residual`).
 
 use std::sync::Arc;
 
@@ -288,7 +290,7 @@ fn bid_ctx() -> BidContext<'static> {
         scoring: Scoring::Imp,
         natural: None,
         implicit_pass: ImplicitPass::Complement,
-        policy: PolicyParams::default(),
+        policy: PolicyParams::system_players(),
     }
 }
 
@@ -360,8 +362,9 @@ fn four_seat_competitive() -> Auction {
 /// likelihood (`SampleContext::bidding`), single-threaded and (with the `parallel` feature) on
 /// rayon's default pool.
 fn bench_sayc_auction(c: &mut Criterion, group_name: &str, table: &Table, auction: &Auction) {
-    let interp = interpret(table, auction, &InterpretOptions::default());
     let bctx = bid_ctx();
+    // The mirror of the likelihood's own policy (07-bidding.md §4.2).
+    let interp = interpret(table, auction, &InterpretOptions::for_context(&bctx));
     let bidding = BiddingLikelihood {
         table,
         auction,
@@ -375,6 +378,19 @@ fn bench_sayc_auction(c: &mut Criterion, group_name: &str, table: &Table, auctio
         "single_thread",
         Threads::Single,
         &proposal,
+        &interp,
+        Some(bidding),
+    );
+    // Residual rejection (09-sample.md §6.5): fewer produced deals per attempt, flatter weights.
+    let residual = ConstraintProposal {
+        residual_rejection: true,
+        ..ConstraintProposal::default()
+    };
+    bench_threads(
+        &mut group,
+        "single_thread_residual",
+        Threads::Single,
+        &residual,
         &interp,
         Some(bidding),
     );
