@@ -89,8 +89,10 @@ const MIN_ESS: f64 = 30.0;
 const TARGET_ACCEPTED: usize = 1000;
 /// Default uniform-draw cap per auction of the rejection sampler (`SAYC_REPRO_MAX_DRAWS`). A
 /// strict SAYC interpretation of a whole auction accepts about 1e-4 of uniform deals, so the
-/// phase-3 cap of 200,000 left 44 of the 100 generated auctions under 30 kept deals; a draw with
-/// its check costs about 50 ns, so 5e6 draws are a quarter of a second per auction and thread.
+/// phase-3 cap of 200,000 left 44 of the 100 generated auctions under 30 kept deals. A draw with
+/// its check costs about 125 ns on one thread (release, measured on one generated auction), so a
+/// capped auction takes about 0.6 s per thread; with 8 threads on a shared machine the per-draw
+/// cost rose to 200-400 ns, and part (i), where most auctions hit the cap, takes 12-25 s.
 const MAX_DRAWS: usize = 5_000_000;
 /// The legacy part's sampler: the phase-3 definition (1000 kept deals, at most 200,000 draws),
 /// fixed so that its numbers stay comparable across phases whatever the headline sampler is.
