@@ -442,3 +442,147 @@ N8. **Pattern rows that share a table with exact rows carry `{prio:1}`
     whatever its position in the file. A variable-suit bid (`5+#` in the
     suit named) is more specific than the neighbouring penalty double, so
     it is given a priority above it.
+
+## Lane sayc-comp (openings, responses, rebids, competition)
+
+Notes added while completing these five files against the replay-based consistency harness
+and its coverage report (`crates/bridge-bidding/tests/consistency.rs`). They are numbered
+`C1`, `C2`, ... so they cannot collide with notes other lanes append above.
+
+C1. **Opener's rebid tables are exhaustive after a forcing response (`rebids.bml`).** A new
+    suit by responder is forcing, and a two-over-one promises another bid, so opener may not
+    pass. The old tables stopped at 18 hcp (a 19--21 opener had no call and was passed by the
+    implicit pass) and left some 12-hcp and 16--18 hcp shapes uncovered. Every table after a
+    one-level new suit or a two-over-one now splits opener's 12--21 range into the booklet's
+    three bands (12--15 / 16--18 / 19--21) and ranks the calls in the booklet's order of
+    preference: support for responder's major, a one-level major of opener's own, a balanced
+    notrump rebid, a reverse, then a rebid of the opening suit or a non-reverse new suit. The
+    19--21 band jumps: to game in a fit or in a six-card major, a jump shift with a second
+    suit, or 3NT (the 19--21 hand with a long minor and no other call). A balanced 15--17
+    opens 1NT and a balanced 20--21 opens 2NT, so those two bands never reach these tables,
+    which is what makes the split exhaustive. After a two-over-one response, opener's 2NT is
+    the balanced minimum (12--14) and 3NT the balanced 18--19; the booklet gives no numbers for
+    these two, and this split follows from the 2/1's own 10+ (12--14 opposite 10+ is only
+    invitational, 18--19 opposite 10+ is game). The plain rebid of the opening suit
+    (`2H = 12--15 hcp` after 1!h-2!c, and so on) is the minimum "nothing else to show" call;
+    every 1-of-a-major opener has 5+ cards in it, so it needs no length of its own.
+    Also: the limit raise is 10--12 (was 10--11, which left 12-hcp hands with 3-card support
+    and no Jacoby 2NT with no call), the 3NT response to 1M ranks above the 2/1 new suits (it
+    was unreachable behind them), 2C over 1!s also covers the one 13+ shape with 3-card
+    spade support and no other call (3=4=3=3), and 1!s-2!c-2!h-3!s (game-forcing jump
+    preference) ranks above the fourth-suit 3!d that used to hide it.
+    Responder's second call after opener's 1NT rebid (1!x-1!y-1NT) now has a full table for
+    all six one-level auctions: a weak (0--10) rebid of a six-card suit or preference to
+    opener's suit, a 5-card new suit that is not a reverse (non-forcing, including the weak
+    5-4 1!m-1!s-1NT-2!h), 2NT or a three-level rebid/jump preference as an invitation
+    (11--12), game in a six-card major or a 3-card fit for opener's major (13+), a reverse or
+    jump shift as a game force, and 3NT with 13+ and nothing else. Before, most of these
+    positions had only two or four rows, so invitational and game-going hands passed 1NT
+    through the implicit pass.
+
+C2. **Every common competitive position has its own table, so a hand with nothing to say
+    passes instead of having no call (`competition.bml`; `harness_review.json` #0).** When
+    the auction reaches a position the system does not list, `choose_bid` resolves it by
+    substituting the opponents' unexpected call with a pass (`resolve_lenient`, "system
+    on") and offers that position's rows; but it synthesizes the implicit pass (the
+    complement of the listed rows) only at an *exact* system position, because `interpret`
+    only reads a pass as that complement there (`docs/design/07-bidding.md` §5.2 step 3).
+    So a hand that fits none of the substituted rows got `NoCandidate`, and the replay-based
+    harness passed for it (a gap). That was the single largest source of holes: responder
+    after 1!h-(1!s), after a weak jump overcall (1!d-(2!s), 1!c-(2!h)), after a two-level
+    overcall and after a three-level preempt, and after a 1NT overcall. Each of these now has
+    a table of its own (a cuebid limit raise or better, a single raise one card lighter than
+    without interference, a preemptive jump raise, notrump with a stopper, the negative
+    double through 2!s and a penalty double above it, natural forcing new suits at 11+),
+    written with pattern variables where one table serves several suits: `1m-(1Y)-` and
+    `1m-(2Y)-` (a minor opening, any higher overcall), `1M-(2m)-` (a major opening, a lower
+    minor overcall), `1S-(3Y)-`, `1H-(3m)-`, `1m-(3Y)-` and `1X-(1N)-`; the rest are written
+    out. The booklet's own numbers are used where it gives them (negative doubles through
+    2!s, the cuebid as a limit raise or better, a jump raise as preemptive); the notrump
+    ranges (1NT 7--10, 2NT 11--12, 3NT 13+ after an overcall; 3NT 12+ over a preempt;
+    3NT is uncapped, since a stronger hand with a stopper and no fit has no other call)
+    and the 10+ penalty double over a preempt are this file's interpolation.
+    Responses to a double of our opening gained the single raise (6--9, 3+ for a major) and
+    1NT (6--9); 2NT is now a limit raise or better *with four trumps* (it read `INV, 10+ hcp`
+    with no fit, which the equal-strength redouble always outranked, so it was never bid),
+    and the preemptive jump raise needs four trumps for a major and five or six for a minor
+    (it required a six-card suit before, which is a jump *shift*'s length, not a raise's).
+
+C3. **Advances, the sandwich seat, and a minimum takeout-double advance
+    (`competition.bml`; `harness_review.json` #4).** Advancing a one-level overcall had only
+    the cuebid row, so every other hand passed; it now has the raise (7--10, 3+ cards), the
+    preemptive jump raise, a new suit, and notrump with a stopper, and the cuebid is the
+    limit raise or better with a fit. After the cuebid (forcing) the overcaller has a call
+    with every hand: 2NT with 13+ and a stopper, a jump in the suit with 13+ otherwise, and
+    the minimum rebid of the suit. When both opponents have bid and partner has passed (the
+    "sandwich" seat), the position used to be read against the balancing table as if
+    responder had passed, leaving most hands without a call; it now has a takeout double of
+    the two unbid suits (12+, at most three cards in either of theirs), a natural overcall
+    and 1NT. These tables name the overcall's suit with whichever variable sits between
+    (or below, or above) the two suits the opponents bid -- `Y` only binds above `X` and `Z`
+    above `Y`, so "a suit between their two suits" is `Y` in `(1X)-P-(1Z)-` and "a suit below
+    both" is `X` in `(1Y)-P-(1Z)-`. When advancing a takeout double, a weak (0--8) hand with no
+    four-card unbid suit now bids the cheapest unbid suit where it holds three cards (the
+    second branch of each minimum-advance row) instead of passing, which converted the
+    double for penalties holding four small trumps; a pass is left only for a hand with
+    length in opener's suit and no three-card unbid suit. The booklet gives no numbers for
+    these advances; the ranges are this file's interpolation from the direct-seat ones.
+    The opponents' 1NT opening is defended naturally (penalty double 15+, natural
+    two-level overcalls with a five-card suit), which the booklet implies by describing no
+    conventional defense.
+
+C4. **Interference this file does not model reverts to natural bidding, through `(any)`
+    wildcard positions with no rows (`competition.bml`).** For every table whose next call
+    belongs to the opponents (the uncontested responses and rebids, the advances, the
+    overcaller's rebid), an opponent's bid or double at that point was read "as if they had
+    passed" (`resolve_lenient`), against the uncontested table. That table's rows were then
+    partly illegal and partly inappropriate, most hands fit none of them, and there is no
+    implicit pass at a lenient match, so `choose_bid` returned `NoCandidate`; each table added
+    for the uncontested auction made this worse. The booklet's own rule is that
+    interference cancels the partnership's agreements and bids become natural, so the end
+    of `competition.bml` lists these positions as history lines ending in `(any)` (the
+    `OppClass::AnyCall` wildcard, an extension token) with no rows under them. The trie
+    follows the exact edge (the pass that the table after it describes) when there is one
+    and the wildcard otherwise; a position with no rows is off-system, so the next call is
+    chosen by natural inference, exactly as `interpret` reads it. On the 10^6-position
+    harness this took `NoCandidate` from 22,583 to 7,619 in one step.
+
+C5. **Positions where natural inference had nothing to offer are written out.** At a
+    position with no table, the next call is chosen by natural inference; its pass rule
+    covers only a weak hand, so a hand of middling strength with no natural call had no
+    candidate at all (`NoCandidate`), the most frequent kind of hole left after C4. The
+    commonest such positions in these files now have tables of their own, so their implicit
+    pass is the complement of the rows and every hand has a call:
+    advancing a natural two-level overcall of the opponents' 1NT (a raise with 8--11 and a
+    fit, game with 12+, a six-card signoff, a raise or a penalty double if opener's partner
+    competes). Two response holes over a minor opening are closed as well: the invitational
+    3=3=3=4 hand over 1!c raises to 3!c with four clubs (the booklet's "one fewer in a
+    pinch"), and a hand above 3NT's 16--18 with no four-card major bids 3NT instead of passing
+    (the booklet has no forcing minor raise to start with instead). All ranges here are this
+    file's interpolation; the booklet gives none.
+    Opener's rebid after responder's forcing new suit over an overcall had no table either:
+    after a one-level response it is the uncontested rebid table for the same two suits,
+    shared through `#COPY`/`#PASTE` (the overcall only removes calls those tables never
+    used), and after a two-level response (11+, five cards) a small table pasted per auction:
+    a raise, 2NT 12--14 or 3NT 18--21 with a stopper, and otherwise the cheapest rebid of the
+    opening suit. Each new table's position also gets an `(any)` line (C4), since otherwise
+    a further bid by the opponents would be read against the new table as if they had passed.
+
+C6. **More positions natural inference could not answer (`competition.bml`, `rebids.bml`).**
+    Continuing C5 down the frequency-ranked `NoCandidate` list: opener after responder's
+    game-forcing fourth suit (1!s-2!c-2!h-3!d: a second five-card suit, 3NT with a diamond
+    stopper, three-card club support, else 3!s) and jump preference (1!s-2!c-2!h-3!s: game
+    with 12--15, a 4!c slam try with more); advancer after opener's partner bids over the
+    overcall (a raise with a fit, at the three level when the cheap raise is gone, a
+    preemptive jump with four trumps, the cuebid with 11+ below the overcall's suit, a
+    penalty double of 2NT); advancer after a 1NT overcall is taken out (3NT with 10+, a
+    penalty double with 8--9); a raise after a negative double of a two-level overcall;
+    advancer's choice of major after a minor-suit Michaels cuebid (game 13+, a jump with
+    11--12, spades with three or more and a doubleton heart or four spades and three hearts,
+    hearts otherwise, 3NT with 13+ and no major fit); and a raise of a sandwich-seat
+    overcall when the opponents bid again. As before, the ranges are interpolations: the
+    booklet describes none of these auctions.
+    Also: a natural two-level new suit when advancing a one-level overcall (10+, five
+    cards, not three-card support), opener after the fourth suit in 1!h-1!s-2!c-2!d, and
+    responder after a 3!c preempt over 1!d (the `1m-(3Y)-` table only binds suits above the
+    opening, so this one is written out).

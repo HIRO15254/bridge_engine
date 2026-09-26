@@ -6,7 +6,7 @@ a 2/1 new suit shows 10+ points and (ordinarily) 4+ cards, except that a respons
 of 2!h over 1!s specifically needs a fifth heart (the booklet's own annotation);
 a single raise is 6--10 dummy points with 3+ trumps; 2NT is the Jacoby 2NT
 game-forcing raise (13+ points, 4+ trumps); jump shifts show a new suit without
-support and invite a slam (17+ points); a limit raise is 10--11 with 3+ trumps;
+support and invite a slam (17+ points); a limit raise is 10--12 with 3+ trumps;
 3NT shows a balanced 15--17 with only two-card support; the direct raise to game
 shows 0--9 points with 5+ trumps and shortness elsewhere (a "shutout" raise).
 
@@ -27,13 +27,13 @@ letting a 6--9 hcp hand with trump support raise instead of bidding notrump.
 2S = {prio:4} F, 17+ hcp, 5+!s, not 3+!h
 3C = {prio:4} F, 17+ hcp, 5+!c, not 3+!h
 3D = {prio:4} F, 17+ hcp, 5+!d, not 3+!h
-3H = {prio:3} 10--11 hcp, 3+!h
+3H = {prio:3} 10--12 hcp, 3+!h
 2C = {prio:2} F, 10+ hcp, 4+!c
 2D = {prio:2} F, 10+ hcp, 4+!d
 1S = {prio:1} F, 6+ hcp, 4+!s
 1N = NF, 6--9 hcp, not 3+!h
 2H = 6--10 hcp, 3+!h
-3N = 15--17 hcp, bal, 2=!h
+3N = {prio:3} 15--17 hcp, bal, 2=!h
 4H = 0--9 hcp, 5+!h, 0--1!c or 0--1!d or 0--1!s
 
 ** After 1!s
@@ -43,11 +43,11 @@ letting a 6--9 hcp hand with trump support raise instead of bidding notrump.
 3C = {prio:4} F, 17+ hcp, 5+!c, not 3+!s
 3D = {prio:4} F, 17+ hcp, 5+!d, not 3+!s
 3H = {prio:4} F, 17+ hcp, 5+!h, not 3+!s
-3S = {prio:3} 10--11 hcp, 3+!s
-2C = {prio:2} F, 10+ hcp, 4+!c
+3S = {prio:3} 10--12 hcp, 3+!s
+2C = {prio:2} F, 4+!c and 10+ hcp or 3=!c and 13+ hcp
 2D = {prio:2} F, 10+ hcp, 4+!d
 2H = {prio:2} F, 10+ hcp, 5+!h
 1N = NF, 6--9 hcp, not 3+!s
 2S = 6--10 hcp, 3+!s
-3N = 15--17 hcp, bal, 2=!s
+3N = {prio:3} 15--17 hcp, bal, 2=!s
 4S = 0--9 hcp, 5+!s, 0--1!c or 0--1!d or 0--1!h
