@@ -345,22 +345,50 @@ impl PairMap {
         with_x: bool,
     ) -> PairSlot {
         let width = if with_x { PAIR_X_MAX as usize + 1 } else { 1 };
+        if self.slots.is_empty() {
+            // A term over many shapes builds dozens of pairs; reserve room for a typical map up
+            // front instead of growing (and copying) the flat vectors pair by pair.
+            self.prefix_data.reserve(PAIR_HEIGHT * width * 32);
+            self.p_data.reserve(PAIR_HEIGHT * 32);
+        }
         let prefix_start = self.prefix_data.len();
         self.prefix_data
             .resize(prefix_start + PAIR_HEIGHT * width, 0);
         let acc = &mut self.prefix_data[prefix_start..];
-        for &(key_a, n_a) in &a.counts[len_a as usize].0 {
-            let (ha, xa) = unpack_key(key_a);
-            for &(key_b, n_b) in &b.counts[len_b as usize].0 {
-                let (hb, xb) = unpack_key(key_b);
-                let h = ha as usize + hb as usize;
-                let x = xa as usize + xb as usize;
-                if h >= PAIR_HEIGHT || x >= width {
-                    // Both suits together cannot exceed the generous PAIR_HCP_MAX/PAIR_X_MAX
-                    // bounds in practice; skip defensively rather than panic.
+        if with_x {
+            for &(key_a, n_a) in &a.counts[len_a as usize].0 {
+                let (ha, xa) = unpack_key(key_a);
+                for &(key_b, n_b) in &b.counts[len_b as usize].0 {
+                    let (hb, xb) = unpack_key(key_b);
+                    let h = ha as usize + hb as usize;
+                    let x = xa as usize + xb as usize;
+                    if h >= PAIR_HEIGHT || x >= width {
+                        // Both suits together cannot exceed the generous PAIR_HCP_MAX/PAIR_X_MAX
+                        // bounds in practice; skip defensively rather than panic.
+                        continue;
+                    }
+                    acc[h * width + x] += n_a * n_b;
+                }
+            }
+        } else {
+            // No additive feature: every key is a bare HCP (`x = 0`, at most `SUIT_HCP_MAX`), so
+            // convolve two dense `[u64; 11]` rows instead of walking the sparse lists pairwise.
+            let dense = |counts: &SparseVec| {
+                let mut row = [0u64; SUIT_HCP_MAX + 1];
+                for &(key, n) in &counts.0 {
+                    row[usize::from(key)] = n;
+                }
+                row
+            };
+            let da = dense(&a.counts[len_a as usize]);
+            let db = dense(&b.counts[len_b as usize]);
+            for (i, &n_a) in da.iter().enumerate() {
+                if n_a == 0 {
                     continue;
                 }
-                acc[h * width + x] += n_a * n_b;
+                for (j, &n_b) in db.iter().enumerate() {
+                    acc[i + j] += n_a * n_b;
+                }
             }
         }
 
