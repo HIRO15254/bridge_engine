@@ -491,3 +491,94 @@ fn implicit_pass_bidirectional() {
             .any(|(c, w, ex)| ex.kind != ResolutionKind::Fallback && *w > 0.0 && c.satisfies(hand))
     );
 }
+
+/// `rank_order_shared` (07-bidding.md §8): over 10^4 SAYC positions, `choose_bid`'s
+/// `alternatives` follow the one rank comparator (`rank_cmp_keys`), and their system members
+/// appear in the order of the exclusive index's sibling group (the order `interpret`'s mirror
+/// and `call_distribution` use), whenever the position resolves exactly.
+#[test]
+fn rank_order_shared() {
+    use bridge_system::exclusive::{RankKey, rank_cmp_keys};
+    use bridge_system::{LookupKey, RelVul};
+
+    let table = compile_sayc("sayc.bml");
+    let ctx = BidContext {
+        scoring: Scoring::Imp,
+        natural: Some(table.natural.as_ref()),
+        implicit_pass: ImplicitPass::Complement,
+        policy: PolicyParams::system_players(),
+    };
+    let n: u64 = std::env::var("RANK_ORDER_N")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10_000);
+    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0x5A1C_7001);
+    let (mut checked, mut grouped) = (0u64, 0u64);
+    while checked < n {
+        let (deal, auction) = random_sayc_position(&mut rng, &table, &ctx);
+        if auction.is_complete() {
+            continue;
+        }
+        let seat = auction.next_seat();
+        let BidChoice::Chosen(chosen) = choose_bid(&table, deal.hand(seat), &auction, &ctx) else {
+            continue;
+        };
+        checked += 1;
+        let system = &table.systems[seat.index() as usize];
+        let key = |a: &bridge_bidding::Alternative| RankKey {
+            call: a.call,
+            priority: a.priority,
+            node: a.node,
+        };
+        for w in chosen.alternatives.windows(2) {
+            assert_ne!(
+                rank_cmp_keys(system, &key(&w[0]), &key(&w[1])),
+                std::cmp::Ordering::Greater,
+                "alternatives out of rank order at {auction}"
+            );
+        }
+        let vulnerability = auction.vulnerability();
+        let vul = RelVul {
+            we: vulnerability.is_vulnerable(seat),
+            they: vulnerability.is_vulnerable(seat.next()),
+        };
+        let lk = match LookupKey::for_auction(&auction, seat) {
+            Some(k) => k,
+            None => LookupKey {
+                we_opened: true,
+                calls: &[],
+                opener_pos: auction.position_of(seat),
+                vul,
+            },
+        };
+        let lookup = system.index.resolve(&lk);
+        if lookup.matched_depth != lk.calls.len() {
+            continue;
+        }
+        let Some(group) = system
+            .exclusive()
+            .group_for(lookup.end, lk.opener_pos, lk.vul)
+        else {
+            continue;
+        };
+        let ranks: Vec<usize> = chosen
+            .alternatives
+            .iter()
+            .filter_map(|a| a.node.map(|n| (a.call, n)))
+            .map(|m| {
+                group
+                    .members
+                    .iter()
+                    .position(|&x| x == m)
+                    .unwrap_or_else(|| panic!("{m:?} is not a group member at {auction}"))
+            })
+            .collect();
+        assert!(
+            ranks.windows(2).all(|w| w[0] < w[1]),
+            "choose_bid order {ranks:?} differs from the index group order at {auction}"
+        );
+        grouped += 1;
+    }
+    eprintln!("rank_order_shared: {checked} positions, {grouped} compared with the index group");
+    assert!(grouped > n / 4, "only {grouped} positions resolved exactly");
+}
