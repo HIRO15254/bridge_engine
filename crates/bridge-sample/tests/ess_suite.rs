@@ -7,8 +7,9 @@
 //! The 50 auctions:
 //!
 //! - 25 generated: random deals (fixed seeds, dealer rotating N/E/S/W, no one vulnerable) bid
-//!   out with `bridge_bidding::replay` using SAYC at all four seats, until the auction ends.
-//!   Passed-out deals are skipped (there is no auction to learn from).
+//!   out with `bridge_bidding::replay` using SAYC at all four seats (with the same natural
+//!   fallback the likelihood's policy uses), until the auction ends. Passed-out deals and
+//!   slam-level runaway escalations are skipped (see `generated_cases`).
 //! - 25 corpus: complete auctions from the PBN tournament records under `BRIDGE_CORPUS_DIR`
 //!   (default `<workspace>/corpus/data`), parsed with `bridge-format`, 25 picked at evenly spaced
 //!   positions in file order. These were bid by humans with their own systems, so they are
@@ -19,6 +20,14 @@
 //! Known cards: the opening leader's hand (declarer's left-hand opponent), as in the lead
 //! problem this sampler serves (phase 6, `14-lead.md`); the other three hands are sampled.
 //! Setting `ESS_SUITE_KNOWN=none` samples all four hands instead (reported, not the criterion).
+//!
+//! Besides ESS, the report says *why* the weights spread: for every non-viewer call and every
+//! `ConstraintProposal` deal, whether the likelihood's own policy (`call_distribution`) makes
+//! that call with the proposed hand (`p ≥ 0.9`), shares it (`0.01 ≤ p < 0.9`), or rejects it
+//! (`p < 0.01`) although the hand is inside the call's own interpretation (`off_inside_node`:
+//! the interpretation disagrees with the policy) or because the hand is outside it
+//! (`off_outside_node`: the proposal drew it from a `Fallback` branch, a coarse summary or the
+//! residual seat); and how many calls the deal's own hands make off-policy (09-sample.md §10.2).
 //!
 //! `ESS_SUITE_CASES=a..b` runs only case indices `a..b` (0-24 generated, 25-49 corpus) so the
 //! suite can be split into shorter runs; the criterion is only asserted when all cases ran.
@@ -217,6 +226,39 @@ fn corpus_cases(dir: &Path) -> Vec<Case> {
     all.into_iter().step_by(step).take(CORPUS).collect()
 }
 
+/// How the policy (`call_distribution`, the likelihood's own per-call factor) scores one
+/// non-viewer call on one proposed hand.
+#[derive(Clone, Copy)]
+enum Verdict {
+    /// `p ≥ 0.9`: the policy makes this call.
+    On,
+    /// `0.01 ≤ p < 0.9`: the call shares the policy's mass with others (equal-priority ties,
+    /// several natural candidates).
+    Shared,
+    /// `p < 0.01` although the hand satisfies one of the call's own non-`Fallback`
+    /// interpretation alternatives: the interpretation admits hands the policy bids differently.
+    OffInsideNode,
+    /// `p < 0.01` and the hand satisfies none of them: it came from a `Fallback` branch, a
+    /// coarse (§6.4 (c)) summary, or the residual last seat.
+    OffOutsideNode,
+}
+
+/// `[On, Shared, OffInsideNode, OffOutsideNode]` counts, per call resolution kind
+/// `[Exact, Partial, Natural, Fallback]`.
+type Breakdown = [[u64; 4]; 4];
+
+fn kind_index(kind: bridge_bidding::ResolutionKind) -> usize {
+    match kind {
+        bridge_bidding::ResolutionKind::Exact => 0,
+        bridge_bidding::ResolutionKind::Partial { .. } => 1,
+        bridge_bidding::ResolutionKind::Natural => 2,
+        bridge_bidding::ResolutionKind::Fallback => 3,
+    }
+}
+
+const KIND_NAMES: [&str; 4] = ["exact", "partial", "natural", "fallback"];
+const VERDICT_NAMES: [&str; 4] = ["on", "shared", "off_inside_node", "off_outside_node"];
+
 struct Row {
     label: String,
     source: &'static str,
@@ -226,6 +268,13 @@ struct Row {
     constraint_ess_ratio: f64,
     constraint_produced: usize,
     constraint_acceptance: f64,
+    /// Share of `ConstraintProposal`'s deals on which every non-viewer call has `p ≥ 0.01`.
+    constraint_all_on_policy: f64,
+    breakdown: Breakdown,
+    /// Calls (of any seat) the deal's own hands make with `p < 0.01`: an auction the policy
+    /// itself would (almost) never bid with the actual cards.
+    true_deal_off_policy_calls: usize,
+    calls: usize,
 }
 
 fn run_case(table: &Table, case: &Case, known_none: bool) -> Row {
@@ -262,10 +311,70 @@ fn run_case(table: &Table, case: &Case, known_none: bool) -> Row {
     let run = |proposal: &dyn Proposal| {
         sample_deals(&ctx, proposal, N, &opts)
             .unwrap_or_else(|e| panic!("{}: sampling failed: {e}", case.label))
-            .1
     };
-    let uniform = run(&UniformProposal);
-    let constraint = run(&ConstraintProposal::default());
+    let (_, uniform) = run(&UniformProposal);
+    let (deals, constraint) = run(&ConstraintProposal::default());
+
+    // The likelihood's own policy, per call, exactly as `sequence_log_likelihood` evaluates it.
+    let policy_ctx = BidContext {
+        natural: Some(table.natural.as_ref()),
+        ..bctx
+    };
+    let mut prefixes = Vec::with_capacity(case.auction.calls().len());
+    let mut prefix = Auction::new(case.auction.dealer(), case.auction.vulnerability());
+    for &call in case.auction.calls() {
+        prefixes.push(prefix.clone());
+        prefix.push(call).expect("legal auction");
+    }
+    let p_call = |j: usize, hand: Hand| -> f32 {
+        let seat = case.auction.seat_at(j);
+        let call = case.auction.calls()[j];
+        bridge_bidding::call_distribution(
+            &table.systems[seat.index() as usize],
+            hand,
+            &prefixes[j],
+            &policy_ctx,
+        )
+        .iter()
+        .find(|(c, _)| *c == call)
+        .map_or(0.0, |(_, p)| *p)
+    };
+
+    let true_deal_off_policy_calls = (0..case.auction.calls().len())
+        .filter(|&j| p_call(j, case.deal.hand(case.auction.seat_at(j))) < 0.01)
+        .count();
+
+    let mut breakdown: Breakdown = [[0; 4]; 4];
+    let mut all_on = 0usize;
+    for weighted in &deals {
+        let mut on = true;
+        for per_call in &interp.per_call {
+            if Some(per_call.seat) == viewer {
+                continue;
+            }
+            let hand = weighted.deal.hand(per_call.seat);
+            let p = p_call(per_call.call_index, hand);
+            let verdict = if p >= 0.9 {
+                Verdict::On
+            } else if p >= 0.01 {
+                Verdict::Shared
+            } else if per_call.alternatives.iter().any(|(c, w, e)| {
+                *w > 0.0 && e.kind != bridge_bidding::ResolutionKind::Fallback && c.satisfies(hand)
+            }) {
+                Verdict::OffInsideNode
+            } else {
+                Verdict::OffOutsideNode
+            };
+            if matches!(verdict, Verdict::OffInsideNode | Verdict::OffOutsideNode) {
+                on = false;
+            }
+            breakdown[kind_index(per_call.kind)][verdict as usize] += 1;
+        }
+        if on {
+            all_on += 1;
+        }
+    }
+
     Row {
         label: case.label.clone(),
         source: case.source,
@@ -275,7 +384,33 @@ fn run_case(table: &Table, case: &Case, known_none: bool) -> Row {
         constraint_ess_ratio: constraint.ess_ratio,
         constraint_produced: constraint.produced,
         constraint_acceptance: constraint.acceptance_rate,
+        constraint_all_on_policy: if deals.is_empty() {
+            0.0
+        } else {
+            all_on as f64 / deals.len() as f64
+        },
+        breakdown,
+        true_deal_off_policy_calls,
+        calls: case.auction.calls().len(),
     }
+}
+
+fn breakdown_json(b: &Breakdown) -> String {
+    let mut out = String::from("{");
+    for (k, kind) in KIND_NAMES.iter().enumerate() {
+        let _ = write!(out, "{}\"{kind}\": {{", if k > 0 { ", " } else { "" });
+        for (v, verdict) in VERDICT_NAMES.iter().enumerate() {
+            let _ = write!(
+                out,
+                "{}\"{verdict}\": {}",
+                if v > 0 { ", " } else { "" },
+                b[k][v]
+            );
+        }
+        out.push('}');
+    }
+    out.push('}');
+    out
 }
 
 fn median(xs: &[f64]) -> f64 {
@@ -364,13 +499,17 @@ fn uniform_vs_constraint_ess_suite() {
         }
         let row = run_case(&table, case, known_none);
         println!(
-            "{idx:>2} {:<9} {:<22} uniform {:>7.4} constraint {:>7.4} (produced {}, acc {:.3})  {}",
+            "{idx:>2} {:<9} {:<20} uniform {:>6.4} constraint {:>6.4} (produced {}, acc {:.3}, \
+             all-on-policy {:.3}, true-deal off-policy calls {}/{})  {}",
             row.source,
             row.label,
             row.uniform_ess_ratio,
             row.constraint_ess_ratio,
             row.constraint_produced,
             row.constraint_acceptance,
+            row.constraint_all_on_policy,
+            row.true_deal_off_policy_calls,
+            row.calls,
             row.auction
         );
         rows.push(row);
@@ -427,6 +566,22 @@ fn uniform_vs_constraint_ess_suite() {
         "  \"median_constraint_ess_ratio_corpus\": {},",
         json_f64(median_corpus)
     );
+    for source in ["generated", "corpus"] {
+        let mut total: Breakdown = [[0; 4]; 4];
+        for r in rows.iter().filter(|r| r.source == source) {
+            for (total_row, row) in total.iter_mut().zip(&r.breakdown) {
+                for (t, x) in total_row.iter_mut().zip(row) {
+                    *t += x;
+                }
+            }
+        }
+        let _ = writeln!(
+            json,
+            "  \"policy_breakdown_{source}\": {},",
+            breakdown_json(&total)
+        );
+        println!("policy breakdown ({source}): {}", breakdown_json(&total));
+    }
     json.push_str("  \"auctions\": [\n");
     for (i, r) in rows.iter().enumerate() {
         let viewer = r
@@ -436,7 +591,9 @@ fn uniform_vs_constraint_ess_suite() {
             json,
             "    {{\"label\": {}, \"source\": {}, \"auction\": {}, \"viewer\": {viewer}, \
              \"uniform_ess_ratio\": {}, \"constraint_ess_ratio\": {}, \
-             \"constraint_produced\": {}, \"constraint_acceptance_rate\": {}}}",
+             \"constraint_produced\": {}, \"constraint_acceptance_rate\": {}, \
+             \"constraint_all_on_policy\": {}, \"true_deal_off_policy_calls\": {}, \
+             \"calls\": {}, \"policy_breakdown\": {}}}",
             json_str(&r.label),
             json_str(r.source),
             json_str(&r.auction),
@@ -444,6 +601,10 @@ fn uniform_vs_constraint_ess_suite() {
             json_f64(r.constraint_ess_ratio),
             r.constraint_produced,
             json_f64(r.constraint_acceptance),
+            json_f64(r.constraint_all_on_policy),
+            r.true_deal_off_policy_calls,
+            r.calls,
+            breakdown_json(&r.breakdown),
         );
         json.push_str(if i + 1 < rows.len() { ",\n" } else { "\n" });
     }
