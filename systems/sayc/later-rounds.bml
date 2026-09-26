@@ -282,14 +282,8 @@ six-card major at game, and otherwise 3NT.
 1C-1D-2H-
 #PASTE after-strong-new-suit
 
-1C-1D-3H-
-#PASTE after-strong-new-suit-3
-
 1C-1D-2S-
 #PASTE after-strong-new-suit
-
-1C-1D-3S-
-#PASTE after-strong-new-suit-3
 
 1C-1D-2N-
 #PASTE after-2n-rebid
@@ -299,9 +293,6 @@ six-card major at game, and otherwise 3NT.
 
 1C-1H-2S-
 #PASTE after-strong-new-suit
-
-1C-1H-3S-
-#PASTE after-strong-new-suit-3
 
 1C-1H-2N-
 #PASTE after-2n-rebid
@@ -331,9 +322,6 @@ six-card major at game, and otherwise 3NT.
 
 1D-1H-2S-
 #PASTE after-strong-new-suit
-
-1D-1H-3S-
-#PASTE after-strong-new-suit-3
 
 1D-1H-2N-
 #PASTE after-2n-rebid
@@ -608,13 +596,7 @@ places it: game in opener's major with three-card support, otherwise 3NT
 1H-2C-3C-
 #PASTE after-2over1-gf-major \M=H \m=h
 
-1H-2C-3D-
-#PASTE after-2over1-gf-major \M=H \m=h
-
 1H-2C-3H-
-#PASTE after-2over1-gf-major \M=H \m=h
-
-1H-2C-3S-
 #PASTE after-2over1-gf-major \M=H \m=h
 
 1H-2D-2H-
@@ -635,9 +617,6 @@ places it: game in opener's major with three-card support, otherwise 3NT
 1H-2D-3H-
 #PASTE after-2over1-gf-major \M=H \m=h
 
-1H-2D-3S-
-#PASTE after-2over1-gf-major \M=H \m=h
-
 1S-2C-2D-
 #PASTE after-2over1-gf-major \M=S \m=s
 
@@ -648,12 +627,6 @@ places it: game in opener's major with three-card support, otherwise 3NT
 #PASTE after-2over1-2n-major \M=S \m=s
 
 1S-2C-3C-
-#PASTE after-2over1-gf-major \M=S \m=s
-
-1S-2C-3D-
-#PASTE after-2over1-gf-major \M=S \m=s
-
-1S-2C-3H-
 #PASTE after-2over1-gf-major \M=S \m=s
 
 1S-2C-3S-
@@ -672,9 +645,6 @@ places it: game in opener's major with three-card support, otherwise 3NT
 #PASTE after-2over1-gf-major \M=S \m=s
 
 1S-2D-3D-
-#PASTE after-2over1-gf-major \M=S \m=s
-
-1S-2D-3H-
 #PASTE after-2over1-gf-major \M=S \m=s
 
 1S-2D-3S-
@@ -720,14 +690,6 @@ places it: game in opener's major with three-card support, otherwise 3NT
 3N = {prio:1} any hand
   #PASTE after-chain
 
-1D-2C-3H-
-3N = {prio:1} any hand
-  #PASTE after-chain
-
-1D-2C-3S-
-3N = {prio:1} any hand
-  #PASTE after-chain
-
 ** After a single raise or a 1NT response
 
 After 1M-2M opener's invitation (three of the major, 16--18) is accepted with
@@ -764,27 +726,15 @@ lower-ranking second suit with three-card support, and bids game opposite the
   #PASTE after-chain
 #PASTE pass-chain
 
-1C-1N-3D-
-3N = {prio:1} any hand
-  #PASTE after-chain
-
 1C-1N-2H-
 3N = {prio:1} 8+ hcp
   #PASTE after-chain
 #PASTE pass-chain
 
-1C-1N-3H-
-3N = {prio:1} any hand
-  #PASTE after-chain
-
 1C-1N-2S-
 3N = {prio:1} 8+ hcp
   #PASTE after-chain
 #PASTE pass-chain
-
-1C-1N-3S-
-3N = {prio:1} any hand
-  #PASTE after-chain
 
 1D-1N-2D-
 #PASTE after-chain
@@ -804,27 +754,15 @@ lower-ranking second suit with three-card support, and bids game opposite the
   #PASTE after-chain
 #PASTE pass-chain
 
-1D-1N-3C-
-3N = {prio:1} any hand
-  #PASTE after-chain
-
 1D-1N-2H-
 3N = {prio:1} 8+ hcp
   #PASTE after-chain
 #PASTE pass-chain
 
-1D-1N-3H-
-3N = {prio:1} any hand
-  #PASTE after-chain
-
 1D-1N-2S-
 3N = {prio:1} 8+ hcp
   #PASTE after-chain
 #PASTE pass-chain
-
-1D-1N-3S-
-3N = {prio:1} any hand
-  #PASTE after-chain
 
 1H-1N-2H-
 #PASTE after-chain
@@ -861,10 +799,6 @@ lower-ranking second suit with three-card support, and bids game opposite the
 3N = {prio:1} 8+ hcp
   #PASTE after-chain
 #PASTE pass-chain
-
-1H-1N-3S-
-3N = {prio:1} any hand
-  #PASTE after-chain
 
 1S-1N-2S-
 #PASTE after-chain

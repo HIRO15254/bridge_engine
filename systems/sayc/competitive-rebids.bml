@@ -64,7 +64,6 @@ opposite 1NT with 13+ and invites with 2NT; and otherwise passes.
   (P)
     3N = {prio:1} any hand
       #PASTE after-chain
-    #PASTE pass-chain
   (any)
     #PASTE pass-chain
 #ENDCUT

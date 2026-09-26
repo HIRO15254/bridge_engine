@@ -142,7 +142,10 @@ pub fn run(args: &[&str]) -> Result<std::process::ExitCode> {
         policy: PolicyParams::system_players(),
     };
 
-    let lints_json = lint_report(&lints);
+    let lints_json = lint_report(&ir, &lints);
+    if let Ok(show) = std::env::var("COVERAGE_SHOW") {
+        show_group(&ir, &show);
+    }
     eprintln!("coverage: compiled sayc.bml in {compile_ms:.0} ms; lints {lints_json}");
     let exclusive_json = exclusive_report(&ir);
 
@@ -212,7 +215,7 @@ pub fn run(args: &[&str]) -> Result<std::process::ExitCode> {
 // Lints and the exclusive index.
 // ------------------------------------------------------------------------------------------
 
-fn lint_report(lints: &[bridge_system::Lint]) -> Value {
+fn lint_report(ir: &SystemIR, lints: &[bridge_system::Lint]) -> Value {
     let mut by_code: BTreeMap<String, u64> = BTreeMap::new();
     let (mut error, mut warning, mut info) = (0u64, 0u64, 0u64);
     // Authoring aid: `COVERAGE_PRINT_LINTS=<code substring>` prints the matching lints.
@@ -221,7 +224,11 @@ fn lint_report(lints: &[bridge_system::Lint]) -> Value {
         if let Some(filter) = &print {
             let code = format!("{:?}/{:?}", l.severity, l.code);
             if code.contains(filter.as_str()) {
-                eprintln!("lint {code} {:?}: {}", l.span, l.message);
+                let path = l.node.map(|n| {
+                    let node = ir.node(n);
+                    format!("{:?} {:?}", node.side, node.calls)
+                });
+                eprintln!("lint {code} {:?} {path:?}: {}", l.span, l.message);
             }
         }
         match l.severity {
@@ -238,11 +245,24 @@ fn lint_report(lints: &[bridge_system::Lint]) -> Value {
         .filter(|(k, _)| k.contains("ShadowedBranch"))
         .map(|(_, v)| *v)
         .sum();
+    // Split by the side whose call the shadowed node is: our own calls are what `choose_bid`
+    // picks; the opponents' calls are trie edges only (their nodes carry no requirement, so
+    // every opponents' call ranked below another one at the same position reads as shadowed).
+    let shadowed_us = lints
+        .iter()
+        .filter(|l| format!("{:?}", l.code).contains("ShadowedBranch"))
+        .filter(|l| {
+            l.node
+                .is_some_and(|n| ir.node(n).side == bridge_system::Side::Us)
+        })
+        .count();
     json!({
         "error": error,
         "warning": warning,
         "info": info,
         "shadowed_branch": shadowed,
+        "shadowed_branch_us": shadowed_us,
+        "shadowed_branch_them": shadowed - shadowed_us as u64,
         "by_code": by_code,
     })
 }
@@ -317,6 +337,56 @@ fn rel_vul(auction: &Auction, seat: Seat) -> RelVul {
     RelVul {
         we: v.is_vulnerable(seat),
         they: v.is_vulnerable(seat.next()),
+    }
+}
+
+/// Authoring aid (`COVERAGE_SHOW="1D 1H P P"`, calls from the dealer, North dealing, none
+/// vulnerable): prints the sibling group the next seat chooses from, best rank first, with
+/// each member's priority, source line and whether the exclusive index shadows it.
+fn show_group(ir: &SystemIR, calls: &str) {
+    let mut auction = Auction::new(Seat::North, Vulnerability::None);
+    for token in calls.split_whitespace() {
+        match token.parse::<Call>() {
+            Ok(call) => {
+                if auction.push(call).is_err() {
+                    eprintln!("show: illegal call {token}");
+                    return;
+                }
+            }
+            Err(_) => {
+                eprintln!("show: cannot parse {token}");
+                return;
+            }
+        }
+    }
+    let seat = auction.next_seat();
+    let key = key_for(&auction, seat);
+    let lookup = ir.index.resolve(&key);
+    eprintln!(
+        "show {auction}: matched {}/{} calls",
+        lookup.matched_depth,
+        key.calls.len()
+    );
+    if lookup.matched_depth != key.calls.len() {
+        return;
+    }
+    let Some(group) = ir
+        .exclusive()
+        .group_for(lookup.end, key.opener_pos, key.vul)
+    else {
+        eprintln!("show: no group");
+        return;
+    };
+    for &(call, node_id) in &group.members {
+        let node = ir.node(node_id);
+        let span = ir.row(node.row).span.clone();
+        eprintln!(
+            "  {call} prio {} shadowed {} row {:?} {:?}",
+            node.priority,
+            group.is_shadowed(call),
+            node.row,
+            span
+        );
     }
 }
 
