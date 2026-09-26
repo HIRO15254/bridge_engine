@@ -20,15 +20,14 @@ use std::collections::HashMap;
 
 use bridge_core::{Auction, Call, Hand, Seat};
 use bridge_system::exclusive::{RankKey, rank_cmp_keys};
-use bridge_system::natural::classify;
 use bridge_system::trie::TrieId;
-use bridge_system::{
-    ExclusiveGroup, LookupKey, NaturalCandidate, NaturalInference, PartnerContext, RelVul,
-};
+use bridge_system::{ExclusiveGroup, LookupKey, NaturalInference, RelVul};
 
-use crate::exclusion::partner_context;
+use crate::exclusion::{NaturalPos, natural_position, partner_context};
 use crate::interpret::{LENIENT_MAX_SUBST, summary_satisfiable};
+use crate::memo::{self, PrefixEntry};
 use crate::{BidContext, ImplicitPass, NodeId, SystemIR, Table};
+use std::rc::Rc;
 
 /// The outcome of a bidding decision. `NoCandidate` is information about the system's coverage,
 /// not an error.
@@ -156,21 +155,35 @@ pub(crate) struct Kept {
 }
 
 /// The natural candidates of a position in rank order, with the partner context they were
-/// inferred under (so the winner's explanation can be rebuilt without recomputing it).
-pub(crate) struct NaturalRanked {
-    pub(crate) ranked: Vec<NaturalCandidate>,
-    pub(crate) partner: PartnerContext,
-}
+/// inferred under (so the winner's explanation can be rebuilt without recomputing it); shared
+/// through the per-thread natural-position cache.
+pub(crate) type NaturalRanked = std::rc::Rc<NaturalPos>;
 
 /// The hand-independent candidates of one position: 07-bidding.md §5.2 steps 1–3 without the
 /// hand filter. `choose_bid` (through [`gather`]), `call_distribution` and `interpret`'s mirror
 /// all start from this one enumeration, so they can never disagree on the candidate set, on
 /// whether the position is on-system, or on whether an implicit `Pass` is synthesised.
+///
+/// The hand-independent data lives in a [`PositionCore`] memoised per prefix
+/// ([`crate::memo`]); `Position` dereferences to it.
 pub(crate) struct Position<'a> {
+    /// The acting seat's system.
+    pub(crate) system: &'a SystemIR,
+    entry: Rc<PrefixEntry>,
+}
+
+impl std::ops::Deref for Position<'_> {
+    type Target = PositionCore;
+
+    fn deref(&self) -> &PositionCore {
+        &self.entry.core
+    }
+}
+
+/// The table-independent part of a [`Position`] (everything but the system reference).
+pub(crate) struct PositionCore {
     /// The acting seat.
     pub(crate) seat: Seat,
-    /// Its system.
-    pub(crate) system: &'a SystemIR,
     /// The opener position of the lookup key.
     pub(crate) opener_pos: u8,
     /// The relative vulnerability of the lookup key.
@@ -195,6 +208,11 @@ pub(crate) struct Position<'a> {
 }
 
 impl<'a> Position<'a> {
+    /// The memo entry of the position (its natural data lives there too).
+    pub(crate) fn entry(&self) -> &PrefixEntry {
+        &self.entry
+    }
+
     /// The position is on-system: at least one legal system candidate.
     pub(crate) fn on_system(&self) -> bool {
         self.children.iter().any(|&(_, _, legal)| legal)
@@ -248,14 +266,27 @@ pub(crate) fn policy_key(auction: &Auction, seat: Seat) -> LookupKey<'_> {
     }
 }
 
-/// Enumerates the candidates of the position after `auction` (see [`Position`]).
+/// Enumerates the candidates of the position after `auction` (see [`Position`]), memoised per
+/// prefix.
 pub(crate) fn enumerate_position<'a>(
     table: &'a Table,
     auction: &Auction,
     implicit_pass: ImplicitPass,
 ) -> Position<'a> {
+    let system: &'a SystemIR = &table.systems[auction.next_seat().index() as usize];
+    let entry = memo::entry(table, auction, implicit_pass, || {
+        position_core(system, auction, implicit_pass)
+    });
+    Position { system, entry }
+}
+
+/// The [`PositionCore`] of the position after `auction` for `system` (the acting seat's).
+fn position_core(
+    system: &SystemIR,
+    auction: &Auction,
+    implicit_pass: ImplicitPass,
+) -> PositionCore {
     let seat = auction.next_seat();
-    let system: &'a SystemIR = &table.systems[seat.index() as usize];
     let key = policy_key(auction, seat);
     let lookup = system.index.resolve(&key);
     // Whether the candidates come from the exact resolve or from `resolve_lenient` (the
@@ -292,9 +323,8 @@ pub(crate) fn enumerate_position<'a>(
         && !pass_offered
         && any_legal
         && auction.is_legal(Call::Pass);
-    Position {
+    PositionCore {
         seat,
-        system,
         opener_pos: key.opener_pos,
         vul: key.vul,
         exact_match,
@@ -342,15 +372,14 @@ pub(crate) fn system_choice(pos: &Position<'_>, hand: Hand) -> Option<Call> {
 /// (bidirectional consistency, §2.3).
 pub(crate) fn natural_ranked(
     table: &Table,
+    pos: &Position<'_>,
     auction: &Auction,
     natural: &NaturalInference,
     implicit_pass: ImplicitPass,
 ) -> NaturalRanked {
-    let seat = auction.next_seat();
-    let system = &table.systems[seat.index() as usize];
-    let partner = partner_context(table, natural, auction, implicit_pass);
-    let ranked = natural.ranked_candidates(auction, seat, &partner, system.meta.tie_break);
-    NaturalRanked { ranked, partner }
+    natural_position(table, pos, natural, auction, implicit_pass, || {
+        partner_context(table, natural, auction, implicit_pass)
+    })
 }
 
 /// The natural policy's choice `m_P(h)` (docs/design/15-phase4-plan.md D18): the first ranked
@@ -447,7 +476,7 @@ pub(crate) fn gather(
     let mut natural_out = None;
     if !pos.on_system() {
         if let Some(natural) = ctx.natural {
-            let ranked = natural_ranked(table, auction, natural, ctx.implicit_pass);
+            let ranked = natural_ranked(table, &pos, auction, natural, ctx.implicit_pass);
             for cand in &ranked.ranked {
                 if !cand.constraint.satisfies(hand) {
                     // Natural candidates are not system nodes, so a rejection is not reported
@@ -579,14 +608,7 @@ pub fn choose_bid(table: &Table, hand: Hand, auction: &Auction, ctx: &BidContext
                 let ranked = natural_ranked_out
                     .as_ref()
                     .expect("a Natural-sourced candidate implies ranked natural candidates");
-                let next = auction
-                    .with(winner_call)
-                    .expect("a kept candidate is legal");
-                let mut call_ctx = classify(&next, auction.len(), seat);
-                call_ctx.partner_constraint = ranked.partner.partner_constraint.clone();
-                call_ctx.forcing_situation = ranked.partner.forcing_situation;
-                let inf = natural.infer(&call_ctx);
-                format!("{} ({})", inf.explanation, inf.rule)
+                ranked.text(natural, auction, winner_call)
             }
             ChoiceSource::ImplicitPass => "implicit pass".to_string(),
             ChoiceSource::System => String::new(),

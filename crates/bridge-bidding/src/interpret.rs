@@ -93,12 +93,14 @@ impl Explanation {
     /// §4.4.5): `text` joins the non-empty part texts with ` / `, `node` is the last part's node,
     /// `resolution` is the least confident kind among the parts.
     fn from_parts(parts: Vec<CallExplanation>) -> Explanation {
-        let text = parts
-            .iter()
-            .map(|p| p.text.as_str())
-            .filter(|t| !t.is_empty())
-            .collect::<Vec<_>>()
-            .join(" / ");
+        let len: usize = parts.iter().map(|p| p.text.len() + 3).sum();
+        let mut text = String::with_capacity(len);
+        for t in parts.iter().map(|p| p.text.as_str()).filter(|t| !t.is_empty()) {
+            if !text.is_empty() {
+                text.push_str(" / ");
+            }
+            text.push_str(t);
+        }
         let node = parts.last().and_then(|p| p.node);
         let resolution = parts
             .iter()
@@ -825,6 +827,7 @@ fn step_a_mirror(table: &Table, auction: &Auction, opts: &InterpretOptions) -> S
         implicit_pass: opts.implicit_pass,
         strict: opts.strict,
         want_text: true,
+        membership: false,
     };
     let mut reader = Reader::new(table, table.natural.as_ref(), auction, opts.implicit_pass);
     let calls = auction.calls();
@@ -948,6 +951,10 @@ fn is_any(c: &HandConstraint) -> bool {
 /// passed through the initial `ANY` seed or a `Fallback` alternative carried it along forever as
 /// a redundant `And` member (`And([ANY, c1, ANY, …])`), which was cloned and re-summarised at
 /// every subsequent step of the cross product for no semantic benefit (07-bidding.md §4.4.2).
+///
+/// [`materialize_constraint`] builds the same tree as a fold of this function in one pass; the
+/// fold is kept as the test oracle.
+#[cfg(test)]
 fn and_one_more(existing: &HandConstraint, addition: &HandConstraint) -> HandConstraint {
     if is_any(addition) {
         return existing.clone();
@@ -1123,11 +1130,35 @@ fn materialize_constraint(
     seat_calls: &[&CallInterpretation],
     key: &[(Option<NodeId>, ResolutionKind, usize)],
 ) -> HandConstraint {
-    key.iter()
+    // The fold `acc = and_one_more(&acc, alt)` over the key, built without its intermediate
+    // clones: `ANY` alternatives are skipped, the first remaining one is the seed (its children
+    // when it is an `And`), and every later one is appended as one child.
+    let mut parts = key
+        .iter()
         .enumerate()
-        .fold(HandConstraint::ANY, |acc, (level, &(_, _, alt_index))| {
-            and_one_more(&acc, &seat_calls[level].alternatives[alt_index].0)
-        })
+        .map(|(level, &(_, _, alt_index))| &seat_calls[level].alternatives[alt_index].0)
+        .filter(|c| !is_any(c));
+    let Some(first) = parts.next() else {
+        return HandConstraint::ANY;
+    };
+    let rest: Vec<&HandConstraint> = parts.collect();
+    if rest.is_empty() {
+        return first.clone();
+    }
+    let mut v = match first {
+        HandConstraint::And(children) => {
+            let mut v = Vec::with_capacity(children.len() + rest.len());
+            v.extend_from_slice(children);
+            v
+        }
+        other => {
+            let mut v = Vec::with_capacity(1 + rest.len());
+            v.push(other.clone());
+            v
+        }
+    };
+    v.extend(rest.into_iter().cloned());
+    HandConstraint::And(v)
 }
 
 /// Step B: combines `per_call` into the four seats' weighted disjunctions (07-bidding.md §4.4):
@@ -1139,24 +1170,29 @@ fn step_b(a: &StepA, opts: &InterpretOptions) -> [Vec<(HandConstraint, f32, Expl
     let mut seats: [Vec<(HandConstraint, f32, Explanation)>; 4] = Default::default();
     let k = opts.max_alternatives.max(1);
 
+    // Two buffers reused across seats and levels (the cross product allocates nothing else).
+    let mut combos: Vec<Combo> = Vec::with_capacity(4 * k);
+    let mut next: Vec<Combo> = Vec::with_capacity(4 * k);
     for seat in Seat::ALL {
-        let seat_idx: Vec<usize> = (0..per_call.len())
+        let seat_idx: SmallVec<[usize; 8]> = (0..per_call.len())
             .filter(|&j| per_call[j].seat == seat)
             .collect();
-        let seat_calls: Vec<&CallInterpretation> = seat_idx.iter().map(|&j| &per_call[j]).collect();
-        let mut combos: Vec<Combo> = vec![Combo {
+        let seat_calls: SmallVec<[&CallInterpretation; 8]> =
+            seat_idx.iter().map(|&j| &per_call[j]).collect();
+        combos.clear();
+        combos.push(Combo {
             summary: Summary::ANY,
             weight: 1.0,
             key: ComboKey::new(),
             catch_all: true,
-        }];
+        });
         let had_calls = !seat_calls.is_empty();
 
         for (level, cj) in seat_calls.iter().enumerate() {
             let j = seat_idx[level];
             let alt_summaries = &a.summaries[j];
             let any = a.any_index[j];
-            let mut next: Vec<Combo> = Vec::with_capacity(combos.len() * cj.alternatives.len());
+            next.clear();
             for combo in &combos {
                 for (i, (_, wi, ex)) in cj.alternatives.iter().enumerate() {
                     let Some(summary) = combo.summary.and(&alt_summaries[i]) else {
@@ -1188,17 +1224,17 @@ fn step_b(a: &StepA, opts: &InterpretOptions) -> [Vec<(HandConstraint, f32, Expl
                     _ => next.truncate(k),
                 }
             }
-            combos = next;
+            std::mem::swap(&mut combos, &mut next);
         }
 
         if had_calls && combos.is_empty() {
             tracing::warn!(?seat, "seat contradicts itself");
-            combos = vec![Combo {
+            combos.push(Combo {
                 summary: Summary::ANY,
                 weight: 1.0,
                 key: ComboKey::new(),
                 catch_all: true,
-            }];
+            });
         }
 
         // Highest weight first (the order callers and explanations expect).
@@ -1206,7 +1242,7 @@ fn step_b(a: &StepA, opts: &InterpretOptions) -> [Vec<(HandConstraint, f32, Expl
         let total: f32 = combos.iter().map(|c| c.weight).sum();
         let idx = seat.index() as usize;
         seats[idx] = combos
-            .into_iter()
+            .drain(..)
             .map(|c| {
                 let w = if total > 0.0 {
                     c.weight / total
@@ -1224,6 +1260,21 @@ fn step_b(a: &StepA, opts: &InterpretOptions) -> [Vec<(HandConstraint, f32, Expl
     }
 
     seats
+}
+
+/// Step A of [`interpret`] alone: the per-call interpretations (`Interpretation::per_call`),
+/// without Step B's per-seat combination. For benches that report the Step A / Step B split.
+#[doc(hidden)]
+pub fn interpret_per_call(
+    table: &Table,
+    auction: &Auction,
+    opts: &InterpretOptions,
+) -> Vec<CallInterpretation> {
+    match opts.mode {
+        InterpretMode::Mirror => step_a_mirror(table, auction, opts),
+        InterpretMode::Legacy => step_a_legacy_full(table, auction, opts),
+    }
+    .per_call
 }
 
 /// Interprets `auction` under the four systems of `table`.
@@ -1393,5 +1444,47 @@ mod tests {
         let interpretation = one_call_interpretation();
         let hand = balanced_16_hcp_hand();
         assert_eq!(interpretation.likelihood(Seat::East, hand), 1.0);
+    }
+
+    #[test]
+    fn materialize_constraint_equals_the_and_one_more_fold() {
+        let a = balanced_15_17();
+        let b = HandConstraint::And(vec![balanced_15_17(), HandConstraint::ANY.not()]);
+        let any = HandConstraint::ANY;
+        let alternatives = [a.clone(), b.clone(), any.clone()];
+        let interp = one_call_interpretation();
+        let template = &interp.per_call[0];
+        let mut calls: Vec<CallInterpretation> = Vec::new();
+        for _ in 0..3 {
+            let mut c = template.clone();
+            c.alternatives = alternatives
+                .iter()
+                .map(|x| (x.clone(), 1.0, template.alternatives[0].2.clone()))
+                .collect();
+            calls.push(c);
+        }
+        let refs: Vec<&CallInterpretation> = calls.iter().collect();
+        for i in 0..3 {
+            for j in 0..3 {
+                for k in 0..3 {
+                    let key = [
+                        (None, ResolutionKind::Exact, i),
+                        (None, ResolutionKind::Exact, j),
+                        (None, ResolutionKind::Exact, k),
+                    ];
+                    let fold = key.iter().enumerate().fold(
+                        HandConstraint::ANY,
+                        |acc, (level, &(_, _, alt))| {
+                            and_one_more(&acc, &refs[level].alternatives[alt].0)
+                        },
+                    );
+                    assert_eq!(
+                        format!("{:?}", materialize_constraint(&refs, &key)),
+                        format!("{fold:?}"),
+                        "{i} {j} {k}"
+                    );
+                }
+            }
+        }
     }
 }

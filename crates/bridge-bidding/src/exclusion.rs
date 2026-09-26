@@ -28,9 +28,11 @@
 //! identically.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use bridge_constraint::grid::bounds;
-use bridge_constraint::{Atom, GridBounds, HandConstraint, HcpShapeGrid};
+use bridge_constraint::{Atom, HandConstraint, HcpShapeGrid};
 use bridge_core::{Auction, Call, ShapeSet};
 use bridge_system::exclusive::{
     ExclusivePiece, PieceSummary, branches_of, is_empty_or, subtract, subtract_tree,
@@ -38,6 +40,7 @@ use bridge_system::exclusive::{
 use bridge_system::{Forcing, NaturalCandidate, NaturalInference, PartnerContext};
 
 use crate::choose::{Position, enumerate_position, ranked_legal};
+use crate::memo;
 use crate::{ImplicitPass, NodeId, PolicyParams, ResolutionKind, Table};
 
 /// Cap on the atoms of a flat natural piece; a grid with more HCP runs is widened (merged runs,
@@ -79,9 +82,10 @@ pub(crate) struct MirrorPiece<'a> {
     pub(crate) raw: f64,
     /// The proposal form: a superset of the exact region (equal to it unless `exact` is set).
     pub(crate) flat: Cow<'a, HandConstraint>,
-    /// The exact region when `flat` over-covers it.
+    /// The exact region when `flat` over-covers it (kept only under [`MirrorSpec::membership`]).
     pub(crate) exact: Option<HandConstraint>,
-    /// The exact region as a grid, when it is literal-free and was computed on the grid.
+    /// The exact region as a grid, when it is literal-free and was computed on the grid (kept
+    /// only under [`MirrorSpec::membership`]).
     pub(crate) grid: Option<Box<HcpShapeGrid>>,
     /// Summary of `flat`.
     pub(crate) summary: Cow<'a, PieceSummary>,
@@ -336,13 +340,23 @@ impl<'t> Reader<'t> {
         let reading = match system_x(&pos, call).as_ref().and_then(system_reading) {
             Some(r) => r,
             None => {
-                let partner = self.partner_context(j);
-                let cand = self
-                    .natural
-                    .infer_batch(&prefix, pos.seat, &partner, &[call])
-                    .pop()
-                    .expect("one result per call");
-                natural_reading(&cand)
+                match peek_natural_position(self.table, self.natural, &prefix, self.implicit_pass) {
+                    Some(np) => np
+                        .ranked
+                        .iter()
+                        .find(|c| c.call == call)
+                        .map(natural_reading)
+                        .unwrap_or_default(),
+                    None => {
+                        let partner = self.partner_context(j);
+                        let cand = self
+                            .natural
+                            .infer_batch(&prefix, pos.seat, &partner, &[call])
+                            .pop()
+                            .expect("one result per call");
+                        natural_reading(&cand)
+                    }
+                }
             }
         };
         self.memo[j] = Some(reading.clone());
@@ -462,6 +476,56 @@ fn or_of(cs: &[&HandConstraint]) -> Option<HandConstraint> {
     }
 }
 
+/// The union of the guaranteed subsets (`sub` of [`bounds`]) of `cs`, and whether every one is
+/// exact. Literal-free atoms (almost every natural inference) are merged per HCP range into one
+/// box each, so no per-candidate grid is built.
+fn union_sub<'c>(cs: impl IntoIterator<Item = &'c HandConstraint>) -> (HcpShapeGrid, bool) {
+    let mut boxes: Vec<(u8, u8, ShapeSet)> = Vec::new();
+    let mut grid: Option<HcpShapeGrid> = None;
+    let mut exact = true;
+    for c in cs {
+        match c {
+            HandConstraint::Atom(a) if a.cards.is_empty() && a.eval.is_empty() => {
+                let (lo, hi) = (*a.hcp.start(), *a.hcp.end());
+                match boxes.iter_mut().find(|b| b.0 == lo && b.1 == hi) {
+                    Some(b) => b.2 = b.2.union(a.shapes),
+                    None => boxes.push((lo, hi, a.shapes)),
+                }
+            }
+            // An atom with literals: `sub = ∅`.
+            HandConstraint::Atom(_) => exact = false,
+            _ => {
+                let b = bounds(c);
+                exact &= b.is_exact();
+                grid = Some(match grid {
+                    Some(g) => g.or(&b.sub),
+                    None => b.sub,
+                });
+            }
+        }
+    }
+    let mut g = grid.unwrap_or(HcpShapeGrid::EMPTY);
+    for (lo, hi, shapes) in boxes {
+        g = g.or(&HcpShapeGrid::from_box(shapes, lo..=hi));
+    }
+    (g, exact)
+}
+
+/// The guaranteed superset (`sup` of [`bounds`]) of `c`, and whether it is exact.
+fn sup_of(c: &HandConstraint) -> (HcpShapeGrid, bool) {
+    match c {
+        HandConstraint::Atom(a) => (
+            HcpShapeGrid::of_atom_box(a),
+            a.cards.is_empty() && a.eval.is_empty(),
+        ),
+        _ => {
+            let b = bounds(c);
+            let exact = b.is_exact();
+            (b.sup, exact)
+        }
+    }
+}
+
 /// The natural regions of `call` among `ranked` (rank order): `Y_c` and, without the natural
 /// implicit pass, `N_nat`.
 fn natural_regions(
@@ -469,36 +533,37 @@ fn natural_regions(
     call: Call,
     implicit_pass: ImplicitPass,
 ) -> (Option<NaturalPiece>, Option<NaturalPiece>) {
-    let bounds_of: Vec<GridBounds> = ranked.iter().map(|c| bounds(&c.constraint)).collect();
-    let union_sub =
-        |range: &[GridBounds]| range.iter().fold(HcpShapeGrid::EMPTY, |g, b| g.or(&b.sub));
-    let all_exact = |range: &[GridBounds]| range.iter().all(GridBounds::is_exact);
     let constraints: Vec<&HandConstraint> = ranked.iter().map(|c| &c.constraint).collect();
     let idx = ranked.iter().position(|c| c.call == call);
     let natural_pass = implicit_pass == ImplicitPass::Complement;
 
     let y = if call == Call::Pass && natural_pass {
         // The natural implicit pass: the first satisfied candidate is `Pass`, or none is.
-        let (above, own, below) = match idx {
-            Some(i) => (&bounds_of[..i], Some(&bounds_of[i]), &bounds_of[i + 1..]),
-            None => (&bounds_of[..], None, &bounds_of[..0]),
+        let (above_c, own_c, below_c) = match idx {
+            Some(i) => (
+                &constraints[..i],
+                Some(constraints[i]),
+                &constraints[i + 1..],
+            ),
+            None => (&constraints[..], None, &constraints[..0]),
         };
-        let none_below = union_sub(below).not();
-        let inner = match own {
-            Some(b) => b.sup.or(&none_below),
-            None => none_below,
+        let (above, above_exact) = union_sub(above_c.iter().copied());
+        let (below, below_exact) = union_sub(below_c.iter().copied());
+        let none_below = below.not();
+        let (inner, own_exact) = match own_c {
+            Some(c) => {
+                let (sup, exact) = sup_of(c);
+                (sup.or(&none_below), exact)
+            }
+            None => (none_below, true),
         };
-        let grid = union_sub(above).not().and(&inner);
-        let exact = all_exact(&bounds_of);
+        let grid = above.not().and(&inner);
+        let exact = above_exact && own_exact && below_exact;
         grid_piece(&grid, exact, None, || {
-            let (above_c, below_c) = match idx {
-                Some(i) => (&constraints[..i], &constraints[i + 1..]),
-                None => (&constraints[..], &constraints[..0]),
-            };
             let not_below = or_of(below_c).map(|u| u.not());
-            let inner = match (idx, not_below) {
-                (Some(i), Some(nb)) => Some(HandConstraint::Or(vec![constraints[i].clone(), nb])),
-                (Some(i), None) => Some(constraints[i].clone()),
+            let inner = match (own_c, not_below) {
+                (Some(c), Some(nb)) => Some(HandConstraint::Or(vec![c.clone(), nb])),
+                (Some(c), None) => Some(c.clone()),
                 (None, nb) => nb,
             };
             let not_above = or_of(above_c).map(|u| u.not());
@@ -510,11 +575,11 @@ fn natural_regions(
             }
         })
     } else if let Some(i) = idx {
-        let own_b = &bounds_of[i];
-        let grid = own_b.sup.and(&union_sub(&bounds_of[..i]).not());
-        let exact_above = all_exact(&bounds_of[..i]);
         let own_c = &ranked[i].constraint;
-        let own = (!own_b.is_exact()).then_some(own_c);
+        let (own_sup, own_exact) = sup_of(own_c);
+        let (above, exact_above) = union_sub(constraints[..i].iter().copied());
+        let grid = own_sup.and(&above.not());
+        let own = (!own_exact).then_some(own_c);
         grid_piece(&grid, exact_above, own, || {
             subtract_tree(own_c, &constraints[..i])
         })
@@ -525,12 +590,119 @@ fn natural_regions(
     let n = if natural_pass {
         None
     } else {
-        let grid = union_sub(&bounds_of).not();
-        grid_piece(&grid, all_exact(&bounds_of), None, || {
+        let (all, exact) = union_sub(constraints.iter().copied());
+        grid_piece(&all.not(), exact, None, || {
             or_of(&constraints).map_or(HandConstraint::ANY, |u| u.not())
         })
     };
     (y, n)
+}
+
+/// The hand-independent natural data of one position (prefix): the ranked natural candidates
+/// under the partner context of the acting seat, and, per call, its natural regions and
+/// explanation text (computed on first use). Shared by `choose_bid`'s natural branch,
+/// `call_distribution` and the mirror through [`natural_position`].
+pub(crate) struct NaturalPos {
+    /// The natural candidates in rank order.
+    pub(crate) ranked: Vec<NaturalCandidate>,
+    /// The partner context they were inferred under.
+    pub(crate) partner: PartnerContext,
+    implicit_pass: ImplicitPass,
+    regions: RefCell<Vec<(Call, Rc<NaturalCall>)>>,
+    texts: RefCell<Vec<(Call, String)>>,
+}
+
+/// The natural regions of one call at a [`NaturalPos`].
+struct NaturalCall {
+    y: Option<NaturalPiece>,
+    n: Option<NaturalPiece>,
+}
+
+impl NaturalPos {
+    fn compute(
+        table: &Table,
+        natural: &NaturalInference,
+        prefix: &Auction,
+        implicit_pass: ImplicitPass,
+        partner: PartnerContext,
+    ) -> NaturalPos {
+        let seat = prefix.next_seat();
+        let tie_break = table.systems[seat.index() as usize].meta.tie_break;
+        let ranked = natural.ranked_candidates(prefix, seat, &partner, tie_break);
+        NaturalPos {
+            ranked,
+            partner,
+            implicit_pass,
+            regions: RefCell::new(Vec::new()),
+            texts: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// `Y_c` and `N_nat` of `call` (memoised).
+    fn regions(&self, call: Call) -> Rc<NaturalCall> {
+        if let Some((_, r)) = self.regions.borrow().iter().find(|(c, _)| *c == call) {
+            return r.clone();
+        }
+        let (y, n) = natural_regions(&self.ranked, call, self.implicit_pass);
+        let r = Rc::new(NaturalCall { y, n });
+        self.regions.borrow_mut().push((call, r.clone()));
+        r
+    }
+
+    /// The natural explanation of `call` after `prefix` (this position), memoised.
+    pub(crate) fn text(&self, natural: &NaturalInference, prefix: &Auction, call: Call) -> String {
+        if let Some((_, t)) = self.texts.borrow().iter().find(|(c, _)| *c == call) {
+            return t.clone();
+        }
+        let t = natural_text(natural, prefix, call, &self.partner);
+        self.texts.borrow_mut().push((call, t.clone()));
+        t
+    }
+}
+
+/// The memoised [`NaturalPos`] of the position after `prefix`, if any (never computes).
+fn peek_natural_position(
+    table: &Table,
+    natural: &NaturalInference,
+    prefix: &Auction,
+    implicit_pass: ImplicitPass,
+) -> Option<Rc<NaturalPos>> {
+    if !std::ptr::eq(natural, table.natural.as_ref()) {
+        return None;
+    }
+    let entry = memo::peek(table, prefix, implicit_pass)?;
+    entry.natural.borrow().clone()
+}
+
+/// The [`NaturalPos`] of `pos` (the position after `prefix`): memoised with the position
+/// ([`crate::memo`]) when `natural` is the table's own engine, else computed. `partner()` must
+/// be `partner_context(table, natural, prefix, implicit_pass)`; it is only called on a miss.
+pub(crate) fn natural_position(
+    table: &Table,
+    pos: &Position<'_>,
+    natural: &NaturalInference,
+    prefix: &Auction,
+    implicit_pass: ImplicitPass,
+    partner: impl FnOnce() -> PartnerContext,
+) -> Rc<NaturalPos> {
+    let own = std::ptr::eq(natural, table.natural.as_ref());
+    if own {
+        if let Some(np) = pos.entry().natural.borrow().as_ref() {
+            return np.clone();
+        }
+    }
+    // Computed outside any borrow: the partner context reads other entries.
+    let np = Rc::new(NaturalPos::compute(
+        table,
+        natural,
+        prefix,
+        implicit_pass,
+        partner(),
+    ));
+    if own {
+        *pos.entry().natural.borrow_mut() = Some(np.clone());
+    }
+    np
 }
 
 /// What [`mirror_call`] needs besides the position.
@@ -543,6 +715,9 @@ pub(crate) struct MirrorSpec<'t> {
     pub(crate) strict: bool,
     /// Build the explanation text.
     pub(crate) want_text: bool,
+    /// Keep the exact membership forms of the natural pieces (their exact trees and grids, for
+    /// [`crate::AuctionPolicy`]); without it a piece carries its flat (proposal) form only.
+    pub(crate) membership: bool,
 }
 
 /// The natural explanation text of `call` after `prefix` with `partner`'s context.
@@ -677,45 +852,45 @@ pub(crate) fn mirror_call<'t>(
     };
 
     if nat_w > 0.0 {
-        let partner = reader.partner_context(j);
-        let tie_break = pos.system.meta.tie_break;
-        let ranked = spec
-            .natural
-            .ranked_candidates(prefix, pos.seat, &partner, tie_break);
+        let np = natural_position(
+            spec.table,
+            &pos,
+            spec.natural,
+            prefix,
+            spec.implicit_pass,
+            || reader.partner_context(j),
+        );
         if !on_system && reader.memo[j].is_none() {
-            let r = match ranked.iter().find(|c| c.call == call) {
+            let r = match np.ranked.iter().find(|c| c.call == call) {
                 Some(cand) => natural_reading(cand),
                 None => Reading::default(),
             };
             reader.memo[j] = Some(r);
         }
-        let (y, none) = natural_regions(&ranked, call, spec.implicit_pass);
-        if let Some(y) = y {
+        let regions = np.regions(call);
+        let piece = |role: PieceRole, raw: f64, p: &NaturalPiece| MirrorPiece {
+            role,
+            node: None,
+            raw,
+            flat: Cow::Owned(p.flat.clone()),
+            exact: if spec.membership {
+                p.exact.clone()
+            } else {
+                None
+            },
+            grid: if spec.membership { p.grid.clone() } else { None },
+            summary: Cow::Owned(p.summary.clone()),
+        };
+        if let Some(y) = &regions.y {
             has_y = true;
-            pieces.push(MirrorPiece {
-                role: PieceRole::Natural,
-                node: None,
-                raw: nat_w,
-                flat: Cow::Owned(y.flat),
-                exact: y.exact,
-                grid: y.grid,
-                summary: Cow::Owned(y.summary),
-            });
+            pieces.push(piece(PieceRole::Natural, nat_w, y));
             if spec.want_text && !has_x {
-                text = natural_text(spec.natural, prefix, call, &partner);
+                text = np.text(spec.natural, prefix, call);
             }
         }
         if !spec.strict {
-            if let Some(none) = none {
-                pieces.push(MirrorPiece {
-                    role: PieceRole::NoNatural,
-                    node: None,
-                    raw: nat_none_w,
-                    flat: Cow::Owned(none.flat),
-                    exact: none.exact,
-                    grid: none.grid,
-                    summary: Cow::Owned(none.summary),
-                });
+            if let Some(none) = &regions.n {
+                pieces.push(piece(PieceRole::NoNatural, nat_none_w, none));
             }
         }
     }
@@ -736,10 +911,15 @@ pub(crate) fn mirror_call<'t>(
     if shadowed && spec.want_text {
         let base = match node {
             Some(id) => pos.system.node(id).description.clone(),
-            None => {
-                let partner = reader.partner_context(j);
-                natural_text(spec.natural, prefix, call, &partner)
-            }
+            None => natural_position(
+                spec.table,
+                &pos,
+                spec.natural,
+                prefix,
+                spec.implicit_pass,
+                || reader.partner_context(j),
+            )
+            .text(spec.natural, prefix, call),
         };
         text = format!("{base} [never chosen by the policy here]");
     }

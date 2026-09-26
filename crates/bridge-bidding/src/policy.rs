@@ -144,14 +144,14 @@ pub fn call_distribution(
         add_choice(&mut pi, system_choice(&pos, hand), 1.0 - delta, &legal);
         if delta > 0.0 {
             let m = ctx.natural.and_then(|natural| {
-                let ranked = natural_ranked(table, auction, natural, ctx.implicit_pass);
+                let ranked = natural_ranked(table, &pos, auction, natural, ctx.implicit_pass);
                 natural_choice(&ranked, hand, ctx.implicit_pass)
             });
             add_choice(&mut pi, m, delta, &legal);
         }
     } else {
         let m = ctx.natural.and_then(|natural| {
-            let ranked = natural_ranked(table, auction, natural, ctx.implicit_pass);
+            let ranked = natural_ranked(table, &pos, auction, natural, ctx.implicit_pass);
             natural_choice(&ranked, hand, ctx.implicit_pass)
         });
         add_choice(&mut pi, m, 1.0, &legal);

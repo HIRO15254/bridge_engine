@@ -16,6 +16,7 @@ mod cache;
 mod choose;
 mod exclusion;
 mod interpret;
+mod memo;
 mod policy;
 mod replay;
 
@@ -30,7 +31,7 @@ pub use choose::{
 };
 pub use interpret::{
     CallExplanation, CallInterpretation, Explanation, InterpretMode, InterpretOptions,
-    Interpretation, ResolutionKind, interpret,
+    Interpretation, ResolutionKind, interpret, interpret_per_call,
 };
 pub use policy::{PolicyParams, call_distribution, sequence_log_likelihood};
 pub use replay::{Replay, replay};

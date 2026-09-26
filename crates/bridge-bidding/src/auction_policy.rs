@@ -96,6 +96,7 @@ impl AuctionPolicy {
             implicit_pass: ctx.implicit_pass,
             strict: false,
             want_text: false,
+            membership: true,
         };
         let mut reader = Reader::new(table, natural, auction, ctx.implicit_pass);
         let mut prefix = Auction::new(auction.dealer(), auction.vulnerability());
