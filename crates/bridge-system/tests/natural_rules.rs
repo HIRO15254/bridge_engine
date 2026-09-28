@@ -224,14 +224,14 @@ fn rule_resp_nt_denies_a_minor_raise() {
     assert_eq!(inf.rule, "resp_nt");
     let plain = hand("K432", "Q32", "J32", "Q32"); // 8 hcp, 4-3-3-3 with four clubs
     let four_diamonds = hand("K32", "Q432", "J32", "Q32"); // 8 hcp, 4 diamonds: still 1NT
-    let five_diamonds = hand("K3", "Q5432", "J32", "Q2"); // 8 hcp, 5 diamonds: raise
+    let five_diamonds = hand("K3", "Q5432", "J32", "Q32"); // 8 hcp, 5 diamonds: raise
     assert!(inf.constraint.satisfies(plain));
     assert!(inf.constraint.satisfies(four_diamonds));
     assert!(!inf.constraint.satisfies(five_diamonds));
     // A later 1NT by responder (1C P 1D P 1S P 1NT) keeps the plain HCP range.
     let (_, rebid) = infer("1C P 1D P 1S P 1NT", 6, Seat::South);
     assert_eq!(rebid.rule, "resp_nt");
-    assert!(rebid.constraint.satisfies(hand("K3", "Q5432", "J32", "Q2")));
+    assert!(rebid.constraint.satisfies(hand("K3", "Q5432", "J32", "Q32")));
 }
 
 #[test]
