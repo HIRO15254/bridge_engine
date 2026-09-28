@@ -752,3 +752,50 @@ P0. **Baseline, before any phase-4 SAYC change** (wip/p4-api 4b131db; release; 5
     - `(ε, δ)` MLE on the tune split (4135 calls): ε = 0.490, δ = 0.309, ln L = -9351.0
       (-2.261 per call); at the placeholder `human()` (0.01, 0.3) ln L = -15390.1, at
       `system_players()` -21012.9. Eval split at the MLE: -8801.9 over 4034 calls.
+
+P1'. **The same base SAYC under the phase-4 engine** (the base files of P0, compiled and
+    replayed with this branch's code, i.e. after the wip/p4-S merge: natural level floor,
+    SAYC-shaped natural rules; release, `COVERAGE_POSITIONS=1000000`, loadavg 8.2). It
+    separates the effect of the rows below from the engine's: generated all-system 27/1000;
+    positions `NoCandidate` 8,826 per 10^6 (on-system 203), phase-3 tops `1D-(3C)` 19,
+    `1D-(1H)` 146, `1C-(1H)` 101; corpus all-Exact 0.041 / eval 0.039 / subset 0.034,
+    system resolution 0.405 / 0.409 / 0.424, `resolve_lenient` 5 of 8169 calls; agreement
+    0.600 (system) / 0.627 (natural); MLE ε = 0.375, δ = 0.460. ShadowedBranch 249 (ours 18,
+    theirs 231, all on table headers).
+
+P2'. **After P1-P8** (this branch; release; `COVERAGE_POSITIONS=1000000`, 17.0 s at loadavg
+    3.5; the default sizing takes 5.8 s):
+    - Compile 855 ms (35,856 rows, 45,749 nodes); lints Error 0, ShadowedBranch 378 (ours 18,
+      theirs 360; the 129 new ones are table headers, see "Lints" above); exclusive index
+      22,088 groups, fresh build 43 ms best of 3; postcard IR 15,118,747 bytes.
+    - Generated (seed `0xC0FE4001`): all-system **894/1000 (0.894)**; 104 auctions with a
+      natural completion, 2 with a gap. Calls: system 7515 (4125 of them default chain
+      passes), system implicit pass 938, natural 214, gap 2. First departures: their pass not
+      in the trie 74, the system exhausted 18, their call not in the trie 14. Final contract
+      level `[passout, 1..7]`: `[14, 81, 324, 436, 141, 3, 1, 0]`. Held-out seeds (2000
+      replays each): `0x1234` 0.895, `0xBEEF0001` 0.875, `0xD00D` 0.8755.
+    - Positions (10^6): `NoCandidate` 3,069 (on-system 138); the phase-3 tops `1D-(3C)`,
+      `1D-(1H)` and `1C-(1H)` responder are 0 / 0 / 0. The remaining tops are off-system
+      positions after the generator's random jumps (`1D-(5D)` responder 36 per 10^6) and a
+      few advances; the natural implicit pass (lane B) answers most of them.
+    - Forward consistency (release, seed `0x5a1c0002`): 10^5 positions 0 non-gap violations,
+      31 gap-induced; 10^6 0 non-gap, 401 gap-induced (phase 3: 2,645).
+    - Corpus (724 auctions): all-Exact 206/724 (0.285), eval 105/362 (0.290), subset
+      112/384 (0.292). System resolution (Exact or Partial): all 0.632, eval 0.654, subset
+      **0.653** (target 0.80), subset eval 0.681. `resolve_lenient` 1 of 8169 calls. Seats
+      with empty strict support 27; sampler `EmptySupport` 1 (a tune-split auction). In the
+      subset, 273 of 384 auctions leave the system; the first natural call is a recorded call
+      that is not a row at an on-system position in 221 of them (`call_not_a_row`: the
+      players' own methods, for example 1!c-2!d, or a 2/1 continuation), a hole of ours in 52
+      (their pass not in the trie 19, the system exhausted 18, our pass 9, their call 5), and
+      875 of the subset's 1511 natural calls follow an earlier call of ours that was off the
+      system.
+    - True-deal agreement: system positions 3851/5739 (0.671), natural positions 1438/2430
+      (0.592); eval 0.688 / 0.599.
+    - MLE on the tune split (4135 calls): **ε = 0.3373, δ = 0.3516**, ln L = -7347.0 (-1.777
+      per call); profile 95% intervals ε 0.322--0.349, δ 0.31--0.395. ln L at δ = 0 / 0.1 /
+      0.2 / 0.3 / 0.4 / 0.5 (ε at the MLE): -7722.1 / -7440.6 / -7373.6 / -7349.7 / -7349.2 /
+      -7367.0; at ε = 0.001 / 0.01 / 0.1 / 0.2 / 0.3 / 0.4 / 0.5 (δ at the MLE): -13800.7 /
+      -10858.0 / -8134.4 / -7541.6 / -7359.0 / -7378.7 / -7548.9. The placeholder `human()`
+      (0.01, 0.3) gives -10866.0, `system_players()` -15412.7. Eval split at the MLE:
+      -6718.9 over 4034 calls.
