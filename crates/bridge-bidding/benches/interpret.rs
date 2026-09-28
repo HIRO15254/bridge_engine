@@ -16,6 +16,10 @@
 //!
 //! Phase 4 (docs/design/15-phase4-plan.md, lane B step 7) adds:
 //!
+//! - `interpret/sayc-12-call-on-policy`: a 12-call SAYC auction in which every call is one the
+//!   policy makes (the acceptance bench `interpret/sayc-12-call-auction` ends in an off-policy,
+//!   shadowed 3NT).
+//! - `interpret/natural-heavy-auction`: a competitive corpus auction with 9 natural calls.
 //! - `interpret-step-a/*`: Step A alone (`interpret_per_call`), for the Step A / Step B split
 //!   (Step B = `interpret/*` minus `interpret-step-a/*`).
 //! - `interpret-cold/*`: the first interpretation of an auction under a table whose positions are
@@ -485,20 +489,24 @@ fn bench_interpret_sayc_12_call(c: &mut Criterion) {
     });
 }
 
-/// `1H-(2C)-2D-(3C)-3H-(P)-4H-(P)-P-(P)`: a natural-heavy SAYC auction (every call from the
-/// third on is read at an off-system position: 8 natural calls).
+/// A natural-heavy competitive auction from the corpus (D20 corpus enumeration of
+/// `tests/common::corpus_auctions_with_deals`, index 615; dealer West, NS vulnerable):
+/// `1H-(1S)-2C-(2D)-X-(P)-2H-(P)-3H-(P)-P-(P)`, 12 calls of which 9 are read naturally under
+/// SAYC (2 of them shadowed; the count is recomputed and printed when the bench starts).
 fn bench_auction_natural_heavy() -> Auction {
     Auction::from_calls(
-        Seat::North,
-        Vulnerability::None,
+        Seat::West,
+        Vulnerability::NS,
         vec![
             bid(1, Strain::Hearts),
+            bid(1, Strain::Spades),
             bid(2, Strain::Clubs),
             bid(2, Strain::Diamonds),
-            bid(3, Strain::Clubs),
-            bid(3, Strain::Hearts),
+            Call::Double,
             Call::Pass,
-            bid(4, Strain::Hearts),
+            bid(2, Strain::Hearts),
+            Call::Pass,
+            bid(3, Strain::Hearts),
             Call::Pass,
             Call::Pass,
             Call::Pass,
@@ -507,8 +515,33 @@ fn bench_auction_natural_heavy() -> Auction {
     .unwrap()
 }
 
-/// Number of calls of `bench_auction_natural_heavy` read naturally.
-const NATURAL_HEAVY_NATURAL_CALLS: usize = 8;
+/// `P-P-1NT-P-2C-P-2S-P-4S-P-P-P` (dealer North, none vulnerable): a 12-call SAYC auction that
+/// `replay` bids with the system-players policy (Stayman, a 2S answer, a raise to game), in which
+/// every call is one the policy makes (none shadowed; the four closing passes are read
+/// naturally). `interpret/sayc-12-call-auction` is the acceptance bench, but its 3NT is
+/// off-policy: SAYC has no continuation after `1C-1H-1S-2NT` and the natural rules have no 3NT
+/// candidate there, so it is shadowed and read by its `Fallback` pieces only.
+fn bench_auction_sayc_12_on_policy() -> Auction {
+    Auction::from_calls(
+        Seat::North,
+        Vulnerability::None,
+        vec![
+            Call::Pass,
+            Call::Pass,
+            bid(1, Strain::NoTrump),
+            Call::Pass,
+            bid(2, Strain::Clubs),
+            Call::Pass,
+            bid(2, Strain::Spades),
+            Call::Pass,
+            bid(4, Strain::Spades),
+            Call::Pass,
+            Call::Pass,
+            Call::Pass,
+        ],
+    )
+    .unwrap()
+}
 
 fn sayc_table() -> Table {
     let system = Arc::new(compile_sayc());
@@ -538,10 +571,30 @@ fn bench_interpret_step_a(c: &mut Criterion) {
     });
 }
 
+fn bench_interpret_sayc_12_on_policy(c: &mut Criterion) {
+    let table = sayc_table();
+    let opts = InterpretOptions::default();
+    let auction = bench_auction_sayc_12_on_policy();
+    let shadowed = interpret(&table, &auction, &opts)
+        .per_call
+        .iter()
+        .filter(|pc| pc.shadowed)
+        .count();
+    eprintln!("sayc-12-call-on-policy: {shadowed} shadowed calls");
+    c.bench_function("interpret/sayc-12-call-on-policy", |b| {
+        b.iter(|| std::hint::black_box(interpret(&table, &auction, &opts)))
+    });
+}
+
 fn bench_interpret_natural_heavy(c: &mut Criterion) {
     let table = sayc_table();
     let opts = InterpretOptions::default();
     let auction = bench_auction_natural_heavy();
+    let natural_calls = interpret(&table, &auction, &opts)
+        .per_call
+        .iter()
+        .filter(|pc| pc.kind == bridge_bidding::ResolutionKind::Natural)
+        .count();
     c.bench_function("interpret/natural-heavy-auction", |b| {
         b.iter(|| std::hint::black_box(interpret(&table, &auction, &opts)))
     });
@@ -551,7 +604,7 @@ fn bench_interpret_natural_heavy(c: &mut Criterion) {
         systems: table.systems.clone(),
         natural: Arc::new((*table.natural).clone()),
     };
-    eprintln!("natural-heavy-auction: {NATURAL_HEAVY_NATURAL_CALLS} natural calls");
+    eprintln!("natural-heavy-auction: {natural_calls} natural calls");
     c.bench_function("interpret-cold/natural-heavy-auction", |b| {
         b.iter_batched_ref(
             fresh,
@@ -629,6 +682,7 @@ criterion_group!(
     bench_interpret_sayc_1nt,
     bench_interpret_sayc_competitive,
     bench_interpret_sayc_12_call,
+    bench_interpret_sayc_12_on_policy,
     bench_interpret_step_a,
     bench_interpret_natural_heavy,
     bench_interpret_human,
