@@ -24,8 +24,9 @@ bridge-core = { workspace = true, features = ["std"] }
 bridge-format = { workspace = true, features = ["std"] }
 bridge-eval = { workspace = true, features = ["std"] }
 bridge-constraint = { workspace = true, features = ["std"] }
-bridge-system = { workspace = true, features = ["std"] }
+bridge-system = { workspace = true, features = ["std", "serde"] }
 bridge-bidding = { workspace = true, features = ["std"] }
 rand_xoshiro = { workspace = true }
+postcard = { workspace = true }
 serde_json = { workspace = true }
 # Phase 5 adds: bindgen (dds regen-bindings)

@@ -1698,6 +1698,7 @@ dependencies = [
  "bridge-format",
  "bridge-system",
  "flate2",
+ "postcard",
  "rand_xoshiro",
  "serde",
  "serde_json",

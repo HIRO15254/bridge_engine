@@ -28,7 +28,8 @@
 //!   and the maximum-likelihood `(ε, δ)` of `p(c|h) = (1−ε)[(1−δ)S + δM] + ε/n` on the tune
 //!   split with its log-likelihood curves.
 //! - **lints / exclusive**: lint counts by severity and code, and the members/branches the
-//!   exclusive index shows as never chosen (shadowed).
+//!   exclusive index shows as never chosen (shadowed), a fresh index build time (best of 3) and
+//!   the postcard size of the compiled IR.
 //!
 //! Sizing: `COVERAGE_REPLAYS`, `COVERAGE_POSITIONS`, `COVERAGE_CORPUS_LIMIT` (default: all),
 //! `COVERAGE_SEED` (replay seed, default `0xC0FE_4001`). `BRIDGE_CORPUS_DIR` and
@@ -282,6 +283,18 @@ fn exclusive_report(ir: &SystemIR) -> Value {
     let t = Instant::now();
     let index = ir.exclusive();
     let build_ms = t.elapsed().as_secs_f64() * 1e3;
+    // `compile()` builds the index eagerly, so `build_ms` is normally ~0; time a fresh build
+    // (best of 3) to see what the index costs on this system.
+    let fresh_build_ms = (0..3)
+        .map(|_| {
+            let t = Instant::now();
+            let fresh = bridge_system::ExclusiveIndex::build(ir);
+            let ms = t.elapsed().as_secs_f64() * 1e3;
+            std::hint::black_box(fresh.group_count());
+            ms
+        })
+        .fold(f64::INFINITY, f64::min);
+    let ir_postcard_bytes = postcard::to_allocvec(ir).map(|b| b.len()).unwrap_or(0);
     // (node, branch) -> (groups where shadowed, groups where present)
     let mut branch_stats: HashMap<(u32, u16), (u32, u32)> = HashMap::new();
     let mut call_shadowed: HashMap<u32, (u32, u32)> = HashMap::new();
@@ -312,6 +325,8 @@ fn exclusive_report(ir: &SystemIR) -> Value {
     }
     json!({
         "build_ms": build_ms,
+        "fresh_build_ms_best_of_3": fresh_build_ms,
+        "ir_postcard_bytes": ir_postcard_bytes,
         "groups": index.group_count(),
         "keys": index.key_count(),
         "nodes": call_shadowed.len(),
