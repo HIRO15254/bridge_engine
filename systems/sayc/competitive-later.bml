@@ -2788,3 +2788,8 @@ support and 8--11; the partnership then stops, as in `competitive-extra.bml`.
 
 (1S)-P-(1N)-2H-(any)-
 #PASTE pass-chain
+
+(1X)-P-(2X)-2Y-
+3Y = {prio:1} 8--11 hcp, 3+Y
+  #PASTE after-chain
+#PASTE pass-chain

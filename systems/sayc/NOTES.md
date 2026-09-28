@@ -696,7 +696,8 @@ P8. **Advances after they raise over Michaels, and of the sandwich overcall over
     over `(1X)-P-(1N)-2Y` and opener's pass a raise with 8--11 and three-card support. These
     were the most frequent off-system `NoCandidate` positions of the 10^6 forward-consistency
     generator after P1-P7 (for example `(1S)-P-(1NT)-2H` advancer 73 and `(1S)-2S-(3S)`
-    advancer 67 per 10^6).
+    advancer 67 per 10^6). Also the advancer after our balancing two-level overcall of their
+    raise and opener's pass (`(1X)-P-(2X)-2Y-`, a raise with 8--11 and three-card support).
 
 Lints: the phase-4 rows add no `ShadowedBranch` warning on our side (18 before and after,
 all phase-3 rows). They add 129 on the opponents' side, every one on a table-header node:

@@ -12,7 +12,8 @@
 //!   (`NoCandidate`, forced `Pass`). An auction is *all-system* when it has neither natural
 //!   completions nor gaps. Reports the all-system rate, the gap (`NoCandidate`) top 50, the
 //!   natural-completion tops (every natural call, and the first departure from the system per
-//!   auction), and the final-contract level histogram `[passout, 1..=7]`.
+//!   auction), the final-contract level histogram `[passout, 1..=7]`, and how many system calls
+//!   were default passes (a `Pass` row at priority <= -100, `systems/sayc/passes.bml`).
 //! - **positions**: `COVERAGE_POSITIONS` (default 200,000) positions drawn exactly like the
 //!   forward-consistency harness (`crates/bridge-bidding/tests/common` +
 //!   `tests/consistency.rs`: seed `0x5a1c0002`, 5% random-call substitution, random depth
@@ -75,6 +76,10 @@ const PHASE3_TOPS: &[(&str, &str)] = &[
     ("1D-(1H)", "responder"),
     ("1C-(1H)", "responder"),
 ];
+
+/// Priority at or below which a system `Pass` row is a default "the partnership passes from
+/// here on" pass (the `pass-chain` / `after-chain` clipboards of `systems/sayc/passes.bml`).
+const DEFAULT_PASS_PRIORITY: i16 = -100;
 
 /// The harness's off-system substitution rate.
 const RANDOM_CALL_RATE: f64 = 0.05;
@@ -662,6 +667,7 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
     let mut departure_by_category: BTreeMap<&'static str, u64> = BTreeMap::new();
     let mut natural_passes = 0u64;
     let mut only_passes_after_departure = 0u64;
+    let mut default_passes = 0u64;
 
     for _ in 0..n {
         let deal = random_deal(&mut rng);
@@ -682,6 +688,13 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
             }
             let (call, outcome) = match choose_bid(table, hand, &auction, ctx) {
                 BidChoice::Chosen(c) => {
+                    if state != OnSystem::Off
+                        && c.call == Call::Pass
+                        && c.node
+                            .is_some_and(|id| system.node(id).priority <= DEFAULT_PASS_PRIORITY)
+                    {
+                        default_passes += 1;
+                    }
                     let outcome = match (state, c.source) {
                         (OnSystem::Off, _) => Outcome::Natural,
                         (_, bridge_bidding::ChoiceSource::ImplicitPass) => {
@@ -758,6 +771,7 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
         "seed": seed,
         "all_system": all_system,
         "all_system_rate": all_system as f64 / n.max(1) as f64,
+        "system_default_passes": default_passes,
         "auctions_with_natural": with_natural,
         "auctions_with_gap": with_gap,
         "calls": total_calls,
