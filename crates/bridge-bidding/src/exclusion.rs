@@ -477,22 +477,77 @@ fn or_of(cs: &[&HandConstraint]) -> Option<HandConstraint> {
     }
 }
 
+/// Adds the exact region of `c` to `boxes` as `(hcp lo, hcp hi, shapes)` boxes when `c` is a
+/// literal-free atom, an `And` of literal-free atoms (one box: the shapes intersected, the HCP
+/// ranges intersected), or an `Or` of such constraints; returns `false` (and adds nothing)
+/// otherwise. Boxes with the same HCP range are merged by uniting their shapes. This is the
+/// common form of natural candidates (a rule's atom, conjoined with the level floor's HCP atom
+/// at high levels), and it avoids building and intersecting per-candidate grids.
+fn push_boxes(c: &HandConstraint, boxes: &mut SmallVec<[(u8, u8, ShapeSet); 8]>) -> bool {
+    fn push(boxes: &mut SmallVec<[(u8, u8, ShapeSet); 8]>, lo: u8, hi: u8, shapes: ShapeSet) {
+        if lo > hi || shapes.is_empty() {
+            return;
+        }
+        match boxes.iter_mut().find(|b| b.0 == lo && b.1 == hi) {
+            Some(b) => b.2 = b.2.union(shapes),
+            None => boxes.push((lo, hi, shapes)),
+        }
+    }
+    let literal_free = |a: &Atom| a.cards.is_empty() && a.eval.is_empty();
+    match c {
+        HandConstraint::Atom(a) if literal_free(a) => {
+            push(boxes, *a.hcp.start(), *a.hcp.end(), a.shapes);
+            true
+        }
+        HandConstraint::And(children) => {
+            let (mut lo, mut hi, mut shapes) = (0u8, u8::MAX, ShapeSet::ALL);
+            for child in children {
+                match child {
+                    HandConstraint::Atom(a) if literal_free(a) => {
+                        lo = lo.max(*a.hcp.start());
+                        hi = hi.min(*a.hcp.end());
+                        shapes = shapes.intersect(a.shapes);
+                    }
+                    _ => return false,
+                }
+            }
+            push(boxes, lo, hi, shapes);
+            true
+        }
+        HandConstraint::Or(children) => {
+            let mut own = SmallVec::new();
+            if !children.iter().all(|child| push_boxes(child, &mut own)) {
+                return false;
+            }
+            for (lo, hi, shapes) in own {
+                push(boxes, lo, hi, shapes);
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The grid of `boxes` (see [`push_boxes`]) united with `grid`.
+fn or_boxes(grid: HcpShapeGrid, boxes: &[(u8, u8, ShapeSet)]) -> HcpShapeGrid {
+    boxes.iter().fold(grid, |g, &(lo, hi, shapes)| {
+        g.or(&HcpShapeGrid::from_box(shapes, lo..=hi))
+    })
+}
+
 /// The union of the guaranteed subsets (`sub` of [`bounds`]) of `cs`, and whether every one is
-/// exact. Literal-free atoms (almost every natural inference) are merged per HCP range into one
-/// box each, so no per-candidate grid is built.
+/// exact. Literal-free atoms and `And`/`Or` combinations of them (almost every natural
+/// inference) are merged per HCP range into one box each ([`push_boxes`]), so no per-candidate
+/// grid is built.
 fn union_sub<'c>(cs: impl IntoIterator<Item = &'c HandConstraint>) -> (HcpShapeGrid, bool) {
-    let mut boxes: Vec<(u8, u8, ShapeSet)> = Vec::new();
+    let mut boxes: SmallVec<[(u8, u8, ShapeSet); 8]> = SmallVec::new();
     let mut grid: Option<HcpShapeGrid> = None;
     let mut exact = true;
     for c in cs {
+        if push_boxes(c, &mut boxes) {
+            continue;
+        }
         match c {
-            HandConstraint::Atom(a) if a.cards.is_empty() && a.eval.is_empty() => {
-                let (lo, hi) = (*a.hcp.start(), *a.hcp.end());
-                match boxes.iter_mut().find(|b| b.0 == lo && b.1 == hi) {
-                    Some(b) => b.2 = b.2.union(a.shapes),
-                    None => boxes.push((lo, hi, a.shapes)),
-                }
-            }
             // An atom with literals: `sub = ∅`.
             HandConstraint::Atom(_) => exact = false,
             _ => {
@@ -505,15 +560,15 @@ fn union_sub<'c>(cs: impl IntoIterator<Item = &'c HandConstraint>) -> (HcpShapeG
             }
         }
     }
-    let mut g = grid.unwrap_or(HcpShapeGrid::EMPTY);
-    for (lo, hi, shapes) in boxes {
-        g = g.or(&HcpShapeGrid::from_box(shapes, lo..=hi));
-    }
-    (g, exact)
+    (or_boxes(grid.unwrap_or(HcpShapeGrid::EMPTY), &boxes), exact)
 }
 
 /// The guaranteed superset (`sup` of [`bounds`]) of `c`, and whether it is exact.
 fn sup_of(c: &HandConstraint) -> (HcpShapeGrid, bool) {
+    let mut boxes = SmallVec::new();
+    if push_boxes(c, &mut boxes) {
+        return (or_boxes(HcpShapeGrid::EMPTY, &boxes), true);
+    }
     match c {
         HandConstraint::Atom(a) => (
             HcpShapeGrid::of_atom_box(a),
