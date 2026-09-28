@@ -26,7 +26,10 @@
 //!   whose default-mode support is empty (what the sampler would report as `EmptySupport`), the
 //!   `resolve_lenient` usage rate, the true-deal policy agreement (system / natural positions),
 //!   and the maximum-likelihood `(ε, δ)` of `p(c|h) = (1−ε)[(1−δ)S + δM] + ε/n` on the tune
-//!   split with its log-likelihood curves.
+//!   split with its log-likelihood curves. For the subset it also lists where its calls leave
+//!   the system (every natural call and the first one per auction, by trie position, with the
+//!   reason: `call_not_a_row` when the position is on the system but the recorded call is not
+//!   one of its rows, otherwise why the position itself is off the system).
 //! - **lints / exclusive**: lint counts by severity and code, and the members/branches the
 //!   exclusive index shows as never chosen (shadowed), a fresh index build time (best of 3) and
 //!   the postcard size of the compiled IR.
@@ -577,6 +580,17 @@ fn record(map: &mut HashMap<PosKey, Agg>, key: PosKey, kind: &'static str, a: &A
         e.sample_hand = format!("{h:?}");
         e.sample_hcp = bridge_eval::hcp(h);
     }
+}
+
+/// Total count per kind over every key of `map`.
+fn by_kind_totals(map: &HashMap<PosKey, Agg>) -> BTreeMap<&'static str, u64> {
+    let mut totals = BTreeMap::new();
+    for agg in map.values() {
+        for (&kind, &n) in &agg.by_kind {
+            *totals.entry(kind).or_default() += n;
+        }
+    }
+    totals
 }
 
 fn top(map: &HashMap<PosKey, Agg>, n: usize, scale: f64) -> Vec<Value> {
@@ -1245,6 +1259,8 @@ fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path) -> Value {
     let mut obs_tune: BTreeMap<PolicyObs, u64> = BTreeMap::new();
     let mut obs_eval: BTreeMap<PolicyObs, u64> = BTreeMap::new();
     let print_lenient = std::env::var_os("COVERAGE_PRINT_LENIENT").is_some();
+    let mut subset_natural: HashMap<PosKey, Agg> = HashMap::new();
+    let mut subset_first_natural: HashMap<PosKey, Agg> = HashMap::new();
 
     for (i, (auction, deal)) in games.iter().enumerate() {
         let interp = interpret(table, auction, &opts);
@@ -1306,6 +1322,48 @@ fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path) -> Value {
                 if !is_tune {
                     add_stats(&mut subset_eval, &st);
                 }
+                // Where the subset's calls leave the system (authoring aid for 4.2-4.4).
+                let mut first = true;
+                for pc in &interp.per_call {
+                    if pc.kind != ResolutionKind::Natural {
+                        continue;
+                    }
+                    let Ok(prefix) = Auction::from_calls(
+                        auction.dealer(),
+                        auction.vulnerability(),
+                        auction.calls()[..pc.call_index].iter().copied(),
+                    ) else {
+                        continue;
+                    };
+                    let seat = prefix.next_seat();
+                    let system = &table.systems[seat.index() as usize];
+                    let (state, depth) = on_system(system, &prefix);
+                    let key = pos_key(&prefix, depth);
+                    // On-system with the human call not among the rows, or why the position
+                    // itself is off the system.
+                    let kind = if state == OnSystem::Off {
+                        departure_category(&prefix, depth)
+                    } else {
+                        "call_not_a_row"
+                    };
+                    record(
+                        &mut subset_natural,
+                        key.clone(),
+                        kind,
+                        &prefix,
+                        deal.hand(seat),
+                    );
+                    if first {
+                        record(
+                            &mut subset_first_natural,
+                            key,
+                            kind,
+                            &prefix,
+                            deal.hand(seat),
+                        );
+                        first = false;
+                    }
+                }
             }
         }
         let mut prefix = Auction::new(auction.dealer(), auction.vulnerability());
@@ -1363,6 +1421,10 @@ fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path) -> Value {
         "eval": eval.to_json(),
         "sayc_compatible_opening": subset.to_json(),
         "sayc_compatible_opening_eval": subset_eval.to_json(),
+        "sayc_compatible_opening_natural_top50": top(&subset_natural, 50, 1.0),
+        "sayc_compatible_opening_first_natural_top50": top(&subset_first_natural, 50, 1.0),
+        "sayc_compatible_opening_first_natural_by_kind": by_kind_totals(&subset_first_natural),
+        "sayc_compatible_opening_natural_by_kind": by_kind_totals(&subset_natural),
         "agreement": {
             "all": agree_all.to_json(),
             "tune": agree_tune.to_json(),
