@@ -1574,24 +1574,27 @@ fn natural_tuning() {
             let (tuned, j) = tune_priorities(&sets, &defaults, w);
             let after = sets.rates(&tuned);
             if let Ok(fixed) = std::env::var("TUNE_FIX") {
-                // "rule:default=value,..." applied on top of the tuned vector.
-                let mut v = tuned.clone();
-                for item in fixed.split(',') {
-                    let (key, value) = item.split_once('=').expect("rule:default=value");
-                    let (rule, d) = key.split_once(':').expect("rule:default");
-                    let d: i16 = d.parse().expect("default");
-                    let k = keys
-                        .keys
-                        .iter()
-                        .position(|&(r, p)| r == rule && p == d)
-                        .expect("key");
-                    v[k] = value.parse().expect("value");
+                // "rule:default=value,..." applied on top of the tuned vector and of the
+                // defaults.
+                for (label, start) in [("tuned", &tuned), ("defaults", &defaults)] {
+                    let mut v = start.clone();
+                    for item in fixed.split(',') {
+                        let (key, value) = item.split_once('=').expect("rule:default=value");
+                        let (rule, d) = key.split_once(':').expect("rule:default");
+                        let d: i16 = d.parse().expect("default");
+                        let k = keys
+                            .keys
+                            .iter()
+                            .position(|&(r, p)| r == rule && p == d)
+                            .expect("key");
+                        v[k] = value.parse().expect("value");
+                    }
+                    eprintln!(
+                        "  fixed {fixed} on the {label}: objective {:.4}, {}",
+                        sets.objective(&v, w),
+                        sets.rates(&v)
+                    );
                 }
-                eprintln!(
-                    "  fixed {fixed}: objective {:.4}, {}",
-                    sets.objective(&v, w),
-                    sets.rates(&v)
-                );
             }
             eprintln!(
                 "  w_corpus {w}: objective {:.4} -> {j:.4}\n  tuned:   {after}",

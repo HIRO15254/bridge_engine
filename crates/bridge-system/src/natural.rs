@@ -940,29 +940,30 @@ impl NaturalInference {
         out
     }
 
-    /// The natural implicit `Pass` (docs/design/07-bidding.md §5.2 step 3, 06-system.md §8):
-    /// with `ImplicitPass::Complement`, a hand that satisfies none of the natural candidates
-    /// passes. `ranked` is [`NaturalInference::ranked_candidates`]'s output. Returns `None` when
-    /// `Pass` is itself a ranked candidate (its own rule then describes it); otherwise a
-    /// candidate for `Pass` whose constraint is `¬(C_1 ∨ … ∨ C_k)` over the ranked candidates
-    /// (`ANY` when there are none), with confidence `0` and rule [`IMPLICIT_PASS_RULE`]. It ranks
-    /// after every natural candidate (`choose_bid` gives it priority `i16::MIN + 1`); since it
-    /// is disjoint from them by construction, its region is also its exclusive region.
-    pub fn implicit_pass(ranked: &[NaturalCandidate]) -> Option<NaturalCandidate> {
-        if ranked.iter().any(|c| c.call == Call::Pass) {
-            return None;
-        }
+    /// The natural implicit `Pass` (docs/design/07-bidding.md §4.1 and §5.2 step 3,
+    /// 06-system.md §8.6): with `ImplicitPass::Complement`, a hand that satisfies none of the
+    /// natural candidates passes. `ranked` is [`NaturalInference::ranked_candidates`]'s output.
+    /// The result is a candidate for `Pass` whose constraint is `¬(C_1 ∨ … ∨ C_k)` over every
+    /// ranked candidate (`ANY` when there are none), with confidence `0` and rule
+    /// [`IMPLICIT_PASS_RULE`]. It ranks after every natural candidate (`choose_bid` gives it
+    /// priority `i16::MIN + 1`); since it is disjoint from them by construction, its region is
+    /// also its exclusive region.
+    ///
+    /// A `Pass` that is itself a ranked candidate (a limited `pass_default`, say 0-5 HCP after
+    /// `1H P`) does not suppress it: the natural region of `Pass` is then `(pass rule ∧ ¬higher)
+    /// ∨ ¬(C_1 ∨ … ∨ C_k)`, so a 17-count that fits no natural call after `1H P` still passes.
+    pub fn implicit_pass(ranked: &[NaturalCandidate]) -> NaturalCandidate {
         let constraint = ranked
             .iter()
             .map(|c| c.constraint.clone())
             .reduce(HandConstraint::or)
             .map_or(HandConstraint::ANY, HandConstraint::not);
-        Some(NaturalCandidate {
+        NaturalCandidate {
             call: Call::Pass,
             constraint,
             confidence: 0.0,
             rule: IMPLICIT_PASS_RULE,
-        })
+        }
     }
 
     /// Candidate calls with their natural constraints and priorities, for `choose_bid` when the
@@ -1239,7 +1240,9 @@ fn rule_open_pass(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
     let constraint = HandConstraint::Atom(Atom::ANY.with_hcp(0..=hi));
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        // Below `open_weak2` (0.5): the weak-two range lies inside 0-11 HCP, and at an equal
+        // priority `Pass` wins by call order, so the natural policy never opened a weak two.
+        confidence: 0.45,
         rule: "open_pass",
         explanation: expl!(ex, "declines to open: 0-{hi} hcp"),
     })
@@ -1505,6 +1508,14 @@ fn rule_new_suit_resp_1(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Optio
     let bid = ctx.call.bid()?;
     let suit = bid.strain().suit()?;
     let (min_len, min_hcp) = p.response.new_suit_1;
+    // After an overcall (both sides have bid, so the overcall was at the 1 level) a 1-level new
+    // suit shows five: with four cards in an unbid major responder makes the negative double
+    // (`negative_x`), which otherwise this rule, ranked above it, would shadow completely.
+    let min_len = if ctx.competitive {
+        min_len.max(MIN_NEW_SUIT_OVER_OVERCALL)
+    } else {
+        min_len
+    };
     let constraint = HandConstraint::Atom(
         Atom::ANY
             .with_hcp(min_hcp..=37)
@@ -1578,8 +1589,13 @@ fn rule_resp_nt(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infere
     if ctx.level >= 2 {
         atom.shapes = ShapeSet::BALANCED;
     }
+    let constraint = if ctx.level == 1 && !ctx.owner_acted {
+        one_nt_response(p, ctx, atom)
+    } else {
+        HandConstraint::Atom(atom)
+    };
     Some(Inference {
-        constraint: HandConstraint::Atom(atom),
+        constraint,
         confidence: 0.5,
         rule: "resp_nt",
         explanation: expl!(
@@ -1590,6 +1606,59 @@ fn rule_resp_nt(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infere
             hcp.end()
         ),
     })
+}
+
+/// Minimum length of a 1-level new-suit response after an overcall (with four cards in an
+/// unbid major, responder doubles: `negative_x`).
+const MIN_NEW_SUIT_OVER_OVERCALL: u8 = 5;
+
+/// Minimum support in partner's minor that a natural raise shows in place of a 1NT response
+/// (SAYC `1m-2m`: 5+). A major raise needs only `response.raise.0` (3).
+const MINOR_RAISE_SUPPORT: u8 = 5;
+
+/// Responder's first-response 1NT (`resp_nt` at the 1 level; `atom` carries its HCP range): the
+/// response that is left after the others. It denies
+///
+/// - a 4-card major still biddable at the 1 level (above the last bid, not the opponents'
+///   suit), which `new_suit_resp_1` (or `negative_x` after an overcall) would show, and
+/// - a simple raise of partner's suit: support (`response.raise.0` in a major,
+///   [`MINOR_RAISE_SUPPORT`] in a minor) together with the raise's HCP range.
+///
+/// Without the second part the shape-free 1NT covers every simple-raise hand, so ranking it
+/// above `raise` (phase 4.6: 0.5 against 0.45) left the raise with an empty natural region: after
+/// `1H P` the natural policy never bid `2H`. A hand with support and more strength than a simple
+/// raise (10 HCP and 3 hearts after `1H`) may still respond 1NT.
+fn one_nt_response(p: &NaturalParams, ctx: &CallContext, mut atom: Atom) -> HandConstraint {
+    if let Some(last) = ctx.last_bid.filter(|b| b.level() == 1) {
+        for major in [Suit::Hearts, Suit::Spades] {
+            let strain = Strain::from_suit(major);
+            if strain > last.strain() && !ctx.their_suits.contains(strain) {
+                atom = atom.with_len(major, 0..=p.response.new_suit_1.0.saturating_sub(1));
+            }
+        }
+    }
+    let Some(Call::Bid(opening)) = ctx.partner_first_action else {
+        return HandConstraint::Atom(atom);
+    };
+    let Some(suit) = opening.strain().suit() else {
+        return HandConstraint::Atom(atom);
+    };
+    let support = if matches!(suit, Suit::Hearts | Suit::Spades) {
+        p.response.raise.0
+    } else {
+        MINOR_RAISE_SUPPORT
+    };
+    let (lo, hi) = (*atom.hcp.start(), *atom.hcp.end());
+    let raise_hi = *p.response.raise.1.end();
+    let short = atom.clone().with_len(suit, 0..=support.saturating_sub(1));
+    // The part of the 1NT range above the simple raise keeps any support.
+    let stronger = raise_hi.checked_add(1).filter(|&from| from.max(lo) <= hi);
+    match stronger {
+        Some(from) => {
+            HandConstraint::Atom(short).or(HandConstraint::Atom(atom.with_hcp(from.max(lo)..=hi)))
+        }
+        None => HandConstraint::Atom(short),
+    }
 }
 
 /// The HCP range implied by the *original* opening bid, for rules (`rebid_own`) that need to
@@ -2121,7 +2190,7 @@ mod tests {
     #[test]
     fn implicit_pass_is_the_complement_of_the_ranked_candidates() {
         let engine = NaturalInference::default();
-        // 1S P: responder has natural candidates, Pass among them (pass_default).
+        // 1S P: responder has natural candidates, a limited Pass (pass_default, 0-5) among them.
         let a = Auction::from_calls(
             Seat::North,
             Vulnerability::None,
@@ -2134,27 +2203,55 @@ mod tests {
             &PartnerContext::default(),
             crate::TieBreak::RowOrder,
         );
-        if ranked.iter().any(|c| c.call == Call::Pass) {
-            assert!(NaturalInference::implicit_pass(&ranked).is_none());
-        }
+        assert!(ranked.iter().any(|c| c.call == Call::Pass));
         let without_pass: Vec<NaturalCandidate> = ranked
-            .into_iter()
+            .iter()
             .filter(|c| c.call != Call::Pass)
+            .cloned()
             .collect();
-        let pass = NaturalInference::implicit_pass(&without_pass).expect("Pass not listed");
-        assert_eq!(pass.call, Call::Pass);
-        assert_eq!(pass.rule, IMPLICIT_PASS_RULE);
-        assert!(!pass.is_fallback());
-        let mut seed = 0x1a55u64;
-        for _ in 0..2000 {
-            seed = seed
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            let hand = test_hand(seed);
-            let any = without_pass.iter().any(|c| c.constraint.satisfies(hand));
-            assert_eq!(pass.constraint.satisfies(hand), !any);
+        for set in [&ranked, &without_pass] {
+            let pass = NaturalInference::implicit_pass(set);
+            assert_eq!(pass.call, Call::Pass);
+            assert_eq!(pass.rule, IMPLICIT_PASS_RULE);
+            assert!(!pass.is_fallback());
+            let mut seed = 0x1a55u64;
+            for _ in 0..2000 {
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                let hand = test_hand(seed);
+                let any = set.iter().any(|c| c.constraint.satisfies(hand));
+                assert_eq!(pass.constraint.satisfies(hand), !any);
+            }
         }
-        let none = NaturalInference::implicit_pass(&[]).unwrap();
+        // The listed limited Pass does not suppress the implicit one: after 1H P the 17-count
+        // AK2.32.AQ32.KJ32 fits no natural call (pass_default is 0-5 there), and passes.
+        let a = Auction::from_calls(
+            Seat::North,
+            Vulnerability::None,
+            [Call::Bid(Bid::new(1, Strain::Hearts).unwrap()), Call::Pass],
+        )
+        .unwrap();
+        let ranked = engine.ranked_candidates(
+            &a,
+            Seat::South,
+            &PartnerContext::default(),
+            crate::TieBreak::RowOrder,
+        );
+        assert!(ranked.iter().any(|c| c.call == Call::Pass));
+        let strong = bridge_core::Hand::from_holdings(
+            "KJ32".parse().unwrap(),
+            "AQ32".parse().unwrap(),
+            "32".parse().unwrap(),
+            "AK2".parse().unwrap(),
+        );
+        assert!(!ranked.iter().any(|c| c.constraint.satisfies(strong)));
+        assert!(
+            NaturalInference::implicit_pass(&ranked)
+                .constraint
+                .satisfies(strong)
+        );
+        let none = NaturalInference::implicit_pass(&[]);
         assert!(matches!(none.constraint, HandConstraint::Atom(ref a) if *a == Atom::ANY));
     }
 

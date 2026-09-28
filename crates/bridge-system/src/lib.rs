@@ -48,3 +48,12 @@ pub use trie::{AuctionTrie, Lookup, LookupKey, RelVul, Resolution};
 pub const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Bumped on every breaking change of the serialised IR.
 pub const IR_FORMAT: u32 = 1;
+/// Revision of what [`crate::compile()`] produces for a given source and options, bumped
+/// whenever that output changes without a format change (so without an [`IR_FORMAT`] bump):
+/// new lints, a different expansion. It is part of the `cache::SystemCache` key (feature
+/// `cache`), so an entry written by an older compiler of the same crate version is a miss
+/// rather than a silently stale IR.
+///
+/// 1: phase 3. 2: phase 4 (the exclusive-index lints `ShadowedBranch` and
+/// `OverlappingBranches` are stored in `SystemIR::lints`).
+pub const COMPILE_REVISION: u32 = 2;
