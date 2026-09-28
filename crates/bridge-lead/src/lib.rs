@@ -73,11 +73,12 @@ pub enum LeadError {
 }
 
 /// The deal proposal the lead advisor uses (`docs/design/14-lead.md` §3): [`ConstraintProposal`]
-/// with residual rejection at an acceptance floor of 0.125 instead of the sampler's default 0.5.
+/// with residual rejection turned on (the sampler's default leaves it off) at an acceptance
+/// floor of 0.125 instead of the sampler's default 0.5.
 ///
 /// Every produced deal costs a double-dummy solve, far more than a rejected attempt, so flatter
-/// weights are worth more attempts here: on the corpus evaluation (100 eval-split boards, 100
-/// samples) the median ESS is 86 at this floor, against 35 without residual rejection.
+/// weights are worth more attempts here. `docs/design/14-lead.md` §4.2 has the corpus
+/// evaluation's median ESS with and without residual rejection.
 pub fn lead_proposal() -> ConstraintProposal {
     ConstraintProposal {
         residual_rejection: true,
