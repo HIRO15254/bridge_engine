@@ -1021,18 +1021,18 @@ impl Default for NaturalInference { /* NaturalParams::default() */ }
 | `open_weak2` | `Opener`, `level 2`, スート ≠ C | `suit_len[s] ≥ weak_two.0` ∧ `hcp = weak_two.1` | 0.5 |
 | `open_2c` | `Opener`, `2C` | `hcp ≥ strong_two_c` (シェイプなし) | 0.5 |
 | `open_preempt` | `Opener`, `level 3..=5`, スート | `suit_len[s] ≥ preempt[L].1` ∧ `hcp = preempt[L].2` | 0.55 (旧 0.5) |
-| `open_pass` | `Opener` の席の `Pass` (パス済みでない、かつまだ誰もビッドしていない: `last_bid == None`。オープナーの後のパスはここに来ない) | `hcp ≤ opening_hcp.start − 1` | 0.5 |
+| `open_pass` | `Opener` の席の `Pass` (パス済みでない、かつまだ誰もビッドしていない: `last_bid == None`。オープナーの後のパスはここに来ない) | `hcp ≤ opening_hcp.start − 1` | 0.45 (旧 0.5。`open_weak2` より下に置く。§8.6 の「レビュー後の修正」) |
 | `overcall` | `Overcaller` の最初のアクション (`!owner_acted`), `new_suit` (相手スートのキュービッドを除く), `jump == 0` | `suit_len[s] ≥ overcall[l].0` ∧ `hcp = overcall[l].1` (`l` = 0: 1 レベル、1: 2 レベル以上); `Balancer` は下限に `balancing_shift` | 0.35 (旧 0.5) |
 | `jump_overcall` | `Overcaller` の最初のアクション, `new_suit`, `jump == 1` | `suit_len[s] ≥ overcall[2].0` ∧ `hcp = overcall[2].1` | 0.5 (旧 0.4) |
 | `nt_overcall` | `Overcaller` の最初のアクション, 最安の NT (`jump == 0`) で 2 レベル以下 (1 レベルのオープンに 1N、ウィーク・ツーに 2N) | `hcp = nt_overcall` ∧ `BALANCED` ∧ `Stopper(their suit)` | 0.6 |
 | `takeout_x` | `Double(Takeout)`: パートナー未ビッド、相手のスートが 2 レベル以下 | `hcp ≥ takeout_double.0` ∧ `suit_len[their] ≤ takeout_double.1` ∧ 未ビッドスート各 `≥ takeout_double.2` (未ビッドが 3 つ以上なら `Or` で 2 つ以上を要求) | 0.45 (旧 0.5) |
 | `penalty_x` | `Double(Penalty)`: パートナーの最後のビッドが NT、相手が NT または 4 レベル以上、または我々がスートを合意済み | `hcp ≥ 10` ∧ `suit_len[their] ≥ 4` | 0.3 |
-| `negative_x` | `Double(Negative)`: パートナーがスートを開き RHO が 2 レベル以下でオーバーコール | 未ビッドメジャー `≥ 4` (`Or`) ∧ `hcp ≥ response.new_suit_1.1 + 2 × (level − 1)` | 0.4 (旧 0.5) |
+| `negative_x` | `Double(Negative)`: パートナーがスートを開き RHO が 2 レベル以下でオーバーコール | `hcp ≥ response.new_suit_1.1 + 2 × (level − 1)` ∧ 未ビッドメジャーの条件: 両メジャーが未ビッドで 1 レベルで言える (`1C (1D) X`) なら両方 `≥ 4`; 1 つだけ未ビッドで 1 レベルで言える (`1C (1H) X`) ならちょうど 4 枚; それ以外 (2 レベルのオーバーコール) は未ビッドメジャー `≥ 4` (`Or`) | 両メジャーの場合 0.5、それ以外 0.4 (旧 0.5) |
 | `raise` | パートナーが先にビッドしたスート `s` を我々がビッド | `suit_len[s] ≥ raise.0` ∧ 役割/レベル別の `hcp` (`Responder`: `response.raise.1` 単純、`response.jump_raise.1` ジャンプ、ゲームレイズ `13+`; `Advancer`: `advance.raise`; `Opener`: `rebid.raise` / `rebid.jump_raise`) | 0.45 (旧 0.6) |
-| `new_suit_resp_1` | `Responder`, `new_suit`, `level 1` | `suit_len[s] ≥ response.new_suit_1.0` ∧ `hcp ≥ response.new_suit_1.1` | 0.5 |
+| `new_suit_resp_1` | `Responder`, `new_suit`, `level 1` | `suit_len[s] ≥ response.new_suit_1.0` ∧ `hcp ≥ response.new_suit_1.1`。相手がメジャーでオーバーコールした後 (`1C (1H) 1S`) は長さ `≥ 5` (4 枚はネガティブ・ダブル) | 0.5 |
 | `new_suit_resp_2` | `Responder`, `new_suit`, `level 2`, `jump == 0` | `suit_len[s] ≥ response.new_suit_2.0` (5) ∧ `hcp ≥ response.new_suit_2.1` (10); `jump == 1` は `hcp ≥ response.jump_shift` | 0.6 (旧 0.5) |
-| `resp_nt` | `Responder`, `nt`, レベル `L` | `hcp = response.nt[L]` (1N はシェイプなし、2N/3N は `BALANCED` 寄り: 4 メジャー否定は v2) | 0.5 |
-| `rebid_own` | `Opener`, `rebid_own` | `suit_len[s] ≥ 6` ∧ `hcp = opening_hcp` (`jump == 1` なら `rebid.jump_rebid`)。1 スートのオープン後に合意済みスート (自分が先にビッドしパートナーがサポートしたスート) を再び上げる場合は別枝: 長さはオープンの最小長 (2 番目のスートなら 4)、`hcp` は競り合いなしのジャンプなしが `rebid.jump_rebid` (ゲームトライ)、競り合いでは `opening_hcp`、ジャンプは `rebid.jump_rebid.start..=opening_hcp.end` | 0.5 |
+| `resp_nt` | `Responder`, `nt`, レベル `L` | `hcp = response.nt[L]` (2N/3N は `BALANCED` 寄り: 4 メジャー否定は v2)。最初の応答の 1N はシンプル・レイズを否定する: パートナーのスート `s` について ¬(`suit_len[s] ≥ 支持` ∧ `hcp ∈ response.raise.1`)。支持はメジャーで `response.raise.0` (3)、マイナーで 5 (SAYC の `1H-1N` は「3 枚以上のハートなし」、`1C-1N` は「5 枚以上のクラブなし」)。10 HCP の支持付きは 1N でよい | 0.5 |
+| `rebid_own` | `Opener`, `rebid_own` | `suit_len[s] ≥ 6` ∧ `hcp = opening_hcp` (`jump == 1` なら `rebid.jump_rebid`)。1 スートのオープン後に合意済みスート (自分が先にビッドしパートナーがサポートしたスート) を再び上げる場合は別枝: 長さはオープンの最小長 (2 番目のスートなら 4)、`hcp` は競り合いなしのジャンプなしが `rebid.jump_rebid` (ゲームトライ)、競り合いでは `opening_hcp`、ジャンプは `rebid.jump_rebid.start..=opening_hcp.end` | ジャンプ (`jump ≥ 1`、`rebid.jump_rebid`) は 0.55、それ以外は 0.5 (旧はどちらも 0.5。ジャンプの 16〜18 は非ジャンプの 12〜21 に含まれ、同点ではコール順で安い非ジャンプが勝つので、ジャンプ・リビッドが一度も選ばれなかった) |
 | `reverse` | `Opener`, `reverse` (最初のスートの 2 レベルより上の新スート) | `hcp ≥ rebid.reverse` ∧ 最初のスート `≥ 5` ∧ 2 番目 `≥ 4` | 0.55 (旧 0.4) |
 | `rebid_nt` | `Opener` (1 スートのオープン後), `nt`, 2 レベル以下、合意スートなし | `BALANCED` ∧ `hcp = rebid.nt_1` (`jump == 0`) / `rebid.nt_2` (`jump == 1`)。それより大きいジャンプは `fallback` | 0.45 (旧 0.5) |
 | `rebid_new_suit` | `Opener` (1 スートのオープン後), `new_suit` (リバースでない。`reverse` が先に当たる) | `suit_len[s] ≥ 4` ∧ `hcp = opening_hcp.start..=rebid.jump_raise.end` (`jump ≥ 1` のジャンプシフトは `hcp ≥ rebid.jump_rebid.end + 1`) | 0.35 (旧 0.4) |
@@ -1077,7 +1077,7 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
 - 結果の制約・確信度・規則は、各コールについて `classify(&auction.with(call), …)` + `infer` と同一でなければならない。合法でないコールは `fallback` (`ANY`、確信度 0.05) を返す。
 - 同一性の確認:
   - `tests/natural_batch.rs`: 固定 6 + 乱数 60 オークション × 3 パートナー文脈 × 2 エンジンで、114,570 組。
-  - `bridge-bidding` の `natural_metrics.rs`: `#[ignore]` 版は生成 1000 + コーパス 500 オークションで、1,025,270 組。
+  - `bridge-bidding` の `natural_metrics.rs`: `#[ignore]` 版は生成 1000 + コーパス 500 オークションで、859,954 組 (確信度の調整前は 1,025,270 組、4.6 の採用時点は 860,516 組。規則の変更で生成オークションが変わるため)。
 - 速度 (`1NT P 2C` の後の合法 31 コール、release、best of 3、loadavg 6.5):
 
   | 方法 | 時間 |
@@ -1103,17 +1103,19 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
   | 下限なし、旧確信度 | [32, 48, 208, 256, 139, 45, 12, 1260] | 63.0% | 63.6% |
   | 下限なし、4.6 の確信度 | [32, 92, 379, 573, 396, 131, 28, 369] | 18.5% | 19.9% |
   | 既定の表、4.6 の確信度 | [32, 95, 608, 855, 290, 100, 18, 2] | 0.1% | 1.0% |
+  | 下限なし、レビュー後の規則 | [32, 92, 374, 573, 395, 134, 30, 370] | 18.5% | 20.0% |
+  | 既定の表、レビュー後の規則 (現行) | [32, 95, 603, 854, 294, 101, 19, 2] | 0.1% | 1.05% |
 
-  基準 (7 レベル ≤ 1%、6 レベル以上 ≤ 5%) を満たす。既定スイートでは 200 配牌版を回す。
+  基準 (7 レベル ≤ 1%、6 レベル以上 ≤ 5%) を満たす。既定スイートでは 200 配牌版を回す。なお、途中で強制パスの穴 (gap) に落ちたリプレイは、下限ありで 115 件、下限なしで 54 件である。下限が継続ビッドを禁じた手が、SAYC の表にもナチュラル候補にも行き場を失う分である (ナチュラル暗黙パスの有無では変わらない)。
 
 **ナチュラル暗黙パス (`NaturalInference::implicit_pass`)。** `ImplicitPass::Complement` のもとで、どのナチュラル候補も満たさない手はパスする (`07-bidding.md` §5.2 の手順 3)。
 
-- `Pass` 自体が候補に入っているときは、その規則がパスを説明するので `None` を返す。
-- それ以外では、候補の和の否定 ¬(C_1 ∨ … ∨ C_k) を制約とする `Pass` を返す (候補が無ければ `ANY`)。
+- 全候補 (`Pass` の規則が候補に入っていればそれも含む) の和の否定 ¬(C_1 ∨ … ∨ C_k) を制約とする `Pass` を返す (候補が無ければ `ANY`)。戻り値は `Option` ではない。
+- 上限付きの `pass_default` (例: `1H P` の後の 0〜5) が候補にあっても省かない。ナチュラルの `Pass` の領域は `07-bidding.md` §4.1 のとおり (パスの規則 ∧ ¬上位) ∨ ¬(全候補の和) になる。例: `1H P` の後の 17 点 AK2.32.AQ32.KJ32 はどの候補も満たさないのでパスする (以前は `None` を返し、`m_P(h)` が ⊥ になっていた)。レビュー時点 (34d51a3) の規則では、`1H P` の一様な手 10 万のうち 0.21% がこの場合に当たった。レーン B の `natural_choice` (wip/p4-B) も同じく `Pass` の有無を見ない。
   - 確信度は 0、規則名は `IMPLICIT_PASS_RULE` (`"implicit_pass"`)、説明は「pass: no natural call fits this hand」。
   - この `Pass` は全候補の後に位置し、構成上どの候補とも素なので、その領域はそのまま排他領域になる。
 
-**フェーズ 4.6 の調整。** 対象は、規則の確信度 (priority としてだけ効く) とレベル下限の表である。規則の制約 (HCP 範囲など) は変えないので、測定 1 と 3 は構成上変わらない。調整後の全測定で、測定 1 の全グループと測定 3 の全規則が、調整前と同一であることを確かめた。
+**フェーズ 4.6 の調整。** 対象は、規則の確信度 (priority としてだけ効く) とレベル下限の表である。規則の制約 (HCP 範囲など) は変えないので、測定 1 と 3 は構成上変わらない。調整後の全測定で、測定 1 の全グループと測定 3 の全規則が、調整前と同一であることを確かめた (4.6 の調整の時点。後の「レビュー後の修正」は規則の制約も変えたので、測定 1 と 3 も動く)。
 
 - データの分割 (`15-phase4-plan.md` D20):
   - コーパス (27 ファイル、724 ゲーム、8,169 コール) を列挙の添字で分ける。偶数が調整用、奇数が評価用。
@@ -1156,16 +1158,53 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
 - 座標降下は `new_suit_resp_1` を 0.5 → 0.4 (初回) / 0.25 (再調整)、`resp_nt` を 0.5 → 0.55 にも動かした。これは 1 レベルの新スート応答より 1NT 応答を優先する順で、標準的な応答順と逆になる。調整用の目的関数では 0.5073 対 0.5066 と差が誤差程度なので、採らずに旧値 (ともに 0.5) を残した。
 - レベル下限の表は STANDARD のままにした。調整用の目的関数は、STANDARD が 0.5066、STANDARD+2 が 0.5099、STANDARD−2 が 0.5026、4 レベルからが 0.5071、下限なしが 0.4655 で、下限なし以外の差は 0.004 以内である。一方 STANDARD+2 は旧定義の測定 2 を 0.011 下げる。
 
-受け入れ基準 (レーン S「ナチュラル」):
+**レビュー後の修正: 影に隠れた規則 (2026-09-28)。** 4.6 の確信度は `raise` (0.45) を 1 レベルの `resp_nt` (0.5) の下に置いた。1 レベルの 1NT 応答はシェイプに制限が無く (6〜10)、シンプル・レイズ (3 枚以上、6〜9) の領域を丸ごと含むので、`1x P` の後のナチュラル方策は一度もレイズしなかった (レイズ規則を満たす手 2000 のうち 0)。δ > 0 (`human()`) の解釈では、ナチュラルの 2M/2m の片 `Y_c` が空になる。目的関数はこれを見分けない。同じ種類の「全域の影」を網羅的に調べ、次を直した。
+
+- `resp_nt`: 最初の応答の 1NT はシンプル・レイズを否定する (§8.3 の表)。SAYC の書き方 (`1H-1N` は「3 枚以上のハートなし」、`1C-1N` は「5 枚以上のクラブなし」) に合わせた。1 レベルで言える 4 枚メジャーは否定しない。`new_suit_resp_1` と同点でコール順で勝つので、排他領域からは既に抜けている。生の制約に入れると測定 1 の再現率を大きく下げた (試した版で SAYC の `Responder`/`Bid_NT` 0.316 → 0.208) ので外した。
+- `negative_x` と `new_suit_resp_1`: `1C (1H)` では 1S が 4 枚以上を示してダブル (0.4) を丸ごと覆っていた。SAYC どおり、メジャーのオーバーコールの後の 1 レベルの新メジャーは 5 枚以上、ダブルはちょうど 4 枚にした。`1C (1D)` のように両メジャーが 1 レベルで言えるときは、ダブルは両メジャー 4 枚以上で、確信度 0.5 (1H/1S と同点になり、コール順でダブルが勝つ)。2 レベルのオーバーコールの後は従来どおり、どちらかの未ビッドメジャー 4 枚以上。
+- `open_pass`: 0.5 → 0.45。ウィーク・ツー (0.5、5〜10) は `open_pass` (0〜11) に含まれ、同点ではコール順でパスが勝つので、ナチュラル方策は一度もウィーク・ツーを開かなかった (フェーズ 3 からの問題)。
+- `rebid_own`: ジャンプ・リビッドを 0.55 にした (§8.3 の表。フェーズ 3 からの問題)。
+- `implicit_pass`: `Pass` の規則が候補にあっても省かない (上の「ナチュラル暗黙パス」)。
+
+回帰テストは `tests/natural_shadow.rs` である。
+
+- 26 の代表局面で、どの規則も全域が影にならないこと。例外は `cue` と `penalty_x` だけで、上限なしのパス (0.3) の後ろに意図して置いている。
+- 17 局面の 106 の代表的なコール (オープニング、各応答、ネガティブ・ダブル、オーバーコール、アドバンス、オープナーのリビッド) が、ある手で選ばれること。
+- 判定は、サンプラーが除去なしで数えられるときは「C_i ∧ ¬(上位の和)」の手数が正であることで厳密に行う。それ以外は C_i から 4000 手を引いて調べる。
+- レビューで示された手 (`1H P` で 7.KJ84.QT763.982 は 2H、`1S P` で Q84.K73.J9763.82 は 2S) の確認も入れた。
+- 残る影は、より高いレベルが同じ制約を繰り返すものだけである。5〜7 レベルのレイズは 4 レベルと同じ制約で、アドバンサーの 3H/4H は `advance.raise` を共有し、オープナーの 4 レベルのジャンプシフトは 3 レベルと同じ制約である。規則表の既知の限界として、代表コールには入れていない。
+
+測定 (release、loadavg 18〜100。機械を他のレーンと共有):
+
+| 設定 | 測定 2 (旧定義) 全体 / 調整半分 / 評価半分 | 測定 2 (文脈付き) 全体 / 調整半分 / 評価半分 | 実配牌一致率 調整用 / 評価用 |
+| --- | --- | --- | --- |
+| 4.6 の採用値 (修正前) | 0.3382 / 0.3400 / 0.3362 | 0.4147 / 0.4145 / 0.4149 | 0.5988 / 0.6180 |
+| 修正後 (現行) | 0.3506 / 0.3535 / 0.3477 | 0.4294 / 0.4302 / 0.4285 | 0.5978 / 0.6175 |
+
+- `natural_inference_metrics` 本体では、測定 2 は旧定義 0.338 → 0.350、文脈付き 0.415 → 0.429 (600 決定点、8,326 候補)。
+- 規則の制約を変えたので、測定 1 と 3 も動く。
+  - 測定 1 (全ノード平均) は、SAYC の再現率 0.6500 → 0.6481、精度 0.6422 → 0.6438 (1500 ノード)。vendor の再現率 0.5829 → 0.5803、精度 0.5961 → 0.5965 (795 ノード)。
+  - グループ別で 0.01 を超えて動いたもの:
+    - `Responder`/`Bid_NT`: 再現率が SAYC で 0.316 → 0.293、vendor で 0.284 → 0.232。精度は 0.525 → 0.529 / 0.637 → 0.644。
+    - `Responder`/`Double(Negative)`: 再現率が SAYC で 0.593 → 0.558 (精度 0.740 → 0.796)、vendor (6 ノード) で 0.468 → 0.333。
+  - 測定 3 (コーパス 8,169 コールの充足率) は 0.7991 → 0.7981。規則別では `negative_x` 0.649 → 0.544 (57 コール)、`resp_nt` 0.313 → 0.303 (198 コール)。
+- `open_pass` だけを 0.5 に戻すと、実配牌一致率は 0.6005 / 0.6197 (+0.0027 / +0.0022) で、測定 2 は変わらない。コーパスの実際の手では、ウィーク・ツーの形でもパスするほうが多い。それでもナチュラル方策がウィーク・ツーを開かないのは SAYC の補完として誤りなので、0.45 を採った。
+- 修正後の規則で座標降下をやり直すと、目的関数は 0.5140 → 0.5156 (+0.0016) で、動かすのは次の 3 つである。どれも採らなかった。
+  - `new_suit_resp_1` を 0.5 → 0.4 にする。これは、1NT 応答を 1 レベルの新スートより前に置く、既に退けた順である。
+  - `negative_x` を 0.4 → 0.25 にする。
+  - `open_weak2` を 0.5 → 0.45 にする。`open_pass` と同点になり、ウィーク・ツーが再び影になる。
+  - 3 つを入れても、評価用の実配牌一致率は 0.6175 → 0.6140 に下がる。
+
+受け入れ基準 (レーン S「ナチュラル」)。数値はレビュー後の修正を含む現行の値である。
 
 - (a) 3 測定のどれも 0.01 を超えて下がらないこと。満たす。
-  - 測定 1 と 3 は同一である。
-  - 測定 2 は、旧定義で 0.329 → 0.338、文脈付きで 0.415 に上がった。
+  - 測定 1 と 3 の全体の値は、上のとおり 0.003 以内でしか下がらない。グループ別・規則別には、上に挙げた下がり方がある。
+  - 測定 2 は、旧定義で 0.329 → 0.350、文脈付きで 0.429 に上がった。
 - (b) 決定点の一致率が 0.329 から 0.02 以上上がること。
-  - 文脈付きの定義では 0.415 (+0.086) で満たす。
-  - 旧定義では 0.338 (+0.009) で満たさない。理由は上の注意のとおりで、旧定義は下限が除外する手を引いて外れに数えるので、下限だけで −0.030 になる。同じ確信度で下限を外すと、旧定義でも 0.373 (+0.044) になる。
-  - レベル下限はリプレイの暴走を止めるために必要なので、下限を入れたまま文脈付きの定義で評価する。
-- 実配牌一致率 (評価用分割) は、フェーズ 3 の 0.478 から 0.618 に上がった。
+  - 旧定義では 0.350 (+0.021) で満たす。調整用・評価用の半分では、フェーズ 3 の 0.331 / 0.334 に対して 0.3506 / 0.3477 (+0.020 / +0.014)。
+  - 文脈付きの定義では、同じ定義のフェーズ 3 の値 0.333 / 0.335 (全体 / 評価半分) に対して 0.429 / 0.4285 (+0.096 / +0.094) で満たす。4.6 の採用時点の「+0.086」は、文脈付きの値を旧定義の基準 0.329 と比べていたので、定義をそろえると +0.082 (全体) / +0.080 (評価半分) だった。
+  - 旧定義は、下限が除外する手を引いて外れに数えるので、下限だけで −0.030 になる (上の注意)。レベル下限はリプレイの暴走を止めるために必要なので、下限を入れたまま評価する。
+- 実配牌一致率 (評価用分割) は、フェーズ 3 の 0.478 から 0.6175 に上がった (4.6 の採用時点では 0.618)。
 
 ---
 
@@ -1226,7 +1265,7 @@ impl LintSummary { pub fn of(lints: &[Lint]) -> LintSummary; }
 | constraint | `DnfTruncated` | Warning (`strict_dnf` なら Error) | `to_dnf` が `max_terms` (256) を超えて `residual` に退避した |
 | coverage | `MissingOpeningCoverage` | Warning | どのオープニングも満たさない (パス以外の) 手の割合 |
 | coverage | `MissingResponseCoverage` | Info | あるノードの子のどれも満たさない手の割合 |
-| exclusive | `ShadowedBranch` | Warning | 上位の兄弟 (と同じノードの先の枝) に全域を覆われ、`choose_bid` が決して選ばない枝 (§9.3 の 8) |
+| exclusive | `ShadowedBranch` | Warning | 上位の兄弟に全域を覆われ、`choose_bid` が決して選ばない枝 (§9.3 の 8) |
 | exclusive | `OverlappingBranches` | Info | 同じノードの枝どうしが重なり、排他索引が後の枝を素化した (§9.3 の 8) |
 
 ### 9.3 コンパイル後の八つの検査
@@ -1284,12 +1323,14 @@ pub const IR_FORMAT: u32 = 1;
 pub struct SystemCache { dir: PathBuf }
 impl SystemCache {
     pub fn new(dir: impl Into<PathBuf>) -> SystemCache;                       // dir は初回書き込み時に作る
-    /// blake3(resolved source ‖ compiler_version ‖ ir_format ‖ options)
+    /// blake3(resolved source ‖ compiler_version ‖ ir_format ‖ compile_revision ‖ options)
     pub fn key(source: &[u8], opts: &CompileOptions) -> [u8; 32];
     /// Loads the cached IR for `path` if its key matches, otherwise compiles and stores it. Lints are stored with the IR.
     pub fn load_or_compile(&self, path: &Path, loader: &dyn SourceLoader, opts: &CompileOptions) -> std::io::Result<(SystemIR, Vec<Lint>)>;
 }
 ```
+
+`compile_revision` は `COMPILE_REVISION` (フェーズ 3 が 1、フェーズ 4 が 2) である。`compile()` の出力が形式を変えずに変わるとき (新しい Lint など) に上げる。クレートのバージョンと `IR_FORMAT` が同じでも、古いコンパイラが書いたエントリは別のキーになり、読まれずに再コンパイルされる (フェーズ 4 の排他索引の Lint を持たない IR が、温まったキャッシュから返るのを防ぐ。回帰テスト `an_entry_under_the_pre_revision_key_is_a_miss`)。
 
 手順: (1) `loader` で `path` を読み、`lexer::load` で include を解決して `resolved source` (全ファイルの連結、`Loaded.files` の順) を得る。(2) `key` を計算し `dir/<hex(key)>.ir` を探す。(3) あれば `postcard` でデコードする。ヘッダの `ir_format` が `IR_FORMAT` と違う、`compiler_version` が違う、デコードに失敗する、のいずれも「不一致」として再コンパイルし上書きする (エラーにはしない)。(4) 無ければ `compile` して書く。書き込みは一時ファイル + rename で原子的に行い、I/O の失敗だけが `Err`。`std` 無し (wasm) では `SystemCache` を提供せず、`compile` だけを使う。
 
@@ -1353,7 +1394,7 @@ systems/
 | `lint.rs` | `Severity`, `LintCode`, `Lint`, `LintSummary`、八つの検査 |
 | `cache.rs` | `SystemCache` (feature `cache`) |
 
-feature: `default = ["std"]`, `std`, `serde = ["dep:serde", ..]`, `cache = ["std", "serde", "dep:postcard", "dep:blake3"]`。依存: `bridge-core`, `bridge-eval`, `bridge-constraint`, `winnow 1.0`, `smallvec`, `thiserror 2`, `tracing 0.1`, `serde` (optional), `postcard` / `blake3` (optional、`cache`)。dev: `insta`。`lib.rs` の公開面: `compile::{CompileOptions, compile}`、`ir::*`、`lint::{Lint, LintCode, Severity}`、`natural::{CallContext, CallKind, Inference, NaturalInference, NaturalParams, Role}`、`pattern::*`、`trie::{AuctionTrie, Lookup, LookupKey, RelVul, Resolution}` に加え、`ast`, `cache`, `compile`, `lexer`, `lint`, `natural`, `parser`, `pattern`, `trie` は `pub mod`。
+feature: `default = ["std"]`, `std`, `serde = ["dep:serde", ..]`, `cache = ["std", "serde", "dep:postcard", "dep:blake3"]`。依存: `bridge-core`, `bridge-eval`, `bridge-constraint`, `winnow 1.0`, `smallvec`, `thiserror 2`, `tracing 0.1`, `serde` (optional), `postcard` / `blake3` (optional、`cache`)。dev: `insta`, `rand_xoshiro` (`tests/natural_shadow.rs` のサンプリング)。`lib.rs` の公開面: 定数 `COMPILER_VERSION` / `IR_FORMAT` / `COMPILE_REVISION` (§10.2)、`compile::{CompileOptions, compile}`、`ir::*`、`lint::{Lint, LintCode, Severity}`、`natural::{CallContext, CallKind, Inference, NaturalInference, NaturalParams, Role}`、`pattern::*`、`trie::{AuctionTrie, Lookup, LookupKey, RelVul, Resolution}` に加え、`ast`, `cache`, `compile`, `lexer`, `lint`, `natural`, `parser`, `pattern`, `trie` は `pub mod`。
 
 ### 11.2 実装順と完了条件
 

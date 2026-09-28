@@ -1442,20 +1442,48 @@ fn rule_negative_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inf
         .1
         .saturating_add(2u8.saturating_mul(their_level.saturating_sub(1)));
     // Only the major(s) neither side has bid yet count: holding length in the suit the
-    // opponents just showed (their overcall) says nothing about an unbid major.
-    let majors = [Suit::Hearts, Suit::Spades]
+    // opponents just showed (their overcall) says nothing about an unbid major. Where the new
+    // suits are still available at the 1 level the double is what they are not (SAYC):
+    //
+    // - both majors unbid (`1C (1D) X`): both majors, since `1H`/`1S` show one four-card major;
+    //   ranked with them (0.5, and the double wins the tie by call order) so a 4-4 hand doubles;
+    // - one major unbid (`1C (1H) X`): exactly four, since `1S` shows five.
+    //
+    // Otherwise (a 2-level overcall, `1D (2C) X`) it is four cards in either unbid major.
+    let unbid: Vec<Suit> = [Suit::Hearts, Suit::Spades]
         .into_iter()
         .filter(|&s| {
             let strain = Strain::from_suit(s);
             !ctx.our_suits.contains(strain) && !ctx.their_suits.contains(strain)
         })
-        .map(|s| HandConstraint::Atom(Atom::ANY.with_len(s, 4..=13)))
-        .reduce(HandConstraint::or)
-        .unwrap_or(HandConstraint::ANY);
-    let constraint = majors.and(HandConstraint::Atom(Atom::ANY.with_hcp(min_hcp..=37)));
+        .collect();
+    let one_level = |s: Suit| {
+        ctx.last_bid
+            .is_some_and(|b| b.level() == 1 && Strain::from_suit(s) > b.strain())
+    };
+    let hcp = HandConstraint::Atom(Atom::ANY.with_hcp(min_hcp..=37));
+    let (majors, confidence) = match unbid.as_slice() {
+        &[h, s] if one_level(h) && one_level(s) => (
+            HandConstraint::Atom(Atom::ANY.with_len(h, 4..=13).with_len(s, 4..=13)),
+            0.5,
+        ),
+        &[m] if one_level(m) => (
+            HandConstraint::Atom(Atom::ANY.with_len(m, 4..=MIN_NEW_SUIT_OVER_OVERCALL - 1)),
+            0.4,
+        ),
+        _ => (
+            unbid
+                .iter()
+                .map(|&s| HandConstraint::Atom(Atom::ANY.with_len(s, 4..=13)))
+                .reduce(HandConstraint::or)
+                .unwrap_or(HandConstraint::ANY),
+            0.4,
+        ),
+    };
+    let constraint = majors.and(hcp);
     Some(Inference {
         constraint,
-        confidence: 0.4,
+        confidence,
         rule: "negative_x",
         explanation: expl!(ex, "negative double: {min_hcp}+ hcp, 4+ card unbid major"),
     })
@@ -1508,10 +1536,14 @@ fn rule_new_suit_resp_1(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Optio
     let bid = ctx.call.bid()?;
     let suit = bid.strain().suit()?;
     let (min_len, min_hcp) = p.response.new_suit_1;
-    // After an overcall (both sides have bid, so the overcall was at the 1 level) a 1-level new
-    // suit shows five: with four cards in an unbid major responder makes the negative double
-    // (`negative_x`), which otherwise this rule, ranked above it, would shadow completely.
-    let min_len = if ctx.competitive {
+    // After a 1-level overcall in a major (`1C (1H) 1S`), the new major shows five: with exactly
+    // four responder makes the negative double, which this rule, ranked above it, would
+    // otherwise shadow completely. Over a minor overcall (`1C (1D) 1H`) it stays 4+ (SAYC; the
+    // double then shows both majors).
+    let over_major = [Strain::Hearts, Strain::Spades]
+        .into_iter()
+        .any(|m| ctx.their_suits.contains(m));
+    let min_len = if ctx.competitive && over_major {
         min_len.max(MIN_NEW_SUIT_OVER_OVERCALL)
     } else {
         min_len
@@ -1608,35 +1640,27 @@ fn rule_resp_nt(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infere
     })
 }
 
-/// Minimum length of a 1-level new-suit response after an overcall (with four cards in an
-/// unbid major, responder doubles: `negative_x`).
+/// Minimum length of a 1-level new major after an overcall in the other major (`1C (1H) 1S`):
+/// with exactly four, responder makes the negative double (`negative_x`).
 const MIN_NEW_SUIT_OVER_OVERCALL: u8 = 5;
 
 /// Minimum support in partner's minor that a natural raise shows in place of a 1NT response
 /// (SAYC `1m-2m`: 5+). A major raise needs only `response.raise.0` (3).
 const MINOR_RAISE_SUPPORT: u8 = 5;
 
-/// Responder's first-response 1NT (`resp_nt` at the 1 level; `atom` carries its HCP range): the
-/// response that is left after the others. It denies
+/// Responder's first-response 1NT (`resp_nt` at the 1 level; `atom` carries its HCP range)
+/// denies a simple raise of partner's suit: support (`response.raise.0` in a major,
+/// [`MINOR_RAISE_SUPPORT`] in a minor) together with the raise's HCP range, as SAYC writes it
+/// (`1H-1NT`: 6-9, not 3+ hearts; `1C-1NT`: not 5+ clubs).
 ///
-/// - a 4-card major still biddable at the 1 level (above the last bid, not the opponents'
-///   suit), which `new_suit_resp_1` (or `negative_x` after an overcall) would show, and
-/// - a simple raise of partner's suit: support (`response.raise.0` in a major,
-///   [`MINOR_RAISE_SUPPORT`] in a minor) together with the raise's HCP range.
-///
-/// Without the second part the shape-free 1NT covers every simple-raise hand, so ranking it
-/// above `raise` (phase 4.6: 0.5 against 0.45) left the raise with an empty natural region: after
-/// `1H P` the natural policy never bid `2H`. A hand with support and more strength than a simple
-/// raise (10 HCP and 3 hearts after `1H`) may still respond 1NT.
-fn one_nt_response(p: &NaturalParams, ctx: &CallContext, mut atom: Atom) -> HandConstraint {
-    if let Some(last) = ctx.last_bid.filter(|b| b.level() == 1) {
-        for major in [Suit::Hearts, Suit::Spades] {
-            let strain = Strain::from_suit(major);
-            if strain > last.strain() && !ctx.their_suits.contains(strain) {
-                atom = atom.with_len(major, 0..=p.response.new_suit_1.0.saturating_sub(1));
-            }
-        }
-    }
+/// Without it the shape-free 1NT covers every simple-raise hand, so ranking it above `raise`
+/// (phase 4.6: 0.5 against 0.45) left the raise with an empty natural region: after `1H P` the
+/// natural policy never bid `2H`. A hand with support and more strength than a simple raise (10
+/// HCP and 3 hearts after `1H`) may still respond 1NT. A 4-card major biddable at the 1 level is
+/// not denied here: `new_suit_resp_1` ties with 1NT and wins by call order, so the natural
+/// exclusive region already leaves it out, and the raw constraint stays the node's own (as the
+/// SAYC tables write it; §8.5 measurement 1 compares raw constraints).
+fn one_nt_response(p: &NaturalParams, ctx: &CallContext, atom: Atom) -> HandConstraint {
     let Some(Call::Bid(opening)) = ctx.partner_first_action else {
         return HandConstraint::Atom(atom);
     };
@@ -1722,7 +1746,9 @@ fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
     let constraint = HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, 6..=13));
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        // A jump rebid (16-18) lies inside the plain rebid's range (12-21): at an equal
+        // priority the cheaper call would always win and the jump would never be made.
+        confidence: if jump >= 1 { 0.55 } else { 0.5 },
         rule: "rebid_own",
         explanation: expl!(
             ex,
