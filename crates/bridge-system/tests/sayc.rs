@@ -27,10 +27,22 @@ use bridge_system::{
     CompileOptions, LintCode, LookupKey, NodeId, RelVul, Severity, Side, SystemIR,
 };
 
-/// Compiles one `systems/sayc/<name>` file with `FsLoader`, panicking (not skipping) on any
-/// I/O error: unlike the vendored-corpus tests, this file is checked into the repo and must
-/// always be present.
-fn compile_sayc(name: &str) -> (SystemIR, std::time::Duration) {
+/// Compiles one `systems/sayc/<name>` file with `FsLoader` once per test binary (the phase-4
+/// system has about 45k nodes, several seconds per debug compile) and returns the shared result
+/// with the first compile's elapsed time. Panics (does not skip) on any I/O error: unlike the
+/// vendored-corpus tests, this file is checked into the repo and must always be present.
+fn compile_sayc(name: &str) -> &'static (SystemIR, std::time::Duration) {
+    use std::sync::OnceLock;
+    static SAYC: OnceLock<(SystemIR, std::time::Duration)> = OnceLock::new();
+    static OPENINGS_ONLY: OnceLock<(SystemIR, std::time::Duration)> = OnceLock::new();
+    match name {
+        "sayc.bml" => SAYC.get_or_init(|| compile_sayc_uncached(name)),
+        "openings-only.bml" => OPENINGS_ONLY.get_or_init(|| compile_sayc_uncached(name)),
+        other => panic!("compile_sayc: no cache slot for {other}"),
+    }
+}
+
+fn compile_sayc_uncached(name: &str) -> (SystemIR, std::time::Duration) {
     let path = common::systems_dir().join("sayc").join(name);
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
@@ -373,7 +385,7 @@ fn sayc_opening_choice_by_suit_length() {
     let (ir, _) = compile_sayc("openings-only.bml");
     let seat = Seat::North;
     let vul = Vulnerability::None;
-    let candidates = opening_candidates(&ir, seat, vul);
+    let candidates = opening_candidates(ir, seat, vul);
 
     let cases: &[(&str, &str, &str, &str, &str, Call)] = &[
         // (label, clubs, diamonds, hearts, spades, expected opening)
@@ -496,7 +508,7 @@ fn sayc_opening_choice_by_suit_length() {
             (12..=21).contains(&hcp),
             "{label}: test fixture hand has {hcp} hcp, outside the 12-21 opening range"
         );
-        let opened = best_opening(&ir, &candidates, hnd);
+        let opened = best_opening(ir, &candidates, hnd);
         assert_eq!(
             opened,
             Some(expected),
@@ -517,7 +529,7 @@ fn sayc_opening_coverage_sanity() {
 
     let seat = Seat::North;
     let vulnerability = Vulnerability::None;
-    let candidates = opening_candidates(&ir, seat, vulnerability);
+    let candidates = opening_candidates(ir, seat, vulnerability);
     assert!(
         !candidates.is_empty(),
         "openings-only.bml: no opening candidates at all at the start of the auction"
