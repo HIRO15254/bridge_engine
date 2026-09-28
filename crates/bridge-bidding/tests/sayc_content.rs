@@ -1124,3 +1124,128 @@ mod sayc_comp {
         }
     }
 }
+
+/// Phase 4 (docs/design/15-phase4-plan.md lane D; `systems/sayc/NOTES.md` #P1-#P7): one case per
+/// family of the tables that keep generated auctions on the system past the phase-3 rows (pass
+/// chains, later uncontested rounds, opener after a negative double, Michaels and balancing
+/// continuations, defense to weak twos, opener's reopening, the sandwich advances), plus the three
+/// phase-3 `NoCandidate` tops. Every call must come from a system row (`ChoiceSource::System`),
+/// not from natural completion or an implicit pass. Dealer North, none vulnerable, hands `S.H.D.C`.
+mod phase4_tables {
+    use super::*;
+    use bridge_bidding::{BidChoice, ChoiceSource};
+    use bridge_core::{Auction, Call, Hand};
+
+    /// Asserts every `(auction, hand, expected call)` case, and that the call is a system row.
+    fn check_system(cases: &[(&str, &str, &str)]) {
+        let table = sayc();
+        let ctx = ctx(table);
+        let mut failures = Vec::new();
+        for &(calls, hand, expected) in cases {
+            let mut a = Auction::new(Seat::North, Vulnerability::None);
+            for c in calls.split_whitespace() {
+                let c: Call = c.parse().expect("valid call");
+                a = a.with(c).expect("legal call");
+            }
+            let h: Hand = hand.parse().expect("valid hand");
+            let expected: Call = expected.parse().expect("valid call");
+            match choose_bid(table, h, &a, &ctx) {
+                BidChoice::Chosen(c) if c.call == expected && c.source == ChoiceSource::System => {}
+                BidChoice::Chosen(c) => failures.push(format!(
+                    "  [{calls}] {hand}: expected {expected} from the system, got {} ({:?})",
+                    c.call, c.source
+                )),
+                other => failures.push(format!(
+                    "  [{calls}] {hand}: expected {expected} from the system, got {other:?}"
+                )),
+            }
+        }
+        assert!(failures.is_empty(), "wrong calls:\n{}", failures.join("\n"));
+    }
+
+    /// The phase-3 `NoCandidate` tops (12-roadmap: `1D-(3C)`, `P-P-1D-(1H)` and `1C-(1H)`
+    /// responder) are answered by system rows.
+    #[test]
+    fn phase3_no_candidate_tops_are_on_the_system() {
+        check_system(&[
+            ("1D 3C", "KJ7.Q84.KJ72.Q83", "3NT"),
+            ("P P 1D 1H", "KQ32.32.K32.5432", "X"),
+            ("1C 1H", "KQ32.32.K32.5432", "X"),
+        ]);
+    }
+
+    /// Pass chains (#P1): once the partnership has placed the contract it keeps passing, on
+    /// the system, while the opponents bid on.
+    #[test]
+    fn pass_chain_after_a_game_bid() {
+        check_system(&[("1NT P 3NT P P 4S", "K32.Q32.KJ2.Q432", "P")]);
+    }
+
+    /// Later uncontested rounds (#P5): opener accepts or declines responder's invitation after
+    /// a 1NT rebid, responder places the contract after opener's single raise, and opener
+    /// accepts the re-raise invitation with the top of the range.
+    #[test]
+    fn later_uncontested_rounds() {
+        check_system(&[
+            ("1H P 1S P 1NT P 2NT P", "K3.AQ842.K32.Q32", "3NT"),
+            ("1C P 1H P 2H P", "A32.KQ54.K32.J32", "4H"),
+            ("1C P 1H P 2H P", "A32.KJ54.Q32.J32", "3H"),
+            ("1C P 1H P 2H P 3H P", "K2.Q543.A2.AJ432", "4H"),
+        ]);
+    }
+
+    /// Opener's rebid after a negative double, and responder's raise of the major (#P4).
+    #[test]
+    fn opener_after_a_negative_double() {
+        check_system(&[
+            ("1C 1D X P", "K32.AJ54.32.KJ32", "1H"),
+            ("1C 1D X P 1H P", "Q432.KQ32.A2.A32", "4H"),
+        ]);
+    }
+
+    /// Michaels over a major: after advancer's 2NT inquiry the cuebidder names his minor.
+    #[test]
+    fn michaels_answers_the_2nt_inquiry() {
+        check_system(&[
+            ("1H 2H P 2NT P", "KQJ32.32.2.AJ432", "3C"),
+            ("1H 2H P 2NT P", "KQJ32.32.AJ432.2", "3D"),
+        ]);
+    }
+
+    /// Advancing a balancing overcall: a raise with three-card support, to the three level
+    /// with 12+.
+    #[test]
+    fn advancing_a_balancing_overcall() {
+        check_system(&[
+            ("1C P P 1H P", "K32.K32.AQ32.J32", "3H"),
+            ("1C P P 1H P", "832.K32.Q832.K32", "2H"),
+        ]);
+    }
+
+    /// Defense to a weak two (`defense.bml`): the 2NT overcall, and advancing the takeout
+    /// double (game in a four-card major with 12+, else the cheapest four-card major).
+    #[test]
+    fn defense_to_a_weak_two() {
+        check_system(&[
+            ("2S", "AQ2.KJ3.KQ32.J32", "2NT"),
+            ("2D X P", "A32.KQ32.K32.Q32", "4H"),
+            ("2D X P", "KJ32.432.Q32.432", "2S"),
+        ]);
+    }
+
+    /// Opener's reopening double after an overcall and responder's pass, and responder's
+    /// penalty pass with length in their suit (`continuations.bml`).
+    #[test]
+    fn opener_reopens_after_an_overcall() {
+        check_system(&[
+            ("1D 1H P P", "KQ32.2.AQ32.J432", "X"),
+            ("1D 1H P P X P", "32.KJ54.Q32.J432", "P"),
+        ]);
+    }
+
+    /// The advancer of a sandwich overcall after opener's pass (`competitive-extra.bml`).
+    #[test]
+    fn advancing_a_sandwich_overcall_after_their_pass() {
+        check_system(&[("1C P 1D 1H P", "K32.Q32.K432.432", "2H")]);
+    }
+}
