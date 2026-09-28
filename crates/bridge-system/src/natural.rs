@@ -1462,12 +1462,12 @@ fn rule_negative_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inf
             .is_some_and(|b| b.level() == 1 && Strain::from_suit(s) > b.strain())
     };
     let hcp = HandConstraint::Atom(Atom::ANY.with_hcp(min_hcp..=37));
-    let (majors, confidence) = match unbid.as_slice() {
-        &[h, s] if one_level(h) && one_level(s) => (
+    let (majors, confidence) = match *unbid.as_slice() {
+        [h, s] if one_level(h) && one_level(s) => (
             HandConstraint::Atom(Atom::ANY.with_len(h, 4..=13).with_len(s, 4..=13)),
             0.5,
         ),
-        &[m] if one_level(m) => (
+        [m] if one_level(m) => (
             HandConstraint::Atom(Atom::ANY.with_len(m, 4..=MIN_NEW_SUIT_OVER_OVERCALL - 1)),
             0.4,
         ),
