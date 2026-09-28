@@ -12,6 +12,14 @@ use bridge_bidding::{BidContext, ImplicitPass, PolicyParams, Scoring, choose_bid
 use bridge_core::{Seat, Strain, Vulnerability};
 use common::*;
 
+/// The compiled `systems/sayc/sayc.bml`, compiled once per test binary: the phase-4 system has
+/// about 45k nodes, and a debug compile of it takes several seconds, so every test here shares
+/// one table instead of compiling its own.
+fn sayc() -> &'static bridge_bidding::Table {
+    static TABLE: std::sync::OnceLock<bridge_bidding::Table> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| common::compile_sayc("sayc.bml"))
+}
+
 fn ctx(table: &bridge_bidding::Table) -> BidContext<'_> {
     BidContext {
         scoring: Scoring::Imp,
@@ -26,7 +34,7 @@ fn ctx(table: &bridge_bidding::Table) -> BidContext<'_> {
 /// must get that call, not the plain one-level overcall that also happens to fit it.
 #[test]
 fn michaels_outranks_plain_overcall() {
-    let table = common::compile_sayc("sayc.bml");
+    let table = sayc();
     let ctx = ctx(&table);
     // 5 spades, 5 clubs, 10 hcp: qualifies for both Michaels (2H, over a 1H opening) and the
     // plain `1S` overcall (4+ spades, 8-16 hcp).
@@ -44,7 +52,7 @@ fn michaels_outranks_plain_overcall() {
 /// must bid the unusual 2NT, not a plain one-level overcall of one of those same two suits.
 #[test]
 fn unusual_notrump_outranks_plain_overcall() {
-    let table = common::compile_sayc("sayc.bml");
+    let table = sayc();
     let ctx = ctx(&table);
     // Over 1C, the unusual 2NT shows 5+ diamonds and 5+ hearts. 10 hcp also fits the plain `1D`/
     // `1H` overcall (4+, 8-16 hcp).
@@ -63,7 +71,7 @@ fn unusual_notrump_outranks_plain_overcall() {
 /// range must jump, not settle for the plain one-level overcall the same hand also satisfies.
 #[test]
 fn weak_jump_overcall_outranks_plain_overcall() {
-    let table = common::compile_sayc("sayc.bml");
+    let table = sayc();
     let ctx = ctx(&table);
     // Over 1H, 6 spades and 9 hcp fits both the plain `1S` (4+, 8-16 hcp) and the weak jump `2S`
     // (6=, 5-11 hcp).
@@ -81,7 +89,7 @@ fn weak_jump_overcall_outranks_plain_overcall() {
 /// shape, not always the cheapest unbid suit regardless of what advancer holds.
 #[test]
 fn takeout_double_advance_follows_shape_not_cheapest_suit() {
-    let table = common::compile_sayc("sayc.bml");
+    let table = sayc();
     let ctx = ctx(&table);
     // West opens 1C, North doubles for takeout, East passes; South (the advancer) has 4 hearts
     // and no diamonds at all, so `1D` (the cheapest unbid suit) must not be picked.
@@ -104,7 +112,7 @@ fn takeout_double_advance_follows_shape_not_cheapest_suit() {
 /// not folded into a plain minimum advance in a different suit.
 #[test]
 fn takeout_double_advance_invitational_jump_outranks_other_minimum_suits() {
-    let table = common::compile_sayc("sayc.bml");
+    let table = sayc();
     let ctx = ctx(&table);
     let a = common::auction(
         Seat::West,
@@ -127,7 +135,7 @@ fn takeout_double_advance_invitational_jump_outranks_other_minimum_suits() {
 /// (NOTES.md #C8) a major outranks a minor within a tier, so 4-4 in hearts and diamonds bids 2H.
 #[test]
 fn takeout_double_advance_of_1s_double_is_covered() {
-    let table = common::compile_sayc("sayc.bml");
+    let table = sayc();
     let ctx = ctx(&table);
     let a = common::auction(
         Seat::West,
@@ -150,7 +158,7 @@ fn takeout_double_advance_of_1s_double_is_covered() {
 /// added at the 3 level, `NOTES.md` #21).
 #[test]
 fn natural_response_after_1nt_is_overcalled_is_on_system() {
-    let table = common::compile_sayc("sayc.bml");
+    let table = sayc();
     let ctx = ctx(&table);
 
     // 1NT-(2D)-?: spades (above diamonds) is directly reachable at 2S.
@@ -189,7 +197,7 @@ fn natural_response_after_1nt_is_overcalled_is_on_system() {
 /// require a four-card major, exactly like the direct (uninterfered) Stayman row.
 #[test]
 fn stayman_after_double_of_1nt_requires_a_major() {
-    let table = common::compile_sayc("sayc.bml");
+    let table = sayc();
     let ctx = ctx(&table);
     let a = common::auction(
         Seat::North,
@@ -210,7 +218,7 @@ fn stayman_after_double_of_1nt_requires_a_major() {
 /// four-card major.
 #[test]
 fn stayman_opposite_1nt_overcall_requires_a_major() {
-    let table = common::compile_sayc("sayc.bml");
+    let table = sayc();
     let ctx = ctx(&table);
     let a = common::auction(
         Seat::West,
@@ -231,7 +239,7 @@ fn stayman_opposite_1nt_overcall_requires_a_major() {
 /// swallowed by the double when the hand actually holds a real 4-card suit.
 #[test]
 fn balancing_suit_overcall_outranks_double() {
-    let table = common::compile_sayc("sayc.bml");
+    let table = sayc();
     let ctx = ctx(&table);
     // West opens 1C, North/East/South all pass; West's partner (East) already passed, so this is
     // the classic balancing seat for West's partner... rather, North reopens after 1C-P-P.
@@ -255,7 +263,7 @@ fn balancing_suit_overcall_outranks_double() {
 /// preemptive jump, not simply "the same hand as the plain overcall, one card longer."
 #[test]
 fn balancing_jump_overcall_is_preemptive_not_full_strength() {
-    let table = common::compile_sayc("sayc.bml");
+    let table = sayc();
     let ctx = ctx(&table);
     let a = common::auction(
         Seat::West,
@@ -278,7 +286,7 @@ fn balancing_jump_overcall_is_preemptive_not_full_strength() {
 /// the cheap 2 level, not only as an unwarranted 3-level jump.
 #[test]
 fn weak_two_response_new_suit_above_opening_is_at_two_level() {
-    let table = common::compile_sayc("sayc.bml");
+    let table = sayc();
     let ctx = ctx(&table);
     let a = common::auction(
         Seat::North,
@@ -298,7 +306,7 @@ fn weak_two_response_new_suit_above_opening_is_at_two_level() {
 /// negative double) must have a natural response, not be left with no call.
 #[test]
 fn negative_double_leaves_a_call_for_a_plain_four_card_major() {
-    let table = common::compile_sayc("sayc.bml");
+    let table = sayc();
     let ctx = ctx(&table);
     let a = common::auction(
         Seat::West,
@@ -320,7 +328,7 @@ fn negative_double_leaves_a_call_for_a_plain_four_card_major() {
 /// satisfies.
 #[test]
 fn notrump_overcall_outranks_plain_overcall() {
-    let table = common::compile_sayc("sayc.bml");
+    let table = sayc();
     let ctx = ctx(&table);
     // Over 1D, a balanced 15-count with a solid diamond stopper and an incidental 4-card major
     // also fits the plain `1H` overcall (4+ hearts, 8-16 hcp).
@@ -349,11 +357,9 @@ mod notrump_lane {
     use super::ctx;
     use bridge_bidding::{BidChoice, ChoiceSource, Table, choose_bid};
     use bridge_core::{Auction, Call, Hand, Seat, Vulnerability};
-    use std::sync::OnceLock;
 
     fn table() -> &'static Table {
-        static TABLE: OnceLock<Table> = OnceLock::new();
-        TABLE.get_or_init(|| super::common::compile_sayc("sayc.bml"))
+        super::sayc()
     }
 
     /// `choose_bid` for `hand` (`S.H.D.C`) after `calls` (space-separated, North dealer).
@@ -697,7 +703,7 @@ mod sayc_comp {
 
     /// Asserts every `(auction, hand, expected call)` case against the compiled SAYC system.
     fn check(cases: &[(&str, &str, &str)]) {
-        let table = common::compile_sayc("sayc.bml");
+        let table = sayc();
         let ctx = ctx(&table);
         let mut failures = Vec::new();
         for &(calls, hand, expected) in cases {
@@ -1098,7 +1104,7 @@ mod sayc_comp {
         // The balancing table must not capture the opponents' own 1NT responses (lenient
         // matching reads an uncovered response as a pass): after their 1NT-2D transfer or
         // 1NT-2C Stayman our seat bids naturally, not from `(1N)-P-(P)-`.
-        let table = common::compile_sayc("sayc.bml");
+        let table = sayc();
         let ctx = ctx(&table);
         for (calls, hand) in [
             ("P 1NT P 2D", "974.652.753.AKQ2"),
