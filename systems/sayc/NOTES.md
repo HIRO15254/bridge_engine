@@ -640,6 +640,80 @@ C8. **Phase-3 recheck: rows that caught every hand, or were shadowed by a siblin
       passed the forcing 2!d. 2NT now also takes 22--24 hands with no five-card suit,
       and 3NT takes 25+ hands with no five-card suit (or balanced).
 
+## Phase 4 tables (tasks 4.2-4.4)
+
+Phase 4 measures SAYC on auctions it generates itself (`cargo xtask coverage`, below): a
+position without rows is answered by natural inference, and an auction is *all-system* only
+when no call needed it. The booklet stops at the first round or two, so most of the phase-4
+text is this file's own limit-bidding interpolation, written per auction; none of it adds a
+convention. Every table ends with the partnership passing from then on.
+
+P1. **Pass chains** (`passes.bml`). Our own pass is a trie edge only where a row names it, so
+    a partnership that stopped used to leave the system at the partner's next turn. The
+    clipboards `pass-chain` (our pass, then `(any)` of theirs, six rounds deep) and
+    `after-chain` (starting with their call, pasted under a row whose call ends our bidding)
+    write the stop out. Chain passes carry `{prio:-100}` and no requirement, so under the
+    phase-4 rank policy they are chosen exactly when no other listed call applies, like the
+    implicit pass they replace. Six rounds are needed: with four the generated all-system rate
+    falls from 0.883 to 0.824, with three to 0.614 (the opponents often compete for several
+    rounds). The chains are about 37k of the 45k compiled nodes (see "Cost" below).
+P2. **Defense to their two-level and higher openings** (`defense.bml`): the one-level methods
+    one level higher (takeout double short in their suit, 12--16 or any 17+; a natural
+    overcall with five cards at the two level and six at the three level; 2NT 15--18 with a
+    stopper over a weak two; 3NT to play), with the advances of the double and of the
+    overcall. Over a four-level preempt double with 16+, else pass; over their strong 2!c and
+    2NT a natural overcall needs a good hand and a long suit.
+P3. **Continuations after our pass** (`continuations.bml`): the `pass-chain` pasted as the
+    lowest-ranked call of every table that has no pass of its own, and opener's reopening
+    after an overcall and responder's pass (double short in their suit with 12+, rebid a
+    six-card suit; responder then passes for penalty with four cards in their suit, bids
+    notrump with a stopper, or returns to opener's suit).
+P4. **Opener after a negative double** (`competitive-rebids.bml`): the unbid four-card major at
+    the cheapest level with 12--15, a jump with 16--18, game with 19--21; notrump with a
+    stopper; else the cheapest rebid of the opening suit (the double is forcing). Responder
+    raises to game with 12+, invites with 10--11, and so on.
+P5. **Later uncontested rounds** (`later-rounds.bml`, the weak-two 2NT inquiry in
+    `weak-twos.bml`): responder adds opener's shown range to his own and bids game with enough
+    for 25--26, invites a point or two below, else stops; opener accepts an invitation with
+    the top of his range. An eight-card major fit plays in the major, anything else in
+    notrump. Neither slam bidding nor a second-round forcing new suit is written.
+P6. **Later competitive rounds** (`competitive-later.bml`): opener's answer to a negative
+    double of a two-level overcall, opener after responder's raise or notrump over an
+    overcall, the overcaller's side after the advance, two-level and weak jump overcalls,
+    Michaels and the unusual notrump, the balancing seat, and the takeout doubler's rebid.
+P7. **Further competitive continuations** (`competitive-extra.bml`, the doubled preempt in
+    `preempts.bml`): tables generated once from the most frequent departures of a 5000-replay
+    coverage run and checked against the compiled system (every one of our header calls an
+    unshadowed sibling, the position still empty); each table gets an `(any)` sibling so
+    that `resolve_lenient` does not read their double or bid as a pass (the corpus lenient
+    count had risen from 5 to 66 of 8169 calls and is 1 now). The calls are natural: a raise
+    with the stated support at the cheapest level, a rebid of a six-card suit, notrump with a
+    stopper.
+P8. **Advances after they raise over Michaels, and of the sandwich overcall over their 1NT
+    response** (end of `competitive-later.bml`): over a minor-suit cuebid game in a major with
+    11+ and three-card support, else the cheapest major with support; over a major-suit
+    cuebid game in the known major (11+ over 2!h, 8+ over 2!s), else 3!s with 0--10 over 2!h;
+    over `(1X)-P-(1N)-2Y` and opener's pass a raise with 8--11 and three-card support. These
+    were the most frequent off-system `NoCandidate` positions of the 10^6 forward-consistency
+    generator after P1-P7 (for example `(1S)-P-(1NT)-2H` advancer 73 and `(1S)-2S-(3S)`
+    advancer 67 per 10^6).
+
+Lints: the phase-4 rows add no `ShadowedBranch` warning on our side (18 before and after,
+all phase-3 rows). They add 129 on the opponents' side, every one on a table-header node:
+a header such as `1C-(1D)-1H-(1N)-` names their call with no constraint, next to the row that
+defines that call (here `competition.bml`'s advance of the overcall), so the header node is a
+second, lower-ranked member with the same call and is never the first satisfied one. The call
+itself keeps its pieces; the base system has 231 lints of exactly this kind.
+
+Cost: the system grew from 1,611 rows / 2,415 nodes to about 36k rows / 46k nodes (the pass
+chains are about 37k of them). Release compile about 0.84 s best of 3 and 1.2--1.7 s cold
+(loadavg 5--11), of which `run_post_compile_checks` is about 0.7 s (`check_satisfiability` 0.2 s,
+`check_own_history` 0.47 s: one `is_satisfiable` per node); the exclusive index takes 43--74 ms
+to rebuild; the postcard IR is 14.9 MB (845,860 bytes before). `tests/compile_time.rs`'
+release-only `< 1 s` assertion on `sayc.bml` fails on a cold compile. A trie-level "the
+partnership passes from here on" marker in BML would replace the chains; so would skipping
+the satisfiability checks for `any hand` constraints.
+
 ## Phase 4 coverage (`cargo xtask coverage`)
 
 `cargo xtask coverage` (`xtask/src/coverage.rs`) writes `target/coverage_report.json`; the

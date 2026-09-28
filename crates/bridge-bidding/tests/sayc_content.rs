@@ -1243,9 +1243,24 @@ mod phase4_tables {
         ]);
     }
 
-    /// The advancer of a sandwich overcall after opener's pass (`competitive-extra.bml`).
+    /// The advancer of a sandwich overcall after opener's pass (`competitive-extra.bml`, and
+    /// over their 1NT response `competitive-later.bml` #P8), passing without a fit.
     #[test]
     fn advancing_a_sandwich_overcall_after_their_pass() {
-        check_system(&[("1C P 1D 1H P", "K32.Q32.K432.432", "2H")]);
+        check_system(&[
+            ("1C P 1D 1H P", "K32.Q32.K432.432", "2H"),
+            ("1S P 1NT 2H P", "872.QT4.J87.KQ97", "3H"),
+            ("1S P 1NT 2H P", "8742.T4.J873.K97", "P"),
+        ]);
+    }
+
+    /// Advancing Michaels after the opponents raise (#P8): the cheapest major with support.
+    #[test]
+    fn advancing_michaels_after_their_raise() {
+        check_system(&[
+            ("1C 2C 3C", "K32.Q432.432.432", "3H"),
+            ("1C 2C 3C", "KQ32.32.5432.432", "3S"),
+            ("1H 2H 3H", "Q32.32.K5432.432", "3S"),
+        ]);
     }
 }

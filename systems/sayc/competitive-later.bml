@@ -2670,3 +2670,121 @@ signoff after our 1NT and their overcall.
 
 1N-(2X)-2Y-
 #PASTE after-chain
+
+** Advances after they raise over Michaels, and of the sandwich overcall over 1NT
+
+Phase 4 (NOTES.md #P8). When the opponents raise over our Michaels cuebid,
+advancer still chooses a suit: over a minor-suit cuebid (both majors) game in a
+major with 11+ and three-card support, otherwise the cheapest major with
+three-card support (spades only with a doubleton or less in hearts, or four
+spades and three hearts); over a major-suit cuebid game in the known major
+with 11+ (8+ when that is already the four level) and, over 2!h, the cheapest
+spade bid with 0--10. With no fit advancer passes. After the sandwich overcall
+over their 1NT response and opener's pass, advancer raises with three-card
+support and 8--11; the partnership then stops, as in `competitive-extra.bml`.
+
+(1C)-2C-(3C)-
+4H = {prio:3} 11+ hcp, 3+!h
+  #PASTE after-chain
+4S = {prio:3} 11+ hcp, 3+!s, 0--2!h
+  #PASTE after-chain
+3S = {prio:2} 0--10 hcp and 3+!s and 0--2!h or 0--10 hcp and 4+!s and 3=!h
+  #PASTE after-chain
+3H = {prio:1} 0--10 hcp, 3+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-2D-(3D)-
+4H = {prio:3} 11+ hcp, 3+!h
+  #PASTE after-chain
+4S = {prio:3} 11+ hcp, 3+!s, 0--2!h
+  #PASTE after-chain
+3S = {prio:2} 0--10 hcp and 3+!s and 0--2!h or 0--10 hcp and 4+!s and 3=!h
+  #PASTE after-chain
+3H = {prio:1} 0--10 hcp, 3+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-2H-(3H)-
+4S = {prio:3} 11+ hcp, 3+!s
+  #PASTE after-chain
+3S = {prio:2} 0--10 hcp, 3+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-2S-(3S)-
+4H = {prio:3} 8+ hcp, 3+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(1N)-2D-
+3D = {prio:1} 8--11 hcp, 3+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(1N)-2D-(any)-
+#PASTE pass-chain
+
+(1C)-P-(1N)-2H-
+3H = {prio:1} 8--11 hcp, 3+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(1N)-2H-(any)-
+#PASTE pass-chain
+
+(1C)-P-(1N)-2S-
+3S = {prio:1} 8--11 hcp, 3+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(1N)-2S-(any)-
+#PASTE pass-chain
+
+(1D)-P-(1N)-2C-
+3C = {prio:1} 8--11 hcp, 3+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-P-(1N)-2C-(any)-
+#PASTE pass-chain
+
+(1H)-P-(1N)-2C-
+3C = {prio:1} 8--11 hcp, 3+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-P-(1N)-2C-(any)-
+#PASTE pass-chain
+
+(1H)-P-(1N)-2D-
+3D = {prio:1} 8--11 hcp, 3+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-P-(1N)-2D-(any)-
+#PASTE pass-chain
+
+(1S)-P-(1N)-2C-
+3C = {prio:1} 8--11 hcp, 3+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-P-(1N)-2C-(any)-
+#PASTE pass-chain
+
+(1S)-P-(1N)-2D-
+3D = {prio:1} 8--11 hcp, 3+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-P-(1N)-2D-(any)-
+#PASTE pass-chain
+
+(1S)-P-(1N)-2H-
+3H = {prio:1} 8--11 hcp, 3+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-P-(1N)-2H-(any)-
+#PASTE pass-chain
