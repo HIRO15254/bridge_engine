@@ -493,12 +493,14 @@ fn implicit_pass_bidirectional() {
 }
 
 /// `rank_order_shared` (07-bidding.md §8): over 10^4 SAYC positions, `choose_bid`'s
-/// `alternatives` follow the one rank comparator (`rank_cmp_keys`), and their system members
-/// appear in the order of the exclusive index's sibling group (the order `interpret`'s mirror
-/// and `call_distribution` use), whenever the position resolves exactly.
+/// `alternatives` follow the documented rank order (priority descending, then the system's
+/// `tie_break`, then call index ascending; recomputed here from the nodes, independently of
+/// `rank_cmp_keys`, which `choose_bid` itself sorts with), and their system members appear in the
+/// order of the exclusive index's sibling group (the order `interpret`'s mirror and
+/// `call_distribution` use), whenever the position resolves exactly.
 #[test]
 fn rank_order_shared() {
-    use bridge_system::exclusive::{RankKey, rank_cmp_keys};
+    use bridge_system::TieBreak;
     use bridge_system::{LookupKey, RelVul};
 
     let table = compile_sayc("sayc.bml");
@@ -525,16 +527,29 @@ fn rank_order_shared() {
         };
         checked += 1;
         let system = &table.systems[seat.index() as usize];
-        let key = |a: &bridge_bidding::Alternative| RankKey {
-            call: a.call,
-            priority: a.priority,
-            node: a.node,
+        // The documented order as a lexicographic key (smaller ranks higher). A node-less
+        // candidate's row / volume ranks after every node's.
+        let key = |a: &bridge_bidding::Alternative| {
+            if let Some(n) = a.node {
+                assert_eq!(a.priority, system.node(n).priority, "priority of {n:?}");
+            }
+            let index = i64::from(a.call.index());
+            let tie = match system.meta.tie_break {
+                TieBreak::RowOrder => a.node.map_or(i64::MAX, |n| i64::from(system.node(n).row.0)),
+                TieBreak::Narrowest => a
+                    .node
+                    .map_or(i64::MAX, |n| i64::from(system.node(n).volume_log2)),
+                TieBreak::LowestCall => index,
+                TieBreak::HighestCall => -index,
+            };
+            (-i64::from(a.priority), tie, index)
         };
         for w in chosen.alternatives.windows(2) {
-            assert_ne!(
-                rank_cmp_keys(system, &key(&w[0]), &key(&w[1])),
-                std::cmp::Ordering::Greater,
-                "alternatives out of rank order at {auction}"
+            assert!(
+                key(&w[0]) <= key(&w[1]),
+                "alternatives out of rank order at {auction}: {:?} before {:?}",
+                w[0],
+                w[1]
             );
         }
         let vulnerability = auction.vulnerability();
