@@ -1,22 +1,39 @@
 //! `interpret`: auction → constraints.
 //!
-//! Phase 4 turns Step A into the calibrated mirror of the bidding policy
-//! ([`InterpretMode::Mirror`], docs/design/15-phase4-plan.md D19); until lane B lands, both
-//! modes run the legacy Step A described here ([`InterpretMode::Legacy`]).
+//! **Step A (per call).** The default, [`InterpretMode::Mirror`], is the calibrated mirror of the
+//! bidding policy `p(c|h) = (1 − ε)·[(1 − δ)·S + δ·M] + ε/n` (docs/design/15-phase4-plan.md
+//! D18/D19; 07-bidding.md §4). For call `c` at its position the pieces are:
 //!
-//! **Step A (per call, legacy).** For call `j` by seat `s`, resolve in `table.systems[s]`. `Exact`
-//! yields one alternative per top-level `Or` branch (weights from `branch_weights` or equal);
-//! `Partial` first tries `resolve_lenient`, then falls back to natural inference. Every
-//! alternative is scaled by `1 − ε` and a defensive branch `(ANY, ε, Fallback)` is appended, with
-//! `ε` depending on the resolution kind. This is how lower confidence is represented: more mass
-//! on the unconstrained alternative, never an ad-hoc loosening of the constraint; the sampler's
-//! importance weights correct the mixture afterwards.
+//! - `X_c^(b)`: per branch, the system's exclusive region (the hands whose first satisfied
+//!   candidate in `rank_cmp` order has call `c`), taken from the `ExclusiveIndex` and recomputed
+//!   at run time when a higher-ranked sibling is illegal after the prefix; raw weight
+//!   `(1 − ε)(1 − δ)`;
+//! - `N_sys`: the hands with no system candidate, raw weight `(1 − ε)(1 − δ)/n`;
+//! - `Y_c`: the natural exclusive region (first satisfied ranked natural candidate, or the
+//!   natural implicit `Pass`), raw weight `(1 − ε)·δ` on-system, `1 − ε` off-system;
+//! - `N_nat`: the hands with no natural choice, raw weight `(1 − ε)·δ/n` (or `(1 − ε)/n`);
+//! - `ANY`, raw weight `ε/n`.
+//!
+//! The weights are normalised and `log_scale = ln Σ raw` is recorded, so that
+//! `p(c|h) = exp(log_scale)·Σ_i w_i·1[h ∈ C_i]` (exact for literal-free pieces; pieces with
+//! literals may only over-cover). A call the policy never makes at its position (both `X_c` and
+//! `Y_c` empty) is flagged `shadowed` and read by its `Fallback` pieces only. The mirror reads
+//! with `table.natural` and the policy of [`InterpretOptions`]; build the options with
+//! [`InterpretOptions::for_context`] (and see [`crate::BidContext::natural`]) so that the mirror
+//! and the likelihood describe the same policy.
+//!
+//! [`InterpretMode::Legacy`] keeps the phase-3 Step A for one phase of before/after comparisons:
+//! the call's node (one alternative per top-level `Or` branch, or its lenient / natural reading)
+//! scaled by `1 − ε` plus a defensive `(ANY, ε, Fallback)` branch, with `ε` set by the resolution
+//! kind.
 //!
 //! **Step B (per seat).** The alternatives of a seat's calls are combined by cross product
-//! (`and`, unsatisfiable combinations dropped by a summary-only pre-check, deduplicated by
-//! node/kind/branch, truncated to `K` by weight, renormalised). Each call contributes only its
-//! own node's constraint; calls before the divergence point keep their `Exact` confidence, which
-//! is the operational meaning of "weaken later constraints, not earlier ones".
+//! (`and`; unsatisfiable combinations dropped by a check on precomputed summaries), truncated at
+//! each step to `K` combinations by estimated mass `w · cells(summary)` rather than by weight,
+//! always keeping the all-`ANY` catch-all combination (so the proposal's support covers the
+//! target's), then renormalised. Each call contributes only its own pieces; calls before the
+//! divergence point keep their `Exact` reading, which is the operational meaning of "weaken
+//! later constraints, not earlier ones".
 
 use bridge_constraint::HandConstraint;
 use bridge_core::{Auction, Call, Hand, Seat};
@@ -269,6 +286,11 @@ impl Default for InterpretOptions {
 impl InterpretOptions {
     /// The mirror of the policy `ctx` describes: `policy` and `implicit_pass` are taken from
     /// `ctx`, everything else is the default.
+    ///
+    /// The mirror's natural engine is the table's (`table.natural`), which is the policy's
+    /// engine when `ctx.natural` is `None` or `Some(&*table.natural)` (see
+    /// [`BidContext::natural`]); to mirror a different engine, interpret with a [`Table`] that
+    /// holds it.
     pub fn for_context(ctx: &BidContext<'_>) -> InterpretOptions {
         InterpretOptions {
             policy: ctx.policy,

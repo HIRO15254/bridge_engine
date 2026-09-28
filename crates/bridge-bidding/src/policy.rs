@@ -118,6 +118,10 @@ fn add_choice(pi: &mut [f32; N_CALLS], choice: Option<Call>, mass: f32, legal: &
 /// D18; the module doc has the formula). Values are in `Call` legal order and sum to 1 (up to
 /// rounding).
 ///
+/// The natural engine of `M` is `ctx.natural`, or `table.natural` when `ctx.natural` is `None`
+/// (the same substitution as [`sequence_log_likelihood`] and [`crate::AuctionPolicy`], so all
+/// three evaluate one policy; see [`BidContext::natural`]).
+///
 /// Grouped by `Call::index()` in a fixed-size array, not a `HashMap` (D12/09-sample §7): the
 /// summation order is fixed, so `sequence_log_likelihood` is bit-for-bit deterministic between
 /// single- and multi-threaded runs.
@@ -131,6 +135,11 @@ pub fn call_distribution(
     if legal.is_empty() {
         return Vec::new();
     }
+    // The policy's natural engine is always defined (`BidContext::natural`).
+    let ctx = &BidContext {
+        natural: Some(ctx.natural.unwrap_or(table.natural.as_ref())),
+        ..*ctx
+    };
     if let Some(tau) = ctx.policy.legacy_temperature {
         return legacy_distribution(table, hand, auction, ctx, &legal, tau);
     }
