@@ -4,6 +4,12 @@
 //!   `exp(log_scale) · Σ_i w_i · 1[h ∈ C_i]` equals `call_distribution(h)[c]`. Pieces with
 //!   `cards`/`eval` literals may over-cover (the density is then an upper bound); under-cover is
 //!   never allowed.
+//!   Besides the four main cells (SAYC-generated and corpus positions, `δ ∈ {0, 0.3}`), the
+//!   variant cells cover `ImplicitPass::Never` (the `N_sys` piece and the natural region without
+//!   the natural implicit pass), positions whose prefix has calls substituted by random legal
+//!   calls (lenient `Partial` resolutions and the run-time recompute of `X_c`), and a
+//!   `BidContext` whose `natural` is `None` (the policy then uses `table.natural`, as the mirror
+//!   does).
 //! - `tightness` (ported from prototype A): at a position `choose_bid` reaches, a hand inside the
 //!   strict (non-`Fallback`) reading of the call it made picks that call, and a hand that picks
 //!   it is inside, for the `Exact` calls of the system-players preset.
@@ -26,6 +32,11 @@ fn policy_ctx(table: &Table, policy: PolicyParams) -> BidContext<'_> {
         policy,
     }
 }
+
+const HUMAN_LIKE: PolicyParams = PolicyParams {
+    deviation: 0.3,
+    ..PolicyParams::system_players()
+};
 
 #[derive(Default)]
 struct Stats {
@@ -116,13 +127,16 @@ fn check_call(
     }
 }
 
-/// Up to `positions` positions from `auctions` (two random calls of each), `hands` random hands
-/// per position plus the true hand when the deal is known.
+/// Up to `positions` positions from `auctions` (`per_auction` distinct random calls of each, or
+/// all of a shorter auction's calls), `hands` random hands per position plus the true hand when
+/// the deal is known.
+#[allow(clippy::too_many_arguments)]
 fn run_positions(
     table: &Table,
     ctx: &BidContext<'_>,
     auctions: &[(Auction, Option<Deal>)],
     positions: u64,
+    per_auction: usize,
     hands: usize,
     rng: &mut Xoshiro256PlusPlus,
     st: &mut Stats,
@@ -137,11 +151,15 @@ fn run_positions(
             continue;
         }
         let interp = interpret(table, auction, &opts);
-        for _ in 0..2 {
+        // A partial Fisher-Yates shuffle picks `per_auction` distinct calls.
+        let mut order: Vec<usize> = (0..auction.len()).collect();
+        for k in 0..per_auction.min(auction.len()) {
             if st.positions - start >= positions {
                 break;
             }
-            let j = (rng.next_u32() as usize) % auction.len();
+            let pick = k + (rng.next_u32() as usize) % (order.len() - k);
+            order.swap(k, pick);
+            let j = order[k];
             let mut hs: Vec<bridge_core::Hand> = (0..hands)
                 .map(|_| common::random_hand13(&mut *rng))
                 .collect();
@@ -171,6 +189,55 @@ fn generated(
         .collect()
 }
 
+/// Calls per corpus auction so that `positions` positions are reached (at least 2): the corpus
+/// has fewer auctions with a deal than the large run's position count.
+fn per_corpus_auction(positions: u64, corpus: &[(Auction, Option<Deal>)]) -> usize {
+    if corpus.is_empty() {
+        return 2;
+    }
+    (positions as usize).div_ceil(corpus.len()).max(2)
+}
+
+/// One generated and one corpus cell under `ctx` (`name` prefixes the cell names).
+#[allow(clippy::too_many_arguments)]
+fn run_cells(
+    table: &Table,
+    ctx: &BidContext<'_>,
+    name: &str,
+    corpus: &[(Auction, Option<Deal>)],
+    positions: u64,
+    hands: usize,
+    seed: u64,
+    out: &mut Vec<(String, Stats)>,
+) {
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+    let mut gen_st = Stats::default();
+    let generated_auctions = generated(table, ctx, positions as usize, &mut rng);
+    run_positions(
+        table,
+        ctx,
+        &generated_auctions,
+        positions,
+        2,
+        hands,
+        &mut rng,
+        &mut gen_st,
+    );
+    out.push((format!("{name} generated"), gen_st));
+    let mut corpus_st = Stats::default();
+    run_positions(
+        table,
+        ctx,
+        corpus,
+        positions,
+        per_corpus_auction(positions, corpus),
+        hands,
+        &mut rng,
+        &mut corpus_st,
+    );
+    out.push((format!("{name} corpus"), corpus_st));
+}
+
 fn run_mirror(positions: u64, hands: usize, seed: u64) -> Vec<(String, Stats)> {
     let table = common::compile_sayc("sayc.bml");
     let corpus = common::corpus_auctions_with_deals(4 * positions as usize);
@@ -180,44 +247,93 @@ fn run_mirror(positions: u64, hands: usize, seed: u64) -> Vec<(String, Stats)> {
     let mut out = Vec::new();
     for (name, policy) in [
         ("delta=0", PolicyParams::system_players()),
-        (
-            "delta=0.3",
-            PolicyParams {
-                deviation: 0.3,
-                ..PolicyParams::system_players()
-            },
-        ),
+        ("delta=0.3", HUMAN_LIKE),
     ] {
         let ctx = policy_ctx(&table, policy);
-        let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
-        let mut gen_st = Stats::default();
-        let generated_auctions = generated(&table, &ctx, positions as usize, &mut rng);
-        run_positions(
-            &table,
-            &ctx,
-            &generated_auctions,
-            positions,
-            hands,
-            &mut rng,
-            &mut gen_st,
+        run_cells(
+            &table, &ctx, name, &corpus, positions, hands, seed, &mut out,
         );
-        out.push((format!("{name} generated"), gen_st));
-        let mut corpus_st = Stats::default();
-        run_positions(
-            &table,
-            &ctx,
-            &corpus,
-            positions,
-            hands,
-            &mut rng,
-            &mut corpus_st,
-        );
-        out.push((format!("{name} corpus"), corpus_st));
     }
     out
 }
 
-fn assert_mirror(results: &[(String, Stats)]) {
+/// The variant cells: `ImplicitPass::Never` (both δ), `natural: None` (δ = 0.3), and positions
+/// with random substituted calls (both δ, both implicit-pass rules).
+fn run_mirror_variants(positions: u64, hands: usize, seed: u64) -> Vec<(String, Stats)> {
+    let table = common::compile_sayc("sayc.bml");
+    let corpus = common::corpus_auctions_with_deals(4 * positions as usize);
+    let mut out = Vec::new();
+    for (name, policy) in [
+        ("never delta=0", PolicyParams::system_players()),
+        ("never delta=0.3", HUMAN_LIKE),
+    ] {
+        let ctx = BidContext {
+            implicit_pass: ImplicitPass::Never,
+            ..policy_ctx(&table, policy)
+        };
+        run_cells(
+            &table, &ctx, name, &corpus, positions, hands, seed, &mut out,
+        );
+    }
+    let ctx = BidContext {
+        natural: None,
+        ..policy_ctx(&table, HUMAN_LIKE)
+    };
+    run_cells(
+        &table,
+        &ctx,
+        "natural=None delta=0.3",
+        &corpus,
+        positions,
+        hands,
+        seed,
+        &mut out,
+    );
+    for (name, policy, implicit_pass) in [
+        (
+            "substituted delta=0",
+            PolicyParams::system_players(),
+            ImplicitPass::Complement,
+        ),
+        (
+            "substituted delta=0.3",
+            HUMAN_LIKE,
+            ImplicitPass::Complement,
+        ),
+        (
+            "substituted never delta=0.3",
+            HUMAN_LIKE,
+            ImplicitPass::Never,
+        ),
+    ] {
+        let ctx = BidContext {
+            implicit_pass,
+            ..policy_ctx(&table, policy)
+        };
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed ^ 0x5B5);
+        let auctions: Vec<(Auction, Option<Deal>)> = (0..positions)
+            .map(|_| {
+                let p = common::random_sayc_position_with_substitution(
+                    &mut rng,
+                    &table,
+                    &policy_ctx(&table, policy),
+                    0.3,
+                );
+                (p.auction, Some(p.deal))
+            })
+            .collect();
+        let mut st = Stats::default();
+        run_positions(
+            &table, &ctx, &auctions, positions, 2, hands, &mut rng, &mut st,
+        );
+        out.push((name.to_string(), st));
+    }
+    out
+}
+
+/// Under-cover 0 in every cell, and at least `min_exact` of the checks exact (over-cover comes
+/// only from pieces with `cards`/`eval` literals).
+fn assert_mirror(results: &[(String, Stats)], min_exact: f64) {
     for (name, st) in results {
         eprintln!("policy_mirror {name}: {}", st.summary());
     }
@@ -225,7 +341,7 @@ fn assert_mirror(results: &[(String, Stats)]) {
         assert_eq!(st.under, 0, "{name}: {}", st.summary());
         if st.checks > 0 {
             assert!(
-                st.exact as f64 >= 0.99 * st.checks as f64,
+                st.exact as f64 >= min_exact * st.checks as f64,
                 "{name}: {}",
                 st.summary()
             );
@@ -236,10 +352,19 @@ fn assert_mirror(results: &[(String, Stats)]) {
 /// Default suite: 150 positions × 40 hands per (source, δ).
 #[test]
 fn policy_mirror() {
-    assert_mirror(&run_mirror(150, 40, 0x4D1_2202));
+    assert_mirror(&run_mirror(150, 40, 0x4D1_2202), 0.99);
 }
 
-/// The large run: 2000 positions × 100 hands per (source, δ).
+/// Default suite, variant cells: 60 positions × 20 hands per cell. The acceptance's 99% exact is
+/// defined on the main cells; in a variant cell this small, one over-covered position is 1.7% of
+/// its checks, so only under-cover 0 and a 97% exact guard are asserted.
+#[test]
+fn policy_mirror_variants() {
+    assert_mirror(&run_mirror_variants(60, 20, 0x4D1_2204), 0.97);
+}
+
+/// The large run: 2000 positions × 100 hands per (source, δ), then the variant cells at 500
+/// positions × 50 hands.
 #[test]
 #[ignore = "2000 positions x 100 hands; run with `cargo test --release -- --ignored`"]
 fn policy_mirror_large() {
@@ -247,7 +372,8 @@ fn policy_mirror_large() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(2000);
-    assert_mirror(&run_mirror(n, 100, 0x4D1_2203));
+    assert_mirror(&run_mirror(n, 100, 0x4D1_2203), 0.99);
+    assert_mirror(&run_mirror_variants(n / 4, 50, 0x4D1_2205), 0.99);
 }
 
 /// `[inside & picked, inside & not picked, outside & picked]` per kind `[Exact, Partial,

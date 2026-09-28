@@ -582,3 +582,107 @@ fn rank_order_shared() {
     eprintln!("rank_order_shared: {checked} positions, {grouped} compared with the index group");
     assert!(grouped > n / 4, "only {grouped} positions resolved exactly");
 }
+
+/// The run-time recompute of `X_c` (15-phase4-plan D19): at a lenient position where a
+/// higher-ranked sibling is illegal after the actual prefix, the call's exclusive region comes
+/// from the legal siblings only, not from the index (where the illegal sibling shadows it), and
+/// the mirror still equals `call_distribution`.
+///
+/// System: `1C` opening; responses `1C-P-1D` (any hand, priority 10) and `1C-P-1H` (4+ hearts,
+/// priority 5). In `1C-(1D)-1H` the lenient match substitutes East's `1D` by `Pass`, so the
+/// position is `1C-P` with `1D` illegal. The index reads `1H` as shadowed by `1D`; the run-time
+/// region is `1H`'s own constraint.
+#[test]
+fn recomputed_region_when_a_higher_sibling_is_illegal() {
+    use bridge_bidding::call_distribution;
+    use rand_xoshiro::Xoshiro256PlusPlus;
+
+    let mut b = SystemBuilder::new();
+    b.insert(
+        true,
+        &[bid(1, Strain::Clubs)],
+        bid(1, Strain::Clubs),
+        atom_hcp(12, 21),
+        SeatCond::Any,
+        VulCond::default(),
+        "opening",
+        0,
+    );
+    b.insert(
+        true,
+        &[bid(1, Strain::Clubs), PASS, bid(1, Strain::Diamonds)],
+        bid(1, Strain::Diamonds),
+        atom_hcp(0, 37),
+        SeatCond::Any,
+        VulCond::default(),
+        "any response",
+        10,
+    );
+    b.insert(
+        true,
+        &[bid(1, Strain::Clubs), PASS, bid(1, Strain::Hearts)],
+        bid(1, Strain::Hearts),
+        atom_suit_hcp(Suit::Hearts, 4, 13, 0, 37),
+        SeatCond::Any,
+        VulCond::default(),
+        "four hearts",
+        5,
+    );
+    let table = Table::uniform(
+        Arc::new(b.build()),
+        Arc::new(bridge_system::NaturalInference::default()),
+    );
+    let ctx = BidContext {
+        scoring: Scoring::Imp,
+        natural: None,
+        implicit_pass: ImplicitPass::Complement,
+        policy: PolicyParams::human(),
+    };
+    let prefix = auction(
+        Seat::North,
+        Vulnerability::None,
+        &[bid(1, Strain::Clubs), bid(1, Strain::Diamonds)],
+    );
+    let a = prefix.with(bid(1, Strain::Hearts)).expect("legal");
+    let interp = interpret(&table, &a, &InterpretOptions::for_context(&ctx));
+    let pc = &interp.per_call[2];
+    assert_eq!(pc.kind, ResolutionKind::Partial { matched_depth: 1 });
+    assert!(!pc.shadowed, "1H is shadowed only by the illegal 1D");
+    let system_pieces: Vec<_> = pc
+        .alternatives
+        .iter()
+        .filter(|(_, _, ex)| matches!(ex.kind, ResolutionKind::Partial { .. }))
+        .collect();
+    assert_eq!(system_pieces.len(), 1, "{:?}", pc.alternatives);
+
+    // The mirror equals the policy on every hand (with and without four hearts).
+    let scale = pc.log_scale.exp();
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x4EC0);
+    let (mut with_hearts, mut without) = (0, 0);
+    for _ in 0..400 {
+        let hand = random_hand13(&mut rng);
+        if hand.holding(Suit::Hearts).len() >= 4 {
+            with_hearts += 1;
+        } else {
+            without += 1;
+        }
+        let p = f64::from(
+            call_distribution(&table, hand, &prefix, &ctx)
+                .iter()
+                .find(|(c, _)| *c == bid(1, Strain::Hearts))
+                .map(|(_, p)| *p)
+                .expect("1H is legal"),
+        );
+        let m: f64 = scale
+            * pc.alternatives
+                .iter()
+                .filter(|(c, _, _)| c.satisfies(hand))
+                .map(|(_, w, _)| f64::from(*w))
+                .sum::<f64>();
+        assert!(
+            (m - p).abs() <= 1e-4 * p,
+            "hand {hand:?}: mirror {m:e}, policy {p:e}"
+        );
+    }
+    assert!(with_hearts > 0 && without > 0);
+}
