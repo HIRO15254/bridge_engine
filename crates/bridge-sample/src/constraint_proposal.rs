@@ -35,7 +35,8 @@
 //!
 //! **§6.5, residual rejection** ([`ConstraintProposal::residual_rejection`]). The last seat can
 //! be accepted with probability proportional to its own mixture at the residual hand, which moves
-//! that seat's likelihood factor out of the importance weight and into the acceptance rate.
+//! that seat's likelihood factor out of the importance weight and into the acceptance rate. Off
+//! by default (it does not lower the wall time per effective sample on the ESS suite).
 //!
 //! This is *not* a fix for a per-literal filtering cost at `Sampler::prepare` — measured on the
 //! bench cases (`09-sample.md` §10.1) and on `Sampler::prepare` directly, a `cards` literal adds
@@ -123,7 +124,7 @@ pub struct ConstraintProposal {
     /// cases, so this trade was left as `SampleWarning::CustomConstraint`'s documented caveat
     /// rather than measured and changed here.
     pub max_retries: u32,
-    /// Residual rejection (`09-sample.md` §6.5; default `true`): the residual last seat, which
+    /// Residual rejection (`09-sample.md` §6.5; default `false`): the residual last seat, which
     /// receives whatever cards remain, is accepted with probability `a(h) = min(1, m(h) / T)`,
     /// where `m(h) = Σ_{i: h ∈ C_i} w_i` is the seat's own alternative mixture at its hand and
     /// `T` a threshold fixed once in `prepare`, and `log_prob` adds `ln a`.
@@ -151,15 +152,19 @@ pub struct ConstraintProposal {
     /// deal; whether the trade pays depends on what a produced deal costs downstream (a
     /// double-dummy solve in the lead advisor costs far more than an attempt).
     ///
-    /// On by default: on the ESS suite (§9, eval fixture) it raises the median ESS/n from 0.42 to
-    /// 0.73 at the default [`ConstraintProposal::residual_min_acceptance`], for 1.4-1.6x the
-    /// sampling time and about the same time per effective sample.
+    /// Off by default. The phase-4 rule (D18-D20 of `15-phase4-plan.md`) enables it by default
+    /// only if it lowers the wall time per effective sample, and on the ESS suite it does not:
+    /// it raises ESS/n but costs more sampling time than that buys (the measurements are in
+    /// `09-sample.md` §6.5 and §10.2). Turn it on where a produced deal costs far more
+    /// downstream than a proposal attempt, as `bridge_lead::lead_proposal` does for the
+    /// double-dummy solves of the lead advisor.
     pub residual_rejection: bool,
-    /// The pilot acceptance residual rejection's threshold is kept above (default 0.5, tuned on
-    /// the ESS suite's tuning set to keep sampling time within 2x of the run without rejection;
-    /// at most about 2 attempts per produced deal). Lower values reject more and flatten the
-    /// weights further (0.125 gives a median ESS/n of 0.92 for about 4x the sampling time), which
-    /// pays when every produced deal is expensive downstream, as in the lead advisor.
+    /// The pilot acceptance residual rejection's threshold is kept above (default 0.5, at most
+    /// about 2 attempts per produced deal; only used when
+    /// [`ConstraintProposal::residual_rejection`] is on). Lower values reject more and flatten
+    /// the weights further for more sampling time, which pays when every produced deal is
+    /// expensive downstream (`bridge_lead::lead_proposal` uses 0.125). `09-sample.md` §6.5 has
+    /// the tuning sweep.
     pub residual_min_acceptance: f64,
     /// Light-alternative folding (`09-sample.md` §6.4 (d); default `1e-2`). At a seat
     /// re-prepared on every draw, a coarse alternative `j` whose share of the full-pool mass,
@@ -184,7 +189,7 @@ impl Default for ConstraintProposal {
     fn default() -> ConstraintProposal {
         ConstraintProposal {
             max_retries: 16,
-            residual_rejection: true,
+            residual_rejection: false,
             residual_min_acceptance: 0.5,
             light_threshold: 1e-2,
         }
@@ -1533,9 +1538,13 @@ mod tests {
             play_soft: None,
             bidding: None,
         };
-        let prepared = ConstraintProposal::default()
-            .prepare_constraint(&ctx)
-            .expect("every seat has support");
+        // Residual rejection on (off by default), so the reference's `ln a` term is covered too.
+        let prepared = ConstraintProposal {
+            residual_rejection: true,
+            ..ConstraintProposal::default()
+        }
+        .prepare_constraint(&ctx)
+        .expect("every seat has support");
 
         // The fixture must actually exercise every fast path.
         let mut merged = false;
@@ -1639,9 +1648,13 @@ mod tests {
             play_soft: None,
             bidding: None,
         };
-        let prepared = ConstraintProposal::default()
-            .prepare_constraint(&ctx)
-            .expect("every seat has support");
+        // Residual rejection on (off by default), so the reference's `ln a` term is covered too.
+        let prepared = ConstraintProposal {
+            residual_rejection: true,
+            ..ConstraintProposal::default()
+        }
+        .prepare_constraint(&ctx)
+        .expect("every seat has support");
         let south = prepared
             .order
             .iter()

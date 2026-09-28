@@ -12,8 +12,8 @@
 //! target's own "real auction" cases, closer to how the library is actually used than the
 //! synthetic ones. They are interpreted as the mirror of `PolicyParams::system_players()`
 //! (`InterpretOptions::for_context`), and weighted with that policy's `AuctionPolicy`
-//! likelihood; each is also benched without residual rejection (`single_thread_plain`), which
-//! `ConstraintProposal` turns on by default.
+//! likelihood; each is also benched with residual rejection (`single_thread_residual`, at the
+//! default acceptance floor), which `ConstraintProposal` leaves off by default.
 
 use std::sync::Arc;
 
@@ -382,17 +382,18 @@ fn bench_sayc_auction(c: &mut Criterion, group_name: &str, table: &Table, auctio
         &interp,
         Some(bidding),
     );
-    // Without residual rejection (09-sample.md §6.5, on by default): every attempt produces a
-    // deal, with the residual seat's likelihood factor left in the weights.
-    let plain = ConstraintProposal {
-        residual_rejection: false,
+    // With residual rejection (09-sample.md §6.5, off by default): the residual seat's
+    // likelihood factor moves from the weights into the acceptance rate, so fewer attempts
+    // produce a deal.
+    let residual = ConstraintProposal {
+        residual_rejection: true,
         ..ConstraintProposal::default()
     };
     bench_threads(
         &mut group,
-        "single_thread_plain",
+        "single_thread_residual",
         Threads::Single,
-        &plain,
+        &residual,
         &interp,
         Some(bidding),
     );

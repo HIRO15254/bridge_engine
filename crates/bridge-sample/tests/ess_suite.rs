@@ -2,11 +2,13 @@
 //! `12-roadmap.md` task 5.3, D20 of `15-phase4-plan.md`): 50 auctions, each interpreted with SAYC
 //! as the mirror of the auction's own bidding policy (`InterpretOptions::for_context`) and sampled
 //! with that policy's likelihood (`SampleContext::bidding = Some`), `n = 1000` deals per auction.
-//! Criteria (phase 4, `11-testing.md` §13): with residual rejection, median ESS/n at least 0.5
-//! overall and on the generated half (the corpus half is reported against a 0.4 target) with at
-//! most 2 of the 50 cases exhausting the attempt budget; median ESS per attempt of
-//! `ConstraintProposal::default()` at least 0.35. The time ratio of residual rejection to none
-//! (target at most 2x) is printed, not asserted, since it depends on the machine's load.
+//! Criteria (phase 4, `11-testing.md` §13), for `ConstraintProposal::default()` (residual
+//! rejection off): median ESS/n at least 0.5 overall and on the generated half, at least 0.4 on
+//! the corpus half, at most 2 of the 50 cases exhausting the attempt budget, and median ESS per
+//! attempt at least 0.35. The residual-rejection variant is measured and reported alongside; the
+//! time ratios of residual rejection to none (sampling time, target at most 2x, and time per
+//! effective sample, which decides the default) are printed, not asserted, since they depend on
+//! the machine's load.
 //!
 //! The 50 auctions:
 //!
@@ -1052,26 +1054,31 @@ fn uniform_vs_constraint_ess_suite() {
     std::fs::write(&path, json).unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
     println!("wrote {}", path.display());
 
-    // The phase-4 criteria (11-testing.md §9): ESS/n >= 0.5 overall and on the generated cases
-    // with residual rejection, which exhausts the attempt budget on at most 2 cases; ESS per
-    // attempt >= 0.35 for the default proposal. The wall-time ratio is load-sensitive and only
+    // The phase-4 criteria (11-testing.md §13), for the default proposal: ESS/n >= 0.5 overall
+    // and on the generated cases, >= 0.4 on the corpus cases, at most 2 cases exhausting the
+    // attempt budget, ESS per attempt >= 0.35. The wall-time ratios are load-sensitive and only
     // printed above.
     if mode == Mode::Eval && rows.len() == total_cases && !known_none {
         assert!(
-            residual.median_ess_ratio >= 0.5,
-            "median ESS/n with residual rejection = {:.4} < 0.5",
-            residual.median_ess_ratio
+            criterion.median_ess_ratio >= 0.5,
+            "median ESS/n of the default ConstraintProposal = {:.4} < 0.5",
+            criterion.median_ess_ratio
         );
         assert!(
-            residual.median_ess_ratio_generated >= 0.5
-                || residual.median_ess_ratio_generated.is_nan(),
-            "median ESS/n with residual rejection on the generated cases = {:.4} < 0.5",
-            residual.median_ess_ratio_generated
+            criterion.median_ess_ratio_generated >= 0.5
+                || criterion.median_ess_ratio_generated.is_nan(),
+            "median ESS/n of the default ConstraintProposal on the generated cases = {:.4} < 0.5",
+            criterion.median_ess_ratio_generated
         );
         assert!(
-            residual.budget_exhausted <= 2,
-            "{} cases exhausted the attempt budget with residual rejection",
-            residual.budget_exhausted
+            criterion.median_ess_ratio_corpus >= 0.4 || criterion.median_ess_ratio_corpus.is_nan(),
+            "median ESS/n of the default ConstraintProposal on the corpus cases = {:.4} < 0.4",
+            criterion.median_ess_ratio_corpus
+        );
+        assert!(
+            criterion.budget_exhausted <= 2,
+            "{} cases exhausted the attempt budget with the default ConstraintProposal",
+            criterion.budget_exhausted
         );
         assert!(
             criterion.median_ess_per_attempt >= 0.35,

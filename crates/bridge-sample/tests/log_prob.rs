@@ -179,11 +179,24 @@ fn enumerate_three_way_splits(pool: Hand, pool_cards: &[Card]) -> Vec<(Hand, Han
 /// `log_prob_consistency` above.
 #[test]
 fn middle_seat_coarse_log_prob_consistency() {
-    check_three_seat_consistency(
-        &three_seat_interpretation(),
-        20260926,
-        &ConstraintProposal::default(),
-    );
+    for proposal in with_and_without_residual(ConstraintProposal::default()) {
+        check_three_seat_consistency(&three_seat_interpretation(), 20260926, &proposal);
+    }
+}
+
+/// `base` without and with residual rejection (`09-sample.md` §6.5, off by default), so each
+/// exactness check covers both densities.
+fn with_and_without_residual(base: ConstraintProposal) -> [ConstraintProposal; 2] {
+    [
+        ConstraintProposal {
+            residual_rejection: false,
+            ..base.clone()
+        },
+        ConstraintProposal {
+            residual_rejection: true,
+            ..base
+        },
+    ]
 }
 
 /// High-card points of `hand` (A = 4, K = 3, Q = 2, J = 1).
@@ -258,11 +271,13 @@ fn three_seat_merged_summary_interpretation(south_fixed: Hand) -> Interpretation
 fn middle_seat_merged_summaries_log_prob_consistency() {
     let (known, _) = three_seat_pool_context();
     let south_fixed = known.known[Seat::South.index() as usize];
-    check_three_seat_consistency(
-        &three_seat_merged_summary_interpretation(south_fixed),
-        20260927,
-        &ConstraintProposal::default(),
-    );
+    for proposal in with_and_without_residual(ConstraintProposal::default()) {
+        check_three_seat_consistency(
+            &three_seat_merged_summary_interpretation(south_fixed),
+            20260927,
+            &proposal,
+        );
+    }
 }
 
 /// §6.4 (d)'s light folding (light alternatives replaced by one uniform component with a fixed
@@ -272,14 +287,16 @@ fn middle_seat_merged_summaries_log_prob_consistency() {
 fn middle_seat_light_tier_log_prob_consistency() {
     let (known, _) = three_seat_pool_context();
     let south_fixed = known.known[Seat::South.index() as usize];
-    check_three_seat_consistency(
-        &three_seat_merged_summary_interpretation(south_fixed),
-        20260928,
-        &ConstraintProposal {
-            light_threshold: f64::INFINITY,
-            ..ConstraintProposal::default()
-        },
-    );
+    for proposal in with_and_without_residual(ConstraintProposal {
+        light_threshold: f64::INFINITY,
+        ..ConstraintProposal::default()
+    }) {
+        check_three_seat_consistency(
+            &three_seat_merged_summary_interpretation(south_fixed),
+            20260928,
+            &proposal,
+        );
+    }
 }
 
 /// Enumerates every 3/3/3 split of [`three_seat_pool_context`]'s pool, sums `exp(log_prob)` over
