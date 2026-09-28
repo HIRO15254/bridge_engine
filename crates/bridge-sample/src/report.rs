@@ -68,10 +68,14 @@ pub struct SampleReport {
     pub ess: f64,
     /// `ess / requested`.
     pub ess_ratio: f64,
-    /// `ess / attempts` (0 when no attempt was made): the effective sample size bought per
-    /// proposal attempt. Unlike `ess_ratio` it charges a rejecting proposal (residual rejection,
-    /// `09-sample.md` §6.5) for its rejected draws, so proposals that reject differently can be
-    /// compared on it.
+    /// Proposals the prepared proposal drew during setup, before the first slot (residual
+    /// rejection's pilot, `09-sample.md` §6.5; 0 for proposals without one). Not part of
+    /// `attempts`, the budget or `acceptance_rate`, which describe the sampling loop itself.
+    pub pilot_attempts: u64,
+    /// `ess / (attempts + pilot_attempts)` (0 when no attempt was made): the effective sample
+    /// size bought per proposal draw. Unlike `ess_ratio` it charges a rejecting proposal
+    /// (residual rejection, `09-sample.md` §6.5) for its rejected draws and its pilot, so
+    /// proposals that reject differently can be compared on it.
     pub ess_per_attempt: f64,
     /// Largest log weight.
     pub log_weight_max: f64,

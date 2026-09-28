@@ -418,6 +418,7 @@ struct Run {
     ess_per_attempt: f64,
     produced: usize,
     attempts: u64,
+    pilot_attempts: u64,
     acceptance: f64,
     budget_exhausted: bool,
     seconds: f64,
@@ -431,6 +432,7 @@ impl Run {
             ess_per_attempt: report.ess_per_attempt,
             produced: report.produced,
             attempts: report.attempts,
+            pilot_attempts: report.pilot_attempts,
             acceptance: report.acceptance_rate,
             budget_exhausted: report.budget_exhausted,
             seconds: report.elapsed.as_secs_f64(),
@@ -441,11 +443,13 @@ impl Run {
     fn json(&self) -> String {
         format!(
             "{{\"ess_ratio\": {}, \"ess_per_attempt\": {}, \"produced\": {}, \"attempts\": {}, \
-             \"acceptance_rate\": {}, \"budget_exhausted\": {}, \"seconds\": {}}}",
+             \"pilot_attempts\": {}, \"acceptance_rate\": {}, \"budget_exhausted\": {}, \
+             \"seconds\": {}}}",
             json_f64(self.ess_ratio),
             json_f64(self.ess_per_attempt),
             self.produced,
             self.attempts,
+            self.pilot_attempts,
             json_f64(self.acceptance),
             self.budget_exhausted,
             json_f64(self.seconds),

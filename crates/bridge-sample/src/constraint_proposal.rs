@@ -547,6 +547,7 @@ impl ConstraintProposal {
             order,
             cached_first,
             residual_threshold: None,
+            pilot_attempts: 0,
         };
         // Residual rejection's threshold, fixed once here from a bound and a pilot run of the
         // proposal without it.
@@ -559,6 +560,7 @@ impl ConstraintProposal {
                 let threshold =
                     residual_threshold(&prepared, *seat, candidates, self.residual_min_acceptance);
                 prepared.residual_threshold = Some(threshold);
+                prepared.pilot_attempts = RESIDUAL_PILOT_DRAWS as u64;
             }
         }
         Ok(prepared)
@@ -1070,6 +1072,9 @@ struct PreparedConstraint<'c> {
     /// `Some(T)` when residual rejection is on and the last seat is `Sampled`: the threshold of
     /// [`residual_threshold`].
     residual_threshold: Option<f64>,
+    /// Proposals [`residual_threshold`]'s pilot drew ([`RESIDUAL_PILOT_DRAWS`] when it ran, else
+    /// 0), reported through [`PreparedProposal::pilot_attempts`].
+    pilot_attempts: u64,
 }
 
 impl PreparedProposal for PreparedConstraint<'_> {
@@ -1280,6 +1285,10 @@ impl PreparedProposal for PreparedConstraint<'_> {
         }
 
         ln_pi
+    }
+
+    fn pilot_attempts(&self) -> u64 {
+        self.pilot_attempts
     }
 }
 

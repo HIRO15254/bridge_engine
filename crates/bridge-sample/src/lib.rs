@@ -276,16 +276,20 @@ pub fn sample_deals(
         .iter()
         .copied()
         .fold(f64::NEG_INFINITY, f64::max);
-    let (acceptance_rate, ess_per_attempt) = if attempts > 0 {
-        (produced as f64 / attempts as f64, ess / attempts as f64)
+    let pilot_attempts = prepared.pilot_attempts();
+    let acceptance_rate = if attempts > 0 {
+        produced as f64 / attempts as f64
     } else {
-        (0.0, 0.0)
+        0.0
     };
+    let draws = attempts + pilot_attempts;
+    let ess_per_attempt = if draws > 0 { ess / draws as f64 } else { 0.0 };
 
     let report = SampleReport {
         requested: n,
         produced,
         attempts,
+        pilot_attempts,
         acceptance_rate,
         ess,
         ess_ratio,
@@ -303,6 +307,7 @@ pub fn sample_deals(
         requested = report.requested,
         produced = report.produced,
         attempts = report.attempts,
+        pilot_attempts = report.pilot_attempts,
         acceptance_rate = report.acceptance_rate,
         ess = report.ess,
         ess_ratio = report.ess_ratio,
@@ -690,7 +695,7 @@ mod tests {
     /// The attempt budget `n × max_attempt_factor` is honoured (to within one slot's
     /// `max_attempts_per_sample`) whatever the chunking, and running out of it is reported both
     /// as `budget_exhausted` and as a `BudgetExhausted` warning; a run that finishes within the
-    /// budget reports neither. `ess_per_attempt` is `ess / attempts`.
+    /// budget reports neither. `ess_per_attempt` is `ess / attempts` (no pilot here).
     #[test]
     fn attempt_budget_is_honoured_and_reported() {
         let (interpretation, _) = north_1nt_interpretation();

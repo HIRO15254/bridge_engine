@@ -433,3 +433,39 @@ fn weighted_estimates_are_unbiased() {
         }
     }
 }
+
+/// Residual rejection's pilot (128 proposals drawn in `prepare` to fix `T`) is reported as
+/// `pilot_attempts` and charged to `ess_per_attempt`; a proposal without a pilot reports 0.
+#[test]
+fn residual_pilot_is_charged_to_ess_per_attempt() {
+    let (fixture, _) = fixture(WestVariant::Overlapping);
+    let play = PLAY;
+    let ctx = context(&fixture, &play);
+    let opts = SampleOptions {
+        seed: 0x9170,
+        threads: Threads::Single,
+        ..SampleOptions::default()
+    };
+    for (residual_rejection, pilot) in [(false, 0u64), (true, 128)] {
+        let proposal = ConstraintProposal {
+            residual_rejection,
+            ..ConstraintProposal::default()
+        };
+        let (_, report) = sample_deals(&ctx, &proposal, 200, &opts).expect("samples");
+        assert_eq!(
+            report.pilot_attempts, pilot,
+            "residual {residual_rejection}"
+        );
+        let expected = report.ess / (report.attempts + pilot) as f64;
+        assert!(
+            (report.ess_per_attempt - expected).abs() < 1e-12,
+            "residual {residual_rejection}: {} != {expected}",
+            report.ess_per_attempt
+        );
+        assert!(
+            (report.acceptance_rate - report.produced as f64 / report.attempts as f64).abs()
+                < 1e-12,
+            "the pilot is not part of the acceptance rate"
+        );
+    }
+}

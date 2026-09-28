@@ -24,6 +24,15 @@ pub trait PreparedProposal {
 
     /// `ln π(deal)`; `-∞` outside the support.
     fn log_prob(&self, deal: &Deal) -> f64;
+
+    /// Proposals drawn while preparing (default 0), such as residual rejection's pilot run
+    /// (`09-sample.md` §6.5). [`sample_deals`](crate::sample_deals) reports them as
+    /// [`SampleReport::pilot_attempts`](crate::SampleReport::pilot_attempts) and charges them to
+    /// `ess_per_attempt`, so a proposal that spends draws on setup is compared fairly with one
+    /// that does not.
+    fn pilot_attempts(&self) -> u64 {
+        0
+    }
 }
 
 /// What the sampler knows about the position.
