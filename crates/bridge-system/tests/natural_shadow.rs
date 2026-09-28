@@ -32,6 +32,7 @@ const POSITIONS: &[&str] = &[
     "1NT P",
     "2H P",
     "1C 1H",
+    "1C 1D",
     "1D 1S",
     "1H 2C",
     "1C X",
@@ -148,9 +149,9 @@ fn no_natural_rule_is_fully_shadowed_at_canonical_positions() {
 }
 
 /// Standard natural calls that the natural policy must choose for some hand. Higher calls that
-/// repeat a lower call's constraint (a 5-level raise after the 4-level one, an opener's jump
-/// rebid inside the plain rebid's 12-21 range, an advancer's jump raise) are known limitations
-/// of the rule table and are not listed (docs/design/06-system.md §8.6).
+/// repeat a lower call's constraint (a 5-level raise after the 4-level one, an advancer's jump
+/// raise, opener's 4-level jump shift) are known limitations of the rule table and are not
+/// listed (docs/design/06-system.md §8.6).
 const CANONICAL: &[(&str, &str)] = &[
     ("", "P 1C 1D 1H 1S 1NT 2C 2D 2H 2S 2NT 3C 3D 3H 3S"),
     ("P P P", "P 1C 1H 2S"),
@@ -160,13 +161,14 @@ const CANONICAL: &[(&str, &str)] = &[
     ("1S P", "P 1NT 2C 2D 2H 2S 3S 4S"),
     ("1NT P", "P 2C 2NT 3NT"),
     ("1C 1H", "P X 1S 1NT 2C 2D"),
+    ("1C 1D", "P X 1H 1S 1NT 2C"),
     ("1D 1S", "P X 1NT 2D"),
     ("1H 2C", "P X 2H 2D"),
     ("1C X", "P 1D 1H 1S 1NT 2C"),
     ("1H", "P X 1S 1NT 2C 2S"),
     ("1D 1H P", "P 1S 2H"),
-    ("1C P 1H P", "1S 1NT 2C 2D 2H 3H"),
-    ("1H P 1S P", "1NT 2C 2H 2S 3S"),
+    ("1C P 1H P", "1S 1NT 2C 3C 2D 2H 3H"),
+    ("1H P 1S P", "1NT 2C 2H 3H 2S 3S"),
     ("1H P 2C P", "2H 3C 2S"),
 ];
 
