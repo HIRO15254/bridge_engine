@@ -320,6 +320,7 @@ impl InterpretOptions {
 - `eps_exact` / `eps_partial` / `eps_natural` / `lenient_decay` は既定の経路から外し、`InterpretOptions::legacy()` として 1 フェーズだけ残す（ESS の前後比較用）。
 - 「信頼度が低いほど ε を大きくする」という役割は、δ（システム外への逸脱）と、方策上選ばれないコールの床に移る。
 - `InterpretOptions` は `InterpretOptions::for_context(&BidContext)` で作る。`PolicyParams` と `implicit_pass` を尤度と同じ値から取るので、解釈と尤度がずれることは構造上起きない。
+- 方策のナチュラル推定器は常に定まる：`call_distribution`・`sequence_log_likelihood`・`AuctionPolicy` はいずれも `ctx.natural`、それが `None` なら `table.natural` を使う（レビュー修正で `call_distribution` もこの補完をするようにした。以前は `None` のとき M が一様になり、δ > 0 では鏡像とずれていた）。鏡像は `table.natural` で読むので、両者が一致するのは `ctx.natural` が `None` か `Some(&*table.natural)` のときである。別の推定器を鏡像にしたいときは、その推定器を持つ `Table` で解釈する。`choose_bid` にとっての `None`（システム外で `NoCandidate`）は変わらない。
 - 以下の表はフェーズ 3 の根拠である。「支持集合が空にならない」「`strict` で制約そのものを検証できる」「事後補正できる」の 3 点は、ANY 片（ε/n）でもそのまま成り立つ。
 
 低信頼度の解釈を「HCP を 2 広げる」のような場当たりな緩和で表すと、緩め幅に根拠がなく、しかも緩めても支持集合が空になる場合を救えない。ε-混合は、コール毎に「無制約の代替」を重み ε で追加するだけで、次の性質を得る。
@@ -419,6 +420,8 @@ impl Interpretation {
 
 ベンチは `bridge-bidding/benches/interpret.rs` に集約されている: 手組みの 2 系統（`interpret/12-call-auction` は裸の HCP 制約のみで `shapes == ALL` を常に取る最良ケース、`interpret/12-call-auction-realistic` は各ノードが自分のスート長も課す意図的な最悪ケース）に加え、`systems/sayc/sayc.bml` から実コンパイルした SAYC を使う 3 本 —— `interpret/sayc-1nt-auction`（`1NT-P-2C-P-2H-P-3NT-P-P-P`、10 コール）、`interpret/sayc-competitive-auction`（`1S-(2H)-X-(P)-3S-(P)-P-P`、ネガティブダブル入りの競り合い、8 コール）、そして仕様 §9 / 本節が実際に定めている長さそのものを実 SAYC で解釈する `interpret/sayc-12-call-auction`（`1C-P-1H-P-1S-P-2NT-P-3NT-P-P-P`、12 コール）。
 
+（フェーズ 4 の注記）`sayc-12-call-auction` の 3NT は方策上選ばれない（shadowed）。SAYC に `1C-1H-1S-2NT` の続きが無いのでこの位置はシステム外で、ナチュラル規則にもここでの 3NT 候補が無い（`rule_rebid_nt` が発火しない）。したがって両プリセットで p(3NT|h) = ε/n（`log_scale` ≈ −10.17）であり、17+ HCP の開始者も 3NT を選ばない。受け入れのベンチはこのまま残し、方策どおりの 12 コール `interpret/sayc-12-call-on-policy`（`P-P-1NT-P-2C-P-2S-P-4S-P-P-P`、shadowed 0）を並べて計る。
+
 **目標未達**: 上記 3 点の最適化は実在する。`hcp_bounds` のルックアップテーブル化は正しさを差分テスト（`bridge-core::shape::tests::hcp_bounds_match_brute_force`、`shape_set.rs::min_max_hcp_matches_naive_walk_for_every_single_shape`・`random_sets_are_consistent`）で、全 560 単一形状と乱数集合について「全メンバー形を歩く」旧実装相当のブルートフォースと一致することを確認済み。`ComboKey`/重複除去の変更は専用の差分テストは追加していないが、`bridge-bidding` の Step B 既存ユニットテスト（`and_combination_drops_contradictions`・`weights_sum_to_one`・`seat_without_calls_is_any`・`implicit_pass_bidirectional` 等）が変更前後で green のままであることで確認した。だが、**12 コールのオークションを 10 μs 未満で解釈するケースは、実 SAYC・手組みのいずれでも観測されていない**。この節の計測は、本フェーズで並行して動いている他エージェントのビルド/ベンチ（`git worktree list` で 20 前後）の影響を強く受ける共有開発機上で行っており、`uptime` の負荷平均が常時 9〜11 という状態のため、単発の値ではなく多数回実行した範囲で書く: `interpret/sayc-12-call-auction`（実 SAYC、目標そのものの 12 コール）はおおむね 12〜20 μs、最良実行でも 11.6 μs 程度。裸の HCP 制約のみの最良ケース `interpret/12-call-auction` もおおむね 10〜16 μs、最良実行で 9.5 μs 程度。`interpret/12-call-auction-realistic` はおおむね 11〜20 μs（負荷スパイク時は 25 μs 超）。10 μs を安定して下回るのは `interpret/sayc-1nt-auction`（10 コール、おおむね 8〜16 μs、最良 8.5 μs 程度）と `interpret/sayc-competitive-auction`（8 コール、おおむね 6〜10 μs）だけだが、これらは仕様 §9 が要求する 12 コールより短いオークションであり、この 2 本が目標内であることは 12 コールの目標が満たされていることを意味しない。したがって 11-testing.md §9 の `interpret` 12 コール < 10 μs は、本レーンの時点では**未達**として記録する。ボトルネックは引き続き Step B の交叉積と見られる（上表の計画時見積りで Step A ≈ 4.3 μs に対し Step B ≈ 6 μs。本レーンの recheck で報告された実 SAYC 12 コールの内訳測定でも Step A は全体の一部（数 μs）に留まっている）。`Summary::and` のインライン化や `ComboKey` のさらなる圧縮など、追加の高速化余地が残っている。
 
 2026-09-26 のフェーズ 3 統合時 (SAYC 2 レーン統合後、負荷平均 9〜16) の `cargo bench -p bridge-bidding --bench interpret`: `interpret/12-call-auction` 11.3 μs、`interpret/12-call-auction-realistic` 12.3 μs、`interpret/sayc-12-call-auction` 17.6 μs、`interpret/sayc-1nt-auction` 9.5 μs、`interpret/sayc-competitive-auction` 7.4 μs、`sequence_log_likelihood/12-call-auction` 5.5 μs、`sequence_log_likelihood/12-call-auction-realistic` 6.2 μs (いずれも 2 回目の実行の中央値。1 回目は負荷平均 21 で 12 コール 22〜32 μs と大きくぶれた)。12 コール < 10 μs は引き続き未達。
@@ -442,47 +445,53 @@ impl Interpretation {
 - 容量は 1024 エントリ × 2 世代である。古い世代でヒットしたエントリは新しい世代に移し、新しい世代が満杯になったら古い世代を捨てる（近似 LRU）。
 - ヒットは再計算と同一の値を返すので、観測できる違いは速度だけである。`choose_bid`、`call_distribution`、`interpret`、`AuctionPolicy::new` のすべてがこのメモを通る。
 
-**実測（レーン B 最終、criterion の中央値、μs。3 回の実行、括弧内は開始→終了の loadavg）**：
+**実測（レビュー修正後、criterion の中央値、μs。warm-up 2 s・計測 4 s で 3 回、括弧内は開始→終了の loadavg）**：
 
-| ベンチ | 1 回目（6.6→15.0） | 2 回目（20.0→5.4） | 3 回目（4.7→5.2） |
+| ベンチ | 1 回目（10.4→6.9） | 2 回目（6.3→5.4） | 3 回目（5.1→5.3） |
 | --- | --- | --- | --- |
-| `interpret/12-call-auction` | 7.63 | 8.05 | 7.54 |
-| `interpret/12-call-auction-realistic` | 7.88 | 13.1 | 7.85 |
-| `interpret/sayc-1nt-auction`（10 コール） | 7.20 | 7.52 | 8.11 |
-| `interpret/sayc-competitive-auction`（8 コール） | 4.96 | 6.40 | 5.88 |
-| `interpret/sayc-12-call-auction` | 10.12 | **9.99** | 10.33 |
-| `interpret-step-a/sayc-12-call-auction`（Step A のみ） | 4.55 | 3.73 | 3.82 |
-| `interpret-step-a/sayc-1nt-auction` | 5.47 | 3.17 | 3.15 |
-| `interpret-step-a/sayc-competitive-auction` | 2.83 | 2.58 | 2.57 |
-| `interpret-step-a/12-call-auction` | 4.72 | 3.14 | 3.94 |
-| `interpret/natural-heavy-auction`（`1H 2C 2D 3C 3H P 4H P P P`、ナチュラル 8 コール、メモ済み） | 11.1 | 7.20 | 7.55 |
-| `interpret-cold/natural-heavy-auction`（反復ごとに新しいナチュラル推定器 = 全位置コールド） | 128 | 78.9 | 83.0 |
-| `interpret-cold/sayc-12-call-auction`（同上） | 79.5 | 53.2 | 48.6 |
-| `interpret-human/sayc-12-call-auction`（δ = 0.3） | 21.6 | 13.4 | 13.4 |
-| `auction-policy/log-likelihood/sayc-12/system-players` | 0.199 | 0.113 | 0.120 |
-| `auction-policy/log-likelihood/sayc-12/human` | 0.161 | 0.136 | 0.145 |
-| `auction-policy/new/sayc-12/system-players` | 14.7 | 8.00 | 8.75 |
-| `auction-policy/new/sayc-12/human` | 12.6 | 11.4 | 11.6 |
-| `sequence_log_likelihood/sayc-12/system-players`（参照実装） | 5.01 | 3.75 | 4.03 |
-| `sequence_log_likelihood/sayc-12/human`（参照実装） | 4.84 | 4.04 | 4.00 |
+| `interpret/12-call-auction` | 8.27 | 8.32 | 7.62 |
+| `interpret/12-call-auction-realistic` | 7.99 | 8.00 | 9.25 |
+| `interpret/sayc-1nt-auction`（10 コール） | 8.58 | 7.33 | 7.27 |
+| `interpret/sayc-competitive-auction`（8 コール） | 6.42 | 5.36 | 4.99 |
+| `interpret/sayc-12-call-auction` | 10.75 | **9.90** | 10.01 |
+| `interpret/sayc-12-call-on-policy`（shadowed 0） | 11.25 | 9.92 | 10.54 |
+| `interpret-step-a/sayc-12-call-auction`（Step A のみ） | 3.63 | 3.64 | 3.60 |
+| `interpret-step-a/sayc-1nt-auction` | 3.06 | 2.88 | 2.95 |
+| `interpret-step-a/sayc-competitive-auction` | 2.61 | 2.46 | 2.48 |
+| `interpret-step-a/12-call-auction` | 3.76 | 2.92 | 2.88 |
+| `interpret/natural-heavy-auction`（コーパス、下記、メモ済み） | 11.48 | 8.29 | 8.24 |
+| `interpret-cold/natural-heavy-auction`（反復ごとに新しいナチュラル推定器 = 全位置コールド） | 60.6 | 54.2 | 58.0 |
+| `interpret-cold/sayc-12-call-auction`（同上） | 57.3 | 47.5 | 46.6 |
+| `interpret-human/sayc-12-call-auction`（δ = 0.3） | 13.4 | 13.8 | 13.4 |
+| `auction-policy/log-likelihood/sayc-12/system-players` | 0.126 | 0.112 | 0.159 |
+| `auction-policy/log-likelihood/sayc-12/human` | 0.139 | 0.137 | 0.152 |
+| `auction-policy/new/sayc-12/system-players` | 9.33 | 8.14 | 10.2 |
+| `auction-policy/new/sayc-12/human` | 13.8 | 11.8 | 12.5 |
+| `sequence_log_likelihood/sayc-12/system-players`（参照実装） | 3.87 | 3.82 | 3.89 |
+| `sequence_log_likelihood/sayc-12/human`（参照実装） | 4.49 | 4.01 | 4.07 |
+
+natural-heavy のベンチは、計画どおりコーパスの競り合いオークションに差し替えた：`1H-(1S)-2C-(2D)-X-(P)-2H-(P)-3H-(P)-P-(P)`（`corpus_auctions_with_deals` の列挙番号 615、ディーラー West、NS バル）。12 コールのうち 9 コールがナチュラル読み（うち 2 つは shadowed）である。レーン B の手組みの `1H 2C 2D 3C 3H P 4H P P P` は、コールド 78.9〜128 μs だった。
 
 所見：
 
 - **12 コール < 10 μs**
-  - 手組みの `interpret/12-call-auction` は 7.5〜8.1 μs で達成した。
-  - 実 SAYC の `interpret/sayc-12-call-auction` は 9.99〜10.33 μs で、3 回の最良値でようやく 10 μs を切る境界線上にある。
-  - 別途の最小値ハーネス（30 バッチの最小、loadavg 3.8）でも 10.1 μs（Step A 3.7 μs）だった。
-- **内訳**：sayc-12 は Step A が約 3.7 μs、Step B が約 6.3 μs である。
-  - Step B は、切り詰め後に生き残った 28 組合せの実体化（`HandConstraint` の And と各片の複製、`CallExplanation` の説明文の複製、`Explanation` の連結）にかかる。
-  - 割当は 1 回の `interpret` で 213 回、うち Step A が 46 回である。
-  - これ以上は、公開型（`CallExplanation.text: String`、所有する `HandConstraint`）を共有型に変えない限り削りにくい。
+  - 手組みの `interpret/12-call-auction` は 7.6〜8.3 μs で達成した。
+  - 実 SAYC の `interpret/sayc-12-call-auction` は 9.90〜10.75 μs で、3 回の最良値でようやく 10 μs を切る。中央値の基準としては**境界線上（未達扱い）**のままである。方策どおりの 12 コールも 9.92〜11.25 μs で同じ水準である。
+  - レーン B 最終の計測（10.12 / 9.99 / 10.33）と同じ水準である。統合時に静かな機械で 3 回の最良値を取り直す。
+- **内訳**：sayc-12 は Step A が約 3.6 μs、Step B が約 6.3 μs である。
+  - Step B は、切り詰め後に生き残った 28 組合せの実体化にかかる。内訳は、`HandConstraint` の And と各片の複製（サンプリングで約 45%）、`CallExplanation` の複製（説明文の `String` を含む）、`Explanation` の連結である。
+  - 片は小さい（1 片あたり 1〜10 アトム、28 組合せで計約 160 アトム）。したがって、残りは公開型（`CallExplanation.text: String`、所有する `HandConstraint`）の複製と割当である。
+  - これ以上は、公開型を共有型（`Arc<str>`、`Arc` で共有する片）に変えない限り削りにくい。後続の課題とする（§9 の 11）。
   - フェーズ 3 統合時の 17.6 μs からは短縮した。
-- **ナチュラル位置のコールド追加**
-  - コールドの sayc-12（システム位置のみ）は、1 コールあたり約 3.2〜3.6 μs のコールド費用がかかる。これは、位置の列挙、メモへの登録、世代の入れ替えによる解放の合計である。
-  - natural-heavy はこれに加えて、ナチュラル 1 コールあたり約 5.4 μs（criterion、負荷下）かかる。最小値ハーネス（loadavg 17）では約 4.2 μs だった。
-  - 目標 ≤ 5 μs に対して境界線上である。コールド費用はメモにより、スレッドごと・接頭辞ごとに 1 回だけ払う。
-- **δ > 0**：human プリセットの 12 コールは 13.4 μs で、目標 40 μs 内である。
-- **`AuctionPolicy::log_likelihood`**：0.11〜0.20 μs / 配牌で、目標 10 μs に対して 2 桁の余裕がある。参照実装の約 1/30 である。
+- **ナチュラル位置のコールド追加（≤ 5 μs）**
+  - レビュー修正で、ナチュラル領域の計算を速くした。`union_sub` と `sup_of` は、アトムでないナチュラル候補を毎回 `grid::bounds` に通していた。これはシェイプ × HCP のグリッドを候補ごとに作って交わす処理である。レベル下限のため、高いレベルの候補はほとんどが `And([規則のアトム, HCP のアトム])` になる。
+  - リテラルを持たないアトム、その And（形の積と HCP 範囲の積の 1 つの箱）、それらの Or は、HCP 範囲ごとの箱に直接まとめるようにした。領域は同一である。
+  - コールドの natural-heavy は 108 → 49 μs になった（バッチ最小値、loadavg 約 9）。プロファイルでは、残りは `infer_batch`（bridge-system）とメモの世代入れ替えによる解放である。
+  - 1 コールあたりのコールド追加は次のように出す：(コールド natural-heavy − warm natural-heavy − 12 位置 × システム位置 1 つのコールド費用) / 9。システム位置 1 つのコールド費用は (コールド sayc-12 − warm sayc-12) / 12 で、3.1〜3.9 μs である。
+  - 結果は 3 回それぞれ 0.3 / 0.9 / 1.5 μs で、**達成**した。
+- **δ > 0**：human プリセットの 12 コールは 13.4〜13.8 μs で、目標 40 μs 内である。
+- **その他**：`sayc-1nt` 7.3〜8.6 μs（≤ 10）、`sayc-competitive` 5.0〜6.4 μs（≤ 8）、`12-call-auction-realistic` 8.0〜9.3 μs（≤ 12）で、いずれも達成した。
+- **`AuctionPolicy::log_likelihood`**：0.11〜0.16 μs / 配牌で、目標 10 μs に対して 2 桁の余裕がある。参照実装の約 1/30 である。
 
 ---
 
@@ -533,7 +542,7 @@ impl PolicyParams {
 }
 pub struct BidContext<'a> {
     pub scoring: Scoring,                        // v1 では素通し（L2 の条件に scoring がない。「未決」: #+SCORING 条件）
-    pub natural: Option<&'a NaturalInference>,   // 接頭辞がシステム外のときのフォールバック
+    pub natural: Option<&'a NaturalInference>,   // choose_bid: システム外のときのフォールバック（None なら NoCandidate）。方策（call_distribution / 尤度 / AuctionPolicy）: None なら table.natural
     pub implicit_pass: ImplicitPass,             // テストの既定 Never、アプリの既定 Complement
     pub policy: PolicyParams,
 }
@@ -692,10 +701,12 @@ impl InterpretCache {
 | `forward_consistency`（仕様 §10） | `tests/consistency.rs`、`#[ignore]`、release | 10^6 のランダム (hand, auction 接頭辞)、`InterpretOptions { strict: true, .. }`。`Chosen` なら `interpret(auction.with(call)).satisfied_by(seat, hand)` | 1e5 で gap 起因でない違反 0、gap 起因 ≤ 30。1e6 は報告する。`NoCandidate` と `ImplicitPass` はノード別に集計し `target/coverage_report.json`（上位 50 の穴） |
 | `reproduction_rate` | 同ファイル | コーパスの 500 オークション × `sample_deals(1000)` → `replay == auction` の率 | ノード別に報告。フェーズ 4 で中央値 ≥ 0.6 |
 | `policy_argmax_matches_choose_bid` | `tests/policy.rs` | 10^5 局面、`system_players()` と `human()` の両プリセット | 100% |
-| `policy_mirror`（フェーズ 4） | `tests/mirror.rs` | 生成位置とコーパス位置の両方、δ ∈ {0, 0.3}。既定スイートは 150 位置 × 40 手、`#[ignore]` 版（`policy_mirror_large`）は 2000 × 100。各 (コール, 手) で `exp(log_scale)·Σ w·1[h ∈ C]` を `call_distribution` と比べる | under-cover 0、厳密一致 ≥ 99%（リテラルによる over-cover ≤ 1%） |
+| `policy_mirror`（フェーズ 4） | `tests/mirror.rs` | 生成位置とコーパス位置の両方、δ ∈ {0, 0.3}。既定スイートは 150 位置 × 40 手、`#[ignore]` 版（`policy_mirror_large`）は 2000 × 100（コーパスは 1 オークションから複数の異なるコールを取り、2000 位置に届かせる）。各 (コール, 手) で `exp(log_scale)·Σ w·1[h ∈ C]` を `call_distribution` と比べる | under-cover 0、厳密一致 ≥ 99%（リテラルによる over-cover ≤ 1%） |
+| `policy_mirror_variants`（フェーズ 4） | 同上 | `ImplicitPass::Never`（δ ∈ {0, 0.3}）、`natural: None`（δ = 0.3）、接頭辞のコールを 0.3 の率で乱択の合法コールに置き換えた位置（寛容照合と X_c の実行時再計算）。既定は各 60 位置 × 20 手、`policy_mirror_large` では各 500 × 50 | under-cover 0。厳密一致は既定で ≥ 97%（小さい集合で 1 位置の over-cover が 1.7% に当たるため）、large で ≥ 99% |
+| `recomputed_region_when_a_higher_sibling_is_illegal`（フェーズ 4） | unit | 手組みシステム。寛容照合の位置で、上位の兄弟（`1D`）が接頭辞 `1C-(1D)` の後で非合法 | `1H` は shadowed にならず（索引では `1D` に覆われる）、全ての手で鏡像 = `call_distribution` |
 | `tightness`（フェーズ 4、プロトタイプ A 由来） | 同上 | δ = 0。`choose_bid` が到達する位置で、非 Fallback 片の内側 / 外側と「選ばれたか」を集計 | Exact：「内側なのに選ばれない」0、「外側なのに選ばれる」0 |
-| `fast_likelihood_matches_reference`（フェーズ 4） | `tests/policy.rs` | 50 オークション × 1000 配牌（`_large` 版は 150 × 1001） | \|Δ ln L\| ≤ 1e-5 |
-| `rank_order_shared`（フェーズ 4） | unit | 10^4 位置 | `choose_bid` の `alternatives` の順序が `rank_cmp` の順序と一致 |
+| `fast_likelihood_matches_reference`（フェーズ 4） | `tests/policy.rs` | 既定は 3 ソース × 50 オークション × (20 配牌 + 真の配牌) = 3150 配牌。受け入れの 50 × 1000 は `_large` 版（ソースごとに 50 オークション × 1001 配牌、計 150 オークション・150,150 配牌） | \|Δ ln L\| ≤ 1e-5 |
+| `rank_order_shared`（フェーズ 4） | unit | 10^4 位置 | `choose_bid` の `alternatives` が、ノードから独立に計算した順位（priority 降順、`tie_break`、コール index 昇順）に並び、各候補の priority がノードの値と一致する（`choose_bid` 自身が使う `rank_cmp_keys` との比較は恒真なので使わない）。厳密に解決した位置では、索引の兄弟グループの順序とも一致 |
 | `materialize_constraint_equals_the_and_one_more_fold` | `interpret.rs` の unit | 一括の And 組み立て | 逐次の fold と同じ木 |
 | `illegal_call_is_lint` | unit | 不正な継続を含む合成 `SystemIR` | `Diagnostic::IllegalSystemCall` が返り、パニックしない |
 | `weights_sum_to_one` | unit | 各席の `seats[s]` と各 `per_call` の重み | 合計 1（許容 1e-5） |
@@ -705,28 +716,35 @@ impl InterpretCache {
 | `interpret_bench` | `benches/` | criterion、12 コール | < 10 μs |
 | コーパス解決率（フェーズ 4、`xtask coverage`） | `--ignored` | 実ハンドレコードのオークション | ≥ 80% が全コール Exact、残りに `EmptySupport` なし |
 
-**フェーズ 4 の実測**（レーン B、release）：
+**フェーズ 4 の実測**（レビュー修正後、release）：
 
 | テスト | loadavg | 結果 |
 | --- | --- | --- |
-| `forward_consistency` 1e5（seed 0x5a1c0002） | 20.8 | gap 起因でない違反 0、gap 起因 1、4.1 s |
-| `forward_consistency` 1e6 | 20.1→16.5 | gap 起因でない違反 0、gap 起因 19（`no_candidate` 197）、49.3 s |
-| `policy_argmax_matches_choose_bid` 1e5 | 約 15 | 両プリセットで 100%（system_players 2.1 s、human 1.9 s） |
-| `fast_likelihood_matches_reference_large` | 約 15 | 150 オークション、150,150 配牌、最大 \|Δ ln L\| 5.3e-7 |
-| `policy_mirror_large` | 13.5 | 表を参照 |
-| `tightness_large`（2000 × 100） | 13.5 | `[[32953,0,0],[0,0,0],[63289,334,0]]`。Exact 0/0 |
-| `rank_order_shared` | — | 10^4 位置すべてで `alternatives` が `rank_cmp` 順。うち厳密一致の 4444 位置では、索引の兄弟グループの順序とも一致 |
+| `forward_consistency` 1e5（seed 0x5a1c0002） | 4.1→13.8 | gap 起因でない違反 0、gap 起因 1（chosen 81607、no_candidate 15、implicit_pass 18378）、6.0 s |
+| `forward_consistency` 1e6 | 13.1→10.9 | gap 起因でない違反 0、gap 起因 19（`no_candidate` 197）、27.5 s（レーン B 最終は 49.3 s。差は主にナチュラル領域の高速化と負荷） |
+| `policy_argmax_matches_choose_bid` 1e5 | 4.1 | 両プリセットで 100%（system_players 1.75 s、human 1.86 s） |
+| `fast_likelihood_matches_reference_large` | 4.4 | 150 オークション、150,150 配牌、最大 \|Δ ln L\| 5.3e-7 |
+| `fast_likelihood_matches_reference`（既定） | — | 150 オークション、3150 配牌、最大 \|Δ ln L\| 3.9e-7 |
+| `policy_mirror_large` | 4.6 | 表を参照 |
+| `tightness_large`（2000 × 100） | 4.4 | `[[32953,0,0],[0,0,0],[63289,334,0]]`。Exact 0/0 |
+| `rank_order_shared` | — | 10^4 位置すべてで、独立に計算した順位どおり。厳密に解決した 5474 位置では索引の兄弟グループの順序とも一致 |
 
 `policy_mirror_large` の内訳（under-cover はすべて 0）：
 
-| δ | 位置 | 位置数 | 厳密一致 | 備考 |
+| セル | 位置数 | 厳密一致 | over-cover | shadowed |
 | --- | --- | --- | --- | --- |
-| 0 | 生成 | 2000 | 99.812% | over-cover 379 |
-| 0 | コーパス | 1250 | 99.788% | shadowed 116 |
-| 0.3 | 生成 | — | 99.619% | |
-| 0.3 | コーパス | — | 99.566% | |
+| δ = 0、生成 | 2000 | 99.832% | 340 | 0 |
+| δ = 0、コーパス | 2000 | 99.817% | 369 | 195 |
+| δ = 0.3、生成 | 2000 | 99.638% | 731 | 0 |
+| δ = 0.3、コーパス | 2000 | 99.631% | 746 | 169 |
+| `Never`、δ = 0、生成 / コーパス | 500 / 500 | 99.812% / 99.733% | 48 / 68 | 105 / 120 |
+| `Never`、δ = 0.3、生成 / コーパス | 500 / 500 | 99.671% / 99.612% | 84 / 99 | 0 / 41 |
+| `natural: None`、δ = 0.3、生成 / コーパス | 500 / 500 | 99.431% / 99.612% | 145 / 99 | 0 / 41 |
+| 置換位置、δ = 0 / δ = 0.3 / `Never` δ = 0.3 | 500 ずつ | 99.910% / 99.788% / 99.788% | 23 / 54 / 54 | 78 / 71 / 71 |
 
-既定スイートの `policy_mirror` は厳密一致 99.98%、既定の `fast_likelihood_matches_reference` は最大 |Δ ln L| 7.4e-7 だった。
+レーン B 最終のコーパスのセルは、1 オークションから 2 コールしか取らず 1250 位置だった。修正前の `natural: None` のセルは、`call_distribution` が M を一様にしていたため、under-cover が約半数あった（既定の 60 位置で 804 / 1260）。
+
+**早期信号（ESS、レーン P の提案変更の前）**：フェーズ 5 の `ConstraintProposal`（literal-free coarsen も残差棄却も無い版）を、レーン B の解釈（e04ebca）と組み合わせて ESS スイートを回した。これは使い捨てのワークツリーで、wip/p4-P（febcf3d）の `constraint_proposal.rs` だけを wip/p4proto-base の版に戻したものである。ケースは固定フィクスチャ 50 件（生成 25 件は `system_players`、コーパス評価用分割 25 件は `human`）、n = 1000、SAMPLE_SEED 0xE55。結果は、ESS/n の中央値が全体 **0.390**、生成 0.349、コーパス 0.433 で、基準 ≥ 0.25 を**達成**した。受理率の中央値は 1.000（最小 0.957）、0.5 以上のケースは 22/50、一様提案では 0.004 だった（loadavg 10.7→10.9）。
 
 実装順（計画 §12 フェーズ 3）: 3.6 型 + `interpret`（Exact のみ）+ ベンチ → 3.7 `choose_bid` → 3.8 `call_distribution` / `sequence_log_likelihood` → 3.9 `replay` → 3.10 `forward_consistency` + カバレッジレポート → 3.11 Partial / Natural + ε-混合 + `NaturalInference` 接続 → 3.12 再現率ハーネス。
 
@@ -746,5 +764,7 @@ impl InterpretCache {
 | 8 | `legacy_temperature` と `InterpretMode::Legacy` を削除する時期 | フェーズ 6 のリード評価で hard 方策と比較した後 |
 | 9 | 方策上選ばれない枝（`ShadowedBranch` lint）を SAYC の側で消すか残すか | 残す（解釈は shadowed として Fallback だけで読む） |
 | 10 | `human()` の (ε, δ) | 統合時にレーン D の最尤推定値で置き換える（現状の仮置き ε = 0.01、δ = 0.3） |
+| 11 | `interpret/sayc-12-call-auction` < 10 μs（中央値） | 3 回の最良値 9.90 μs、中央値 9.90〜10.75 μs で境界線上。統合時に静かな機械で測り直す。10 μs 以上のままなら、Step B の実体化（`CallExplanation.text` と片の共有化。公開 API の変更）を後続で行う |
+| 12 | `1C-1H-1S-2NT` の後の 3NT（ベンチ `sayc-12-call-auction` の最後の実質コール） | システム外の位置で、ナチュラル規則にも 3NT 候補が無いため shadowed。上位のナチュラル候補に覆われているのではない。レーン S（`rule_rebid_nt` がこの位置で発火しない。レベル下限が 6C などの充足不能な候補 `And([hcp 16..=18, hcp 20..=37])` を残す）とレーン D（SAYC に 1m-1M-1S-2NT の続きを足す）に回す |
 
 `classify` に解釈済み文脈を渡す方法は §2.2 のとおり `CallContext.partner_constraint` / `forcing_situation` を L3 が後から埋める形で確定した。

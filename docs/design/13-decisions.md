@@ -260,6 +260,7 @@ p(c | h) = (1 − ε) · [(1 − δ) · S(c | h) + δ · M(c | h)] + ε / n
   - 所属判定と尤度用の厳密な木。
 - 方策が決して選ばないコールは `shadowed = true` とし、Fallback 片だけで読む。
 - `InterpretOptions::for_context(&BidContext)` は、`PolicyParams` と `implicit_pass` を尤度と同じ `BidContext` から取る。
+- 方策のナチュラル推定器は `ctx.natural`、それが `None` なら `table.natural` とする（`call_distribution`・`sequence_log_likelihood`・`AuctionPolicy` で共通）。鏡像は `table.natural` で読むので、鏡像と方策が一致する前提は `ctx.natural` が `None` か `table.natural` であることである。別の推定器は `Table` に入れて渡す。
 - 高速尤度 `AuctionPolicy` は、オークションごとに片を所属判定形で組み立て、配牌ごとには所属判定だけを行う。参照実装 `sequence_log_likelihood` との差は |Δ ln L| ≤ 1e-5 を保証する。
 
 **理由**:
