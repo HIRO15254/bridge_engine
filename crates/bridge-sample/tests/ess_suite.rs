@@ -28,7 +28,10 @@
 //! `tests/data/ess_cases.txt` (auction and true deal per case), so changing the policy or the
 //! system never changes the case set. `ESS_SUITE_WRITE_FIXTURE=1` regenerates the fixture from
 //! the generator and the corpus eval split (and then runs on it); it is frozen once, at the
-//! phase-4 integration. Without a fixture file the cases are generated on the fly.
+//! phase-4 integration. Without a fixture file the cases are generated on the fly. The
+//! non-ignored `ess_fixture_generated_cases_are_on_policy` fails when a change to SAYC or the
+//! policy has made a frozen generated case off-policy (so it no longer belongs to the
+//! well-specified set) and the fixture has to be regenerated.
 //!
 //! **Tuning mode.** `ESS_SUITE_MODE=tune` uses a disjoint seed set (other random deals, another
 //! sampling seed) and the corpus tune split (even positions), never the fixture, and asserts
@@ -490,6 +493,54 @@ impl Row {
     }
 }
 
+/// The likelihood's own policy for one case, per call, exactly as `sequence_log_likelihood`
+/// evaluates it (the case's preset, with the natural fallback).
+struct CasePolicy<'a> {
+    table: &'a Table,
+    case: &'a Case,
+    ctx: BidContext<'a>,
+    /// The auction before each call.
+    prefixes: Vec<Auction>,
+}
+
+impl<'a> CasePolicy<'a> {
+    fn new(table: &'a Table, case: &'a Case) -> CasePolicy<'a> {
+        let ctx = BidContext {
+            natural: Some(table.natural.as_ref()),
+            ..bid_ctx(case.source)
+        };
+        let mut prefixes = Vec::with_capacity(case.auction.calls().len());
+        let mut prefix = Auction::new(case.auction.dealer(), case.auction.vulnerability());
+        for &call in case.auction.calls() {
+            prefixes.push(prefix.clone());
+            prefix.push(call).expect("legal auction");
+        }
+        CasePolicy {
+            table,
+            case,
+            ctx,
+            prefixes,
+        }
+    }
+
+    /// `p(call j | hand)` under the policy.
+    fn p_call(&self, j: usize, hand: Hand) -> f32 {
+        let call = self.case.auction.calls()[j];
+        bridge_bidding::call_distribution(self.table, hand, &self.prefixes[j], &self.ctx)
+            .iter()
+            .find(|(c, _)| *c == call)
+            .map_or(0.0, |(_, p)| *p)
+    }
+
+    /// The indices of the calls the deal's own hands make with `p < 0.01`.
+    fn true_deal_off_policy_calls(&self) -> Vec<usize> {
+        let auction = &self.case.auction;
+        (0..auction.calls().len())
+            .filter(|&j| self.p_call(j, self.case.deal.hand(auction.seat_at(j))) < 0.01)
+            .collect()
+    }
+}
+
 fn run_case(table: &Table, case: &Case, known_none: bool, seed: u64, breakdown_on: bool) -> Row {
     let bctx = bid_ctx(case.source);
     // The mirror of the very policy the likelihood uses (D19), built from the same context.
@@ -544,28 +595,9 @@ fn run_case(table: &Table, case: &Case, known_none: bool, seed: u64, breakdown_o
         plain_deals
     };
 
-    // The likelihood's own policy, per call, exactly as `sequence_log_likelihood` evaluates it.
-    let policy_ctx = BidContext {
-        natural: Some(table.natural.as_ref()),
-        ..bctx
-    };
-    let mut prefixes = Vec::with_capacity(case.auction.calls().len());
-    let mut prefix = Auction::new(case.auction.dealer(), case.auction.vulnerability());
-    for &call in case.auction.calls() {
-        prefixes.push(prefix.clone());
-        prefix.push(call).expect("legal auction");
-    }
-    let p_call = |j: usize, hand: Hand| -> f32 {
-        let call = case.auction.calls()[j];
-        bridge_bidding::call_distribution(table, hand, &prefixes[j], &policy_ctx)
-            .iter()
-            .find(|(c, _)| *c == call)
-            .map_or(0.0, |(_, p)| *p)
-    };
-
-    let true_deal_off_policy_calls = (0..case.auction.calls().len())
-        .filter(|&j| p_call(j, case.deal.hand(case.auction.seat_at(j))) < 0.01)
-        .count();
+    let policy = CasePolicy::new(table, case);
+    let p_call = |j: usize, hand: Hand| policy.p_call(j, hand);
+    let true_deal_off_policy_calls = policy.true_deal_off_policy_calls().len();
 
     let mut breakdown: Breakdown = [[0; 4]; 4];
     let mut all_on = 0usize;
@@ -1109,4 +1141,41 @@ fn ess_fixture_parses() {
             case.label
         );
     }
+}
+
+/// The fixture's generated half is the well-specified set (D20): every call is what the
+/// likelihood's own policy (`system_players()`, natural fallback) bids with the deal's actual
+/// hands. A change to SAYC, the natural fallback or the policy that makes any of them off-policy
+/// (`p < 0.01`) leaves the frozen cases stale; regenerate them with `ESS_SUITE_WRITE_FIXTURE=1`
+/// (see the module docs).
+#[test]
+fn ess_fixture_generated_cases_are_on_policy() {
+    let path = fixture_path();
+    let cases = read_fixture(&path).unwrap_or_else(|| panic!("{} is missing", path.display()));
+    let table = Table::uniform(
+        Arc::new(compile_sayc()),
+        Arc::new(bridge_bidding::NaturalInference::default()),
+    );
+    let stale: Vec<String> = cases
+        .iter()
+        .filter(|c| c.source == "generated")
+        .filter_map(|case| {
+            let off = CasePolicy::new(&table, case).true_deal_off_policy_calls();
+            (!off.is_empty()).then(|| {
+                let calls: Vec<String> = off
+                    .iter()
+                    .map(|&j| format!("{}:{}", j, case.auction.calls()[j]))
+                    .collect();
+                format!("{} ({})", case.label, calls.join(", "))
+            })
+        })
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "{} generated fixture case(s) contain calls the current policy does not make with the \
+         deal's own hands; regenerate {} with ESS_SUITE_WRITE_FIXTURE=1: {}",
+        stale.len(),
+        path.display(),
+        stale.join("; ")
+    );
 }
