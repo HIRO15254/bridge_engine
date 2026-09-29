@@ -8,7 +8,7 @@
 //!   when no system candidate is satisfied.
 //! - `m_P(h)`: the natural policy's choice: the first satisfied candidate of
 //!   `NaturalInference::ranked_candidates`, else the natural implicit `Pass` (only under
-//!   `ImplicitPass::Complement`, when `Pass` is not itself a natural candidate), else `⊥`.
+//!   `ImplicitPass::Complement`), else `⊥`.
 //! - `S(c|h) = 1[s_P(h) = c]`, or `1/n` when `s_P(h) = ⊥`; `M` likewise from `m_P`.
 //! - `π(c|h) = (1 − δ)·S + δ·M` on-system, `M` off-system.
 //! - **`p(c|h) = (1 − ε)·π(c|h) + ε/n`**.
@@ -23,8 +23,8 @@
 
 use bridge_core::{Auction, Call, Deal, Hand};
 
-use crate::choose::{Gathered, gather, natural_choice, natural_ranked, sort_kept};
-use crate::{BidContext, ChoiceSource, Table};
+use crate::choose::{enumerate_position, gather, natural_choice, natural_ranked, system_choice};
+use crate::{BidContext, Table};
 
 /// Parameters of the bidding policy `p(c|h) = (1 − ε)·[(1 − δ)·S + δ·M] + ε/n`.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -114,21 +114,13 @@ fn add_choice(pi: &mut [f32; N_CALLS], choice: Option<Call>, mass: f32, legal: &
     }
 }
 
-/// The system choice `s_P(h)` from a [`Gathered`] of an on-system position: the first kept
-/// candidate in rank order (system nodes and the implicit pass), `None` for `⊥`.
-fn system_choice(table: &Table, auction: &Auction, gathered: &mut Gathered) -> Option<Call> {
-    let system = &table.systems[auction.next_seat().index() as usize];
-    sort_kept(system, &mut gathered.kept);
-    gathered
-        .kept
-        .iter()
-        .find(|k| k.source != ChoiceSource::Natural)
-        .map(|k| k.call)
-}
-
 /// The distribution over legal calls for `hand` after `auction` (docs/design/15-phase4-plan.md
 /// D18; the module doc has the formula). Values are in `Call` legal order and sum to 1 (up to
 /// rounding).
+///
+/// The natural engine of `M` is `ctx.natural`, or `table.natural` when `ctx.natural` is `None`
+/// (the same substitution as [`sequence_log_likelihood`] and [`crate::AuctionPolicy`], so all
+/// three evaluate one policy; see [`BidContext::natural`]).
 ///
 /// Grouped by `Call::index()` in a fixed-size array, not a `HashMap` (D12/09-sample §7): the
 /// summation order is fixed, so `sequence_log_likelihood` is bit-for-bit deterministic between
@@ -143,6 +135,11 @@ pub fn call_distribution(
     if legal.is_empty() {
         return Vec::new();
     }
+    // The policy's natural engine is always defined (`BidContext::natural`).
+    let ctx = &BidContext {
+        natural: Some(ctx.natural.unwrap_or(table.natural.as_ref())),
+        ..*ctx
+    };
     if let Some(tau) = ctx.policy.legacy_temperature {
         return legacy_distribution(table, hand, auction, ctx, &legal, tau);
     }
@@ -150,24 +147,22 @@ pub fn call_distribution(
     let eps = ctx.policy.epsilon;
     let delta = ctx.policy.deviation;
 
-    let mut gathered = gather(table, hand, auction, ctx);
+    let pos = enumerate_position(table, auction, ctx.implicit_pass);
     let mut pi = [0.0f32; N_CALLS];
-    if gathered.on_system {
-        let s = system_choice(table, auction, &mut gathered);
-        add_choice(&mut pi, s, 1.0 - delta, &legal);
+    if pos.on_system() {
+        add_choice(&mut pi, system_choice(&pos, hand), 1.0 - delta, &legal);
         if delta > 0.0 {
             let m = ctx.natural.and_then(|natural| {
-                let ranked = natural_ranked(table, auction, natural);
-                natural_choice(&ranked, hand, ctx)
+                let ranked = natural_ranked(table, &pos, auction, natural, ctx.implicit_pass);
+                natural_choice(&ranked, hand, ctx.implicit_pass)
             });
             add_choice(&mut pi, m, delta, &legal);
         }
     } else {
-        // Off-system, `gather` already ranked the natural candidates.
-        let m = gathered
-            .natural
-            .as_ref()
-            .and_then(|ranked| natural_choice(ranked, hand, ctx));
+        let m = ctx.natural.and_then(|natural| {
+            let ranked = natural_ranked(table, &pos, auction, natural, ctx.implicit_pass);
+            natural_choice(&ranked, hand, ctx.implicit_pass)
+        });
         add_choice(&mut pi, m, 1.0, &legal);
     }
 

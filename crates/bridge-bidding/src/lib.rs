@@ -14,7 +14,9 @@
 mod auction_policy;
 mod cache;
 mod choose;
+mod exclusion;
 mod interpret;
+mod memo;
 mod policy;
 mod replay;
 
@@ -29,7 +31,7 @@ pub use choose::{
 };
 pub use interpret::{
     CallExplanation, CallInterpretation, Explanation, InterpretMode, InterpretOptions,
-    Interpretation, ResolutionKind, interpret,
+    Interpretation, ResolutionKind, interpret, interpret_per_call,
 };
 pub use policy::{PolicyParams, call_distribution, sequence_log_likelihood};
 pub use replay::{Replay, replay};
@@ -77,7 +79,17 @@ pub enum ImplicitPass {
 pub struct BidContext<'a> {
     /// Scoring.
     pub scoring: Scoring,
-    /// Natural fallback when the prefix is off-system (`None` = `NoCandidate`).
+    /// The natural engine.
+    ///
+    /// For [`choose_bid`] (and [`replay`]) it is the fallback when the prefix is off-system;
+    /// `None` reports `NoCandidate` there (property tests).
+    ///
+    /// The probabilistic policy always has a natural engine (its `M` term, 15-phase4-plan D18):
+    /// [`call_distribution`], [`sequence_log_likelihood`] and [`AuctionPolicy`] use `natural`,
+    /// or `table.natural` when it is `None`. [`interpret`]'s mirror reads with `table.natural`,
+    /// so the mirror built by [`InterpretOptions::for_context`] describes the likelihood's
+    /// policy exactly when `natural` is `None` or `Some(&*table.natural)`; to mirror another
+    /// engine, put it in the [`Table`] (`Table { natural, ..table.clone() }`).
     pub natural: Option<&'a NaturalInference>,
     /// Implicit-pass policy.
     pub implicit_pass: ImplicitPass,

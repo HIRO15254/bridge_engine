@@ -262,6 +262,7 @@ fn pass_after_intervention_over_a_forcing_call_is_not_pass_forcing() {
 
 /// Review (dropped 8): `lenient_decay` had no effect, because normalising a single lenient
 /// node's alternatives removed `ρ^subst`. The decayed mass now goes to the `Fallback` branch.
+/// (Legacy mode only: the policy mirror has no `lenient_decay`.)
 #[test]
 fn lenient_decay_lowers_the_partial_weight() {
     let sys = sayc_system();
@@ -279,7 +280,7 @@ fn lenient_decay_lowers_the_partial_weight() {
     let real_weight = |decay: f32| {
         let opts = InterpretOptions {
             lenient_decay: decay,
-            ..InterpretOptions::default()
+            ..InterpretOptions::legacy()
         };
         let interp = interpret(&t, &a, &opts);
         let pc = &interp.per_call[2];
@@ -292,7 +293,7 @@ fn lenient_decay_lowers_the_partial_weight() {
             .map(|(_, w, _)| *w)
             .sum::<f32>()
     };
-    let eps = InterpretOptions::default().eps_partial;
+    let eps = InterpretOptions::legacy().eps_partial;
     assert!((real_weight(0.5) - (1.0 - eps) * 0.5).abs() < 1e-4);
     assert!((real_weight(0.9) - (1.0 - eps) * 0.9).abs() < 1e-4);
 }
