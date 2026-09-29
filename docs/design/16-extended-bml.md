@@ -564,7 +564,7 @@ P = {prio:-100} any hand
 
 同じ経路 (同じオークション) に 2 つ以上の定義が当たるときは、次の規則で決まる。
 
-1. **兄弟の中では Exact 行がパターン行に勝つ**。同じ親の下の兄弟の行は、Exact 行 (`2H`、`P`) を行順に全て展開してから、パターン行 (`2M`、`2X`、`nS`、`2S/3H`、`(any)`) を行順に展開する。パターンの候補が先の Exact 行のコールと同じなら、その候補は捨てて `ShadowedByExact` (Info)。先のパターン行のコールと同じなら黙って捨てる (上流の `bid not in bids_processed`)。
+1. **兄弟の中では Exact 行がパターン行に勝つ**。同じ親の下の兄弟の行は、Exact 行 (`2H`、`P`) を行順に全て展開してから、パターン行 (`2M`、`2X`、`nS`、`2S/3H`、`(any)`) を行順に展開する。パターンの候補が先の Exact 行のコールと同じなら、その候補は捨てて `ShadowedByExact` (Info)。先のパターン行のコールと同じなら黙って捨てる (上流の `bid not in bids_processed`)。この展開の順は、優先度が同じ兄弟の順位 (`row-order`、§7.4) にもなる。
 2. **先の定義が勝つ** (表をまたいでも、ファイルをまたいでも)。同じ経路・同じ席とバルの条件の 2 つ目の定義は:
    - 説明が違い、どちらも空でないなら、`DuplicatePath` (Warning) を出して後の定義を捨てる。部分木は先のノードの下に統合される。
    - 先の説明が空 (履歴だけで作られたプレースホルダ) なら、後の説明で埋めて `DuplicatePath` (Info)。
@@ -1007,7 +1007,7 @@ AND の中の「範囲なし」は他の断片に影響しない。OR の枝の 
 4H = PRE, 5+ support, 0--9 hcp
 ```
 
-`3S` は `2N` の部分集合なので、`2N` より先に書く (兄弟は行順に試される §7.4)。逆に書くと `SiblingSubset` と `ShadowedBranch` (Warning) が出る。
+`3S` は `2N` の部分集合なので、`2N` より先に書く (Exact 行どうしはファイル順に試される §7.4)。逆に書くと `SiblingSubset` と `ShadowedBranch` (Warning) が出る。
 
 ```bml
 1C = 12--21 hcp, 3+!c
@@ -1034,7 +1034,7 @@ AND の中の「範囲なし」は他の断片に影響しない。OR の枝の 
 ### 6.1 `{prio:N}` (優先度)
 
 - 説明文のどこかに書く。`N` は −32768〜32767 の整数 (`{prio:-100}`、`{prio:5}`)。既定は 0。
-- 同じ位置の候補 (兄弟) の順位は、**優先度の大きい順**、同じなら `#+TIEBREAK:` (既定は行順)、それでも同じならコールの順 (§7.4)。
+- 同じ位置の候補 (兄弟) の順位は、**優先度の大きい順**、同じなら `#+TIEBREAK:` (既定は展開の順: Exact 行、次にパターン行)、それでも同じならコールの順 (§7.4)。パターン行を Exact 行より上位にしたいときは `{prio:N}` を使う。
 - 典型は、どんな手でも当てはまる受け皿の行を最下位にする `P = {prio:-100} any hand`。
 - 優先度の違う兄弟の包含は `SiblingSubset` が Info になる (意図した順位付けとみなす)。
 
@@ -1188,7 +1188,7 @@ VALUE    = { CHAR } ;                           (* everything after the first ":
 同じ位置の候補は、次の順に比べる (前が上位)。
 
 1. 優先度 `{prio:N}` の大きい方 (既定 0)。
-2. `#+TIEBREAK:` の規則 (既定 `row-order`: ファイル上で先の行)。
+2. `#+TIEBREAK:` の規則。既定の `row-order` は **行が展開された順** で、兄弟の間では「Exact 行 (ファイル順)、次にパターン行 (ファイル順)」になる (§4.8 の規則 1)。したがって `2M` のようなパターン行は、ファイル上で先に書いても、同じ位置の Exact 行 (`1N`、`P`、`D`) より下位である。表をまたぐ兄弟 (別の表が同じ位置に足した行) は、先に展開された表の行が上位。
 3. コールの順 (低いコールが先。パス、ダブル、リダブルはビッドより先)。
 
 上位の候補が手に当てはまれば下位は選ばれない。したがって、ある候補が実際に選ばれる手の集合は「自分の制約 − 上位の兄弟の制約の和」である (**排他領域**)。`ExclusiveIndex` はこれを前もって計算し、次の Lint を出す。
@@ -1530,3 +1530,509 @@ cS = 0+ hcp
 ```
 
 ---
+
+## 9. 完全な EBNF
+
+字句の約束: `NL` は改行、`SP` は半角スペース 1 個、`WS` は `SP` の 1 個以上の並び、`WS0` は 0 個以上、`CHAR` は改行以外の任意の文字、`BLANK` は空白だけの行。字句は大文字小文字を区別する (区別しないものは注記)。
+
+### 9.1 ファイルと段落
+
+```ebnf
+(* after #INCLUDE expansion and removal of column-0 comments *)
+file        = { BLANK , NL } , [ paragraph , { BLANK , NL , { BLANK , NL } , paragraph } ] ;
+paragraph   = line , { NL , line } ;               (* no blank line inside *)
+
+(* preprocessing, per physical line, before paragraphs are formed *)
+comment     = "//" , { CHAR } ;                     (* only at column 0; the line is dropped *)
+include     = WS0 , "#" , WS0 , "INCLUDE" , WS0 , PATH , [ WS , { CHAR } ] ;
+PATH        = CHAR - SP , { CHAR - SP } ;           (* relative to the including file *)
+
+(* a paragraph's kind is decided by its first line, in this order *)
+paragraph   = heading | list | vulpara | seatpara | enumeration
+            | bidtable | metapara | directivetable | prose ;
+heading     = WS0 , "*" , { CHAR } , { NL , line } ;
+list        = WS0 , "-" , { CHAR } , { NL , line } ;
+vulpara     = WS0 , "#VUL" , WS , TRI , TRI , WS0 , { NL , line } ;
+seatpara    = WS0 , "#SEAT" , WS , SEAT , WS0 , { NL , line } ;
+enumeration = WS0 , DIGIT , { DIGIT } , "." , ( SP | NL ) , { CHAR } , { NL , line } ;
+bidtable    = { directive , NL } , firstrow , { NL , ( row | directive | contline ) } ;
+metapara    = metaline , { NL , metaline } ;
+directivetable = directive , { NL , ( directive | row | contline ) } ;   (* a table starting with "#..." *)
+prose       = line , { NL , line } ;
+
+TRI         = "Y" | "N" | "0" ;
+SEAT        = "0" | "1" | "2" | "3" | "4" | "12" | "34" ;
+metaline    = WS0 , "#+" , KEY , ":" , VALUE ;
+KEY         = ( ALNUM | "_" ) , { CHAR - ":" } ;     (* case-insensitive, trimmed *)
+VALUE       = { CHAR } ;                             (* trimmed *)
+```
+
+### 9.2 ビディング表
+
+```ebnf
+firstrow    = historyrow | row ;
+historyrow  = INDENT , seq , [ WS , [ "=" , WS0 ] , description ] ;
+row         = INDENT , calltok , [ WS , [ "=" , WS0 ] , description ] ;
+contline    = DESCCOL , { CHAR } ;       (* indent equal to the previous row's description column *)
+INDENT      = { SP } ;                   (* spaces only; the table's unit is its first parent-child step *)
+seq         = calltok , { ( "-" | ";" ) , calltok } , { "-" | ";" } ;   (* contains at least one "-" or ";" *)
+
+directive   = WS0 , ( "#HIDE" | "#BIDTABLE" | "#STOP" | "#ANYORDER"
+                    | "#COPY" , WS , NAME | "#ENDCOPY"
+                    | "#CUT" , WS , NAME | "#ENDCUT"
+                    | "#PASTE" , WS , NAME , { WS , SUBST } ) , WS0 ;
+NAME        = CHAR - SP , { CHAR - SP } ;
+SUBST       = TARGET , "=" , REPLACEMENT ;      (* plain text replacement, applied in order *)
+TARGET      = CHAR - ( SP | "=" ) , { CHAR - ( SP | "=" ) } ;
+REPLACEMENT = { CHAR - SP } ;
+```
+
+### 9.3 コールトークン
+
+```ebnf
+calltok     = "(" , callcore , ")"                 (* opponents *)
+            | callcore ;                           (* us *)
+callcore    = atom , { "/" , ( atom | strainspec ) } ;   (* a bare strainspec reuses the last level *)
+atom        = "XX" | "X" | "P" | "D" | "R"
+            | oppclass
+            | DIGIT , { DIGIT } , stepword
+            | level , strainspec ;
+oppclass    = "any" | "suit" | "bid" ;
+stepword    = "step" | "steps" ;                   (* case-insensitive *)
+level       = "1" | "2" | "3" | "4" | "5" | "6" | "7"
+            | "n"                                  (* every sufficient level *)
+            | "c"                                  (* cheapest sufficient *)
+            | "j" ;                                (* one above the cheapest *)
+strainspec  = redblack | variable | literal ;
+redblack    = "red" | "black" ;                    (* case-insensitive *)
+variable    = "oM" | "om" | "M" | "m" | "X" | "x" | "Y" | "y" | "Z" | "z" ;
+literal     = "NT" | "N" | suit , { suit } ;
+suit        = "C" | "D" | "H" | "S" ;
+```
+
+### 9.4 説明文
+
+```ebnf
+description = dline , { NL , dline } ;
+dline       = { annotation | alert } , ( enumitem | clauses ) ;   (* annotations may appear anywhere *)
+annotation  = "{" , "prio:" , WS0 , INT , WS0 , "}"
+            | "{" , "w:" , WS0 , REAL , WS0 , "}"
+            | "{" , WS0 , "stop" , WS0 , "}" ;
+alert       = "!" ;                                (* first character only, not followed by c/d/h/s *)
+enumitem    = marker , WS , clauses ;
+marker      = LETTER , ")" | DIGITS , ")" | DIGITS , "." | "(" , LOWER , ")" | "(" , DIGITS , ")" ;
+clauses     = orgroup , { ( "," | ";" | "." ) , [ "or" | "/" ] , orgroup } ;
+orgroup     = andgroup , { ( "or" | "/" ) , andgroup } ;
+andgroup    = fragment , { ( "and" | "with" | "w/" | "+" | WS ) , fragment } ;
+fragment    = [ negation ] , [ hedge , { filler } ] , ( token | callref | unrecognized ) ;
+negation    = "without" | "denies" | "not" | "no" | "w/o" | "non" ;
+hedge       = "normally" | "typically" | "usually" | "likely" | "mostly"
+            | "occasionally" | "sometimes" | "possibly" | "perhaps" | "maybe"
+            | "rarely" | "might" | "may" | "(?)" ;
+filler      = "be" | "have" | "hold" | "contain" | "include" ;
+callref     = refword , WS , callchain | callchain ;     (* the latter only for an ascending "-" chain *)
+refword     = "to" | "over" | "after" | "for" | "than" | "via" | "opposite" | "like" | "see"
+            | "from" | "into" | "then" | "by" | "bid" | "rebid" | "opening" | "open" | "bids"
+            | "else" | "otherwise" | "instead" ;
+
+token       = shape | lengthorder | numeric | "controls" | "control" | balance
+            | "min/max" | "might be strong" | strength | forcing | splinter | convention
+            | quality | stopper | shortness | "natural" | "nat" | nobound | supportword ;
+
+numeric     = [ ( "at least" | "at most" ) , SP ] , [ ( "ca" | "about" ) , SP ] ,
+              ( NUM , "-" , NUM , ( suitref | supportsuffix | metric )
+              | NUM , "+" , ( suitref | supportsuffix | metric )
+              | NUM , "=" , ( suitref | supportsuffix )
+              | NUM , ( suitref | supportsuffix | metricword ) )
+            | "ltc" , [ [ SP ] , NUM ] ;
+NUM         = DIGIT , [ DIGIT ] ;
+metric      = [ metricword ] ;                     (* none = hcp *)
+metricword  = [ SP ] , ( "total points" | "points" | "point" | "tp" | "hcp"
+                       | "controls" | "control" | "losers" | "loser" ) ;
+supportsuffix = [ SP ] , supportword ;
+supportword = "support" | "supp" | "fit" | "raise" | "trumps" ;
+suitref     = [ SP ] , ( SUITSYM | "#" | "oM" | "om" | "M" | "m"
+                       | "card suit" | "cards" | "card" | "suits" | "suit"
+                       | "majors" | "major" | "minors" | "minor" ) ;
+SUITSYM     = "♣" | "♦" | "♥" | "♠" ;              (* written !c !d !h !s *)
+
+shape       = twosuit | fullshape | baretwo ;
+twosuit     = "both" , SP , group
+            | lenspec , [ "-" ] , lenspec , group ;
+lenspec     = [ "(" ] , DIGIT , [ ")" ] , [ "+" ] ;
+group       = [ SP ] , ( "MM" | "mm" | "red suits" | "black suits" | "majors" | "major"
+                       | "minors" | "minor" | "red" | "black" | SUITSYM , "+" , SUITSYM ) ;
+fullshape   = slot , slot , slot , slot ;          (* exactly 4 positions, S H D C *)
+slot        = DIGIT | "x" | "X" | "(" , ( DIGIT | "x" | "X" ) , { DIGIT | "x" | "X" } , ")" ;
+baretwo     = NUM , "-" , NUM ;                    (* a >= 4, a >= b, a + b <= 13 *)
+lengthorder = SUITSYM , WS0 , ( ">=" | "<=" | ">" | "<" | "=" ) , WS0 , SUITSYM ;
+
+balance     = "semi-balanced" | "semi balanced" | "semi-bal" | "semibal"
+            | "unbalanced" | "unbal" | "balanced" | "bal" ;
+strength    = (* §5.4.7 *) "forcing to game" | "game forcing" | "gameforcing" | "game force"
+            | "any game force" | "gf" | "fg" | "invitational plus" | "at most invitational"
+            | "strongly invitational" | "mildly invitational" | "inv+" | "invitational" | "inv"
+            | "game try" | "g/t" | "limit" | "lim" | "minimum" | "min" | "maximum" | "max"
+            | "very light" | "light" | "weak" | "wk" | "strong" | "str" | "preemptive"
+            | "barrage" | "pre" | "slam interest" | "slam try" | "s/t" | "quantitative"
+            | "quant" | "negative" | "neg" ;
+forcing     = "non forcing" | "nonforcing" | "nf" | "f2nt" | "f1r" | "f1" | "forcing" | "f" ;
+splinter    = ( "mini-splinter" | "mini splinter" | "splinter" | "spl" ) , [ suitref ] ;
+convention  = (* §5.4.10 *) "artificial" | "art" | "relay" | "(r)" | "asking for" | "asks"
+            | "asking" | "ask" | "puppet to" | "puppet" | "pup" | "pass/correct"
+            | "pass / correct" | "p/c" | "t/o" | "forced" | "choice of games" | "cog"
+            | "cuebid" | "cue" | "waiting" | "transfer to" | "transfer" | "retransfer" | "trf"
+            | "garbage stayman" | "muppet stayman" | "puppet stayman" | "garbage stay"
+            | "muppet stay" | "stayman" | "stay" | "smolen" | "landy" | "michaels"
+            | "unusual nt" | "unusual" | "unt" | "gambling" | "lebensohl" | "ogust" | "bw"
+            | "rkcb" | "kcb" | "k/b" | "multi-coloured" | "multi-colored" | "multi"
+            | "sign off" | "sign-off" | "s/o" | "to play" | "t/p" ;
+quality     = honourrun
+            | "semi-solid" | "semi solid" | "s-sol" | "solid suit" | "solid" | "sol"
+            | "3 of top 5" | "three of top five" | "2 of top 3" | "2 of 3 top" | "2/3 top"
+            | "two of top three" | "decent suit" | "reasonable suit" | "quality suit"
+            | "good suit" ;
+honourrun   = honour , honour , { honour } , { "x" | "X" | "2".."9" } ;   (* not "QT" alone *)
+honour      = "A" | "K" | "Q" | "J" | "T" | "10" ;
+stopper     = ( "with stopper" | "stopper in" | "stoppers" | "stopper" | "stop" ) , [ suitref ] ;
+shortness   = ( "void" | "singleton" | "short" | "s/s" ) , [ suitref ] ;
+nobound     = "any distribution" | "any strength" | "any hand" | "wide ranged"
+            | "wide range" | "unlimited" | "any" ;
+```
+
+語 (英字の句) は大文字小文字を問わず、語の境界で終わる。`M`、`m`、`oM`、`om`、`MM`、`mm` とオナーの並びは大文字小文字を区別する。説明文の中の `--` は `-` として読む。
+
+---
+
+## 10. 例
+
+### 10.1 小さな完全なシステム
+
+5 枚メジャー、15-17 の 1NT、強い 2C、ウィークツーの小さなシステム。競り合いの無い主要な流れと、最小限の競り合い (相手のオープニングへのオーバーコール、1NT への割り込み) を書き、止まる所には停止を置いている。
+
+```bml,file=mini/common.bml
+#+STRENGTH: gf=25 inv=23-24 slam=33
+
+#CUT raise-M
+2M = 6--10 hcp, 3+ support
+3M = LIM, 4+ support
+4M = PRE, 5+ support, 0--9 hcp
+P = {prio:-100} {stop} 0--5 hcp
+#ENDCUT
+```
+
+```bml
+#+TITLE: Mini standard
+#+AUTHOR: Example Author
+#+VERSION: 1
+
+#INCLUDE mini/common.bml
+
+* Openings
+
+1C = 12--21 hcp, 3+!c
+1D = 12--21 hcp, 4+!d
+1M = 12--21 hcp, 5+M
+1N = 15--17 hcp, bal
+2C = !Strong, 22+ hcp
+2D = weak, 6+!d
+2M = weak, 6+M
+P = {prio:-100} 0--11 hcp
+
+* Responses to one of a major
+
+1M-
+#PASTE raise-M
+1N = 6--12 hcp, 0--2M
+2N = !Jacoby, GF, 4+ support
+
+* Responses to 1NT
+
+#CUT nt-responses
+2C = !STAY, 8+ hcp, 4+ major
+2D = !TRF, 5+!h
+2H = !TRF, 5+!s
+3N = 10--15 hcp, to play
+  #STOP
+P = {prio:-100} {stop} 0--7 hcp
+#ENDCUT
+
+1N-
+#PASTE nt-responses
+
+1N-2C-
+2D = no 4 card major
+2H = 4+!h
+2S = 4+!s, 0--3!h
+
+1N-2D-
+2H = 2+!h
+  #STOP
+
+1N-2H-
+2S = 2+!s
+  #STOP
+
+* Strong two clubs
+
+2C-
+2D = !waiting, 0+ hcp
+
+2C-2D-
+2M = 5+M
+2N = 22--24 hcp, bal
+  #STOP
+
+* Competition
+
+(1X)- = 11+ hcp, 3+X
+1Y = 8--16 hcp, 5+Y
+jY = weak, 6+Y
+1N = 15--18 hcp, bal, stopper
+D = t/o, 12+ hcp
+P = {prio:-100} {stop} any hand
+
+1N-(bid)- = 5+ card suit
+D = 8+ hcp
+P = {prio:-100} {stop} any hand
+```
+
+`mini/common.bml` は `#+STRENGTH:` とクリップボード `raise-M` を持つ共通ファイルで、ルートから `#INCLUDE` する (クリップボードはファイルをまたいで使える)。`1M-` の表は `1H-` と `1S-` の 2 つに展開され、`#PASTE raise-M` の `2M` と `3M` は束縛された M で `2H`/`3H` と `2S`/`3S` になる。
+
+`1M-` の表の `1N` と `P` は Exact 行なので、ファイル上では後にあってもパターン行の `2M`・`3M`・`4M` より先に展開され、`row-order` の順位でも上位になる (§4.8、§7.4)。`1N` に `0--2M` を書いて支持のある手を除いているのはそのためで、書かなければ `2M` と `3M` が `1N` に覆われて `SiblingSubset` と `ShadowedBranch` (Warning) が出る。
+
+### 10.2 競り合いのクックブック
+
+各項目は独立したファイルとしてコンパイルできる。自分のシステムには、履歴と行だけを写せばよい。
+
+**C-1. 同じ応答を 2 つの位置に貼る (`#PASTE` の置換)**。1NT と 2NT の後のトランスファーを 1 つのクリップボードで書く。置換の印はコールトークン用 (`\L` はレベル) と説明文用に分ける。
+
+```bml
+#CUT transfers
+\L\R = !TRF, 5+\M
+  \L\S = 2+\M
+#ENDCUT
+
+1N = 15--17 hcp, bal
+2N = 20--21 hcp, bal
+
+1N-
+#PASTE transfers \L=2 \R=D \S=H \M=!h
+#PASTE transfers \L=2 \R=H \S=S \M=!s
+
+2N-
+#PASTE transfers \L=3 \R=D \S=H \M=!h
+#PASTE transfers \L=3 \R=H \S=S \M=!s
+```
+
+注意: 置換は書いた順に単純な文字列置換で行う。`\M=!h` の後に `\M` を含む別の印 (`\MM` など) を置き換えることはできないので、印は互いに接頭辞にならない名前にする。
+
+**C-2. 相手のオープニングへのオーバーコール (`(1X)`、`c`/`j`)**。`X` は相手のスート、`Y` は我々の新しいスート。`cY` は最も安いレベル、`jY` はジャンプオーバーコール。
+
+```bml
+(1X)- = 11+ hcp, 3+X
+#ANYORDER
+cY = 8--16 hcp, 5+Y
+jY = weak, 6+Y
+1N = 15--18 hcp, bal, stopper
+D = t/o, 12+ hcp
+2N = !Unusual, 5+5+ minors
+P = {prio:-100} {stop} any hand
+```
+
+`#ANYORDER` で `Y` は X より低いスートにもなる (1S の後の 2H、1H の後の 2C)。`cY` は相手のスートより低いスートでは 2 のレベルになる。`!Unusual` の `U` を大文字にしているのは、`!u` 以外でも小文字の `!c`/`!d`/`!h`/`!s` で始まる語 (`!cue`、`!strong`) がスート記号に読まれるのを避ける習慣である (§3.6)。
+
+**C-3. アドバンス (`(1X)-1Y-(P)-`)**。オーバーコールの後、パートナーの応答。
+
+```bml
+(1X)- = 11+ hcp, 3+X
+1Y = 8--16 hcp, 5+Y
+
+(1X)-1Y-(P)-
+2Y = 6--10 hcp, 3+Y
+cX = !Cue, 11+ hcp, 3+Y
+3Y = PRE, 4+Y, 0--9 hcp
+1N = 8--11 hcp, stopper
+P = {prio:-100} {stop} 0--5 hcp
+```
+
+最初の表はオーバーコールそのものの定義 (と相手のオープニングの説明) で、2 つ目の表の履歴はそれを辿る。履歴行に説明を書くと、それは最後のコール (ここでは相手の `(P)`) の説明になるので、オーバーコールの説明は別の表に書く (§3.4)。`(1X)` の X と `1Y` の Y は履歴で束縛され、`cX` は相手のスートのキュービッド (最も安いレベル) になる。`1Y` が `1X` より高いスートのときだけ、つまり X < Y のときだけ展開される (履歴に `#ANYORDER` は効かない。表全体に効かせたければ `#ANYORDER` を書く)。
+
+**C-4. バランシング (`(1X)-P-(P)-`)**。
+
+```bml
+(1X)- = 11+ hcp, 3+X
+P = {prio:-100} any hand
+
+(1X)-P-(P)-
+1N = 11--14 hcp, bal, stopper
+cY = 7--12 hcp, 5+Y
+D = t/o, 8+ hcp
+P = {prio:-100} {stop} any hand
+```
+
+`1N` は相手のスートが 1C〜1S のときだけ十分である。1S の後の `1N` は十分、2 のレベルの `(nX)` の表なら `IllegalCall` になるので、2 のレベルのバランシングは別の表に書く。
+
+**C-5. ネガティブダブル (`1m-(1M)-`)**。
+
+```bml
+1m = 12--21 hcp, 3+m
+
+1m-(1M)- = 8+ hcp, 5+M
+D = !negative, 6+ hcp, 4+oM
+1N = 6--10 hcp, stopper in M
+2m = 6--10 hcp, 5+m
+2M = !Cue, 11+ hcp, 4+m
+P = {prio:-100} {stop} 0--5 hcp
+```
+
+`m` と `M` は別の変数で、`1m-(1M)-` は 1C/1D × 1H/1S の 4 つの表になる。説明文の `oM` は、相手のメジャーでない方のメジャーになる。
+
+**C-6. 1NT への割り込み (`1N-(D)-`、`1N-(bid)-`、`1N-(2X)-`)**。
+
+```bml
+1N = 15--17 hcp, bal
+
+1N-(D)- = 15+ hcp
+XX = 10+ hcp
+2C = !STAY, 5--9 hcp, 4+ major
+P = {prio:-100} {stop} 0--9 hcp
+
+1N-(2X)- = 5+X
+3N = 10--15 hcp, stopper, to play
+D = t/o, 8+ hcp
+2N = !Lebensohl, relay, 4--7 hcp
+P = {prio:-100} {stop} any hand
+
+1N-(bid)- = 5+ card suit
+D = 8+ hcp
+P = {prio:-100} {stop} any hand
+```
+
+照合は具体的な辺を先に試すので、`1N-(D)` と 2 のレベルのスートのビッド (`(2C)`〜`(2S)`) はそれぞれの表へ、他のビッド (`(2N)`、`(3C)` など) は `(bid)` の表へ行く。`(bid)` の表は `(D)` を拾わない。相手のパスは `1N-` の表 (§10.1) がそのまま使われる。
+
+**C-7. 我々のオープニングへのダブル (`1M-(D)-`)**。
+
+```bml
+1M = 12--21 hcp, 5+M
+
+1M-(D)- = t/o, 12+ hcp
+2N = !Jordan, 10+ hcp, 4+ support
+XX = 10+ hcp
+2M = 6--9 hcp, 3+ support
+P = {prio:-100} {stop} 0--5 hcp
+```
+
+**C-8. サインオフの後で止める (`{stop}`、`#STOP`)**。
+
+```bml
+2N = 20--21 hcp, bal
+
+2N-
+3N = 4--10 hcp, to play
+  #STOP
+6N = 13--15 hcp, bal, to play
+  #STOP
+4N = QUANT, bal
+  P = MIN
+    #STOP
+  6N = MAX
+    #STOP
+P = {prio:-100} {stop} 0--3 hcp
+```
+
+停止の後に相手が割り込んでも、我々は (その位置に書いた行が無ければ) パスし続ける。
+
+**C-9. 席とバルで変わるオープニング (`#SEAT`、`#VUL`)**。
+
+```bml
+1S = 12--21 hcp, 5+!s
+2S = weak, 6+!s
+
+#SEAT 34
+
+1S = 10--21 hcp, 5+!s
+
+#SEAT 0
+
+#VUL NY
+
+2S = 4--10 hcp, 6+!s
+
+#VUL 00
+```
+
+3 席目・4 席目の 1S は 10 HCP から、我々がノンバルで相手がバルのときの 2S は 4 HCP から。それ以外の 1S / 2S は最初の定義。
+
+**C-10. 相手の 2 のレベル以上のオープニング (`(nX)` と相対レベル)**。
+
+```bml
+(2X)- = weak, 6+X
+2N = 15--18 hcp, bal, stopper
+cY = 11--16 hcp, 5+Y
+D = t/o, 13+ hcp
+P = {prio:-100} {stop} any hand
+
+(3X)- = 7+X
+3N = 16--21 hcp, stopper, to play
+cY = 13--17 hcp, 5+Y
+D = t/o, 13+ hcp, 0--2X
+P = {prio:-100} {stop} any hand
+```
+
+`cY` はパターン行なので、ファイル上で先に書いても Exact 行の `D` より下位になる (§4.8、§7.4)。`(3X)-` の `D` に `0--2X` (相手のスートの短さ) を書かなければ、`cY` の手は全て `D` に覆われて選ばれない (`SiblingSubset`、`ShadowedBranch`)。
+
+`(nX)-` と書くと 1 のレベルから 7 のレベルまで 28 の表になり (`WideWildcard`)、2 のレベルと 3 のレベルで違う行を書き分けられない。レベルごとに表を分けるのがよい。
+
+---
+
+## 11. 落とし穴
+
+| 症状 | 原因 | 対処 |
+| --- | --- | --- |
+| 段落がビディング表になり、`UnknownCallToken` が出る | 地の文が `P`、`D`、`R`、`X`、`1C` のようなコールの形、あるいは `any`、`bid`、`suit` で始まる (§2.2) | 地の文の先頭の語を変える |
+| 相対レベルの行が全部消える | 段落の最初の行が `cS` などの相対レベル (§4.3) | 履歴行の後か、表の 2 行目以降に置く |
+| 子の行が親の説明の続きになる | 子の字下げが親の説明文の桁と同じ (§3.3) | 子の字下げを浅くする |
+| タブで字下げした行が列 0 として読まれる | 字下げはスペースだけを数える (§2.1) | スペースで字下げする |
+| `4 card major` が読めない | `card` が「自分のスート」として先に当たる (§5.4.2) | `4+ major`、`4+ M` と書く |
+| 行頭の `(5431)` が読めない | 列挙の印として読まれる (§5.2) | 行の途中に置くか、括弧を外す |
+| `stop` を「止まる」の意味で書いた | 説明文の `stop` はストッパー (§5.4.12) | `{stop}` か `#STOP` を使う |
+| `5-5 minors` が 6-5 の手に当てはまらない | 群の付いた数字はちょうどの枚数 (§5.4.4) | `5+5+ minors` と書く |
+| 変数の説明が置き換わらない | 説明文の変数は語の境界でだけ置換 (§5.2)。`5+Ms` は置換されない | `5+M` の後に空白か区切りを置く |
+| 相手の割り込みの後に 1 つ前の表の行が出る | 表の無い割り込みは相手のパスとして照合し直す (§7.1) | 割り込みの表 (`(any)` など) か停止を書く |
+| 停止の後にシステムの行が続かない | 停止の後の我々のパス以外のコールはシステム外 (§7.7) | その位置に表を書く |
+| パターン行の一部のコールが出ない | 先の Exact 行の兄弟と同じコールは捨てられる (`ShadowedByExact`) | 意図どおりか確かめる |
+| 同じ経路の 2 つ目の定義が効かない | 先の定義が勝つ (`DuplicatePath`) | 1 つにまとめる。席・バルで分けるなら `#SEAT`/`#VUL` |
+| `!cue`、`!strong`、`!dbl` のアラートが効かず、説明が `♣ue` などになる | 小文字の `!c`/`!d`/`!h`/`!s` はスート記号 (§3.6、§5.1) | `!Cue`、`!CUE` のように 2 文字目を大文字にする |
+| 履歴行の説明が思った相手に付かない | 履歴行の説明は履歴の **最後のコール** のもの (§3.4)。`(1X)-1Y-(P)- = …` は相手の `(P)` の説明 | 途中のコールの説明は、そのコールで終わる別の表に書く |
+| ファイル上で先に書いたパターン行が、後の Exact 行に負ける | 兄弟は Exact 行を先に展開し、`row-order` はその順 (§4.8、§7.4) | パターン行の制約を狭めるか、`{prio:N}` で上げる |
+| 相手の見出しに `SiblingSubset` (Warning) が並ぶ | 説明の無い相手のコールどうしは互いを含む (§7.4) | 相手のコールに説明を書く (`(1X)- = 11+ hcp, 3+X`) |
+
+---
+
+## 付録 A. 上流の構文で本コンパイラが扱わないもの
+
+| 上流の構文 | 扱い |
+| --- | --- |
+| 段落の書式 (`/italic/`、`*bold*`、`=mono=`) | 地の文として読み飛ばす |
+| ディール図、4 列のオークション表、パイプ表 (`|`) | 段落として読み飛ばす (最初の語がコールの形なら表として読まれることがある) |
+| `#HIDE` | 印を記録するだけで、表はコンパイルする |
+| `#BIDTABLE` | 何もしない |
+| BSS/HTML/LaTeX 出力 | 無い (本コンパイラは `SystemIR` を作る) |
+
+## 付録 B. `06-system.md` とコードの既知の食い違い
+
+本書はコードに合わせてある。`06-system.md` の次の記述は、現在のコードと違う (設計の意図か、未実装)。
+
+| 06-system.md の記述 | コードの動作 (本書) |
+| --- | --- |
+| §7.4: `TRF`/`transfer` は移動先のスートの長さを、`STAY`/`stayman` はメジャーの 4 枚を、`UNT` は 2 スーターを制約にする | 慣習の語は制約を作らず `artificial` を立てるだけ (§5.4.10)。`NodeFlags.transfer_to` は常に `None`。制約は数値やシェイプで明示する |
+| §7.4/§7.5: `PRE` はスートの長さも加える | HCP の範囲だけ (§5.4.7)。長さは明示する |
+| §7.4: `solid` などのスートの質は長さを含む | カードの要件だけで、長さは加えない (§5.4.11) |
+| §5.3: `{w:X}` を OR でない行に書くと Warning | Lint は出ない (§6.2) |
+| §9.3: 網羅性の検査 (`MissingOpeningCoverage`、`MissingResponseCoverage`) | 検査は未実装で、この 2 つは出ない。`CompileOptions::coverage_samples` は使われない (キャッシュの鍵にだけ入る) |
+| `CompileOptions::strict_dnf` | 使われない (キャッシュの鍵にだけ入る) |
+| `#+CONVENTION: transfer=N stayman=…` | 読むが、コンパイラは使わない (§6.5)。使うのは `splinter=N` だけ |
+| 強さの表の `0+ hcp` (weak) | 数値の規則が先に当たるので、実際には使われない (§5.4.1) |
+| 説明文の `stop` | ストッパーの語 (§5.4.12)。システム停止ではない |
+| `to play`、`sign off` などは説明の語 | 慣習の語の表にあるので `artificial` も立つ (§5.4.10) |

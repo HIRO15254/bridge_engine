@@ -87,7 +87,7 @@ fn options() -> CompileOptions {
 #[test]
 fn every_bml_block_compiles_without_errors() {
     let blocks = blocks();
-    assert!(blocks.len() >= 1, "only {} bml blocks found", blocks.len());
+    assert!(blocks.len() >= 60, "only {} bml blocks found", blocks.len());
     let loader = MemLoader {
         files: blocks
             .iter()
