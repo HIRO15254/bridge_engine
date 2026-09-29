@@ -97,6 +97,32 @@ fn compiling_sayc_is_fast() {
     );
 }
 
+/// A coarse release-only guard on SAYC's exclusive-index build (the phase-4 criterion is
+/// <= 15 ms, measured 12-15 ms best of 3 depending on load; the pasted-chain SAYC took 45 ms):
+/// best of 3 must stay under 30 ms, which catches an order-of-magnitude regression without
+/// flaking on a loaded machine. A debug build builds the index once and asserts nothing.
+#[test]
+fn sayc_exclusive_index_build_is_bounded() {
+    let opts = CompileOptions::default();
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../systems/sayc/sayc.bml");
+    let ir = common::compile_guarded(&path, &opts).expect("sayc.bml compiles");
+    let rounds = if cfg!(debug_assertions) { 1 } else { 3 };
+    let mut best = Duration::MAX;
+    for _ in 0..rounds {
+        let started = Instant::now();
+        let index = bridge_system::ExclusiveIndex::build(&ir);
+        best = best.min(started.elapsed());
+        assert_eq!(index.stats(&ir).groups, ir.exclusive().stats(&ir).groups);
+    }
+    eprintln!("sayc: exclusive index build {best:?} (best of {rounds})");
+    if !cfg!(debug_assertions) {
+        assert!(
+            best < Duration::from_millis(30),
+            "SAYC exclusive-index build {best:?} (best of 3) >= 30 ms"
+        );
+    }
+}
+
 /// Best-of-3 release timing of the whole SAYC compile and of rebuilding its exclusive index
 /// alone (the index is built eagerly at the end of `compile()`, docs/design/06-system.md §5.4):
 /// `cargo test -p bridge-system --release --test compile_time -- --ignored --nocapture

@@ -479,3 +479,49 @@ fn a_spaced_stop_annotation_is_a_stop() {
         );
     }
 }
+
+/// A stop counts as written after every table (06-system.md §4.5): a table's rows and wildcard
+/// edges take precedence over it whatever the file order, unlike pasted chains, which shadowed
+/// what later tables wrote at the same position.
+#[test]
+fn written_rows_and_wildcards_take_precedence_over_a_stop() {
+    let candidates = |ir: &SystemIR, dealer: Seat, text: &str, owner: Seat| {
+        let auction = Auction::from_calls(dealer, Vulnerability::None, calls(text)).unwrap();
+        let key = LookupKey::for_auction(&auction, owner).unwrap();
+        let lookup = ir.index.resolve(&key);
+        assert_eq!(lookup.matched_depth, key.calls.len(), "{text}");
+        ir.index
+            .children(lookup.end, key.opener_pos, key.vul)
+            .into_iter()
+            .map(|(c, n)| {
+                (
+                    c,
+                    ir.node(n).priority,
+                    ir.node(n).explanation().into_owned(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    // A later table's `(bid)` edge at the stop position is tried before the stop's `(any)`.
+    let ir = compile("1N = 15--17 hcp\n\n1N-\n2C = 8+ hcp\n  #STOP\n\n1N-2C-(bid)-\nX = 8+ hcp\n");
+    assert_eq!(
+        candidates(&ir, Seat::North, "1N P 2C 2H", Seat::North),
+        vec![(Call::Double, 0, "8+ hcp".to_string())]
+    );
+    // Their double is not a bid: the stop's `(any)` takes it.
+    assert_eq!(
+        candidates(&ir, Seat::North, "1N P 2C X", Seat::North),
+        vec![(Call::Pass, -100, "any hand".to_string())]
+    );
+    // A later table's own pass row on the stop's walk keeps its priority and text, and the stop
+    // goes on through it.
+    let ir = compile("(1S)-\nX = 12+ hcp\n  #STOP\n\n(1S)-X-\n(any)\n  P = any hand\n");
+    assert_eq!(
+        candidates(&ir, Seat::West, "1S X P", Seat::South),
+        vec![(Call::Pass, 0, "any hand".to_string())]
+    );
+    assert_eq!(
+        candidates(&ir, Seat::West, "1S X P P 2H", Seat::North),
+        vec![(Call::Pass, -100, "any hand".to_string())]
+    );
+}
