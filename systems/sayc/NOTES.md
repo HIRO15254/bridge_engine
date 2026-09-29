@@ -938,5 +938,22 @@ P11. **Phase-4 integration: the chains replaced by system stops** (P1; default s
       natural calls unchanged (`call_not_a_row` 137, `..._default_pass_only` 80); subset
       natural calls because their call / their pass is not in the trie 154 -> 85 / 99 -> 85.
       MLE ε 0.3483 unchanged, δ 0.3253 -> 0.3246, ln L -7418.7 -> -7416.2.
-    - Forward consistency (release, seed `0x5a1c0002`): 10^5 0 non-gap / 2 gap-induced
-      (stage 1 26), 10^6 0 / 14 (426), `NoCandidate` 149 per 10^6 (3,009).
+      The +0.016 to +0.019 of system resolution is entirely stop passes: +133 resolved calls,
+      all human passes at default-pass-only positions (rounds 3-6). It is not authored
+      coverage, so the [C] baseline is not restated upwards. Strict [C] (an Exact or Partial
+      call where the caller's system offers only default passes does not count;
+      `system_resolution_strict_rate`, `resolved_at_default_pass`) is identical at both
+      stages: all 0.442, eval 0.449, tune 0.436, subset 0.462, subset eval 0.473. The 0.80
+      criterion applies to the strict value.
+    - Forward consistency (release, seed `0x5a1c0002`): 10^5 0 non-gap / 2 gap-induced,
+      10^6 0 / 14, `NoCandidate` 149 per 10^6, the same at stage 1 (0928a7b): the stops did
+      not change them. The improvement over lane D before the merge (wip/p4-D: 26, 426,
+      3,009) came from merging the other lanes.
+    - Review fixes (stage 3; the SAYC trie and nodes are unchanged apart from the synthesised
+      nodes' flag and text; IR 2,531,202 bytes): stops under different `#SEAT`/`#VUL`
+      conditions meeting at one edge now share a loop of the union (before, only the first
+      condition kept the stop pass; SAYC has no such conditions); written rows and wildcard
+      edges take precedence over a stop whatever the file order (documented, tested);
+      `{ stop }` is a stop; `Node::is_synthesised()` reads `NodeFlags::synthesised`;
+      explanations drop the `{prio}`/`{w}`/`{stop}` annotations, so every stop pass explains
+      itself as `any hand`.
