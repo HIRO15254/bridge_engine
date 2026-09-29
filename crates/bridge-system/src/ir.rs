@@ -146,7 +146,11 @@ pub struct Node {
     pub alertable: Alertability,
     /// Derived flags.
     pub flags: NodeFlags,
-    /// Description after variable substitution (`4+M` → `4+!h`).
+    /// Description after variable substitution (`4+M` → `4+!h`), as shown to a user: `compile()`
+    /// removes the `{prio:N}`, `{w:X}` and `{stop}` annotations, whose content is in
+    /// [`Node::priority`], [`Node::branch_weights`] and [`NodeFlags::stop`]
+    /// ([`Row::description_raw`] keeps them). So `P = {prio:-100} {stop} any hand` and the
+    /// synthesised stop pass both read `any hand`.
     pub description: String,
     /// Row-nodes one actual call deeper (implicit passes skipped).
     pub children: Vec<NodeId>,
@@ -161,14 +165,6 @@ impl Node {
     /// parent; its row is a synthesised row too.
     pub fn is_synthesised(&self) -> bool {
         self.flags.synthesised
-    }
-
-    /// The description as shown to a user: [`Node::description`] without its `{prio:N}`,
-    /// `{w:X}` and `{stop}` annotations, whose content is in [`Node::priority`],
-    /// [`Node::branch_weights`] and [`NodeFlags::stop`]. So `P = {prio:-100} {stop} any hand`
-    /// and the synthesised stop pass both explain themselves as `any hand`.
-    pub fn explanation(&self) -> std::borrow::Cow<'_, str> {
-        crate::compile::desc::normalize::strip_annotations(&self.description)
     }
 }
 

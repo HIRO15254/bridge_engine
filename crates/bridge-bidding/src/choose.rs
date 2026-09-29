@@ -599,7 +599,7 @@ pub fn choose_bid(table: &Table, hand: Hand, auction: &Auction, ctx: &BidContext
         .collect();
 
     let explanation = match winner_node {
-        Some(node_id) => system.node(node_id).explanation().into_owned(),
+        Some(node_id) => system.node(node_id).description.clone(),
         None => match winner_source {
             ChoiceSource::Natural => {
                 let natural = ctx

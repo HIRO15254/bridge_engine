@@ -59,7 +59,8 @@ fn annotation_at(text: &str, i: usize) -> Option<(Annotation, usize)> {
 }
 
 /// `text` without its `{prio:N}` / `{w:X}` / `{stop}` annotations (what [`normalize`] extracts
-/// into [`Normalized::priority`], [`Normalized::weights`] and [`Normalized::stop`]), for display.
+/// into [`Normalized::priority`], [`Normalized::weights`] and [`Normalized::stop`]), for display
+/// (`compile()` stores every node's description this way).
 /// Nothing else changes: suit digraphs, the alert marker and spacing inside the text are kept;
 /// the spaces an annotation leaves at either end are trimmed, and so are the spaces after an
 /// annotation that follows a space. Borrows `text` when it has no annotation.
@@ -67,6 +68,24 @@ pub fn strip_annotations(text: &str) -> std::borrow::Cow<'_, str> {
     use std::borrow::Cow;
     if !text.contains('{') {
         return Cow::Borrowed(text);
+    }
+    // The common shape, `{prio:-100} {stop} any hand`: annotations only in front. Then the
+    // result is a slice of `text`.
+    let mut start = 0usize;
+    loop {
+        let rest = &text[start..];
+        let trimmed = rest.trim_start();
+        start += rest.len() - trimmed.len();
+        if !trimmed.starts_with('{') {
+            break;
+        }
+        match annotation_at(text, start) {
+            Some((_, len)) => start += len,
+            None => break,
+        }
+    }
+    if !text[start..].contains('{') {
+        return Cow::Borrowed(text[start..].trim_end());
     }
     let mut out = String::with_capacity(text.len());
     let mut last = 0usize;
@@ -245,6 +264,8 @@ mod tests {
                 "{prio:abc} is not an annotation",
             ),
             ("{prio:3}", ""),
+            ("  {prio:-100}   ♠ any hand  ", "♠ any hand"),
+            ("♠{prio:2} x", "♠ x"),
         ] {
             assert_eq!(strip_annotations(text), want, "{text:?}");
         }

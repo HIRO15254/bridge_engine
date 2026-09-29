@@ -79,8 +79,18 @@ pub fn compile(
             _ => None,
         })
         .collect();
-    let expansion = expand::expand_file(&tables, &meta, opts);
+    let mut expansion = expand::expand_file(&tables, &meta, opts);
     lints.extend(expansion.lints);
+    // What a user reads (`BidChoice::explanation`, `interpret`): the `{prio:N}` / `{w:X}` /
+    // `{stop}` annotations are already in each node's priority, branch weights and flags, and
+    // `Row::description_raw` keeps them. Done once here, after every expansion-time check that
+    // reads a description (placeholders, duplicate paths), so nothing pays for it per call.
+    for node in &mut expansion.nodes {
+        let stripped = desc::normalize::strip_annotations(&node.description);
+        if stripped.len() != node.description.len() {
+            node.description = stripped.into_owned();
+        }
+    }
 
     let mut ir = SystemIR {
         meta,

@@ -493,13 +493,7 @@ fn written_rows_and_wildcards_take_precedence_over_a_stop() {
         ir.index
             .children(lookup.end, key.opener_pos, key.vul)
             .into_iter()
-            .map(|(c, n)| {
-                (
-                    c,
-                    ir.node(n).priority,
-                    ir.node(n).explanation().into_owned(),
-                )
-            })
+            .map(|(c, n)| (c, ir.node(n).priority, ir.node(n).description.clone()))
             .collect::<Vec<_>>()
     };
     // A later table's `(bid)` edge at the stop position is tried before the stop's `(any)`.
