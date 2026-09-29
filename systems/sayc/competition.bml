@@ -539,6 +539,12 @@ needs a fit and game interest here too; without one of these calls advancer pass
 3N = 15+ hcp, stopper
 #PASTE pass-chain
 
+(1X)-1Z-(D)-
+2Y = {prio:1} NF, 10+ hcp, 5+#, 0--2Z
+
+(1Y)-1Z-(D)-
+2X = {prio:1} NF, 10+ hcp, 5+#, 0--2Z
+
 (1X)-1Y-(D)-2X-(P)-
 2N = {prio:2} 13+ hcp, stopper
 3Y = {prio:1} 13+ hcp

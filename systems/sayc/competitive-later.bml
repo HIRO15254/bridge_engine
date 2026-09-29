@@ -2793,3 +2793,274 @@ support and 8--11; the partnership then stops, as in `competitive-extra.bml`.
 3Y = {prio:1} 8--11 hcp, 3+Y
   #PASTE after-chain
 #PASTE pass-chain
+
+** The overcaller after an advance over a negative double
+
+The same continuations as after an advance over opener's partner's pass: the negative double
+does not change what the advance shows (NOTES.md P9).
+
+(1C)-1D-(D)-1H-
+2H = {prio:2} 4+!h
+  #PASTE after-chain
+2D = {prio:1} 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1D-(D)-1S-
+2S = {prio:2} 4+!s
+  #PASTE after-chain
+2D = {prio:1} 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1H-(D)-2D-
+3D = {prio:2} 4+!d
+  #PASTE after-chain
+2H = {prio:1} 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1H-(D)-1S-
+2S = {prio:2} 4+!s
+  #PASTE after-chain
+2H = {prio:1} 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1S-(D)-2D-
+3D = {prio:2} 4+!d
+  #PASTE after-chain
+2S = {prio:1} 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-1H-(D)-2C-
+3C = {prio:2} 4+!c
+  #PASTE after-chain
+2H = {prio:1} 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-1H-(D)-1S-
+2S = {prio:2} 4+!s
+  #PASTE after-chain
+2H = {prio:1} 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-1S-(D)-2C-
+3C = {prio:2} 4+!c
+  #PASTE after-chain
+2S = {prio:1} 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-1S-(D)-2H-
+3H = {prio:2} 4+!h
+  #PASTE after-chain
+2S = {prio:1} 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-1S-(D)-2C-
+3C = {prio:2} 4+!c
+  #PASTE after-chain
+2S = {prio:1} 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-1S-(D)-2D-
+3D = {prio:2} 4+!d
+  #PASTE after-chain
+2S = {prio:1} 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1D-(D)-1H-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(D)-1S-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(D)-2D-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(D)-1S-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(D)-2D-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(D)-2C-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(D)-1S-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(D)-2C-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(D)-2H-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(D)-2C-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(D)-2D-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(D)-2D-(P)-
+#PASTE pass-chain
+
+(1C)-1D-(D)-2D-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(D)-3D-
+#PASTE after-chain
+
+(1C)-1D-(D)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1C)-1D-(D)-1N-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(D)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1D-(D)-2N-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(D)-3N-
+#PASTE after-chain
+
+(1C)-1H-(D)-2H-(P)-
+#PASTE overcaller-after-raise \M=H
+
+(1C)-1H-(D)-2H-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(D)-3H-
+#PASTE after-chain
+
+(1C)-1H-(D)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1C)-1H-(D)-1N-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(D)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1H-(D)-2N-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(D)-3N-
+#PASTE after-chain
+
+(1C)-1S-(D)-2S-(P)-
+#PASTE overcaller-after-raise \M=S
+
+(1C)-1S-(D)-2S-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(D)-3S-
+#PASTE after-chain
+
+(1C)-1S-(D)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1C)-1S-(D)-1N-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(D)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1S-(D)-2N-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(D)-3N-
+#PASTE after-chain
+
+(1D)-1H-(D)-2H-(P)-
+#PASTE overcaller-after-raise \M=H
+
+(1D)-1H-(D)-2H-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(D)-3H-
+#PASTE after-chain
+
+(1D)-1H-(D)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1D)-1H-(D)-1N-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(D)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-1H-(D)-2N-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(D)-3N-
+#PASTE after-chain
+
+(1D)-1S-(D)-2S-(P)-
+#PASTE overcaller-after-raise \M=S
+
+(1D)-1S-(D)-2S-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(D)-3S-
+#PASTE after-chain
+
+(1D)-1S-(D)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1D)-1S-(D)-1N-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(D)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-1S-(D)-2N-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(D)-3N-
+#PASTE after-chain
+
+(1H)-1S-(D)-2S-(P)-
+#PASTE overcaller-after-raise \M=S
+
+(1H)-1S-(D)-2S-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(D)-3S-
+#PASTE after-chain
+
+(1H)-1S-(D)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1H)-1S-(D)-1N-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(D)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-1S-(D)-2N-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(D)-3N-
+#PASTE after-chain
