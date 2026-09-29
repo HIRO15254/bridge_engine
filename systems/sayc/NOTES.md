@@ -1109,3 +1109,35 @@ P12. **Lane D2: thickening SAYC and extending BML** (wip/p4-D2; default sizing, 
         Forward consistency (release, seed `0x5a1c0002`, 10^5): 0 non-gap violations, 3
         gap-induced, `NoCandidate` 42, chosen 88,492, implicit pass 11,466 (2.1 s, loadavg
         4.2).
+
+P13. **Final phase-4 integration** (wip/p4int after merging lane D2 as 3c57c37;
+    `COMPILE_REVISION` 9, `IR_FORMAT` 3; default sizing, release, 2.9 s at loadavg 6.1 ->
+    5.8). These are the current numbers for this file; P0-P12 record the earlier stages.
+    - The SAYC data is lane D2's after its review fixes, so the coverage numbers equal
+      P12's review-fix numbers: strict [G] 0.745 (745/1000), raw [G] 0.957, stop-audited
+      [G] 0.521, 370 swallows in 307 auctions (suit 278, notrump 68, double 24; tops: the
+      (2S) overcaller 14, 1D-(1H) responder 9, (2H) overcaller 8, 1S-(P)-P-(X) opener 6),
+      `StopUnderForcing` 27. Corpus: all-Exact 0.320 / 0.323 / 0.341 (all / eval / subset);
+      system resolution 0.688 / 0.708 / 0.716 (subset eval 0.743); strict 0.472 / 0.479 /
+      0.491 (subset eval 0.503); `resolve_lenient` 61 of 8,169 calls; empty strict support
+      41 seats, sampler `EmptySupport` 0. MLE on the tune split: epsilon 0.3436, delta
+      0.3267, ln L -7377.4 (delta within 1.92 of the maximum: 0.29-0.37). Generated
+      positions (2x10^5) with no candidate 75, all on-system (top: opener at
+      1D-P-1H-P-1S-P-3NT-P, 9); the phase-3 tops are 0 / 0 / 0. Lints: Error 0,
+      `ShadowedBranch` 18, `DuplicatePath` warnings 23, unconstrained own calls 0.
+    - Only the postcard IR and the timings changed with the merge: IR 3,462,271 bytes
+      (3,537,836 on wip/p4-D2, which lacked the compile-time annotation strip); compile
+      674-680 ms (`sayc_exclusive_index_share`, best of 3, twice; `compiling_sayc_is_fast`
+      685 ms), exclusive-index rebuild 18.9-20.0 ms best of 3 (loadavg 2.3-2.5; 4,070
+      groups, 9,524 index nodes; still above lane S's 15 ms, under the 30 ms guard). One
+      compile peaks at 45 MB RSS (44 MB footprint), a default coverage run at 75 MB.
+    - Forward consistency (seed `0x5a1c0002`): 10^5 0 non-gap / 3 gap-induced,
+      `NoCandidate` 42; 10^6 0 / 29, `NoCandidate` 394. Level floor on 2000 generated deals:
+      no 7-level contract, 6 at the 6 level or higher.
+    - The reproduction fixture (`crates/bridge-bidding/tests/data/repro_generated.txt`) was
+      re-frozen on this SAYC: 8 of 100 auctions changed. Generated reproduction median
+      1.000; the corpus SAYC-reproducible subset has 14 of 312 eval games, median 0.872.
+    - Open: both 0.80 criteria (strict [G], strict [C] subset), the index-build budget, and
+      `PolicyParams::human()` still at its placeholder (0.01, 0.3) until the fit above is
+      adopted before lane P's ESS freeze. Details and the full table: 12-roadmap.md,
+      "フェーズ 4 の最終統合".
