@@ -238,7 +238,7 @@ P9 (負の double 後のアドバンス) の前は、表見出し `(1X)-1Y-(D)-2
 | SAYC のコンパイル (`sayc_exclusive_index_share`、負荷平均 3.2〜3.4) | 914〜941 ms | 437〜441 ms | < 1 s 達成 |
 | `compiling_sayc_is_fast` (単独 3 回) | 926 ms / 1,028 ms (**失敗**) / 943 ms | 474 / 436 / 446 ms | 通過 達成 |
 | 排他索引の再構築 (同上) | 44.7〜46.6 ms (24,067 グループ) | 12.8〜13.0 ms (2,754 グループ。coverage 実行では負荷平均 6.9 で 12.5 ms) | ≤ 15 ms 達成 |
-| postcard IR | 16,415,084 バイト | 2,524,018 バイト (レビュー修正で `NodeFlags::synthesised` と合成ノードの説明を変えて 2,531,202) | 報告 |
+| postcard IR | 16,415,084 バイト | 2,524,018 バイト (レビュー修正で `NodeFlags::synthesised` と合成ノードの説明を変えて 2,531,202、説明文の注釈をコンパイル時に除いて 2,476,329) | 報告 |
 | コンパイル 1 回のピーク RSS (`/usr/bin/time -l`、最大 RSS / ピーク・フットプリント) | 158 MB / 157 MB | 33 MB / 31 MB | 報告 |
 | 既定サイズの coverage 実行のピーク RSS | 230 MB (レーン D の統合前の実測は 241 MB) | 65 MB (レビュー修正後 61 MB) | 報告 |
 | `interpret` ベンチ (交互に 3 回の best、負荷平均 4〜6): `sayc-12-call-auction` / `sayc-1nt-auction` / `sayc-competitive-auction` / 手組み `12-call-auction` | 10.83 / 7.53 / 5.84 / 8.01 µs | 10.55 / 7.16 / 5.58 / 8.11 µs | 退行なし 達成 (手組みの差は SAYC を使わないベンチの誤差) |

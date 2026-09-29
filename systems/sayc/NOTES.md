@@ -956,4 +956,6 @@ P11. **Phase-4 integration: the chains replaced by system stops** (P1; default s
       edges take precedence over a stop whatever the file order (documented, tested);
       `{ stop }` is a stop; `Node::is_synthesised()` reads `NodeFlags::synthesised`;
       explanations drop the `{prio}`/`{w}`/`{stop}` annotations, so every stop pass explains
-      itself as `any hand`.
+      itself as `any hand`. `compile()` strips them once from every node's description
+      (`COMPILE_REVISION` 6; IR 2,476,329 bytes; `interpret/sayc-12-call-auction` about 3%
+      faster than stripping per call).
