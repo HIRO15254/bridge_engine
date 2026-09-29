@@ -1604,4 +1604,47 @@ mod phase4_tables {
             ("1C 3D X P", "A2.K32.2.AKQ5432", "4C"),
         ]);
     }
+
+    /// P12 batch 9: passes that end a limited uncontested auction (the system's stop
+    /// pass or an explicit pass row), next to the invitational or game calls that share
+    /// the position.
+    #[test]
+    fn limited_auction_passes_batch_9() {
+        check_system(&[
+            ("1H P 1NT P", "AK2.KQ432.432.32", "P"),
+            ("1H P 1NT P", "AK2.AKQ32.K32.32", "2NT"),
+            ("1H P 2H P", "AK2.KQ432.432.32", "P"),
+            ("1H P 2H P", "AK2.AKJ32.Q32.32", "3H"),
+            ("1S P 1NT P 2NT P", "32.Q432.Q432.J32", "P"),
+            ("1S P 1NT P 2NT P", "32.K432.KJ32.Q32", "3NT"),
+            ("1C P 1H P 2H P", "32.K432.Q432.J32", "P"),
+            ("1C P 1H P 2H P", "32.KQ32.KQ32.J32", "3H"),
+            ("1S P 1NT P 2H P", "32.K432.Q432.J32", "P"),
+            ("1S P 1NT P 2H P", "32.KJ32.KQ32.J32", "3H"),
+            ("1S X 2S P", "AKJ32.K32.Q32.32", "P"),
+            ("1S X 2S P", "AKJ32.AK2.KQ2.32", "4S"),
+            ("1S P 1NT P 2H P 2S P", "AK432.KQ32.32.32", "P"),
+            ("1S P 1NT P 2H P 2S P", "AK432.AKJ32.K2.2", "3H"),
+            ("1C P 1S P 2S P 4S P", "A32.K32.K32.Q432", "P"),
+        ]);
+    }
+
+    /// P12 batch 9: competitive continuations (jump overcalls raised, their
+    /// preempt over our takeout double, rebids after a two-over-one overcall).
+    #[test]
+    fn competitive_continuations_batch_9() {
+        check_system(&[
+            ("1C 2H 3H", "A32.K32.KQ32.432", "4H"),
+            ("1C 2H 2NT", "5432.K32.Q432.32", "3H"),
+            ("1H X 3H", "AQ32.32.KQ32.K32", "4S"),
+            ("1H X 3H", "Q432.32.KJ32.Q32", "3S"),
+            ("1D 2H 2S 3H", "A32.32.AK432.432", "3S"),
+            ("1C P 2C X", "A2.32.K32.AQ5432", "3C"),
+            ("1C P 2C X", "AK2.KQ2.Q32.AJ32", "2NT"),
+            ("1S P 2D 2H", "AKJ432.32.K2.432", "2S"),
+            ("1S P 2D 2H", "AKJ32.32.K32.432", "3D"),
+            ("1NT 2D 2H X P", "32.32.KQJ432.A32", "P"),
+            ("1H P 2C 2S P", "K32.432.KJ32.432", "3S"),
+        ]);
+    }
 }
