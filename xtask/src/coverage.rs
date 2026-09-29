@@ -31,7 +31,9 @@
 //!   the system (every natural call and the first one per auction, by trie position, with the
 //!   reason: `call_not_a_row` when the position is on the system but the recorded call is not
 //!   one of its rows, otherwise why the position itself is off the system).
-//! - **lints / exclusive**: lint counts by severity and code, and the members/branches the
+//! - **lints / exclusive**: lint counts by severity and code, our own non-pass calls with no
+//!   requirement at all (`unconstrained_own_calls`: a table header naming a call no row
+//!   defines), and the members/branches the
 //!   exclusive index shows as never chosen (shadowed), a fresh index build time (best of 3) and
 //!   the postcard size of the compiled IR.
 //!
