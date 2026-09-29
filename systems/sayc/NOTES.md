@@ -657,6 +657,23 @@ P1. **Pass chains** (`passes.bml`). Our own pass is a trie edge only where a row
     implicit pass they replace. Six rounds are needed: with four the generated all-system rate
     falls from 0.883 to 0.824, with three to 0.614 (the opponents often compete for several
     rounds). The chains are about 37k of the 45k compiled nodes (see "Cost" below).
+    **Caveat (review of lane D).** A chain continues through `(any)`: once one of us has
+    passed, the partner passes with *any* hand whatever the opponents do, and every
+    later level of the chain is the only row of its position. Those positions count as
+    system positions, so the chains also suppress the natural completion that would mark
+    them as holes: without them the generated all-system rate is 0.044, not 0.894. At many
+    of them SAYC has a real decision (a reopening double, competing after a negative double
+    and their raise, a penalty double of a balancing bid). `cargo xtask coverage` therefore
+    reports the *strict* rate as well: a position whose only rows are default passes
+    counts as a departure whenever the natural choice there is not `Pass` (see P4' below).
+    The fitted `(ε, δ)` depends on the chains too (without them ε 0.361, δ 0.412). A chain
+    that continues only over the opponents' pass (`(P)` for `(any)`, trimmed where the
+    auction must already be over) was measured and rejected: all-system 0.333, because
+    the partnership then leaves the system in every auction the opponents keep bidding
+    in, mostly where the natural choice is a pass as well (10,675 rows, 613 ms compile,
+    index 27.7 ms, IR 3.84 MB). The right fix is structural (a stop marker in the trie
+    and a synthesised system pass in bridge-bidding, lanes S and B), with the same strict
+    accounting.
 P2. **Defense to their two-level and higher openings** (`defense.bml`): the one-level methods
     one level higher (takeout double short in their suit, 12--16 or any 17+; a natural
     overcall with five cards at the two level and six at the three level; 2NT 15--18 with a
@@ -710,12 +727,31 @@ P9. **Advancing our one-level overcall after a negative double** (`competition.b
     checked to name only calls the advance table defines). `cargo xtask coverage` now counts
     our own non-pass calls without a requirement (`lints.unconstrained_own_calls`); it is 0.
 
+P10. **Competitive decisions where the chain pass was the only row** (end of
+    `continuations.bml`): opener after a negative double of a two-level overcall and their
+    raise (support for the doubler's major, game with 17+; over their raise of a major, a
+    four-card minor at the four level with 15+; a six-card rebid with 15+); opener's
+    reopening over a three-level overcall (takeout double with 12+ and 0--1 cards in their
+    suit, a six-card rebid with 15+; responder passes for penalty with four trumps, bids
+    3NT with a stopper, else returns to opener's suit); opener after their takeout double,
+    responder's pass and advancer's 1NT (penalty double 16+, a six-card rebid 12--15);
+    opener after responder's pass and their raise of a one-level overcall (takeout double
+    13+ short in their suit, answered in an unbid major, else opener's suit; a six-card
+    rebid 15+); responder's penalty double with 10+ when a passed hand balances over
+    1NT-3NT at the four level. These were the reviewer's examples of strong hands the
+    chains made pass (`sayc_content::phase4_tables::acting_after_they_compete_over_our_stop`).
+    The strict all-system rate rises from 0.540 to 0.550; the positions left are a long tail
+    (the top one, opener after `1S-(P)-P-(X)`, has 9 of 461 overrides in 1000 auctions), and
+    many overrides are the natural engine competing with hands SAYC passes with.
+
 Lints: the phase-4 rows add no `ShadowedBranch` warning on our side (18 before and after,
 all phase-3 rows). They add 129 on the opponents' side, every one on a table-header node:
 a header such as `1C-(1D)-1H-(1N)-` names their call with no constraint, next to the row that
 defines that call (here `competition.bml`'s advance of the overcall), so the header node is a
 second, lower-ranked member with the same call and is never the first satisfied one. The call
-itself keeps its pieces; the base system has 231 lints of exactly this kind.
+itself keeps its pieces; the base system has 231 lints of exactly this kind. P10's headers add
+22 more of the same kind (theirs 382, ours still 18). Opponents' calls are trie edges only, so a
+lint change that skips `Side::Them` nodes (lane S) would remove all of them.
 
 Cost: the system grew from 1,611 rows / 2,415 nodes to about 36k rows / 46k nodes (the pass
 chains are about 37k of them). Release compile about 0.84 s best of 3 and 1.2--1.7 s cold
@@ -838,3 +874,37 @@ P3'. **After P9** (this branch; release; `COVERAGE_POSITIONS=1000000`, 17.3 s at
       0.355 / 0.501 (δ at the MLE): -13772.7 / -10834.5 / -8115.5 / -7456.2 / -7334.3 /
       -7333.6 / -7537.1. The placeholder `human()` (0.01, 0.3) gives -10840.5,
       `system_players()` -15326.0. Eval split at the MLE: -6706.5 over 4034 calls.
+
+P4'. **After P10, with the strict accounting** (this branch; release; `COVERAGE_POSITIONS=1000000`,
+    17.6 s at loadavg 2.6 -> 2.9):
+    - Compile 957--983 ms (38,737 rows, 49,800 nodes; loadavg about 5); lints Error 0,
+      ShadowedBranch ours 18, theirs 382; unconstrained own calls 0; exclusive index 24,067
+      groups, fresh build 45.7--49.2 ms; postcard IR 16,438,261 bytes; peak RSS of a default
+      coverage run 241 MB. `tests/compile_time.rs`' release `< 1 s` on `sayc.bml` now fails
+      (1.24 s alone, 1.42 s with the other tests; loadavg 3.8--4.6).
+    - Generated (seed `0xC0FE4001`): all-system 894/1000 (0.894), **strict 550/1000 (0.550)**
+      (0.540 before P10). 2,706 positions offered only default passes; at 461 of them the
+      natural choice was a call (366 auctions, 344 of them otherwise all-system). Strict first
+      departures: default-pass override 357, their pass not in the trie 61, the system
+      exhausted 18, their call not in the trie 14. Final contract level `[passout, 1..7]`:
+      `[14, 92, 304, 450, 136, 3, 1, 0]`.
+    - Positions (10^6): `NoCandidate` 3,009 (on-system 142); phase-3 tops 0 / 0 / 0.
+      Forward consistency (release, seed `0x5a1c0002`): 10^5 0 non-gap / 26 gap-induced (3.4 s,
+      loadavg 4.0); 10^6 0 non-gap / 426 gap-induced (20.1 s, loadavg 4.4 -> 4.2).
+    - Corpus: all-Exact 0.305 / eval 0.309 / subset 0.326; system resolution 0.641 / 0.661 /
+      **0.665** (subset eval 0.692); `resolve_lenient` 1 of 8169 calls; strict-empty seats 18;
+      sampler `EmptySupport` 0. Subset first natural calls: `call_not_a_row` 137,
+      `call_not_a_row_default_pass_only` 80 (91 before P10: a recorded call at a position the
+      system answers only with a chain pass, i.e. a SAYC decision the file does not write,
+      not a method of the players), their pass 19, the system exhausted 18, their call 5.
+    - Agreement: system positions 0.675, natural 0.588 (eval 0.691 / 0.597).
+    - MLE on the tune split: **ε = 0.3357, δ = 0.335**, ln L = -7320.7 (-1.770 per call); δ
+      within 1.92 of the maximum for 0.30--0.38. ln L at δ = 0 / 0.1 / 0.2 / 0.3 / 0.4 / 0.5:
+      -7666.3 / -7402.7 / -7341.8 / -7321.9 / -7324.6 / -7345.2; at ε = 0.001 / 0.01 / 0.1 /
+      0.2 / 0.316 / 0.398 / 0.501: -13750.6 / -10817.0 / -8102.6 / -7514.2 / -7324.0 / -7351.6
+      / -7528.2. `human()` placeholder -10822.0, `system_players()` -15274.7; eval split at
+      the MLE -6707.5.
+    - The same files with every chain paste removed (release, default sizing, loadavg 3.2):
+      5,010 rows / 5,499 nodes, compile 396 ms, index 17.9 ms, IR 1,913,553 bytes;
+      all-system 0.044 (strict 0.044); corpus all-Exact 0.047 / 0.047 / 0.044, system
+      resolution 0.443 / 0.450 / 0.463; MLE ε 0.361, δ 0.412.
