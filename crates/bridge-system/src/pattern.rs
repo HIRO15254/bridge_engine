@@ -65,7 +65,8 @@ impl StrainSet {
     }
 }
 
-/// A bid level, or `n` for "any level" (extension used by some real files).
+/// A bid level, `n` for "any level" (extension used by some real files), or a level relative to
+/// the path's last bid (`c`, `j`; phase-4 extension, `docs/design/06-system.md` §4.6).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Level {
@@ -73,6 +74,20 @@ pub enum Level {
     At(u8),
     /// `n`.
     Any,
+    /// `c` (extension): the lowest level at which the strain is sufficient after the last bid of
+    /// the path, either side (level 1 when nothing has been bid yet). `cS` over `1H` is `1S`,
+    /// over `2H` it is `2S`, over `2S` it is `3S`.
+    Cheapest,
+    /// `j` (extension): one level above [`Level::Cheapest`], a single jump. `jS` over `1H` is
+    /// `2S`; there is no candidate when that would pass `7`.
+    Jump,
+}
+
+impl Level {
+    /// Whether the level is relative to the path's last bid (`c`, `j`).
+    pub const fn is_relative(self) -> bool {
+        matches!(self, Level::Cheapest | Level::Jump)
+    }
 }
 
 /// A call pattern as written in BML.

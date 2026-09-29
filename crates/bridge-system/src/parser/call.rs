@@ -6,7 +6,7 @@
 //!            | level strainspec
 //!            | level ( "step" | "steps" )
 //!            | callcore "/" ( callcore | strainspec ) ;      (* 2S/3H, 4D/H *)
-//! level      = "1".."7" | "n" ;
+//! level      = "1".."7" | "n" | "c" | "j" ;       (* c = cheapest, j = jump: ext, §4.6 *)
 //! strainspec = literal | variable | "red" | "black" ;
 //! literal    = "NT" | "N" | ( "C" | "D" | "H" | "S" ) { "C" | "D" | "H" | "S" } ;
 //! variable   = "M" | "m" | "oM" | "om" | "X" | "Y" | "Z" | "x" | "y" | "z" ;
@@ -87,6 +87,8 @@ fn level(input: &mut &str) -> ModalResult<Level> {
     alt((
         winnow::token::one_of('1'..='7').map(|c: char| Level::At(c as u8 - b'0')),
         'n'.value(Level::Any),
+        'c'.value(Level::Cheapest),
+        'j'.value(Level::Jump),
     ))
     .parse_next(input)
 }
@@ -252,6 +254,9 @@ pub(crate) fn nonstandard_reasons(raw: &str) -> Vec<&'static str> {
     }
     if inner.starts_with('n') && inner.len() > 1 {
         reasons.push("any-level wildcard (n)");
+    }
+    if (inner.starts_with('c') || inner.starts_with('j')) && inner.len() > 1 {
+        reasons.push("relative level (c = cheapest, j = jump)");
     }
     if inner.chars().any(|c| matches!(c, 'x' | 'y' | 'z')) {
         reasons.push("lowercase variable (x/y/z)");
@@ -524,6 +529,83 @@ mod tests {
         let toks = history(&mut s).unwrap();
         assert!(s.is_empty());
         assert_eq!(toks.len(), 3);
+    }
+
+    #[test]
+    fn relative_levels() {
+        assert_eq!(
+            parse("cS"),
+            (
+                Side::Us,
+                CallPattern::Strains {
+                    level: Level::Cheapest,
+                    strains: StrainSet::EMPTY.with(Strain::Spades),
+                }
+            )
+        );
+        assert_eq!(
+            parse("jY"),
+            (
+                Side::Us,
+                CallPattern::Var {
+                    level: Level::Jump,
+                    var: Var::Y,
+                }
+            )
+        );
+        assert_eq!(
+            parse("coM"),
+            (
+                Side::Us,
+                CallPattern::Var {
+                    level: Level::Cheapest,
+                    var: Var::OtherMajor,
+                }
+            )
+        );
+        assert_eq!(
+            parse("cN"),
+            (
+                Side::Us,
+                CallPattern::Strains {
+                    level: Level::Cheapest,
+                    strains: StrainSet::EMPTY.with(Strain::NoTrump),
+                }
+            )
+        );
+        // The level carries over to a bare strain after `/`.
+        assert_eq!(
+            parse("cD/H"),
+            (
+                Side::Us,
+                CallPattern::AnyOf(vec![
+                    CallPattern::Strains {
+                        level: Level::Cheapest,
+                        strains: StrainSet::EMPTY.with(Strain::Diamonds),
+                    },
+                    CallPattern::Strains {
+                        level: Level::Cheapest,
+                        strains: StrainSet::EMPTY.with(Strain::Hearts),
+                    },
+                ])
+            )
+        );
+        assert_eq!(
+            nonstandard_reasons("cM"),
+            vec!["relative level (c = cheapest, j = jump)"]
+        );
+        assert_eq!(
+            nonstandard_reasons("(jS)"),
+            vec!["relative level (c = cheapest, j = jump)"]
+        );
+        // Words that merely start with c/j are not calls.
+        for word in ["cat", "cheap", "jump", "c", "j", "cs", "jh"] {
+            let mut s = word;
+            assert!(
+                calltok(&mut s).map(|_| s.is_empty()) != Ok(true),
+                "{word} parsed as a call"
+            );
+        }
     }
 
     #[test]

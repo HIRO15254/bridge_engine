@@ -63,6 +63,14 @@ pub enum LintCode {
     /// Two top-level branches of one node's constraint overlap; the exclusive index
     /// disjointifies them (a later branch keeps only hands outside the earlier ones) (Info).
     OverlappingBranches,
+    // relative levels (phase-4 extension, appended for the same reason)
+    /// A relative level (`cS`, `jY`, `docs/design/06-system.md` §4.6) below an opponents'
+    /// wildcard that may stand for a bid: the last bid, and so the level, is unknown (Error;
+    /// the row and its subtree are skipped there).
+    LevelWithoutAnchor,
+    /// A relative level with no candidate: the jump (or the cheapest level) would pass the
+    /// seven level (Info).
+    NoSufficientLevel,
 }
 
 /// One diagnostic.

@@ -9,7 +9,7 @@ pub mod call;
 pub mod clipboard;
 
 use crate::{
-    Lint, LintCode,
+    CallPattern, Lint, LintCode,
     ast::{
         BidTable, Block, BmlFile, BmlNode, CallToken, Description, RawLine, SeatCond, Span, Tri,
         VulCond,
@@ -138,7 +138,21 @@ fn is_bidtable_start(word: &str) -> bool {
         return call::history(&mut s).is_ok() && s.is_empty();
     }
     let mut s = word;
-    call::calltok(&mut s).is_ok() && s.is_empty()
+    match call::calltok(&mut s) {
+        // A relative level (`cS`, `jY`) names no call without a bid before it, so it never
+        // starts a table: a prose paragraph that happens to begin with such a word stays prose.
+        Ok((_, pattern)) => s.is_empty() && !has_relative_level(&pattern),
+        Err(_) => false,
+    }
+}
+
+/// Whether `pattern` (or one of its alternatives) uses a relative level (`c`, `j`).
+fn has_relative_level(pattern: &CallPattern) -> bool {
+    match pattern {
+        CallPattern::Strains { level, .. } | CallPattern::Var { level, .. } => level.is_relative(),
+        CallPattern::AnyOf(alts) => alts.iter().any(has_relative_level),
+        _ => false,
+    }
 }
 
 fn is_meta_start(s: &str) -> bool {
