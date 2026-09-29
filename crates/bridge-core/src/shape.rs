@@ -662,6 +662,75 @@ impl ShapeSet {
         }
         (if min == u8::MAX { 0 } else { min }, max)
     }
+
+    /// `true` when the HCP range `lo..=hi` meets the per-suit bounds of the set: some member
+    /// can hold `lo` or more HCP (`MAX_HCP` per suit) and some member can hold `hi` or fewer
+    /// (`MIN_HCP` per suit). For a non-empty set this is exactly
+    /// `!(lo > max_hcp || hi < min_hcp)` with `(min_hcp, max_hcp) = self.hcp_bounds()`; for the
+    /// empty set it is `false`.
+    ///
+    /// Two threshold masks per call (`HCP_MAX_AT_LEAST[lo]`, `HCP_MIN_AT_MOST[hi]`) intersected
+    /// with the set, instead of [`ShapeSet::hcp_bounds`]'s per-byte walk: the unsatisfiability
+    /// pre-check of `Atom::is_trivially_unsat` only needs the yes/no answer.
+    pub fn hcp_range_reachable(self, lo: u8, hi: u8) -> bool {
+        if lo as usize >= HCP_THRESHOLDS {
+            return false;
+        }
+        let hi = (hi as usize).min(HCP_THRESHOLDS - 1);
+        self.intersects(HCP_MAX_AT_LEAST[lo as usize]) && self.intersects(HCP_MIN_AT_MOST[hi])
+    }
+
+    /// The members that can hold some HCP total in `lo..=hi` by their own per-suit bounds
+    /// (`MIN_HCP`/`MAX_HCP` summed over the suits, the HCP interval of a shape); empty when
+    /// `lo > min(hi, 37)`.
+    pub fn holding_hcp_in(self, lo: u8, hi: u8) -> ShapeSet {
+        let hi = hi.min(HCP_THRESHOLDS as u8 - 1);
+        if lo > hi {
+            return ShapeSet::EMPTY;
+        }
+        self.intersect(HCP_MAX_AT_LEAST[lo as usize])
+            .intersect(HCP_MIN_AT_MOST[hi as usize])
+    }
+
+    /// `true` when `self ∩ other` is not empty.
+    pub const fn intersects(self, other: ShapeSet) -> bool {
+        let mut i = 0;
+        while i < 9 {
+            if self.0[i] & other.0[i] != 0 {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    }
+}
+
+/// Number of HCP thresholds `0..=37` of [`HCP_MAX_AT_LEAST`]/[`HCP_MIN_AT_MOST`].
+const HCP_THRESHOLDS: usize = 38;
+
+/// `HCP_MAX_AT_LEAST[t]`: the shapes whose `MAX_HCP` sum is at least `t`.
+static HCP_MAX_AT_LEAST: [ShapeSet; HCP_THRESHOLDS] = build_hcp_threshold_masks(&MAX_HCP, true);
+/// `HCP_MIN_AT_MOST[t]`: the shapes whose `MIN_HCP` sum is at most `t`.
+static HCP_MIN_AT_MOST: [ShapeSet; HCP_THRESHOLDS] = build_hcp_threshold_masks(&MIN_HCP, false);
+
+/// Builds [`HCP_MAX_AT_LEAST`] (`at_least`) or [`HCP_MIN_AT_MOST`] from the per-suit `table`.
+const fn build_hcp_threshold_masks(table: &[u8; 14], at_least: bool) -> [ShapeSet; HCP_THRESHOLDS] {
+    let mut out = [ShapeSet::EMPTY; HCP_THRESHOLDS];
+    let mut t = 0usize;
+    while t < HCP_THRESHOLDS {
+        let mut w = [0u64; 9];
+        let mut i = 0usize;
+        while i < 560 {
+            let bound = hcp_bound(SHAPES[i], table) as usize;
+            if (at_least && bound >= t) || (!at_least && bound <= t) {
+                w[i / 64] |= 1u64 << (i % 64);
+            }
+            i += 1;
+        }
+        out[t] = ShapeSet(w);
+        t += 1;
+    }
+    out
 }
 
 /// Sum over the four suits of `table[len]`.
@@ -910,5 +979,66 @@ mod tests {
             assert!(set.complement().intersect(set).is_empty());
         }
         assert_eq!(ShapeSet::ALL.into_iter().count(), 560);
+    }
+
+    /// `hcp_range_reachable` is exactly the `hcp_bounds` cross-check on non-empty sets, and
+    /// `false` on the empty set.
+    #[test]
+    fn hcp_range_reachable_matches_hcp_bounds() {
+        let mut sets = vec![
+            ShapeSet::ALL,
+            ShapeSet::BALANCED,
+            ShapeSet::SEMI_BALANCED,
+            ShapeSet::from_suit_len(Suit::Spades, 5, 13),
+            ShapeSet::from_suit_len(Suit::Clubs, 9, 13),
+            ShapeSet::from_suit_len(Suit::Hearts, 0, 1),
+        ];
+        sets.extend(SHAPES.iter().map(|&s| ShapeSet::EMPTY.insert(s)));
+        // A few pseudo-random subsets (a fixed LCG, so the test is deterministic).
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        for _ in 0..64 {
+            let mut w = [0u64; 9];
+            for word in &mut w {
+                x = x
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                *word = x & (x >> 17);
+            }
+            w[8] &= (1u64 << 48) - 1;
+            sets.push(ShapeSet::from_words(w).unwrap());
+        }
+        for set in sets {
+            let (min, max) = set.hcp_bounds();
+            for lo in 0..=40u8 {
+                for hi in lo..=40u8 {
+                    let want = !set.is_empty() && !(lo > max || hi < min);
+                    assert_eq!(set.hcp_range_reachable(lo, hi), want, "{lo}..={hi}");
+                }
+            }
+        }
+        for lo in 0..=40u8 {
+            assert!(!ShapeSet::EMPTY.hcp_range_reachable(lo, 40));
+        }
+    }
+
+    /// `holding_hcp_in` keeps exactly the shapes whose `[Σ MIN_HCP, Σ MAX_HCP]` interval meets
+    /// `lo..=min(hi, 37)`.
+    #[test]
+    fn holding_hcp_in_matches_per_shape_intervals() {
+        for lo in 0..=40u8 {
+            for hi in 0..=40u8 {
+                let want = ShapeSet::filter(|s| {
+                    let min = hcp_bound(s, &MIN_HCP);
+                    let max = hcp_bound(s, &MAX_HCP);
+                    let hi = hi.min(37);
+                    lo <= hi && lo <= max && hi >= min
+                });
+                assert_eq!(ShapeSet::ALL.holding_hcp_in(lo, hi), want, "{lo}..={hi}");
+                assert_eq!(
+                    ShapeSet::BALANCED.holding_hcp_in(lo, hi),
+                    want.intersect(ShapeSet::BALANCED)
+                );
+            }
+        }
     }
 }
