@@ -34,6 +34,7 @@ pub trait Proposal: Send + Sync {
 pub trait PreparedProposal {
     fn propose(&self, rng: &mut dyn Rng) -> Option<Deal>;   // None = 棄却された試行
     fn log_prob(&self, deal: &Deal) -> f64;                 // ln π(deal)。支持集合外は −∞
+    fn pilot_attempts(&self) -> u64 { 0 }                   // 準備中に引いた提案の数（§6.5 のパイロット）
 }
 ```
 
@@ -74,9 +75,10 @@ pub enum Threads { Auto, Single }
 
 pub struct SampleReport {
     pub requested: usize, pub produced: usize, pub attempts: u64,
+    pub pilot_attempts: u64,            // 準備中に引いた提案（§6.5 のパイロット 128 回、なければ 0）。attempts・予算・受理率には入れない
     pub acceptance_rate: f64,           // produced / attempts
     pub ess: f64, pub ess_ratio: f64,   // ess / requested
-    pub ess_per_attempt: f64,           // ess / attempts。棄却する提案の棄却分も数える比較用の指標
+    pub ess_per_attempt: f64,           // ess / (attempts + pilot_attempts)。棄却分とパイロットも数える比較用の指標
     pub log_weight_max: f64,
     pub budget_exhausted: bool,         // n 件そろう前に試行予算を使い切った
     pub elapsed: Duration,
@@ -107,7 +109,7 @@ pub fn sample_deals(ctx: &SampleContext<'_>, proposal: &dyn Proposal, n: usize, 
 2. スロット `i = 0, 1, 2, …` を **`n` 個ずつのチャンク** で処理する。スロット `i` は `rng = rng_for(opts.seed, i)` だけを使い、最大 `max_attempts_per_sample` 回 `propose` を試し、得られた `deal` に `log_prob` を呼ぶ。`(deal, ln π)` に対し §3 の `ln L` を計算し、有限なら `WeightedDeal { deal, log_weight: ln L − ln π }` をスロットの結果とする。`−∞` は棄却として数え、次の試行に進む。
 3. 各チャンクの `n` 件のスロット結果を **スロット順に** たたみ込み、`deals.len()` が `n` に達した時点でそのチャンクの残りのスロットは `attempts` にも `deals` にも加えない（採用されない配牌の試行回数で `attempts`/`acceptance_rate` を水増ししないため）。試行予算も同じくスロット順に適用し、`attempts` が予算 `n × max_attempt_factor` に達したスロットでたたみ込みを止める（報告される `attempts` が予算を超えるのは最後のスロットの `max_attempts_per_sample` 回まで）。`produced < n` のまま予算に達したら `budget_exhausted = true` と `SampleWarning::BudgetExhausted` を報告する。次のチャンクを起動するかどうかの判定（`produced ≥ n` または `attempts ≥ n × max_attempt_factor` なら停止）はチャンク境界で行うが、この判定はチャンク単位の集計値 `produced`/`attempts` を見るだけで、どのスロットがそのチャンクの「余剰」かはスロット順（スレッド数に依らない）だけで決まるので、結果は依然としてスレッド数に依らない。
 4. スロット順に最初の `n` 件を採用する（手順3により `deals.len()` は `n` を超えない）。
-5. §3.2 の式で `ess` を計算し、`SampleReport` を組み立てる。`tracing::info!(requested, produced, attempts, acceptance_rate, ess, ess_ratio, ess_per_attempt, log_weight_max, budget_exhausted, elapsed_us)` を **常時 INFO** で出す（仕様 §9: ESS 報告は性能問題の一次診断情報）。メッセージは `"deal sampling finished"`。フィールドが返り値の `SampleReport` と一致することは `tests/tracing_info.rs` が最小の `tracing::Subscriber` で確認する（5.3）。
+5. §3.2 の式で `ess` を計算し、`SampleReport` を組み立てる。`tracing::info!(requested, produced, attempts, pilot_attempts, acceptance_rate, ess, ess_ratio, ess_per_attempt, log_weight_max, budget_exhausted, elapsed_us)` を **常時 INFO** で出す（仕様 §9: ESS 報告は性能問題の一次診断情報）。メッセージは `"deal sampling finished"`。フィールドが返り値の `SampleReport` と一致することは `tests/tracing_info.rs` が最小の `tracing::Subscriber` で確認する（5.3）。
 
 ---
 
@@ -255,7 +257,7 @@ q(h) = (1 − π_L) · Σ_{i: 残した代替, h ∈ C_i} v_i(P_k) / cnt_i(P_k) 
 
 ### 6.5 残差棄却と試行予算（フェーズ 4）
 
-最後の席 `σ_m` は残りのカードをそのまま受け取るので、その席の尤度の因子は重みにそのまま残る（フェーズ 5.3 の分析で、最後の席が最悪の席になるのは 50 件中 26 件、§10.2）。`ConstraintProposal::residual_rejection`（既定 `true`）は、最後の席の手 `h` を確率
+最後の席 `σ_m` は残りのカードをそのまま受け取るので、その席の尤度の因子は重みにそのまま残る（フェーズ 5.3 の分析で、最後の席が最悪の席になるのは 50 件中 26 件、§10.2）。`ConstraintProposal::residual_rejection`（既定 `false`、下の「既定値の決め方」）は、最後の席の手 `h` を確率
 
 ```text
 a(h) = min(1, m(h) / T)、m(h) = Σ_{i: h ∈ C_{σ_m,i}} w_i
@@ -269,9 +271,14 @@ a(h) = min(1, m(h) / T)、m(h) = Σ_{i: h ∈ C_{σ_m,i}} w_i
 2. 固定の乱数列（`rng_for(0x9E51_D0A1_0000_0001, 0)`）で残差棄却なしの提案を 128 回引いたパイロットで見た `m` の最大値。これより上ではパイロットの重みはすでに平ら。`T` は文脈の決定的な関数になる。
 3. パイロットの平均受理率が `residual_min_acceptance`（既定 0.5）まで下がる `T`（対数領域の二分法）。重い代替にめったに入らない最後の席で試行予算を使い切らないため。
 
-棄却された試行は通常の棄却として数え、`SampleOptions` の試行予算（既定 `20n`）に算入し、`acceptance_rate` と `ess_per_attempt` に現れる。棄却された試行は `log_prob` と尤度を計算しないので、生成された配牌より安い。
+棄却された試行は通常の棄却として数え、`SampleOptions` の試行予算（既定 `20n`）に算入し、`acceptance_rate` と `ess_per_attempt` に現れる。棄却された試行は `log_prob` と尤度を計算しないので、生成された配牌より安い。パイロットの 128 回は `SampleReport::pilot_attempts`（`PreparedProposal::pilot_attempts`）として報告し、`ess_per_attempt = ess / (attempts + pilot_attempts)` に算入する（試行予算と `acceptance_rate` には入れない）。n = 1000 では試行あたり ESS が約 7 % 下がり、n = 100 のリード助言ではほぼ半分になる。
 
-**既定値の決め方（計画の手順 6）.** 有効サンプル 1 個あたりの時間で決める。ESS スイートのチューニング集合（§10.2 の続き）で受理率の下限を掃引すると（B の最新のマージ前）、下限 0.125 / 0.3 / 0.4 / 0.5 / 0.6 で ESS/n の中央値 0.88 / 0.78 / 0.66 / 0.60 / 0.51、サンプリング時間は棄却なしの 4.8 / 3.2 / 2.4 / 1.9 / 1.7 倍、有効サンプルあたりの時間は 2.5 / 1.9 / 1.5 / 1.3 / 1.3 倍だった（loadavg 7.7〜8.2）。2 倍以内に収まる最小の下限 0.5 を既定にした。評価用の固定ケースでは当時 ESS/n 0.7345（生成 0.9103、コーパス 0.6400）、有効サンプルあたりの時間は棄却なしの 0.95〜1.12 倍で、棄却なしとほぼ同じ時間で ESS/n が 0.42 から 0.73 に上がるので既定で有効にした。B の最新のマージ後も ESS/n 0.8258（棄却なし 0.5171）、予算切れ 0 件、サンプリング時間 1.9 倍、有効サンプルあたり 1.36 倍で、2 倍以内に収まる（§10.2 の続き）。配牌 1 つごとに DD 解析が走るリード助言（14-lead.md）は、より低い下限 0.125（`bridge_lead::lead_proposal()`）を使う。
+**既定値の決め方（計画の手順 6、D20）.** 有効サンプル 1 個あたりの壁時計時間が棄却なしより下がる場合に限り既定で有効にする。判断はチューニング集合（`ESS_SUITE_MODE=tune`）で行い、評価用の固定ケースは確認にだけ使う。
+
+- 下限の掃引（チューニング集合、B の最新のマージ前、loadavg 7.7〜8.2）: 下限 0.125 / 0.3 / 0.4 / 0.5 / 0.6 で ESS/n の中央値 0.88 / 0.78 / 0.66 / 0.60 / 0.51、サンプリング時間は棄却なしの 4.8 / 3.2 / 2.4 / 1.9 / 1.7 倍、有効サンプルあたりの時間は 2.5 / 1.9 / 1.5 / 1.3 / 1.3 倍。どの下限でも有効サンプルあたりの時間は悪化する。
+- 現行のコード（固定ケース再生成後、下限 0.5、`ESS_SUITE_THREADS=1` の単一スレッド計測、各 3 回）: チューニング集合で ESS/n 0.7492（棄却なし 0.5443）、サンプリング時間 1.56〜1.61 倍、有効サンプルあたり 1.16〜1.21 倍（loadavg 14.9〜15.4）。評価用固定ケースでも 1.68〜1.75 倍 / 1.20〜1.25 倍（loadavg 15.4〜16.1）。並列の既定（`Threads::Auto`）では 1 ケース約 10 ms の計測が負荷で揺れ、比が 0.66〜1.23 倍まで散るので、判断には単一スレッドの値を使う。試行あたり ESS も棄却なしより低い（評価用 0.5170 対 0.5702）。
+
+したがって **既定は無効**（`residual_rejection: false`）。ESS の完了条件（§10.2 の続き）は棄却なしで満たす。以前の版はこの規則ではなく「サンプリング時間が 2 倍以内」で下限 0.5 を選び既定で有効にしていたが、それは計画の規則と違い、しかも古い固定ケース（生成 25 件中 16 件が現行の方策から外れていた）で ESS を過小に見積もった結果だった。配牌 1 つごとに DD 解析が走るリード助言（14-lead.md）では、提案 1 回よりも生成された配牌 1 つのほうがはるかに高いので、棄却を有効にし、下限も 0.125 まで下げる（`bridge_lead::lead_proposal()`）。`residual_min_acceptance` の既定 0.5 は、有効にしたときの試行を配牌 1 つあたり約 2 回に抑える値として残す。
 
 **残した改善案.** 最後の 2 席を同時に引く（最後の席の格子制約を 1 つ前の席の提案に移す）と、棄却なしで残差の分散を消せる可能性がある。未実装。
 
@@ -320,7 +327,7 @@ pub fn rng_for(master: u64, index: u64) -> SampleRng {
 | `lib.rs` | 再エクスポート（`bridge_constraint::KnownCards` を含む）、`SampleError`、`sample_deals`（チャンク駆動、`parallel` 分岐、tracing） |
 | `proposal.rs` | `Proposal`、`PreparedProposal`、`SampleContext`、`BiddingLikelihood` |
 | `uniform.rs` | `UniformProposal`、`ln_factorial`、`bounded`、Fisher-Yates |
-| `constraint_proposal.rs` | `ConstraintProposal { max_retries: 16, residual_rejection: true, residual_min_acceptance: 0.5, light_threshold: 1e-2 }`、§6（prepare / propose / log_prob、席順、(c) の格子要約、(d) の畳み込み、§6.5 の残差棄却） |
+| `constraint_proposal.rs` | `ConstraintProposal { max_retries: 16, residual_rejection: false, residual_min_acceptance: 0.5, light_threshold: 1e-2 }`、§6（prepare / propose / log_prob、席順、(c) の格子要約、(d) の畳み込み、§6.5 の残差棄却） |
 | `weights.rs` | `WeightedDeal`、`log_sum_exp`、`effective_sample_size`、`normalized_weights` |
 | `rng.rs` | `SampleRng`、`splitmix64`、`rng_for` |
 | `report.rs` | `SampleOptions`、`Threads`、`SampleReport`、`SampleWarning` |
@@ -339,7 +346,9 @@ pub fn rng_for(master: u64, index: u64) -> SampleRng {
 | `middle_seat_light_tier_log_prob_consistency` | `tests/log_prob.rs` | 同じ文脈で `light_threshold = ∞`（最も重い代替以外をすべて §6.4 (d) の一様成分に畳み込む） | 同上 |
 | `residual_log_prob_adds_ln_acceptance` | `tests/residual.rs` | 未知 8 枚・最後の席が `Sampled` の小さい文脈（重なる代替 / 互いに素な代替の 2 通り）を全列挙し、残差棄却ありの `log_prob` が「なし + `ln(m(h)/T)`」に等しいこと、`T` が §6.5 の上界 `U` に等しいこと | 差 < 1e-9 |
 | `residual_proposals_match_log_prob` | `tests/residual.rs` | 同じ文脈で残差棄却ありの 4000 提案の受理率と配牌ヒストグラムを `exp(log_prob)` と χ² 比較 | 棄却されない（有意水準 0.01） |
-| `weighted_estimates_are_unbiased` | `tests/residual.rs` | 同じ文脈で `sample_deals`（n = 6000、残差棄却あり / なし）の自己正規化重み付き推定（ハートとダイヤのエースの持ち主、9 区分）を厳密な事後分布と比較する Wald χ²（共分散は SNIS のデルタ法） | p > 0.01 |
+| `weighted_estimates_are_unbiased` | `tests/residual.rs` | 同じ文脈と下の切り詰め + 粗化の文脈で `sample_deals`（n = 6000、残差棄却あり / なし）の自己正規化重み付き推定（ハートとダイヤのエースの持ち主、9 区分）を厳密な事後分布と比較する Wald χ²（共分散は SNIS のデルタ法） | p > 0.01 |
+| `clipped_threshold_with_coarsened_middle_seat_is_exact` | `tests/residual.rs` | 多くの実ケースが通る経路: 最後の席（西: 赤のエース 2 枚 0.9 + `ANY` 0.1）のパイロット受理率が `U` で下限 0.5 を割り、`T` が二分法で `min m < T < max m` に決まって重い手では `a(h)` が 1 に切り詰められる。再 prepare される南は `cards` リテラル（ハートのキング）を粗化で落とされ、軽い `ANY` 代替が §6.4 (d) で一様成分に畳み込まれる。全列挙で `log_prob` の差 = `ln a`、下限付近の受理率、提案のプール付き χ² | 差 < 1e-9、棄却されない |
+| `residual_pilot_is_charged_to_ess_per_attempt` | `tests/residual.rs` | 残差棄却ありでは `pilot_attempts == 128` で `ess_per_attempt = ess / (attempts + 128)`、なしでは 0 | |
 | `attempt_budget_is_honoured_and_reported` | unit（`lib.rs`） | ほとんど受理しない提案で、総試行数が予算 `20n` を 1 スロット分以内で守り、`budget_exhausted` と `BudgetExhausted` を報告すること。予算内で終わる実行はどちらも報告しない | |
 | `log_prob_matches_the_unmerged_reference` | unit（`constraint_proposal.rs`） | 実 SAYC に似た 4 席の文脈で、併合・`ANY` 直接配り・§6.4 (d) の畳み込み・§6.5 の残差棄却・スレッドローカルキャッシュを使う `log_prob` を、要約を 1 つずつ毎回 prepare する参照実装と比較（提案配牌と一様配牌の両方） | 差 < 1e-9、支持集合一致 |
 | `fold_fallback_matches_the_reference` | unit（`constraint_proposal.rs`） | 北が 4 枚の 2 を持つか 22 点以上、南（再 prepare）が 19 点以上 + 畳み込まれる `ANY` の文脈で、畳み込みの混合とフォールバックの両方が 50 回以上起き、どちらでも `log_prob` が参照実装と一致すること | 差 < 1e-9 |
@@ -350,10 +359,11 @@ pub fn rng_for(master: u64, index: u64) -> SampleRng {
 | `empty_support_early_return` | unit | 矛盾する `play_constraints` | `Err(SampleError::EmptySupport)`、試行 0 回 |
 | `seat_fallback_warns` | unit | ある席の解釈代替がすべて既知カードと矛盾 | `SampleWarning::EmptySupport { seat }`、その席は `ANY` で配られ `produced == n` |
 | `uniform_vs_constraint_ess` | `tests/ess.rs`、`#[ignore]` | 手組みの合成解釈（`bidding = None`）での比較 | 報告のみ |
-| `uniform_vs_constraint_ess_suite` | `tests/ess_suite.rs`、`#[ignore]`、release | 固定ケース `tests/data/ess_cases.txt` の 50 オークション（SAYC の `replay` 25 + コーパスの評価分割 25）× n = 1000、実ビディング尤度（生成は `system_players`、コーパスは `human`）、既知 = オープニングリーダーの手。一様・残差棄却なし・残差棄却ありの 3 通りについて ESS/n、試行あたり ESS、受理率、予算切れ、時間、loadavg を `target/ess_report.json` に出す（11-testing.md §13） | 残差棄却ありで ESS/n の中央値 ≥ 0.5（全体と生成）、予算切れ ≤ 2 件、既定の提案の試行あたり ESS ≥ 0.35（達成、§10.2 の続き）。時間比は負荷に左右されるので表示のみ |
+| `uniform_vs_constraint_ess_suite` | `tests/ess_suite.rs`、`#[ignore]`、release | 固定ケース `tests/data/ess_cases.txt` の 50 オークション（SAYC の `replay` 25 + コーパスの評価分割 25）× n = 1000、実ビディング尤度（生成は `system_players`、コーパスは `human`）、既知 = オープニングリーダーの手。一様・残差棄却なし・残差棄却ありの 3 通りについて ESS/n、試行あたり ESS、受理率、予算切れ、時間、loadavg を `target/ess_report.json` に出す（11-testing.md §13） | 既定の提案（残差棄却なし）で ESS/n の中央値 ≥ 0.5（全体と生成）、コーパス ≥ 0.4、予算切れ ≤ 2 件、試行あたり ESS ≥ 0.35（達成、§10.2 の続き）。残差棄却ありは並べて報告する。時間比（サンプリング時間と有効サンプルあたりの時間）は負荷に左右されるので表示のみ（`ESS_SUITE_THREADS=1` で単一スレッド計測） |
 | `ess_fixture_parses` | `tests/ess_suite.rs` | 固定ケースが 25 + 25 件の完結したオークションと完全な配牌に読めること | |
+| `ess_fixture_generated_cases_are_on_policy` | `tests/ess_suite.rs` | 固定ケースの生成 25 件の各コールを、配牌の実際の手が現行の方策（`system_players`、ナチュラルの予備）で `p ≥ 0.01` で選ぶこと。SAYC や方策の変更で外れたら `ESS_SUITE_WRITE_FIXTURE=1` で固定し直す | 外れたコール 0 |
 | `sample_deals_emits_the_info_line_with_ess` | `tests/tracing_info.rs` | 最小の `tracing::Subscriber` で INFO 行を記録 | INFO 行が 1 本出て、`ess` / `ess_ratio` / `requested` / `produced` が `SampleReport` と一致 |
-| `deals_bench` | `benches/deals.rs` | criterion、制約付き完全配牌。実 SAYC の 3 ケースは鏡像の解釈と `system_players` の方策尤度で、既定（残差棄却あり）と `single_thread_plain`（なし）の両方 | ≥ 10^4 配牌 / 秒 / コア（既定で達成、§10.2 の続き） |
+| `deals_bench` | `benches/deals.rs` | criterion、制約付き完全配牌。実 SAYC の 3 ケースは鏡像の解釈と `system_players` の方策尤度で、既定（`single_thread`、残差棄却なし）と `single_thread_residual`（あり、下限 0.5）の両方 | ≥ 10^4 配牌 / 秒 / コア（両方で達成、§10.2 の続き） |
 
 実装順（計画 §12）: 2.8 骨格（`UniformProposal`、`WeightedDeal`、ESS、`SampleReport`、`rng_for`、`parallel` + 決定性テスト。`bridge-core` と `KnownCards` だけで書ける）→ 5.2 `ConstraintProposal`（`log_prob` χ²）→ 5.3 `sample_deals` + ビディング尤度 + tracing（ESS スイート）→ 5.4 ベンチ + プロファイル（§6.4 の (a)(b)(c) を選ぶ）。
 
@@ -507,23 +517,23 @@ pub fn rng_for(master: u64, index: u64) -> SampleRng {
 
 教訓: 排他（締まり）は必要だがそれだけでは足りない。片の重みを方策の密度に較正して初めて、件数比例の成分抽選が `q ∝ L` を与える。
 
-**最終値（このレーン、B の最新のマージと畳み込みのフォールバックの後、評価用固定ケース、n = 1000、release）.** ケースは `tests/data/ess_cases.txt`（生成 25 は deal seed `0x5A7C_0005_0003` の `replay`、コーパス 25 は D20 の評価分割 = `corpus_auctions` の列挙で奇数番目から等間隔に。暫定版で、S と D の SAYC 変更が入った統合時に `ESS_SUITE_WRITE_FIXTURE=1` で固定し直す）。
+**最終値（このレーン、B の最新のマージと畳み込みのフォールバックの後、固定ケースの再生成後、評価用固定ケース、n = 1000、release）.** ケースは `tests/data/ess_cases.txt`（生成 25 は deal seed `0x5A7C_0005_0003` の `replay`、コーパス 25 は D20 の評価分割 = `corpus_auctions` の列挙で奇数番目から等間隔に）。最初の版は S の自然なレベル下限とフェーズ 4.6 のナチュラルの調整が B から入る前に作ったもので、生成 25 件中 16 件に、配牌の実際の手が現行の方策では `p < 0.01` でしか選ばないコールが残っていた（生成分は「方策どおり」の集合のはずなので、ESS を過小に見積もる）。`ESS_SUITE_WRITE_FIXTURE=1` で再生成し（生成 21 行が変わり、コーパス分は不変）、今は生成 25 件すべてで外れたコールは 0。`ess_fixture_generated_cases_are_on_policy`（非 ignore）が、SAYC や方策の変更で固定ケースが古くなったことを検出する。D の SAYC 変更が入った統合時にこのテストが落ちたら、もう一度固定し直す。
 
-| 提案 | ESS/n（全体 / 生成 / コーパス） | 試行あたり ESS | 受理率（中央値 / 最小） | 予算切れ | ≥ 0.5 の件数 |
+| 提案 | ESS/n（全体 / 生成 / コーパス） | 試行あたり ESS（パイロット込み） | 受理率（中央値 / 最小） | 予算切れ | ≥ 0.5 の件数 |
 | --- | --- | --- | --- | --- | --- |
-| `UniformProposal` | 0.0040 / 0.0040 / 0.0031 | 0.0040 | 1 / 1 | 0 | 0 |
-| 残差棄却なし | 0.5171 / 0.4568 / 0.5709 | 0.5171 | 1.000 / 0.957 | 0 | 26 |
-| 残差棄却あり、下限 0.5（既定） | **0.8258 / 0.8711 / 0.8201** | 0.5154 | 0.598 / 0.440 | 0 | 40 |
-| 残差棄却あり、下限 0.125（リード助言） | 0.9160 / 0.9250 / 0.8979 | 0.5154 | 0.598 / 0.116 | 0 | 46 |
+| `UniformProposal` | 0.0030 / 0.0030 / 0.0031 | 0.0030 | 1 / 1 | 0 | 0 |
+| 残差棄却なし（既定） | **0.5702 / 0.5695 / 0.5709** | **0.5702** | 1.000 / 0.957 | 0 | 29 |
+| 残差棄却あり、下限 0.5 | 0.8420 / 0.8934 / 0.8201 | 0.5170 | 0.628 / 0.430 | 0 | 37 |
+| 残差棄却あり、下限 0.125（リード助言） | 0.9157 / 0.9399 / 0.8979 | 0.5170 | 0.628 / 0.110 | 0 | 43 |
 
-既定のサンプリング時間は棄却なしの 1.90〜1.91 倍、有効サンプルあたりの時間は 1.35〜1.36 倍（3 回、loadavg 7.0〜7.5）。下限 0.125 では 3.5 倍 / 2.1 倍（loadavg 10.2）。スイート全体は 0.9 秒。チューニングモードでは既定が 0.7492（生成 0.7504、コーパス 0.7284）、棄却なしが 0.5443、1.62 倍 / 1.21 倍。B のマージ前の値（棄却なし 0.4247 / 0.5262 / 0.4178、既定 0.7345 / 0.9103 / 0.6400）から上がったのは、主に B の方策と鏡像の変更による。チューニングモード（`ESS_SUITE_MODE=tune`: 別の deal seed と、コーパスのチューニング分割）での下限の掃引は §6.5 に記した。
+完了条件（ESS/n ≥ 0.5 を全体と生成で、コーパス ≥ 0.4、予算切れ ≤ 2 件、試行あたり ESS ≥ 0.35）は既定の提案（残差棄却なし）で満たす。単一スレッド（`ESS_SUITE_THREADS=1`）で、残差棄却あり（下限 0.5）は棄却なしに対しサンプリング時間 1.68〜1.75 倍、有効サンプルあたりの時間 1.20〜1.25 倍（3 回、loadavg 15.4〜16.1）、下限 0.125 では 5.0〜5.2 倍 / 3.1〜3.2 倍（2 回、loadavg 6.9〜7.3）。スイート全体は単一スレッドで約 3 秒。チューニングモードでは棄却なしが 0.5443（生成 0.3910、コーパス 0.6277）、下限 0.5 が 0.7492（生成 0.7504、コーパス 0.7284）、1.56〜1.61 倍 / 1.16〜1.21 倍（loadavg 14.9〜15.4）。チューニング集合の生成分は棄却なしで 0.39 と評価用より低く、生成ケースの ESS は 25 件の選び方でかなり揺れる。B のマージ前の値（棄却なし 0.4247 / 0.5262 / 0.4178）から上がったのは、主に B の方策と鏡像の変更と固定ケースの再生成による。チューニングモード（`ESS_SUITE_MODE=tune`: 別の deal seed と、コーパスのチューニング分割）での下限の掃引と既定の決定は §6.5 に記した。
 
 **スループット（`deals/sayc/*/single_thread`、1 反復 = 1,000 配牌、3 回の最良値）.** 鏡像の解釈と `system_players` の方策尤度（B の `AuctionPolicy` で 1 配牌 0.1〜0.2 μs）で:
 
-| ケース | 残差棄却なし | 既定（残差棄却あり） | loadavg |
+| ケース | 既定（残差棄却なし） | 残差棄却あり（下限 0.5、`single_thread_residual`） | loadavg |
 | --- | --- | --- | --- |
-| `stayman_to_3nt` | 29.3 K/秒（(d) の前は 7.1 K/秒） | 22.8 K/秒 | 6.2〜16.2 |
-| `competitive_raise_to_4s` | 30.4 K/秒（同 9.6 K/秒） | 17.8 K/秒 | 同 |
-| `four_seat_competitive` | 29.2 K/秒（同 14.2 K/秒） | 14.8 K/秒 | 同 |
+| `stayman_to_3nt` | 28.4 K/秒（(d) の前は 7.1 K/秒） | 19.1 K/秒 | 7.6〜12.0 |
+| `competitive_raise_to_4s` | 30.0 K/秒（同 9.6 K/秒） | 19.0 K/秒 | 同 |
+| `four_seat_competitive` | 28.4 K/秒（同 14.2 K/秒） | 13.8 K/秒 | 同 |
 
-目標 10^4 配牌/秒/コアは 3 ケースとも達成。ビディング尤度は B の `AuctionPolicy` で配牌あたりほぼ 0 になり、残りは再 prepare される中間席の `Sampler::prepare` で、(d) がその大半を消した。既定の数値は残差棄却の棄却分とパイロット（128 回）を含む。負荷が高い時間帯の計測なので、統合時に静かなマシンで取り直すこと。
+目標 10^4 配牌/秒/コアは 3 ケースとも、棄却の有無どちらでも達成。ビディング尤度は B の `AuctionPolicy` で配牌あたりほぼ 0 になり、残りは再 prepare される中間席の `Sampler::prepare` で、(d) がその大半を消した。残差棄却ありの数値は棄却分とパイロット（128 回）を含む。負荷が高い時間帯の計測なので、統合時に静かなマシンで取り直すこと。
