@@ -17,9 +17,21 @@
 mod common;
 
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use bridge_system::CompileOptions;
+
+/// Serialises the timed SAYC tests of this binary. The test harness runs them on parallel
+/// threads by default, and a second SAYC compile on another core pushed the release
+/// `compiling_sayc_is_fast` past its 1 s budget at loadavg ~5 (1.01-1.07 s, 2 runs in 3).
+static SAYC_TIMING: Mutex<()> = Mutex::new(());
+
+fn sayc_timing_lock() -> MutexGuard<'static, ()> {
+    SAYC_TIMING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Compiles `path`, reports the elapsed time, and -- only in a `--release` build -- asserts it
 /// stayed under the 1 second budget. Returns `None` (nothing measured) when `compile_guarded`
@@ -88,6 +100,7 @@ fn compiling_the_largest_real_system_is_fast() {
 
 #[test]
 fn compiling_sayc_is_fast() {
+    let _serial = sayc_timing_lock();
     let opts = CompileOptions::default();
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../systems/sayc/sayc.bml");
     assert!(
@@ -97,12 +110,15 @@ fn compiling_sayc_is_fast() {
     );
 }
 
-/// A coarse release-only guard on SAYC's exclusive-index build (the phase-4 criterion is
-/// <= 15 ms, measured 12-15 ms best of 3 depending on load; the pasted-chain SAYC took 45 ms):
-/// best of 3 must stay under 30 ms, which catches an order-of-magnitude regression without
-/// flaking on a loaded machine. A debug build builds the index once and asserts nothing.
+/// A coarse release-only guard on SAYC's exclusive-index build (the lane-S criterion was
+/// <= 15 ms, met at 12-15 ms by the stop-default SAYC; lane D2's thickened SAYC, about 9,700
+/// nodes, measures 18-19 ms best of 3 at loadavg ~4; the pasted-chain SAYC took 45 ms): best of
+/// 3 must stay under 30 ms, which catches an order-of-magnitude regression without flaking on a
+/// loaded machine. A debug build builds the index once and asserts nothing. Holds the SAYC
+/// timing lock so that its own compile never overlaps `compiling_sayc_is_fast`.
 #[test]
 fn sayc_exclusive_index_build_is_bounded() {
+    let _serial = sayc_timing_lock();
     let opts = CompileOptions::default();
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../systems/sayc/sayc.bml");
     let ir = common::compile_guarded(&path, &opts).expect("sayc.bml compiles");
@@ -130,6 +146,7 @@ fn sayc_exclusive_index_build_is_bounded() {
 #[test]
 #[ignore = "timing; run in release with --ignored --nocapture"]
 fn sayc_exclusive_index_share() {
+    let _serial = sayc_timing_lock();
     let opts = CompileOptions::default();
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../systems/sayc/sayc.bml");
     let mut compile_best = Duration::MAX;
