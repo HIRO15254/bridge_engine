@@ -57,6 +57,9 @@
 //! summary or the residual seat); and how many calls the deal's own hands make off-policy
 //! (09-sample.md §10.2).
 //!
+//! `ESS_SUITE_THREADS=1` samples on a single thread, for timings that are less sensitive to
+//! the machine's load (the deals and ESS do not change).
+//!
 //! `ESS_SUITE_CASES=a..b` runs only case indices `a..b` (0-24 generated, 25-49 corpus) so the
 //! suite can be split into shorter runs; the criterion is only asserted when all cases ran.
 //!
@@ -570,7 +573,7 @@ fn run_case(table: &Table, case: &Case, known_none: bool, seed: u64, breakdown_o
     };
     let opts = SampleOptions {
         seed,
-        threads: Threads::Auto,
+        threads: threads(),
         ..SampleOptions::default()
     };
     let run = |proposal: &dyn Proposal| {
@@ -714,6 +717,17 @@ fn case_range() -> core::ops::Range<usize> {
     let a: usize = a.trim().parse().expect("ESS_SUITE_CASES start");
     let b: usize = b.trim().parse().expect("ESS_SUITE_CASES end");
     a..b.min(total)
+}
+
+/// `ESS_SUITE_THREADS=1` samples every case on a single thread (the deals and ESS are the same;
+/// only the timings change, and single-threaded they are far less sensitive to the machine's load
+/// than the parallel default).
+fn threads() -> Threads {
+    if std::env::var("ESS_SUITE_THREADS").is_ok_and(|v| v == "1") {
+        Threads::Single
+    } else {
+        Threads::Auto
+    }
 }
 
 /// The residual variant's `residual_min_acceptance`: `ESS_SUITE_RESIDUAL_MIN_ACCEPTANCE`, else
