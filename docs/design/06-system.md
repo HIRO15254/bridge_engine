@@ -1093,6 +1093,7 @@ pub struct CallContext {
     pub partner_actions: u8,                    // number of partner's non-pass calls so far
     pub partner_first_action: Option<Call>,     // partner's first non-pass call
     pub partner_first_jump: u8,                 // levels skipped by that call when it is a bid (0 otherwise)
+    pub their_bids: u8,                         // bids (not P/X/XX) the opponents have made so far
 }
 
 /// System-independent classification of auction[index] as made by `owner`; unit-testable.
@@ -1136,8 +1137,8 @@ impl Default for NaturalInference { /* NaturalParams::default() */ }
 | `open_2c` | `Opener`, `2C` | `hcp ≥ strong_two_c` (シェイプなし) | 0.5 |
 | `open_preempt` | `Opener`, `level 3..=5`, スート | `suit_len[s] ≥ preempt[L].1` ∧ `hcp = preempt[L].2` | 0.55 (旧 0.5) |
 | `open_pass` | `Opener` の席の `Pass` (パス済みでない、かつまだ誰もビッドしていない: `last_bid == None`。オープナーの後のパスはここに来ない) | `hcp ≤ opening_hcp.start − 1` | 0.45 (旧 0.5。`open_weak2` より下に置く。§8.6 の「レビュー後の修正」) |
-| `overcall` | `Overcaller` の最初のアクション (`!owner_acted`), `new_suit` (相手スートのキュービッドを除く), `jump == 0` | `suit_len[s] ≥ overcall[l].0` ∧ `hcp = overcall[l].1` (`l` = 0: 1 レベル、1: 2 レベル以上); `Balancer` は下限に `balancing_shift` | 0.35 (旧 0.5) |
-| `jump_overcall` | `Overcaller` の最初のアクション, `new_suit`, `jump == 1` | `suit_len[s] ≥ overcall[2].0` ∧ `hcp = overcall[2].1` | 0.5 (旧 0.4) |
+| `overcall` | `Overcaller` の最初のアクション (`!owner_acted`), `new_suit` (相手スートのキュービッドを除く), `jump == 0`。相手が 2 回以上ビッドした後 (`their_bids ≥ 2`) は、相手のゲーム未満で 4 レベル以下 (§8.6「後の巡の制限」(1)) | `suit_len[s] ≥ overcall[l].0` ∧ `hcp = overcall[l].1` (`l` = 0: 1 レベル、1: 2 レベル以上); `Balancer` は下限に `balancing_shift`。相手の交換後の 4 レベルは `suit_len[s] ≥ 6` ∧ `hcp ≥ opening_hcp.start` (`Balancer` はその後で `balancing_shift`) | 0.35 (旧 0.5) |
+| `jump_overcall` | `Overcaller` の最初のアクション, `new_suit`, `jump == 1`, 3 レベル以下。相手の交換後の制限は `overcall` と同じ | `suit_len[s] ≥ overcall[2].0` ∧ `hcp = overcall[2].1` | 0.5 (旧 0.4) |
 | `nt_overcall` | `Overcaller` の最初のアクション, 最安の NT (`jump == 0`) で 2 レベル以下 (1 レベルのオープンに 1N、ウィーク・ツーに 2N) | `hcp = nt_overcall` ∧ `BALANCED` ∧ `Stopper(their suit)` | 0.6 |
 | `takeout_x` | `Double(Takeout)`: パートナー未ビッド、相手のスートが 2 レベル以下 | `hcp ≥ takeout_double.0` ∧ `suit_len[their] ≤ takeout_double.1` ∧ 未ビッドスート各 `≥ takeout_double.2` (未ビッドが 3 つ以上なら `Or` で 2 つ以上を要求) | 0.45 (旧 0.5) |
 | `penalty_x` | `Double(Penalty)`: パートナーの最後のビッドが NT、相手が NT または 4 レベル以上、または我々がスートを合意済み | `hcp ≥ 10` ∧ `suit_len[their] ≥ 4` | 0.3 |
@@ -1319,6 +1320,13 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
   - 文脈付きの定義では、同じ定義のフェーズ 3 の値 0.333 / 0.335 (全体 / 評価半分) に対して 0.429 / 0.4285 (+0.096 / +0.094) で満たす。4.6 の採用時点の「+0.086」は、文脈付きの値を旧定義の基準 0.329 と比べていたので、定義をそろえると +0.082 (全体) / +0.080 (評価半分) だった。
   - 旧定義は、下限が除外する手を引いて外れに数えるので、下限だけで −0.030 になる (上の注意)。レベル下限はリプレイの暴走を止めるために必要なので、下限を入れたまま評価する。
 - 実配牌一致率 (評価用分割) は、フェーズ 3 の 0.478 から 0.6175 に上がった (4.6 の採用時点では 0.618)。
+
+**後の巡の制限 (フェーズ 4 レーン D3、2026-09-30)。** `xtask coverage` の strict [G] は、SAYC に既定のパスしかない局面でナチュラル方策がパス以外を選ぶと、その生成オークションを逸脱に数える。逸脱の大半 (既定パスの上書き 276 件、228 オークション) を調べると、多くはナチュラル規則が最初の行動や最初のリビッド向けの範囲を、そのまま後の巡に当てはめたものだった。SAYC のプレーヤーなら、そこではパスするか、別の意味のコールをする。そこで、規則表の述語を次のように絞った。どの修正も、その局面で規則を発火させなくする (ナチュラル方策はパスする) か、範囲の下限を上げるだけである。最初の行動の制約は変わらない。回帰テストは `tests/natural_later_rounds.rs`。
+
+- (1) 相手が交換した後の参入 (`CallContext::their_bids ≥ 2`、`MAX_ENTRY_LEVEL_AFTER_EXCHANGE = 3`)。`overcall` と `jump_overcall` は、相手のオープンへの参入と、相手がビッドしてレイズした後のパートスコア争い (3 レベルまで) を記述する。
+  - 相手のゲーム (3NT、4M、5m 以上) の上では、どちらの規則も当たらない。例: `1S-P-3S-P-4S-P-P` の 5H (5 枚、7〜16 HCP) はナチュラルなオーバーコールではなく、サクリファイスかリード指示の賭けである。
+  - ゲーム未満の 4 レベルは、`systems/sayc/competing.bml` の競り合いの表と同じく、6 枚以上とオープニングの強さが要る (バランシング席では 3 少ない。`FOUR_LEVEL_ENTRY_MIN_LEN`)。ゲーム未満の 5 レベル以上 (`4C`/`4D` の上) は当たらない。
+  - `jump_overcall` は 3 レベルまで (`MAX_JUMP_OVERCALL_LEVEL`)。制約 `overcall[2]` はウィーク・ツーの手であり、4 レベルへのシングル・ジャンプ (`(2H)-4C`、`(1H)-P-(2NT)-4C`) はその手ではない。
 
 ---
 

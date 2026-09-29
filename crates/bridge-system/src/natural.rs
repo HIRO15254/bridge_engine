@@ -322,6 +322,9 @@ pub struct CallContext {
     /// Levels skipped by `partner_first_action` when it is a bid (0 otherwise), measured like
     /// [`CallKind::Bid::jump`] against the last bid before it.
     pub partner_first_jump: u8,
+    /// How many bids (not passes, doubles or redoubles) the opponents have made so far. Two or
+    /// more on a first entry means the opponents have exchanged bids (opener and responder).
+    pub their_bids: u8,
 }
 
 /// Classifies call `index` of `auction` from the point of view of its caller.
@@ -359,6 +362,7 @@ struct HistoryContext {
     partner_actions: u8,
     partner_first: Option<(usize, Call)>,
     partner_first_jump: u8,
+    their_bids: u8,
 }
 
 impl HistoryContext {
@@ -413,6 +417,12 @@ impl HistoryContext {
                 }
             }
         }
+        let their_bids = history
+            .iter()
+            .enumerate()
+            .filter(|&(i, c)| auction.seat_at(i).side() != owner.side() && c.is_bid())
+            .count()
+            .min(u8::MAX as usize) as u8;
         let partner_first_jump = match partner_first {
             Some((i, Call::Bid(b))) => {
                 let before = history[..i].iter().rev().find_map(|c| c.bid());
@@ -442,6 +452,7 @@ impl HistoryContext {
             partner_actions,
             partner_first,
             partner_first_jump,
+            their_bids,
         }
     }
 
@@ -501,6 +512,7 @@ impl HistoryContext {
             partner_actions: self.partner_actions,
             partner_first_action: self.partner_first.map(|(_, c)| c),
             partner_first_jump: self.partner_first_jump,
+            their_bids: self.their_bids,
         }
     }
 }
@@ -1255,10 +1267,70 @@ fn is_first_overcall(ctx: &CallContext) -> bool {
     matches!(ctx.role, Role::Overcaller | Role::Balancer) && !ctx.owner_acted
 }
 
+/// The highest level of an ordinary natural first entry once the opponents have exchanged bids
+/// ([`CallContext::their_bids`] >= 2).
+///
+/// The overcall rules describe entering over the opening, or competing for a partscore after
+/// the opponents have bid and raised (the three level in the balancing seat). Above that the
+/// generic ranges (five cards, 10-16 HCP, a king less in the balancing seat) are not a natural
+/// action any more:
+///
+/// - over the opponents' game (3NT, four of a major, five of a minor, or higher) after both of
+///   them have bid, a first entry is a sacrifice or a lead-directing gamble, not a natural
+///   overcall: five hearts and 7-16 HCP over their `1S-3S-4S` do not bid `5H`. No overcall
+///   rule fires, so the natural policy passes;
+/// - one level higher (a four-level entry below their game, over a raise to the three level or
+///   to four of a minor) the entry needs what SAYC's own competitive tables ask for there
+///   (`systems/sayc/competing.bml`): opening values and a six-card suit, a king less in the
+///   balancing seat ([`FOUR_LEVEL_ENTRY_MIN_LEN`]);
+/// - a first entry at the five level or higher below their game (over `4C`/`4D`) is not
+///   natural either.
+///
+/// docs/design/06-system.md §8.3 (`overcall`) and §8.6.
+pub const MAX_ENTRY_LEVEL_AFTER_EXCHANGE: u8 = 3;
+
+/// The minimum suit length of a four-level first entry after the opponents have exchanged
+/// bids (see [`MAX_ENTRY_LEVEL_AFTER_EXCHANGE`]).
+pub const FOUR_LEVEL_ENTRY_MIN_LEN: u8 = 6;
+
+/// The highest level of a natural jump overcall: the weak jump overcall is a two- or
+/// three-level preempt over their bid (`overcall[2]`: a weak-two hand). A jump to the four
+/// level or higher (`(1H)-P-(2NT)-4C`, `(3H)-P-(4NT)-6C`) is not a weak jump overcall.
+pub const MAX_JUMP_OVERCALL_LEVEL: u8 = 3;
+
+/// `true` when `bid` is a game contract or higher: 3NT, four of a major, five of a minor.
+fn is_game_or_higher(bid: Bid) -> bool {
+    let game = match bid.strain() {
+        Strain::NoTrump => 3,
+        Strain::Hearts | Strain::Spades => 4,
+        Strain::Clubs | Strain::Diamonds => 5,
+    };
+    bid.level() >= game
+}
+
+/// How the overcall rules apply to a first entry at `ctx.level` (see
+/// [`MAX_ENTRY_LEVEL_AFTER_EXCHANGE`]): `None` when no overcall rule applies, `Some(true)` for
+/// a four-level entry after the opponents' exchange (opening values and six cards), and
+/// `Some(false)` for the ordinary ranges.
+fn entry_after_exchange(ctx: &CallContext) -> Option<bool> {
+    if ctx.their_bids < 2 {
+        return Some(false);
+    }
+    if ctx.last_bid.is_some_and(is_game_or_higher) {
+        return None;
+    }
+    match ctx.level {
+        0..=MAX_ENTRY_LEVEL_AFTER_EXCHANGE => Some(false),
+        4 => Some(true),
+        _ => None,
+    }
+}
+
 fn rule_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if !is_first_overcall(ctx) {
         return None;
     }
+    let four_level = entry_after_exchange(ctx)?;
     // `new_suit` excludes a cue bid of the opponents' suit (which is `rule_cue`'s).
     let CallKind::Bid {
         nt: false,
@@ -1275,6 +1347,15 @@ fn rule_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infer
         &p.overcall[0]
     } else {
         &p.overcall[1]
+    };
+    let (min_len, hcp) = if four_level {
+        let from = (*hcp.start()).max(*p.opening_hcp.start());
+        (
+            &(*min_len).max(FOUR_LEVEL_ENTRY_MIN_LEN),
+            &(from..=*hcp.end().max(&from)),
+        )
+    } else {
+        (min_len, hcp)
     };
     let hcp = opener_or_balancer_hcp(p, ctx.role, hcp.clone());
     let constraint = HandConstraint::Atom(
@@ -1298,7 +1379,10 @@ fn rule_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infer
 }
 
 fn rule_jump_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
-    if !is_first_overcall(ctx) {
+    if !is_first_overcall(ctx)
+        || ctx.level > MAX_JUMP_OVERCALL_LEVEL
+        || entry_after_exchange(ctx).is_none()
+    {
         return None;
     }
     let CallKind::Bid {
