@@ -229,7 +229,8 @@ pub fn run_post_compile_checks(ir: &mut SystemIR, opts: &CompileOptions) {
 /// [`LintCode::StopUnderForcing`]: walks the trie from both roots, tracking whether our side's
 /// last call was forcing with the opponents passing since (`one_round`), and whether our side
 /// has made a game-forcing call and no bid at game level or higher followed (`gf`). At our turn
-/// with either pending, a stop pass among the candidates is reported once per trie position,
+/// with either pending, a stop pass among the candidates that some hand reaches (not shadowed
+/// in the exclusive index under at least one condition class) is reported once per position,
 /// anchored at the forcing call's row. An opponents' bid releases a one-round force; the
 /// wildcard edge a pass would take (no exact `Pass` edge, the first class admitting a pass) is
 /// followed as that pass (the stop is reached through it), any other is a call of unknown
@@ -238,7 +239,7 @@ pub fn run_post_compile_checks(ir: &mut SystemIR, opts: &CompileOptions) {
 fn check_stop_under_forcing(ir: &mut SystemIR) {
     use bridge_core::{Call, Strain};
 
-    use crate::{Forcing, trie::AuctionTrie, trie::TrieId};
+    use crate::{Forcing, exclusive::class_conditions, trie::AuctionTrie, trie::TrieId};
 
     #[derive(Clone, Copy, PartialEq, Eq, Hash)]
     struct State {
@@ -265,6 +266,7 @@ fn check_stop_under_forcing(ir: &mut SystemIR) {
     }
 
     let trie = &ir.index;
+    let index = ir.exclusive();
     let is_stop_pass = |id: NodeId| {
         let n = ir.node(id);
         n.call == Call::Pass && n.flags.stop && n.priority <= -100
@@ -303,26 +305,35 @@ fn check_stop_under_forcing(ir: &mut SystemIR) {
     // The path is only for the message, in BML's notation: the opponents' calls in
     // parentheses, `(any)` for a wildcard step.
     while let Some((st, anchors, path)) = stack.pop() {
-        if !seen.insert(st) {
-            continue;
-        }
-        if st.ours && (st.one_round || st.gf) && !reported.contains(&st.at) {
-            let stop = trie
-                .find_child_call(st.at, Call::Pass)
-                .is_some_and(|child| trie.entries_at(child).any(|(_, _, n)| is_stop_pass(n)));
-            let anchor = if st.one_round {
-                anchors.one_round
-            } else {
-                anchors.gf
-            };
+        // Checked on every arrival (a stop loop's shared node is reached from many forcing
+        // calls), reported once per (position, forcing call); only the expansion is deduplicated.
+        let anchor = if st.one_round {
+            anchors.one_round
+        } else {
+            anchors.gf
+        };
+        let fresh = anchor.is_some_and(|a| !reported.contains(&(st.at, a)));
+        if st.ours && (st.one_round || st.gf) && fresh {
+            // Only a stop pass some hand can reach: under at least one condition class it is a
+            // member of the exclusive group with a non-empty region (rows that cover every hand
+            // shadow it, and then no hand passes the forcing call).
+            let stop = (0u8..16).any(|class| {
+                let (opener_pos, vul) = class_conditions(class);
+                index.group_for(st.at, opener_pos, vul).is_some_and(|g| {
+                    g.members
+                        .iter()
+                        .any(|&(call, n)| call == Call::Pass && is_stop_pass(n))
+                        && !g.is_shadowed(Call::Pass)
+                })
+            });
             if let (true, Some(anchor)) = (stop, anchor) {
-                reported.insert(st.at);
+                reported.insert((st.at, anchor));
                 let node = ir.node(anchor);
                 let forcing_call = &path[..node.calls.len().min(path.len())];
                 let why = if st.one_round {
                     "partner's forcing call, the opponents passing"
                 } else {
-                    "partner's game force, below game"
+                    "a game force of ours, below game"
                 };
                 new_lints.push(
                     Lint::warning(
@@ -339,6 +350,9 @@ fn check_stop_under_forcing(ir: &mut SystemIR) {
                     .with_span(ir.row(node.row).span.clone()),
                 );
             }
+        }
+        if !seen.insert(st) {
+            continue;
         }
         for (call, child) in trie.exact_edges(st.at) {
             let nodes: Vec<NodeId> = trie

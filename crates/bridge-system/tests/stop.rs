@@ -603,5 +603,5 @@ fn a_stop_below_game_after_a_game_force_is_reported() {
         "{}",
         found[0]
     );
-    assert!(found[0].contains("game force"), "{}", found[0]);
+    assert!(found[0].contains("a game force of ours"), "{}", found[0]);
 }
