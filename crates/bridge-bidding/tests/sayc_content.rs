@@ -1174,14 +1174,43 @@ mod phase4_tables {
         ]);
     }
 
-    /// Pass chains (#P1): once the partnership has placed the contract it keeps passing, on
+    /// System stops (#P1): once the partnership has placed the contract it keeps passing, on
     /// the system, while the opponents pass too.
     #[test]
-    fn pass_chain_after_a_game_bid() {
+    fn system_stop_after_a_game_bid() {
         check_system(&[
             ("1NT P 3NT P", "K32.Q32.KJ2.Q432", "P"),
             ("1C P 1H P 2H P 4H P", "A32.KQ54.K32.J32", "P"),
         ]);
+    }
+
+    /// The stop pass is the synthesised system pass (any hand, `{prio:-100}`), whatever the
+    /// opponents call and for as long as they bid on: here North's ninth pass after South's
+    /// 3NT, three rounds deeper than the pasted chains it replaced reached.
+    #[test]
+    fn the_stop_pass_holds_while_they_bid_on() {
+        let table = sayc();
+        let ctx = ctx(table);
+        let calls = "1NT P 3NT 4C P 4D P 4H P 4S P 5C P 5D P 5H P 5S P 6C";
+        let mut a = Auction::new(Seat::North, Vulnerability::None);
+        for c in calls.split_whitespace() {
+            a = a
+                .with(c.parse::<Call>().expect("valid call"))
+                .expect("legal call");
+        }
+        let strong: Hand = "AKQ2.AK2.AQ2.K32".parse().expect("valid hand");
+        let BidChoice::Chosen(choice) = choose_bid(table, strong, &a, &ctx) else {
+            panic!("no choice at {a}");
+        };
+        assert_eq!(choice.call, Call::Pass);
+        assert_eq!(choice.source, ChoiceSource::System);
+        let node = table.systems[0].node(choice.node.expect("a system node"));
+        assert!(node.is_synthesised() && node.flags.stop, "{node:?}");
+        assert!(
+            choice.explanation.contains("system stop"),
+            "{}",
+            choice.explanation
+        );
     }
 
     /// Competitive decisions after the partnership stopped (#P10): at these positions the pass

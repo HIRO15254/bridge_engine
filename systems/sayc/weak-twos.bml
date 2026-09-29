@@ -33,55 +33,55 @@ minimum only with 18+ hcp; after a raise the auction is over for us (NOTES.md
 #CUT ask-min
 (P)
   4\M = {prio:2} 18+ hcp, 3+!\m
-    #PASTE after-chain
+    #STOP
   3N = {prio:1} 18+ hcp
-    #PASTE after-chain
-  #PASTE pass-chain
+    #STOP
+  P = {prio:-100} {stop} any hand
 (any)
-  #PASTE pass-chain
+  P = {prio:-100} {stop} any hand
 #ENDCUT
 
 #CUT ask-max
 (P)
   4\M = {prio:2} 3+!\m
-    #PASTE after-chain
+    #STOP
   3N = {prio:1} any hand
-    #PASTE after-chain
+    #STOP
 (any)
-  #PASTE pass-chain
+  P = {prio:-100} {stop} any hand
 #ENDCUT
 
 #CUT ask-3n
 (P)
   4\M = {prio:1} 3+!\m
-    #PASTE after-chain
-  #PASTE pass-chain
+    #STOP
+  P = {prio:-100} {stop} any hand
 (any)
-  #PASTE pass-chain
+  P = {prio:-100} {stop} any hand
 #ENDCUT
 
 #CUT ask-min-d
 (P)
   3N = {prio:1} 18+ hcp
-    #PASTE after-chain
-  #PASTE pass-chain
+    #STOP
+  P = {prio:-100} {stop} any hand
 (any)
-  #PASTE pass-chain
+  P = {prio:-100} {stop} any hand
 #ENDCUT
 
 #CUT ask-max-d
 (P)
   3N = {prio:1} any hand
-    #PASTE after-chain
+    #STOP
 (any)
-  #PASTE pass-chain
+  P = {prio:-100} {stop} any hand
 #ENDCUT
 
 ** After 2!d
 
 2D-
 3D = 3+!d, 6--14 hcp
-  #PASTE after-chain
+  #STOP
 2N = F, 15+ hcp, 2+!d
   3D = 5--8 hcp
     #PASTE ask-min-d
@@ -92,7 +92,7 @@ minimum only with 18+ hcp; after a raise the auction is over for us (NOTES.md
   3S = {prio:1} 9--11 hcp, stopper in !s
     #PASTE ask-max-d
   3N = {prio:0} 9--11 hcp
-    #PASTE after-chain
+    #STOP
 2H = F, 10+ hcp, 5+!h
   3H = 3+!h
   2N = 9--11 hcp
@@ -104,18 +104,18 @@ minimum only with 18+ hcp; after a raise the auction is over for us (NOTES.md
 3C = F, 10+ hcp, 5+!c
   4C = 3+!c
   3N = 9--11 hcp
-    #PASTE after-chain
+    #STOP
   3D = unlimited
 3N = 15+ hcp
-  #PASTE after-chain
+  #STOP
 
 ** After 2!h
 
 2H-
 4H = 4+!h, 5--14 hcp
-  #PASTE after-chain
+  #STOP
 3H = 3=!h, 6--14 hcp
-  #PASTE after-chain
+  #STOP
 2N = F, 15+ hcp, 2+!h
   3H = 5--8 hcp
     #PASTE ask-min \M=H \m=h
@@ -134,23 +134,23 @@ minimum only with 18+ hcp; after a raise the auction is over for us (NOTES.md
 3C = F, 10+ hcp, 5+!c
   4C = 3+!c
   3N = 9--11 hcp
-    #PASTE after-chain
+    #STOP
   3H = unlimited
 3D = F, 10+ hcp, 5+!d
   4D = 3+!d
   3N = 9--11 hcp
-    #PASTE after-chain
+    #STOP
   3H = unlimited
 3N = 15+ hcp
-  #PASTE after-chain
+  #STOP
 
 ** After 2!s
 
 2S-
 4S = 4+!s, 5--14 hcp
-  #PASTE after-chain
+  #STOP
 3S = 3=!s, 6--14 hcp
-  #PASTE after-chain
+  #STOP
 2N = F, 15+ hcp, 2+!s
   3S = 5--8 hcp
     #PASTE ask-min \M=S \m=s
@@ -165,21 +165,21 @@ minimum only with 18+ hcp; after a raise the auction is over for us (NOTES.md
 3C = F, 10+ hcp, 5+!c
   4C = 3+!c
   3N = 9--11 hcp
-    #PASTE after-chain
+    #STOP
   3S = unlimited
 3D = F, 10+ hcp, 5+!d
   4D = 3+!d
   3N = 9--11 hcp
-    #PASTE after-chain
+    #STOP
   3S = unlimited
 3H = F, 10+ hcp, 5+!h
   4H = 3+!h
-    #PASTE after-chain
+    #STOP
   3N = 9--11 hcp
-    #PASTE after-chain
+    #STOP
   3S = unlimited
 3N = 15+ hcp
-  #PASTE after-chain
+  #STOP
 
 ** Interference over a weak two
 
@@ -194,42 +194,42 @@ specifically.
 
 2D-(D)-
 3D = 3+!d, 0--14 hcp
-  #PASTE after-chain
+  #STOP
 R = 15+ hcp
 
 2H-(D)-
 3H = 3+!h, 0--14 hcp
-  #PASTE after-chain
+  #STOP
 R = 15+ hcp
 
 2S-(D)-
 3S = 3+!s, 0--14 hcp
-  #PASTE after-chain
+  #STOP
 R = 15+ hcp
 
 2D-(2HS)-
 3D = 3+!d, 6--14 hcp
-  #PASTE after-chain
+  #STOP
 D = 13+ hcp
 
 2D-(3C)-
 3D = 3+!d, 6--14 hcp
-  #PASTE after-chain
+  #STOP
 D = 13+ hcp
 
 2H-(2S)-
 3H = 3+!h, 6--14 hcp
-  #PASTE after-chain
+  #STOP
 D = 13+ hcp
 
 2H-(3CD)-
 3H = 3+!h, 6--14 hcp
-  #PASTE after-chain
+  #STOP
 D = 13+ hcp
 
 2S-(3CDH)-
 3S = 3+!s, 6--14 hcp
-  #PASTE after-chain
+  #STOP
 D = 13+ hcp
 
 2D-(bid)-

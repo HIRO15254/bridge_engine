@@ -4,8 +4,8 @@ Phase 4 (NOTES.md #P4). The booklet stops at responder's first call over an
 overcall; the tables below carry the most frequent competitive auctions one or
 two rounds further with the same rebid framework as the uncontested ones
 (minimum 12--15 / medium 16--18 / maximum 19--21 for opener). Every
-continuation ends in a pass chain: a partnership that has described its hands
-stops, and later competition by the opponents is passed.
+continuation ends in a system stop (`passes.bml`): a partnership that has
+described its hands stops, and later competition by the opponents is passed.
 
 ** Opener's rebid after a negative double
 
@@ -22,55 +22,55 @@ opposite 1NT with 13+ and invites with 2NT; and otherwise passes.
 #CUT fit-min
   (P)
     4\F = {prio:2} 12+ hcp
-      #PASTE after-chain
+      #STOP
     3\F = {prio:1} 10--11 hcp
       (P)
         4\F = {prio:1} 14+ hcp
-          #PASTE after-chain
-        #PASTE pass-chain
+          #STOP
+        P = {prio:-100} {stop} any hand
       (any)
-        #PASTE pass-chain
-    #PASTE pass-chain
+        P = {prio:-100} {stop} any hand
+    P = {prio:-100} {stop} any hand
   (any)
-    #PASTE pass-chain
+    P = {prio:-100} {stop} any hand
 #ENDCUT
 
 #CUT fit-jump
   (P)
     4\F = {prio:1} 8+ hcp
-      #PASTE after-chain
-    #PASTE pass-chain
+      #STOP
+    P = {prio:-100} {stop} any hand
   (any)
-    #PASTE pass-chain
+    P = {prio:-100} {stop} any hand
 #ENDCUT
 
 #CUT nt-min
   (P)
     3N = {prio:2} 13+ hcp
-      #PASTE after-chain
+      #STOP
     2N = {prio:1} 11--12 hcp
       (P)
         3N = {prio:1} 13--14 hcp
-          #PASTE after-chain
-        #PASTE pass-chain
+          #STOP
+        P = {prio:-100} {stop} any hand
       (any)
-        #PASTE pass-chain
-    #PASTE pass-chain
+        P = {prio:-100} {stop} any hand
+    P = {prio:-100} {stop} any hand
   (any)
-    #PASTE pass-chain
+    P = {prio:-100} {stop} any hand
 #ENDCUT
 
 #CUT nt-max
   (P)
     3N = {prio:1} any hand
-      #PASTE after-chain
+      #STOP
   (any)
-    #PASTE pass-chain
+    P = {prio:-100} {stop} any hand
 #ENDCUT
 
 #CUT neg-dbl-rebid
 \C = {prio:4} 19--21 hcp, 4+!\s
-  #PASTE after-chain
+  #STOP
 \B = {prio:4} 16--18 hcp, 4+!\s
 #PASTE fit-jump \F=\M
 \A = {prio:4} 12--15 hcp, 4+!\s
@@ -80,9 +80,9 @@ opposite 1NT with 13+ and invites with 2NT; and otherwise passes.
 1N = {prio:2} 12--14 hcp, bal, stopper
 #PASTE nt-min
 \J = {prio:1} 16--18 hcp, 6+!\o
-  #PASTE after-chain
+  #STOP
 \O = {prio:-1} any hand
-  #PASTE after-chain
+  #STOP
 #ENDCUT
 
 When the opener's left-hand opponent raises the overcall or cuebids opener's
@@ -92,20 +92,20 @@ otherwise passes. After any other call opener passes.
 
 #CUT neg-dbl-compete-3
 4\M = {prio:3} 17+ hcp, 4+!\s
-  #PASTE after-chain
+  #STOP
 3\M = {prio:1} 4+!\s
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 #ENDCUT
 
 #CUT neg-dbl-compete
 4\M = {prio:3} 17+ hcp, 4+!\s
-  #PASTE after-chain
+  #STOP
 2\M = {prio:2} 12--16 hcp, 4+!\s
-  #PASTE after-chain
+  #STOP
 3\M = {prio:1} 4+!\s
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 #ENDCUT
 
 1C-(1H)-D-(P)-
@@ -118,7 +118,7 @@ otherwise passes. After any other call opener passes.
 #PASTE neg-dbl-compete \M=S \s=s
 
 1C-(1H)-D-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 1D-(1H)-D-(P)-
 #PASTE neg-dbl-rebid \C=4S \B=2S \A=1S \M=S \s=s \J=3D \O=2D \o=d
@@ -130,7 +130,7 @@ otherwise passes. After any other call opener passes.
 #PASTE neg-dbl-compete \M=S \s=s
 
 1D-(1H)-D-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 1C-(1S)-D-(P)-
 #PASTE neg-dbl-rebid \C=4H \B=3H \A=2H \M=H \s=h \J=3C \O=2C \o=c
@@ -142,7 +142,7 @@ otherwise passes. After any other call opener passes.
 #PASTE neg-dbl-compete \M=H \s=h
 
 1C-(1S)-D-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 1D-(1S)-D-(P)-
 #PASTE neg-dbl-rebid \C=4H \B=3H \A=2H \M=H \s=h \J=3D \O=2D \o=d
@@ -154,13 +154,13 @@ otherwise passes. After any other call opener passes.
 #PASTE neg-dbl-compete \M=H \s=h
 
 1D-(1S)-D-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 After 1!c-(1!d)-double, opener shows a four-card heart suit first, then spades.
 
 1C-(1D)-D-(P)-
 4H = {prio:5} 19--21 hcp, 4+!h
-  #PASTE after-chain
+  #STOP
 2H = {prio:5} 16--18 hcp, 4+!h
 #PASTE fit-jump \F=H
 1H = {prio:5} 12--15 hcp, 4+!h
@@ -169,45 +169,45 @@ After 1!c-(1!d)-double, opener shows a four-card heart suit first, then spades.
 
 1C-(1D)-D-(2D)-
 4H = {prio:4} 17+ hcp, 4+!h
-  #PASTE after-chain
+  #STOP
 2H = {prio:3} 12--16 hcp, 4+!h
-  #PASTE after-chain
+  #STOP
 3H = {prio:2} 4+!h
-  #PASTE after-chain
+  #STOP
 #PASTE neg-dbl-compete \M=S \s=s
 
 1C-(1D)-D-(2C)-
 4H = {prio:4} 17+ hcp, 4+!h
-  #PASTE after-chain
+  #STOP
 2H = {prio:3} 12--16 hcp, 4+!h
-  #PASTE after-chain
+  #STOP
 3H = {prio:2} 4+!h
-  #PASTE after-chain
+  #STOP
 #PASTE neg-dbl-compete \M=S \s=s
 
 1C-(1D)-D-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 After 1!h-(1!s)-double (both minors), opener rebids a six-card heart suit,
 notrump with a stopper, or the cheaper four-card minor.
 
 1H-(1S)-D-(P)-
 3H = {prio:3} 16--18 hcp, 6+!h
-  #PASTE after-chain
+  #STOP
 2N = {prio:2} 18--19 hcp, bal, stopper
 #PASTE nt-max
 1N = {prio:2} 12--14 hcp, bal, stopper
 #PASTE nt-min
 3C = {prio:1} 16+ hcp, 4+!c
-  #PASTE after-chain
+  #STOP
 3D = {prio:1} 16+ hcp, 4+!d
-  #PASTE after-chain
+  #STOP
 2C = 4+!c
-  #PASTE after-chain
+  #STOP
 2D = 4+!d
-  #PASTE after-chain
+  #STOP
 2H = {prio:-1} any hand
-  #PASTE after-chain
+  #STOP
 
 1H-(1S)-D-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand

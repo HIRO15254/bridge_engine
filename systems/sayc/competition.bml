@@ -113,7 +113,7 @@ is Stayman; everything else is natural, as if partner had opened 1NT.
 2Y = 0--7 hcp, 5+#
 2N = 8--9 hcp
 3N = 10--15 hcp
-  #PASTE after-chain
+  #STOP
 
 ** Takeout doubles
 
@@ -243,7 +243,7 @@ D = 6+ hcp, 4+!c, 4+!d
 1N = 7--10 hcp, stopper
 2N = 11--12 hcp, stopper
 3N = 13+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 
 1m-(1Y)-
 2Y = 11+ hcp, 4+m
@@ -252,7 +252,7 @@ D = 6+ hcp, 4+!c, 4+!d
 1N = 7--10 hcp, stopper
 2N = 11--12 hcp, stopper
 3N = 13+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 
 *** Opener's rebid after a one-level response over an overcall
 
@@ -285,7 +285,7 @@ beyond the opening (NOTES.md #C5).
 3\N = {prio:4} \L+!\n
 2N = {prio:3} 12--14 hcp, stopper
 3N = {prio:3} 18--21 hcp, stopper
-  #PASTE after-chain
+  #STOP
 \R = 12+ hcp
 #ENDCUT
 
@@ -326,7 +326,7 @@ and so are the weak jump overcalls (`1C-(2Y)-`, `1D-(2M)-`, 1!h-(2!s)).
 2oM = {prio:1} F, 11+ hcp, 5+oM
 2N = {prio:1} 11--12 hcp, stopper
 3N = {prio:1} 13+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 D = 8+ hcp, 0--2M
 
 1S-(2H)-
@@ -337,7 +337,7 @@ D = 8+ hcp, 0--2M
 3D = {prio:1} F, 11+ hcp, 5+!d
 2N = {prio:1} 11--12 hcp, stopper
 3N = {prio:1} 13+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 D = 8+ hcp, 0--2!s
 
 1D-(2C)-
@@ -349,7 +349,7 @@ D = {prio:2} 8+ hcp, 4+!h or 4+!s
 2D = {prio:1} 6--10 hcp, 4+!d
 2N = 11--12 hcp, stopper
 3N = 13+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 
 1C-(2Y)-
 2Z = {prio:2} F, 11+ hcp, 5+#
@@ -358,7 +358,7 @@ D = {prio:1} 7+ hcp, not 4+!c
 3C = 6--10 hcp, 5+!c
 2N = 11--12 hcp, stopper
 3N = 13+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 
 1D-(2M)-
 2Z = {prio:2} F, 11+ hcp, 5+#
@@ -367,55 +367,55 @@ D = {prio:1} 7+ hcp, not 4+!d
 3D = 6--10 hcp, 4+!d
 2N = 11--12 hcp, stopper
 3N = 13+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 
 1H-(2S)-
 3S = {prio:3} 11+ hcp, 3+!h
 4H = {prio:2} 5--10 hcp, 5+!h
-  #PASTE after-chain
+  #STOP
 3H = {prio:2} 6--10 hcp, 3+!h
 3C = {prio:1} F, 11+ hcp, 5+!c
 3D = {prio:1} F, 11+ hcp, 5+!d
 2N = {prio:1} 11--12 hcp, stopper
 3N = {prio:1} 13+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 D = 7+ hcp, 0--2!h
 
 *** After a three-level preempt
 
 1S-(3Y)-
 4S = {prio:2} 11+ hcp, 3+!s
-  #PASTE after-chain
+  #STOP
 3S = {prio:2} 7--10 hcp, 3+!s
 3N = {prio:1} 12+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 D = 10+ hcp
 
 1H-(3m)-
 4H = {prio:2} 11+ hcp, 3+!h
-  #PASTE after-chain
+  #STOP
 3H = {prio:2} 7--10 hcp, 3+!h
 3N = {prio:1} 12+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 D = 10+ hcp
 
 1H-(3S)-
 4H = {prio:2} 10+ hcp, 3+!h
-  #PASTE after-chain
+  #STOP
 3N = {prio:1} 12+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 D = 10+ hcp
 
 1m-(3Y)-
 3N = {prio:1} 12+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 D = 10+ hcp
 
 1D-(3C)-
 3H = {prio:2} F, 11+ hcp, 5+!h
 3S = {prio:2} F, 11+ hcp, 5+!s
 3N = {prio:1} 12+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 3D = {prio:1} 7--10 hcp, 4+!d
 D = 10+ hcp
 
@@ -501,7 +501,7 @@ opening suit below rather than with a variable (see NOTES.md #14).
 1N = 8--11 hcp, stopper
 2N = 12--14 hcp, stopper
 3N = 15+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 
 A new suit that has to go to the two level (below the overcall's suit) is
 natural and non-forcing too, with 10+ and a five-card suit (NOTES.md #C6).
@@ -537,7 +537,7 @@ needs a fit and game interest here too; without one of these calls advancer pass
 1N = 8--11 hcp, stopper
 2N = 12--14 hcp, stopper
 3N = 15+ hcp, stopper
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (1X)-1Z-(D)-
 2Y = {prio:1} NF, 10+ hcp, 5+#, 0--2Z
@@ -581,7 +581,7 @@ good hand), and 2NT is a forcing inquiry.
 3X = {prio:1} 6--11 hcp, 3+X
 2N = 11--13 hcp, stopper
 3N = 14+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 
 (1X)-2Y-(P)-
 4Y = {prio:2} 14+ hcp, 3+Y
@@ -627,12 +627,12 @@ D = 12+ hcp
 
 (1X)-1N-(2Y)-
 3N = {prio:1} 10+ hcp
-  #PASTE after-chain
+  #STOP
 D = 8+ hcp
 
 (1X)-1N-(2X)-
 3N = {prio:1} 10+ hcp
-  #PASTE after-chain
+  #STOP
 D = 8+ hcp
 
 A negative double of our two-level overcall leaves advancer free to raise with
@@ -653,11 +653,11 @@ file's). A 13+ hand with a doubleton or less in both majors bids 3NT.
 
 (1m)-2m-(P)-
 4H = {prio:3} 13+ hcp, 3+!h
-  #PASTE after-chain
+  #STOP
 4S = {prio:3} 13+ hcp, 3+!s, 0--2!h
-  #PASTE after-chain
+  #STOP
 3N = {prio:2} 13+ hcp, 0--2!h, 0--2!s
-  #PASTE after-chain
+  #STOP
 3H = {prio:2} 11--12 hcp, 3+!h
 3S = {prio:2} 11--12 hcp, 3+!s, 0--2!h
 2S = {prio:1} 0--10 hcp and 3+!s and 0--2!h or 0--10 hcp and 4+!s and 3=!h
@@ -671,14 +671,14 @@ forcing 2NT to ask for the minor (`NOTES.md` #C8).
 
 (1H)-2H-(P)-
 4S = {prio:3} 13+ hcp, 3+!s
-  #PASTE after-chain
+  #STOP
 3S = {prio:2} 11--12 hcp, 3+!s
 2S = {prio:1} 0--10 hcp, 3+!s
 2N = F, 0--2!s
 
 (1S)-2S-(P)-
 4H = {prio:3} 13+ hcp, 3+!h
-  #PASTE after-chain
+  #STOP
 3H = {prio:1} 0--12 hcp, 3+!h
 2N = F, 0--2!h
 
@@ -726,42 +726,42 @@ on, a `Y` binding only reaching suits above `X` (NOTES.md #C3).
 D = 12+ hcp, 0--3X, 0--3Y
 1Z = {prio:1} 8--16 hcp, 5+#
 1N = {prio:1} 15--18 hcp, bal, stopper
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (1X)-P-(1Z)-
 2Y = {prio:1} 10--16 hcp, 5+#
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (1Y)-P-(1Z)-
 2X = {prio:1} 10--16 hcp, 5+#
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (1X)-P-(1N)-
 D = 15+ hcp
 2Y = 8--16 hcp, 5+#
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (1Y)-P-(1N)-
 2X = 8--16 hcp, 5+#
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (1X)-P-(2X)-
 D = 12+ hcp, 0--3X
 2Y = {prio:1} 8--16 hcp, 5+#
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (1Y)-P-(2X)-
 D = 12+ hcp, 0--3X, 0--3Y
 2Z = {prio:1} 10--16 hcp, 5+#
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (1Z)-P-(2X)-
 2Y = {prio:1} 10--16 hcp, 5+#
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (1X)-P-(3X)-
 D = 13+ hcp, 0--2X
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 After a sandwich overcall, advancer raises with three-card support when opener
 or opener's partner bids again, and otherwise passes (NOTES.md #C6).
@@ -809,11 +809,11 @@ competes, advancer still raises with a fit and doubles for penalty with 10+.
 (1N)-2M-(P)-
 4M = {prio:1} 12+ hcp, 3+M
 3N = 12+ hcp, 0--2M
-  #PASTE after-chain
+  #STOP
 
 (1N)-2m-(P)-
 3N = {prio:1} 12+ hcp
-  #PASTE after-chain
+  #STOP
 
 (1N)-2X-(2Y)-
 3X = {prio:1} 8--11 hcp, 3+X
@@ -837,11 +837,11 @@ D = {prio:1} 15+ hcp
 (1N)-P-(P)-2M-(P)-
 4M = {prio:1} 12+ hcp, 3+M
 3N = 12+ hcp, 0--2M
-  #PASTE after-chain
+  #STOP
 
 (1N)-P-(P)-2m-(P)-
 3N = {prio:1} 12+ hcp
-  #PASTE after-chain
+  #STOP
 
 (1N)-P-(P)-2X-(2Y)-
 3X = {prio:1} 8--11 hcp, 3+X
@@ -913,7 +913,7 @@ interference has made some of its calls illegal and the rest inappropriate
 (1X)-D-(any)-
 
 (1X)-P-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (1X)-1Y-(P)-2X-(any)-
 
@@ -948,4 +948,4 @@ interference has made some of its calls illegal and the rest inappropriate
 (1N)-P-(P)-2X-(any)-
 
 (1N)-P-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand

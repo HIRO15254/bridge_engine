@@ -12,9 +12,9 @@ is for takeout with 13+, a suit overcall needs a six-card suit and 13+, and
 16+ and otherwise passed. Over the strong 2!c and the 2NT opening a natural
 overcall needs a good hand and a long suit; everything else passes.
 
-Every table ends in a pass chain (`passes.bml`): once we pass, we keep
+Every table ends in a system stop (`passes.bml`): once we pass, we keep
 passing while the opponents bid on. The advances below end the auction for us
-as well (an `after-chain` under each of them): the doubler or overcaller does
+as well (a `#STOP` under each of them): the doubler or overcaller does
 not bid again. The booklet gives none of these numbers; they are this file's
 interpolation from the one-level methods in `competition.bml`.
 
@@ -27,7 +27,7 @@ interpolation from the one-level methods in `competition.bml`.
 2S = {prio:2} 10--16 hcp, 5+!s
 3C = {prio:2} 12--16 hcp, 6+!c
 D = {prio:1} 12--16 hcp and 0--2!d or 17+ hcp
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2H)-
 2N = {prio:3} 15--18 hcp, bal, stopper
@@ -36,7 +36,7 @@ D = {prio:1} 12--16 hcp and 0--2!d or 17+ hcp
 3C = {prio:2} 12--16 hcp, 6+!c
 3D = {prio:2} 12--16 hcp, 6+!d
 D = {prio:1} 12--16 hcp and 0--2!h or 17+ hcp
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2S)-
 2N = {prio:3} 15--18 hcp, bal, stopper
@@ -45,7 +45,7 @@ D = {prio:1} 12--16 hcp and 0--2!h or 17+ hcp
 3C = {prio:2} 12--16 hcp, 6+!c
 3D = {prio:2} 12--16 hcp, 6+!d
 D = {prio:1} 12--16 hcp and 0--2!s or 17+ hcp
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 In the balancing seat (the opener's partner passed) the same calls can be a
 little lighter: the double 10--16 with shortness (or 17+), a suit 8--16.
@@ -56,7 +56,7 @@ little lighter: the double 10--16 with shortness (or 17+), a suit 8--16.
 2S = {prio:2} 8--16 hcp, 5+!s
 3C = {prio:2} 10--16 hcp, 6+!c
 D = {prio:1} 10--16 hcp and 0--2!d or 17+ hcp
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2H)-P-(P)-
 2N = {prio:3} 14--17 hcp, bal, stopper
@@ -64,7 +64,7 @@ D = {prio:1} 10--16 hcp and 0--2!d or 17+ hcp
 3C = {prio:2} 10--16 hcp, 6+!c
 3D = {prio:2} 10--16 hcp, 6+!d
 D = {prio:1} 10--16 hcp and 0--2!h or 17+ hcp
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2S)-P-(P)-
 2N = {prio:3} 14--17 hcp, bal, stopper
@@ -72,7 +72,7 @@ D = {prio:1} 10--16 hcp and 0--2!h or 17+ hcp
 3C = {prio:2} 10--16 hcp, 6+!c
 3D = {prio:2} 10--16 hcp, 6+!d
 D = {prio:1} 10--16 hcp and 0--2!s or 17+ hcp
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 *** Advancing the takeout double of a weak two
 
@@ -83,58 +83,58 @@ advancer passes for penalty.
 
 #CUT adv-dbl-2d
 4H = {prio:7} 12+ hcp, 4+!h
-  #PASTE after-chain
+  #STOP
 4S = {prio:7} 12+ hcp, 4+!s
-  #PASTE after-chain
+  #STOP
 3N = {prio:6} 12+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 3H = {prio:5} 9--11 hcp, 5+!h
-  #PASTE after-chain
+  #STOP
 3S = {prio:5} 9--11 hcp, 5+!s
-  #PASTE after-chain
+  #STOP
 2H = {prio:4} 0--11 hcp, 4+!h
-  #PASTE after-chain
+  #STOP
 2S = {prio:4} 0--11 hcp, 4+!s
-  #PASTE after-chain
+  #STOP
 3C = {prio:3} 0--11 hcp, 4+!c
-  #PASTE after-chain
+  #STOP
 2N = {prio:2} 9--11 hcp
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 #ENDCUT
 
 #CUT adv-dbl-2h
 4S = {prio:7} 12+ hcp, 4+!s
-  #PASTE after-chain
+  #STOP
 3N = {prio:6} 12+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 3S = {prio:5} 9--11 hcp, 5+!s
-  #PASTE after-chain
+  #STOP
 2S = {prio:4} 0--11 hcp, 4+!s
-  #PASTE after-chain
+  #STOP
 3C = {prio:3} 0--11 hcp, 4+!c
-  #PASTE after-chain
+  #STOP
 3D = {prio:3} 0--11 hcp, 4+!d
-  #PASTE after-chain
+  #STOP
 2N = {prio:2} 9--11 hcp
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 #ENDCUT
 
 #CUT adv-dbl-2s
 4H = {prio:7} 12+ hcp, 4+!h
-  #PASTE after-chain
+  #STOP
 3N = {prio:6} 12+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 3H = {prio:4} 0--11 hcp, 4+!h
-  #PASTE after-chain
+  #STOP
 3C = {prio:3} 0--11 hcp, 4+!c
-  #PASTE after-chain
+  #STOP
 3D = {prio:3} 0--11 hcp, 4+!d
-  #PASTE after-chain
+  #STOP
 2N = {prio:2} 9--11 hcp
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 #ENDCUT
 
 (2D)-D-(P)-
@@ -160,13 +160,13 @@ to bid: he competes in a major with four cards and 6--11, bids game with 12+,
 and otherwise passes.
 
 (2D)-D-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2H)-D-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2S)-D-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 *** Advancing an overcall of a weak two
 
@@ -176,18 +176,18 @@ minor): to the three level with 8--11, to game in a major with 12+; 3NT with
 
 #CUT adv-overcall-major
 4\M = {prio:3} 12+ hcp, 3+!\m
-  #PASTE after-chain
+  #STOP
 3N = {prio:2} 12+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 3\M = {prio:1} 8--11 hcp, 3+!\m
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 #ENDCUT
 
 #CUT adv-overcall-minor
 3N = {prio:2} 12+ hcp, stopper
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 #ENDCUT
 
 (2D)-2H-(P)-
@@ -201,10 +201,10 @@ minor): to the three level with 8--11, to game in a major with 12+; 3NT with
 
 (2S)-3H-(P)-
 4H = {prio:3} 10+ hcp, 3+!h
-  #PASTE after-chain
+  #STOP
 3N = {prio:2} 12+ hcp, stopper
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 
 (2D)-3C-(P)-
 #PASTE adv-overcall-minor
@@ -226,12 +226,12 @@ with a six-card suit and 8+, and otherwise passes.
 
 #CUT adv-2n-overcall
 4H = {prio:2} 8+ hcp, 6+!h
-  #PASTE after-chain
+  #STOP
 4S = {prio:2} 8+ hcp, 6+!s
-  #PASTE after-chain
+  #STOP
 3N = {prio:1} 8+ hcp
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 #ENDCUT
 
 (2D)-2N-(P)-
@@ -246,49 +246,49 @@ with a six-card suit and 8+, and otherwise passes.
 Advancer passes 3NT, and passes after any bid by the opener's partner.
 
 (2D)-3N-
-#PASTE after-chain
+#STOP
 
 (2H)-3N-
-#PASTE after-chain
+#STOP
 
 (2S)-3N-
-#PASTE after-chain
+#STOP
 
 (2D)-2H-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2D)-2S-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2H)-2S-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2S)-3H-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2D)-3C-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2H)-3C-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2H)-3D-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2S)-3C-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2S)-3D-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2D)-2N-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2H)-2N-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (2S)-2N-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 ** Over a three-level preempt
 
@@ -298,7 +298,7 @@ Advancer passes 3NT, and passes after any bid by the opener's partner.
 3H = {prio:2} 13--17 hcp, 6+!h
 3S = {prio:2} 13--17 hcp, 6+!s
 D = {prio:1} 13--17 hcp and 0--2!c or 18+ hcp
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (3D)-
 3N = {prio:3} 16--21 hcp, stopper
@@ -306,7 +306,7 @@ D = {prio:1} 13--17 hcp and 0--2!c or 18+ hcp
 3S = {prio:2} 13--17 hcp, 6+!s
 4C = {prio:2} 13--17 hcp, 6+!c
 D = {prio:1} 13--17 hcp and 0--2!d or 18+ hcp
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (3H)-
 3N = {prio:3} 16--21 hcp, stopper
@@ -314,7 +314,7 @@ D = {prio:1} 13--17 hcp and 0--2!d or 18+ hcp
 4C = {prio:2} 13--17 hcp, 6+!c
 4D = {prio:2} 13--17 hcp, 6+!d
 D = {prio:1} 13--17 hcp and 0--2!h or 18+ hcp
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (3S)-
 3N = {prio:3} 16--21 hcp, stopper
@@ -322,7 +322,7 @@ D = {prio:1} 13--17 hcp and 0--2!h or 18+ hcp
 4C = {prio:2} 13--17 hcp, 6+!c
 4D = {prio:2} 13--17 hcp, 6+!d
 D = {prio:1} 13--17 hcp and 0--2!s or 18+ hcp
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 Advancing the double of a preempt: game in a major with four cards and 10+,
 3NT with 10+ and a stopper, otherwise the cheapest four-card suit (a major
@@ -330,160 +330,160 @@ first), and a pass with length in their suit.
 
 (3C)-D-(P)-
 4H = {prio:5} 10+ hcp, 4+!h
-  #PASTE after-chain
+  #STOP
 4S = {prio:5} 10+ hcp, 4+!s
-  #PASTE after-chain
+  #STOP
 3N = {prio:4} 10+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 3H = {prio:3} 0--9 hcp, 4+!h
-  #PASTE after-chain
+  #STOP
 3S = {prio:3} 0--9 hcp, 4+!s
-  #PASTE after-chain
+  #STOP
 3D = {prio:2} 0--9 hcp, 4+!d
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 
 (3D)-D-(P)-
 4H = {prio:5} 10+ hcp, 4+!h
-  #PASTE after-chain
+  #STOP
 4S = {prio:5} 10+ hcp, 4+!s
-  #PASTE after-chain
+  #STOP
 3N = {prio:4} 10+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 3H = {prio:3} 0--9 hcp, 4+!h
-  #PASTE after-chain
+  #STOP
 3S = {prio:3} 0--9 hcp, 4+!s
-  #PASTE after-chain
+  #STOP
 4C = {prio:2} 0--9 hcp, 4+!c
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 
 (3H)-D-(P)-
 4S = {prio:5} 10+ hcp, 4+!s
-  #PASTE after-chain
+  #STOP
 3N = {prio:4} 10+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 3S = {prio:3} 0--9 hcp, 4+!s
-  #PASTE after-chain
+  #STOP
 4C = {prio:2} 0--9 hcp, 4+!c
-  #PASTE after-chain
+  #STOP
 4D = {prio:2} 0--9 hcp, 4+!d
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 
 (3S)-D-(P)-
 4H = {prio:4} 0+ hcp, 4+!h
-  #PASTE after-chain
+  #STOP
 3N = {prio:5} 10+ hcp, stopper
-  #PASTE after-chain
+  #STOP
 4C = {prio:2} 0--9 hcp, 4+!c
-  #PASTE after-chain
+  #STOP
 4D = {prio:2} 0--9 hcp, 4+!d
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 
 Every other continuation after we act over a preempt ends our bidding.
 
 (3C)-D-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (3D)-D-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (3H)-D-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (3S)-D-(any)-
-#PASTE pass-chain
+P = {prio:-100} {stop} any hand
 
 (3C)-3D-
-#PASTE after-chain
+#STOP
 
 (3C)-3H-
-#PASTE after-chain
+#STOP
 
 (3C)-3S-
-#PASTE after-chain
+#STOP
 
 (3C)-3N-
-#PASTE after-chain
+#STOP
 
 (3D)-3H-
-#PASTE after-chain
+#STOP
 
 (3D)-3S-
-#PASTE after-chain
+#STOP
 
 (3D)-4C-
-#PASTE after-chain
+#STOP
 
 (3D)-3N-
-#PASTE after-chain
+#STOP
 
 (3H)-3S-
-#PASTE after-chain
+#STOP
 
 (3H)-4C-
-#PASTE after-chain
+#STOP
 
 (3H)-4D-
-#PASTE after-chain
+#STOP
 
 (3H)-3N-
-#PASTE after-chain
+#STOP
 
 (3S)-4H-
-#PASTE after-chain
+#STOP
 
 (3S)-4C-
-#PASTE after-chain
+#STOP
 
 (3S)-4D-
-#PASTE after-chain
+#STOP
 
 (3S)-3N-
-#PASTE after-chain
+#STOP
 
 ** Over a four-level preempt, the strong 2!c and the 2NT opening
 
 (4C)-
 D = 16+ hcp
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 
 (4D)-
 D = 16+ hcp
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 
 (4H)-
 D = 16+ hcp
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 
 (4S)-
 D = 16+ hcp
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 
 (2C)-
 2D = {prio:1} 10+ hcp, 6+!d
-  #PASTE after-chain
+  #STOP
 2H = {prio:1} 10+ hcp, 6+!h
-  #PASTE after-chain
+  #STOP
 2S = {prio:1} 10+ hcp, 6+!s
-  #PASTE after-chain
+  #STOP
 3C = {prio:1} 10+ hcp, 6+!c
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
 
 (2N)-
 3C = {prio:1} 10+ hcp, 6+!c
-  #PASTE after-chain
+  #STOP
 3D = {prio:1} 10+ hcp, 6+!d
-  #PASTE after-chain
+  #STOP
 3H = {prio:1} 10+ hcp, 6+!h
-  #PASTE after-chain
+  #STOP
 3S = {prio:1} 10+ hcp, 6+!s
-  #PASTE after-chain
-#PASTE pass-chain
+  #STOP
+P = {prio:-100} {stop} any hand
