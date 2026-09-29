@@ -519,3 +519,83 @@ fn written_rows_and_wildcards_take_precedence_over_a_stop() {
         vec![(Call::Pass, -100, "any hand".to_string())]
     );
 }
+
+fn stop_under_forcing(ir: &SystemIR) -> Vec<String> {
+    let mut out: Vec<String> = ir
+        .lints
+        .iter()
+        .filter(|l| l.code == LintCode::StopUnderForcing)
+        .map(|l| {
+            assert_eq!(l.severity, Severity::Warning);
+            l.message.clone()
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn a_stop_under_partners_forcing_call_is_reported() {
+    // Opener's rebids after the forcing 1H end in a table-level stop: a hand no row takes would
+    // pass partner's forcing call.
+    let ir = compile(
+        "1C-
+1H = F, 6+ hcp, 4+!h
+1S = 6+ hcp, 4+!s
+
+1C-(P)-1H-(P)-
+2H = 12--14 hcp, 4+!h
+#STOP
+
+1C-(P)-1S-(P)-
+2S = 12--14 hcp, 4+!s
+#STOP
+",
+    );
+    let found = stop_under_forcing(&ir);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].contains("at 1C-(Pass)-1H-(Pass) after 1C-(Pass)-1H"),
+        "{}",
+        found[0]
+    );
+
+    // An opponents' bid releases the force: a stop after their overcall is fine, and so is a
+    // written `{stop}` sink there.
+    let ir = compile(
+        "1C-
+1H = F, 6+ hcp, 4+!h
+
+1C-1H-(1S)-
+P = {prio:-100} {stop} any hand
+",
+    );
+    assert!(stop_under_forcing(&ir).is_empty(), "{:?}", ir.lints);
+}
+
+#[test]
+fn a_stop_below_game_after_a_game_force_is_reported() {
+    // Responder's game-forcing jump shift; opener's minimum rebid; a stop under it lets the
+    // jump-shifter pass a partscore. A stop under a game bid is fine.
+    let ir = compile(
+        "1C-
+2H = GF, 17+ hcp, 5+!h
+
+1C-2H-
+3H = 3+!h
+  #STOP
+3N = bal
+  #STOP
+4H = 4+!h
+  #STOP
+",
+    );
+    let found = stop_under_forcing(&ir);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].contains("at 1C-(Pass)-2H-(Pass)-3H-(any) after 1C-(Pass)-2H"),
+        "{}",
+        found[0]
+    );
+    assert!(found[0].contains("a game force of ours"), "{}", found[0]);
+}

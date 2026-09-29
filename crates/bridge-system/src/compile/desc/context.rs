@@ -750,6 +750,13 @@ fn resolve_one(token: &Token, ctx: &RowContext<'_>, meta: &SystemMeta) -> (Atom,
             )
         }
         Token::Forcing(_) | Token::NoBound | Token::Convention(_) => (Atom::ANY, explicit()),
+        Token::LengthOrder(a, cmp, b) => (
+            Atom {
+                shapes: super::tokens::length_order_shapes(*a, *cmp, *b),
+                ..Atom::ANY
+            },
+            explicit(),
+        ),
         // Both need the whole description; `resolve` handles them before calling this.
         Token::Splinter(..) | Token::Stopper(_) => (Atom::ANY, context_prov(true)),
         Token::HonourRun(suitref, honours, cards) => match resolve_single_suit(*suitref, ctx) {

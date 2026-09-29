@@ -61,6 +61,13 @@ pub const IR_FORMAT: u32 = 3;
 /// `OverlappingBranches` are stored in `SystemIR::lints`). 3: system stops (`#STOP`, `{stop}`).
 /// 4: stops under different `#SEAT`/`#VUL` conditions that meet at one edge share a loop
 /// carrying every condition's entries. 5: the synthesised stop pass's description is the row it
-/// stands for, `{prio:-100} {stop} any hand`. 6: every node's description is stored without its
-/// `{prio:N}` / `{w:X}` / `{stop}` annotations (`Row::description_raw` keeps them).
-pub const COMPILE_REVISION: u32 = 6;
+/// stands for, `{prio:-100} {stop} any hand`. 6: relative levels (`cS`, `jY`) and the lints
+/// `LevelWithoutAnchor` / `NoSufficientLevel`; suit-length comparisons in descriptions. 7: the
+/// `#ANYORDER` table directive and the lint `AnyOrderWithoutVariables`. 8: lane D2's review
+/// fixes: a directive-only paragraph (`#ANYORDER`/`#STOP`) and a table led by a relative-level
+/// row are reported, `NoSufficientLevel` covers relative alternations, `LevelWithoutAnchor` is
+/// reported once per row, `!h>=!s+1` is not read as a comparison, and the lint
+/// `StopUnderForcing`. 9: every node's description is stored without its `{prio:N}` /
+/// `{w:X}` / `{stop}` annotations (`Row::description_raw` keeps them); this was revision 6 on
+/// the integration line before lane D2 merged.
+pub const COMPILE_REVISION: u32 = 9;

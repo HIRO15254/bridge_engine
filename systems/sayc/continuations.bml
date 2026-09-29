@@ -698,55 +698,33 @@ a major, the double showed the minors and opener bids a four-card minor at the
 four level with 15+; he rebids a six-card suit with 15+ (game in a major with
 18+). Otherwise he passes.
 
-1C-(2D)-D-(3D)-
-#PASTE neg-dbl-compete-3 \M=H \s=h
-#PASTE neg-dbl-compete-3 \M=S \s=s
-4C = {prio:0} 15+ hcp, 6+!c
-  #STOP
+After a minor opening (M is the doubler's unbid major, `cM` its cheapest level:
+3H/3S, or 4H over their 3S where only game remains):
 
-1C-(2H)-D-(3H)-
-#PASTE neg-dbl-compete-3 \M=S \s=s
-4C = {prio:0} 15+ hcp, 6+!c
+1m-(2Y)-D-(3Y)-
+4M = {prio:3} 17+ hcp, 4+M
   #STOP
-
-1C-(2S)-D-(3S)-
-4H = {prio:3} 17+ hcp, 4+!h
+cM = {prio:1} 4+M
   #STOP
-4C = {prio:0} 15+ hcp, 6+!c
+cm = {prio:0} 15+ hcp, 6+m
   #STOP
 P = {prio:-100} {stop} any hand
 
-1D-(2C)-D-(3C)-
-#PASTE neg-dbl-compete-3 \M=H \s=h
-#PASTE neg-dbl-compete-3 \M=S \s=s
-3D = {prio:0} 15+ hcp, 6+!d
-  #STOP
+After a major opening and their minor overcall:
 
-1D-(2H)-D-(3H)-
-#PASTE neg-dbl-compete-3 \M=S \s=s
-4D = {prio:0} 15+ hcp, 6+!d
+1M-(2m)-D-(3m)-
+4oM = {prio:3} 17+ hcp, 4+oM
   #STOP
-
-1D-(2S)-D-(3S)-
-4H = {prio:3} 17+ hcp, 4+!h
+3oM = {prio:1} 4+oM
   #STOP
-4D = {prio:0} 15+ hcp, 6+!d
+4M = {prio:2} 18+ hcp, 6+M
+  #STOP
+3M = {prio:0} 15+ hcp, 6+M
   #STOP
 P = {prio:-100} {stop} any hand
 
-1H-(2C)-D-(3C)-
-#PASTE neg-dbl-compete-3 \M=S \s=s
-4H = {prio:2} 18+ hcp, 6+!h
-  #STOP
-3H = {prio:0} 15+ hcp, 6+!h
-  #STOP
-
-1H-(2D)-D-(3D)-
-#PASTE neg-dbl-compete-3 \M=S \s=s
-4H = {prio:2} 18+ hcp, 6+!h
-  #STOP
-3H = {prio:0} 15+ hcp, 6+!h
-  #STOP
+After a major opening and their overcall in the other major the double showed
+the minors:
 
 1H-(2S)-D-(3S)-
 4C = {prio:2} 15+ hcp, 4+!c
@@ -756,20 +734,6 @@ P = {prio:-100} {stop} any hand
 4H = {prio:0} 15+ hcp, 6+!h
   #STOP
 P = {prio:-100} {stop} any hand
-
-1S-(2C)-D-(3C)-
-#PASTE neg-dbl-compete-3 \M=H \s=h
-4S = {prio:2} 18+ hcp, 6+!s
-  #STOP
-3S = {prio:0} 15+ hcp, 6+!s
-  #STOP
-
-1S-(2D)-D-(3D)-
-#PASTE neg-dbl-compete-3 \M=H \s=h
-4S = {prio:2} 18+ hcp, 6+!s
-  #STOP
-3S = {prio:0} 15+ hcp, 6+!s
-  #STOP
 
 1S-(2H)-D-(3H)-
 4C = {prio:2} 15+ hcp, 4+!c
@@ -843,98 +807,32 @@ After the double responder bids an unbid major with four cards at the cheapest
 level (a minor when both majors are gone), and otherwise returns to opener's
 suit, which carries no requirement.
 
-1C-(1D)-P-(2D)-
-D = {prio:2} 13+ hcp, 0--1!d
-3C = {prio:1} 15+ hcp, 6+!c
+The six opener/overcall pairs share one table: X is opener's suit, Y the
+one-level overcall above it (1C-(1D) up to 1H-(1S)). Responder's cheapest unbid
+major is `cM` (2H/2S over their raise of a minor, 3H over their raise of
+spades); when both majors are gone (1H-(1S)) he bids a four-card minor instead.
+Before phase 4's relative levels this was six literal tables (NOTES.md #P12,
+"P10 refactor").
+
+1X-(1Y)-P-(2Y)-
+D = {prio:2} 13+ hcp, 0--1Y
+3X = {prio:1} 15+ hcp, 6+X
   #STOP
 P = {prio:-100} {stop} any hand
 
-1C-(1D)-P-(2D)-D-(P)-
-2H = {prio:2} 4+!h
+1X-(1Y)-P-(2Y)-D-(P)-
+cM = {prio:2} 4+M
   #STOP
-2S = {prio:2} 4+!s
+3X = {prio:-1} any hand
   #STOP
-3C = {prio:-1} any hand
-  #STOP
-
-1C-(1D)-P-(2D)-D-(any)-
-P = {prio:-100} {stop} any hand
-
-1C-(1H)-P-(2H)-
-D = {prio:2} 13+ hcp, 0--1!h
-3C = {prio:1} 15+ hcp, 6+!c
-  #STOP
-P = {prio:-100} {stop} any hand
-
-1C-(1H)-P-(2H)-D-(P)-
-2S = {prio:2} 4+!s
-  #STOP
-3C = {prio:-1} any hand
-  #STOP
-
-1C-(1H)-P-(2H)-D-(any)-
-P = {prio:-100} {stop} any hand
-
-1C-(1S)-P-(2S)-
-D = {prio:2} 13+ hcp, 0--1!s
-3C = {prio:1} 15+ hcp, 6+!c
-  #STOP
-P = {prio:-100} {stop} any hand
-
-1C-(1S)-P-(2S)-D-(P)-
-3H = {prio:2} 4+!h
-  #STOP
-3C = {prio:-1} any hand
-  #STOP
-
-1C-(1S)-P-(2S)-D-(any)-
-P = {prio:-100} {stop} any hand
-
-1D-(1H)-P-(2H)-
-D = {prio:2} 13+ hcp, 0--1!h
-3D = {prio:1} 15+ hcp, 6+!d
-  #STOP
-P = {prio:-100} {stop} any hand
-
-1D-(1H)-P-(2H)-D-(P)-
-2S = {prio:2} 4+!s
-  #STOP
-3D = {prio:-1} any hand
-  #STOP
-
-1D-(1H)-P-(2H)-D-(any)-
-P = {prio:-100} {stop} any hand
-
-1D-(1S)-P-(2S)-
-D = {prio:2} 13+ hcp, 0--1!s
-3D = {prio:1} 15+ hcp, 6+!d
-  #STOP
-P = {prio:-100} {stop} any hand
-
-1D-(1S)-P-(2S)-D-(P)-
-3H = {prio:2} 4+!h
-  #STOP
-3D = {prio:-1} any hand
-  #STOP
-
-1D-(1S)-P-(2S)-D-(any)-
-P = {prio:-100} {stop} any hand
-
-1H-(1S)-P-(2S)-
-D = {prio:2} 13+ hcp, 0--1!s
-3H = {prio:1} 15+ hcp, 6+!h
-  #STOP
-P = {prio:-100} {stop} any hand
 
 1H-(1S)-P-(2S)-D-(P)-
 3C = {prio:2} 4+!c
   #STOP
 3D = {prio:2} 4+!d
   #STOP
-3H = {prio:-1} any hand
-  #STOP
 
-1H-(1S)-P-(2S)-D-(any)-
+1X-(1Y)-P-(2Y)-D-(any)-
 P = {prio:-100} {stop} any hand
 
 *** Responder after 1NT-3NT when a passed hand bids on

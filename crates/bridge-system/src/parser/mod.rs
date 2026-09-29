@@ -9,7 +9,7 @@ pub mod call;
 pub mod clipboard;
 
 use crate::{
-    Lint, LintCode,
+    CallPattern, Lint, LintCode, Var,
     ast::{
         BidTable, Block, BmlFile, BmlNode, CallToken, Description, RawLine, SeatCond, Span, Tri,
         VulCond,
@@ -54,7 +54,10 @@ pub fn parse(loaded: Loaded) -> BmlFile {
                     blocks.push(block);
                 }
             }
-            ParagraphKind::Paragraph => blocks.push(parse_paragraph(&paragraph)),
+            ParagraphKind::Paragraph => {
+                relative_row_as_prose(&paragraph, &mut lints);
+                blocks.push(parse_paragraph(&paragraph));
+            }
         }
     }
 
@@ -138,7 +141,79 @@ fn is_bidtable_start(word: &str) -> bool {
         return call::history(&mut s).is_ok() && s.is_empty();
     }
     let mut s = word;
-    call::calltok(&mut s).is_ok() && s.is_empty()
+    match call::calltok(&mut s) {
+        // A relative level (`cS`, `jY`) names no call without a bid before it, so it never
+        // starts a table: a prose paragraph that happens to begin with such a word stays prose.
+        Ok((_, pattern)) => s.is_empty() && !has_relative_level(&pattern),
+        Err(_) => false,
+    }
+}
+
+/// A prose paragraph whose first line has the shape of a bidding-table row led by a relative
+/// level (`cS = 5+!s`): a relative level never starts a table (`is_bidtable_start`), so the
+/// paragraph, and every ordinary row under it, is read as prose. Say so rather than drop the
+/// rows without a trace (Warning `UnknownCallToken`; `docs/design/06-system.md` §3.2).
+fn relative_row_as_prose(paragraph: &[RawLine], lints: &mut Vec<Lint>) {
+    let Some(first) = paragraph.first() else {
+        return;
+    };
+    let mut words = first.text.split_whitespace();
+    let (Some(word), Some(next)) = (words.next(), words.next()) else {
+        return;
+    };
+    if next != "=" {
+        return;
+    }
+    let mut s = word;
+    let relative =
+        matches!(call::calltok(&mut s), Ok((_, ref p)) if s.is_empty() && has_relative_level(p));
+    if relative {
+        lints.push(
+            Lint::warning(
+                LintCode::UnknownCallToken,
+                format!(
+                    "{word}: a relative level cannot open a bidding table (no bid before it); \
+                     the paragraph ({} line(s)) is read as prose",
+                    paragraph.len()
+                ),
+            )
+            .with_span(first.span.clone()),
+        );
+    }
+}
+
+/// How many distinct variables among `X`, `Y`, `Z` a table's history and rows use (the ones
+/// whose strain order `#ANYORDER` lifts).
+fn xyz_variables(history: &[CallToken], rows: &[BmlNode]) -> usize {
+    fn pattern(p: &CallPattern, seen: &mut [bool; 3]) {
+        match p {
+            CallPattern::Var { var, .. } => match var {
+                Var::X => seen[0] = true,
+                Var::Y => seen[1] = true,
+                Var::Z => seen[2] = true,
+                _ => {}
+            },
+            CallPattern::AnyOf(alts) => alts.iter().for_each(|a| pattern(a, seen)),
+            _ => {}
+        }
+    }
+    fn node(n: &BmlNode, seen: &mut [bool; 3]) {
+        n.calls.iter().for_each(|t| pattern(&t.pattern, seen));
+        n.children.iter().for_each(|c| node(c, seen));
+    }
+    let mut seen = [false; 3];
+    history.iter().for_each(|t| pattern(&t.pattern, &mut seen));
+    rows.iter().for_each(|n| node(n, &mut seen));
+    seen.iter().filter(|&&b| b).count()
+}
+
+/// Whether `pattern` (or one of its alternatives) uses a relative level (`c`, `j`).
+fn has_relative_level(pattern: &CallPattern) -> bool {
+    match pattern {
+        CallPattern::Strains { level, .. } | CallPattern::Var { level, .. } => level.is_relative(),
+        CallPattern::AnyOf(alts) => alts.iter().any(has_relative_level),
+        _ => false,
+    }
 }
 
 fn is_meta_start(s: &str) -> bool {
@@ -444,6 +519,7 @@ fn parse_table_paragraph(
     let mut skip_indent: Option<u16> = None;
     let mut history_no_trailing = false;
     let mut table_stop = false;
+    let mut any_order = false;
 
     for line in &expanded {
         let indent = leading_ws(&line.text) as u16;
@@ -466,6 +542,11 @@ fn parse_table_paragraph(
             continue;
         }
         if trimmed.trim_end() == "#BIDTABLE" {
+            continue;
+        }
+        if trimmed.trim_end() == "#ANYORDER" {
+            // Table-scoped wherever it is written (a sub-row's indentation does not narrow it).
+            any_order = true;
             continue;
         }
         if trimmed.trim_end() == "#STOP" {
@@ -687,7 +768,39 @@ fn parse_table_paragraph(
     }
 
     if history.is_empty() && roots.is_empty() {
+        // A paragraph of table directives alone (`#ANYORDER` or `#STOP` followed by a blank
+        // line, the way `#SEAT`/`#VUL` are written) names no table: the directives would
+        // otherwise vanish without a trace while the table below stays ordered / unstopped.
+        let mut orphans = Vec::new();
+        if any_order {
+            orphans.push("#ANYORDER");
+        }
+        if table_stop {
+            orphans.push("#STOP");
+        }
+        if !orphans.is_empty() {
+            lints.push(
+                Lint::warning(
+                    LintCode::UnknownDirective,
+                    format!(
+                        "{} outside a bidding table has no effect (write it inside the table's \
+                         paragraph, with no blank line before the table)",
+                        orphans.join(" and ")
+                    ),
+                )
+                .with_span(table_span),
+            );
+        }
         return None;
+    }
+    if any_order && xyz_variables(&history, &roots) < 2 {
+        lints.push(
+            Lint::info(
+                LintCode::AnyOrderWithoutVariables,
+                "#ANYORDER in a table with fewer than two of the variables X, Y, Z has no effect",
+            )
+            .with_span(table_span.clone()),
+        );
     }
 
     Some(Block::BidTable(BidTable {
@@ -698,6 +811,7 @@ fn parse_table_paragraph(
         history_desc,
         rows: roots,
         stop: table_stop,
+        any_order,
         span: table_span,
     }))
 }
@@ -823,5 +937,33 @@ mod tests {
             .find(|l| l.message.contains("unterminated"))
             .expect("unterminated lint");
         assert_eq!(lint.span.as_ref().map(|s| s.line), Some(2));
+    }
+
+    #[test]
+    fn any_order_is_a_table_directive() {
+        let file = parse_str("#ANYORDER \n1X-(2Y)-\nD  10+ hcp\n\n1X-(3Y)-\nD  12+ hcp\n");
+        assert!(file.lints.is_empty(), "{:?}", file.lints);
+        let flags: Vec<bool> = file
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::BidTable(t) => Some(t.any_order),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(flags, [true, false]);
+        // Written under a row it still marks the table, and the row tree is unchanged.
+        let file = parse_str("1X-(2Y)-\nD  10+ hcp\n  #ANYORDER\n  P  any\n");
+        assert!(matches!(&file.blocks[0], Block::BidTable(b) if b.any_order));
+        assert_eq!(tables(&file)[0].1, ["D 10+ hcp", "  P any"]);
+    }
+
+    #[test]
+    fn any_order_without_two_variables_is_reported() {
+        let file = parse_str("#ANYORDER\n1X-\n2X  raise\n");
+        let codes: Vec<LintCode> = file.lints.iter().map(|l| l.code).collect();
+        assert_eq!(codes, [LintCode::AnyOrderWithoutVariables]);
+        let file = parse_str("#ANYORDER\n1X-\n2Y  new suit\n");
+        assert!(file.lints.is_empty(), "{:?}", file.lints);
     }
 }

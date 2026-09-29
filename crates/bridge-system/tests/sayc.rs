@@ -590,3 +590,66 @@ fn sayc_opening_coverage_sanity() {
          SAYC should open essentially every 12+ HCP hand"
     );
 }
+
+/// Lint `StopUnderForcing` (lane D2's review; `docs/design/06-system.md` §9.3 check 9): no stop
+/// pass may be reachable where partner's forcing call is still pending or a game force of ours
+/// is below game. The positions left are phase 4's `{stop}` sinks for opener's rebid after a
+/// forcing response (`continuations.bml`, "The partnership stops after a pass"), whose rebid
+/// tables do not cover every hand yet (`systems/sayc/NOTES.md` #P12, review fixes). The list is
+/// pinned so that a new table cannot add another.
+#[test]
+fn sayc_stops_under_forcing_calls_are_only_the_known_rebid_sinks() {
+    const KNOWN: &[&str] = &[
+        "1C-(1D)-1H-(Pass)",
+        "1C-(1D)-1S-(Pass)",
+        "1C-(1H)-1S-(Pass)",
+        "1C-(1H)-2D-(Pass)",
+        "1C-(1S)-2D-(Pass)",
+        "1C-(1S)-2H-(Pass)",
+        "1C-(Pass)-1D-(Pass)",
+        "1C-(Pass)-1H-(Pass)",
+        "1C-(Pass)-1S-(Pass)",
+        "1D-(1H)-1S-(Pass)",
+        "1D-(1H)-2C-(Pass)",
+        "1D-(1S)-2C-(Pass)",
+        "1D-(1S)-2H-(Pass)",
+        "1D-(Pass)-1H-(Pass)",
+        "1D-(Pass)-1S-(Pass)",
+        "1D-(Pass)-2C-(Pass)",
+        "1H-(Pass)-1S-(Pass)",
+        "1H-(Pass)-1S-(Pass)-2C-(Pass)-2D-(Pass)",
+        "1H-(Pass)-2C-(Pass)",
+        "1H-(Pass)-2D-(Pass)",
+        "1H-(Pass)-2NT-(Pass)",
+        "1S-(Pass)-2C-(Pass)",
+        "1S-(Pass)-2C-(Pass)-2H-(Pass)-3D-(Pass)",
+        "1S-(Pass)-2C-(Pass)-2H-(Pass)-3S-(Pass)",
+        "1S-(Pass)-2D-(Pass)",
+        "1S-(Pass)-2H-(Pass)",
+        "1S-(Pass)-2NT-(Pass)",
+    ];
+    let (ir, _) = compile_sayc("sayc.bml");
+    let mut found: Vec<String> = ir
+        .lints
+        .iter()
+        .filter(|l| l.code == LintCode::StopUnderForcing)
+        .map(|l| {
+            let at = l
+                .message
+                .split(" is a candidate at ")
+                .nth(1)
+                .unwrap_or(&l.message);
+            at.split(" after ").next().unwrap_or(at).to_owned()
+        })
+        .collect();
+    found.sort();
+    found.dedup();
+    let mut known: Vec<String> = KNOWN.iter().map(|s| (*s).to_owned()).collect();
+    known.sort();
+    let new: Vec<&String> = found.iter().filter(|f| !known.contains(f)).collect();
+    let gone: Vec<&String> = known.iter().filter(|k| !found.contains(k)).collect();
+    assert!(
+        new.is_empty() && gone.is_empty(),
+        "StopUnderForcing positions changed: new {new:#?}, fixed (remove from KNOWN) {gone:#?}"
+    );
+}

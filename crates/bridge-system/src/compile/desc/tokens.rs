@@ -79,6 +79,77 @@ pub enum Token {
     Splinter(Option<SuitRef>, bool),
     /// `unlimited`, `any hand`: recognised, no constraint.
     NoBound,
+    /// Extension (`docs/design/06-system.md` §7.4): a comparison of two suits' lengths,
+    /// `!s>=!h`, `!s>!h`, `!s=!h`, `!s<=!h`, `!s<!h` (a space may surround the operator). With
+    /// variables substituted first, `M>=oM` reads "at least as many cards in `M` as in `oM`".
+    LengthOrder(Suit, LengthCmp, Suit),
+}
+
+/// The operator of a [`Token::LengthOrder`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[allow(missing_docs)]
+pub enum LengthCmp {
+    Ge,
+    Gt,
+    Eq,
+    Le,
+    Lt,
+}
+
+impl LengthCmp {
+    /// Whether `a` and `b` (the two lengths, in written order) satisfy the comparison.
+    pub fn holds(self, a: u8, b: u8) -> bool {
+        match self {
+            LengthCmp::Ge => a >= b,
+            LengthCmp::Gt => a > b,
+            LengthCmp::Eq => a == b,
+            LengthCmp::Le => a <= b,
+            LengthCmp::Lt => a < b,
+        }
+    }
+}
+
+/// The shapes in which `a`'s length compares to `b`'s as `cmp` says.
+pub(crate) fn length_order_shapes(a: Suit, cmp: LengthCmp, b: Suit) -> ShapeSet {
+    bridge_core::SHAPES
+        .iter()
+        .filter(|shape| cmp.holds(shape.len(a), shape.len(b)))
+        .fold(ShapeSet::EMPTY, |set, shape| set.insert(*shape))
+}
+
+/// `<suit> <op> <suit>` with two sentinel suits (`♠>=♥`, `♠ > ♥`); two different suits only.
+fn match_length_order(s: &str) -> Option<(Token, usize)> {
+    let first = s.chars().next()?;
+    let a = sentinel_suit(first)?;
+    let mut i = first.len_utf8();
+    let skip_space = |i: usize| if s[i..].starts_with(' ') { i + 1 } else { i };
+    i = skip_space(i);
+    const OPS: &[(&str, LengthCmp)] = &[
+        (">=", LengthCmp::Ge),
+        ("<=", LengthCmp::Le),
+        (">", LengthCmp::Gt),
+        ("<", LengthCmp::Lt),
+        ("=", LengthCmp::Eq),
+    ];
+    let (op, cmp) = OPS.iter().find(|(op, _)| s[i..].starts_with(op))?;
+    i += op.len();
+    i = skip_space(i);
+    let second = s[i..].chars().next()?;
+    let b = sentinel_suit(second)?;
+    if a == b {
+        return None;
+    }
+    i += second.len_utf8();
+    // `!s>=!hx` is not a comparison, and neither is `!h>=!s+1`: an offset is not supported, and
+    // reading it as `!h>=!s` would silently admit the equal lengths the author excluded.
+    if s[i..]
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_alphanumeric() || matches!(c, '+' | '-'))
+    {
+        return None;
+    }
+    Some((Token::LengthOrder(a, *cmp, b), i))
 }
 
 /// Context-dependent strength words.
@@ -1127,6 +1198,9 @@ pub fn recognize(text: &str) -> Option<(Token, usize)> {
         let _ = set; // interpreted again, from the stored string, by `context::resolve`.
         return Some((Token::Shape(text[..len].to_string()), len));
     }
+    if let Some(hit) = match_length_order(text) {
+        return Some(hit);
+    }
     if let Some(hit) = match_length_or_metric(text) {
         return Some(hit);
     }
@@ -1441,6 +1515,25 @@ mod tests {
 
     #[test]
     fn no_bound_words() {
+        assert_eq!(
+            rec("♠>=♥"),
+            Token::LengthOrder(Suit::Spades, LengthCmp::Ge, Suit::Hearts)
+        );
+        assert_eq!(
+            rec("♦ < ♣"),
+            Token::LengthOrder(Suit::Diamonds, LengthCmp::Lt, Suit::Clubs)
+        );
+        assert_eq!(
+            rec("♥=♠"),
+            Token::LengthOrder(Suit::Hearts, LengthCmp::Eq, Suit::Spades)
+        );
+        assert!(recognize("♠>=♠").is_none_or(|(t, _)| !matches!(t, Token::LengthOrder(..))));
+        assert!(recognize("♠>=♥x").is_none_or(|(t, _)| !matches!(t, Token::LengthOrder(..))));
+        assert!(recognize("♥>=♠+1").is_none_or(|(t, _)| !matches!(t, Token::LengthOrder(..))));
+        assert!(recognize("♥>=♠-1").is_none_or(|(t, _)| !matches!(t, Token::LengthOrder(..))));
+        let set = length_order_shapes(Suit::Spades, LengthCmp::Gt, Suit::Hearts);
+        assert!(set.contains(bridge_core::Shape::new(3, 3, 2, 5)));
+        assert!(!set.contains(bridge_core::Shape::new(3, 2, 4, 4)));
         assert_eq!(rec("unlimited"), Token::NoBound);
         assert_eq!(rec("any hand"), Token::NoBound);
         assert_eq!(rec("any distribution"), Token::NoBound);

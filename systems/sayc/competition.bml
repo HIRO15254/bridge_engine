@@ -761,6 +761,13 @@ P = {prio:-100} {stop} any hand
 
 (1X)-P-(3X)-
 D = 13+ hcp, 0--2X
+  #STOP
+cM = {prio:2} 13--17 hcp, 5+M
+  #STOP
+cm = {prio:2} 13--17 hcp, 6+m
+  #STOP
+3N = {prio:3} 16--19 hcp, stopper
+  #STOP
 P = {prio:-100} {stop} any hand
 
 After a sandwich overcall, advancer raises with three-card support when opener

@@ -1329,4 +1329,470 @@ mod phase4_tables {
             ("1C 1S X 2S P", "AKJ32.K32.A32.32", "4S"),
         ]);
     }
+
+    /// Balancing after their raise to the two level (`competing.bml`, NOTES.md #P12): a
+    /// takeout double short in their suit, a five-card suit at the two level, a six-card lower
+    /// suit at the three level; a weak hand passes, and advancer answers the double in the
+    /// cheapest four-card major or passes for penalty with five trumps.
+    #[test]
+    fn balancing_after_their_two_level_raise() {
+        check_system(&[
+            ("1H P 2H P P", "KJ42.2.AQ32.J432", "X"),
+            ("1H P 2H P P", "KJ432.32.A32.Q32", "2S"),
+            ("1S P 2S P P", "32.K32.AQJ432.32", "3D"),
+            ("1H P 2H P P", "Q432.32.Q432.432", "P"),
+            ("1H P 2H P P X P", "Q432.32.K432.432", "2S"),
+            ("1H P 2H P P X P", "32.KJ432.Q32.Q32", "P"),
+        ]);
+    }
+
+    /// The direct seat over their raise to three (`competition.bml`, #P12): a natural five-card
+    /// major with an opening hand outranks the takeout double, and advancer bids the cheapest
+    /// four-card major; the double of a raise to game shows 16+ and shortness.
+    #[test]
+    fn competing_over_their_three_level_raise() {
+        check_system(&[
+            ("1H P 3H", "AKJ32.32.AQ32.32", "3S"),
+            ("1H P 3H", "KQ32.3.AQ32.K432", "X"),
+            ("1H P 3H", "Q32.32.Q5432.432", "P"),
+            ("1H P 3H X P", "Q432.432.K32.432", "3S"),
+            ("1S P 4S", "3.AK32.AQ32.KJ32", "X"),
+            ("1S P 4S", "32.K432.Q432.432", "P"),
+        ]);
+    }
+
+    /// Their raised weak two and a preempt passed round to us (#P12): the double shows an
+    /// opening hand short in their suit (lighter in the balancing seat), advancer bids the
+    /// cheapest four-card major, and a weak hand passes.
+    #[test]
+    fn competing_over_a_raised_weak_two_and_a_passed_preempt() {
+        check_system(&[
+            ("2H P 3H", "AQ32.3.KQ32.A432", "X"),
+            ("2H P 3H", "32.32.Q5432.Q432", "P"),
+            ("2H P 3H X P", "Q432.432.K32.432", "3S"),
+            ("3D P P", "AQ32.KJ32.3.Q432", "X"),
+            ("3D P P X P", "Q432.K43.32.5432", "3S"),
+            ("3H P P", "AQ32.3.KJ32.Q432", "X"),
+            ("3H P P", "432.Q32.Q432.432", "P"),
+        ]);
+    }
+
+    /// Opener when the fourth hand balances after responder's pass (#P12 batch 2): a six-card
+    /// rebid, a second five-card suit, a takeout double with 16+ that responder answers in his
+    /// cheapest four-card suit; a minimum balanced opener passes.
+    #[test]
+    fn opener_after_they_balance_over_responders_pass() {
+        check_system(&[
+            ("1S P P X", "AKJ832.K2.Q32.32", "2S"),
+            ("1S P P X", "AKJ32.2.KQ432.32", "2D"),
+            ("1S P P X", "AK32.K32.Q32.432", "P"),
+            ("1C P P 1H", "AK32.2.AQ32.KJ32", "X"),
+            ("1C P P 1H X P", "Q432.432.432.432", "1S"),
+            ("1C P P 1H X P", "32.QJ432.432.432", "P"),
+        ]);
+    }
+
+    /// Opener's second turn when they bid again after an overcall or a negative double (#P12
+    /// batch 2): a six-card rebid, the major the negative double promised, and a pass with a
+    /// minimum balanced hand.
+    #[test]
+    fn opener_competes_after_an_overcall() {
+        check_system(&[
+            ("1C 1D P 1NT", "K3.32.A32.KQJ432", "2C"),
+            ("1C 1D P 1NT", "K32.Q32.A32.K432", "P"),
+            ("1D 1H X 1NT", "KJ32.32.AQ432.K2", "2S"),
+            ("1D 1S 2D 2S", "32.K32.AKJ432.Q2", "3D"),
+            ("1D 1S 2D 2S", "32.K432.AKJ4.Q32", "P"),
+        ]);
+    }
+
+    /// Over the response to their 1NT or weak two (#P12 batch 3): a natural six-card overcall,
+    /// a takeout double of the weak two with an opening hand, and a pass otherwise.
+    #[test]
+    fn over_the_response_to_their_notrump_or_weak_two() {
+        check_system(&[
+            ("1NT P 2C", "32.KQJ932.K32.32", "2H"),
+            ("1NT P 2C", "K32.Q432.K32.432", "P"),
+            ("1NT P 2NT", "32.32.AQJ932.K32", "3D"),
+            ("2H P 2NT", "AQ32.3.KQ32.A432", "X"),
+            ("2H P 2NT", "AKJ932.32.A32.32", "3S"),
+            ("2H P 2NT", "Q32.Q32.Q432.432", "P"),
+            ("2D P 2H P 3H P P", "AQ32.3.KJ32.A432", "X"),
+        ]);
+    }
+
+    /// Escaping from a doubled or passed-out notrump (#P12 batch 3): responder bids a five-card
+    /// suit; after their overcall of his response he rebids a six-card suit.
+    #[test]
+    fn responder_escapes_and_rebids() {
+        check_system(&[
+            ("1D 1H X 1NT P P", "KJ432.32.432.Q32", "2S"),
+            ("1D 1S 1NT X P P", "32.QJ432.K32.432", "2H"),
+            ("1D P 1H 2C P P", "32.KQJ932.432.Q2", "2H"),
+            ("1D P 1H 2C P P", "Q32.KJ32.432.Q32", "P"),
+        ]);
+    }
+
+    /// Advancing a takeout double after the opener's partner bids (#P12 batch 4): a free bid
+    /// in a four-card major with 6--11, game with 12+, a pass with a weak hand; over a redouble
+    /// the cheapest four-card suit even with nothing.
+    #[test]
+    fn advancing_a_takeout_double_after_their_bid() {
+        check_system(&[
+            ("1C X 1H", "KJ32.32.Q432.K32", "1S"),
+            ("1C X 1H", "32.Q32.J5432.432", "P"),
+            ("1S X 2S", "32.KQ32.AK32.J32", "4H"),
+            ("1S X 2S", "32.KJ32.Q432.Q32", "3H"),
+            ("1C X XX", "5432.432.432.432", "1S"),
+        ]);
+    }
+
+    /// Advancing a two-level overcall after their new suit, and opener's rebid after a double
+    /// of our opening and responder's one-level suit (#P12 batch 4).
+    #[test]
+    fn advancing_an_overcall_and_rebidding_after_a_double() {
+        check_system(&[
+            ("1S 2D 2H", "32.432.KJ32.Q432", "3D"),
+            ("1S 2D 2H", "432.432.32.QJ432", "P"),
+            ("1C X 1H P", "K32.KJ32.32.AQ32", "2H"),
+            ("1C X 1H P", "K32.Q2.K32.AQ432", "1NT"),
+        ]);
+    }
+
+    /// Responder's second call filled in (#P12 batch 5, `later-rounds-extra.bml`): after
+    /// 1M-1NT-2m a raise with five cards and 8--10 and a 2NT invitation on a maximum; after a
+    /// two-over-one and opener's new suit the 10--12 preference, raise and 2NT.
+    #[test]
+    fn responders_second_call_filled_in() {
+        check_system(&[
+            ("1S P 1NT P 2D P", "32.K32.KJ432.Q32", "3D"),
+            ("1S P 1NT P 2D P", "32.KJ32.Q32.KJ32", "2NT"),
+            ("1S P 2D P 2H P", "32.KJ32.AQ432.32", "3H"),
+            ("1S P 2D P 2H P", "Q2.K32.AQ432.432", "2S"),
+            ("1S P 2D P 2H P", "32.K32.AQJ432.32", "3D"),
+        ]);
+    }
+
+    /// Opener's rebid after responder's forcing new suit over a two-level overcall, and
+    /// responder's game bid over it (#P12 batch 5).
+    #[test]
+    fn opener_rebids_after_a_new_suit_over_a_two_level_overcall() {
+        check_system(&[
+            ("1S 2C 2H P", "AKJ32.K432.32.32", "3H"),
+            ("1S 2C 2H P", "AKJ32.32.KQ2.432", "2S"),
+            ("1S 2C 2H P 3H P", "32.AKJ32.K32.Q32", "4H"),
+            // In range for the forcing 2H (10+, five hearts) but short of game values.
+            ("1S 2C 2H P 3H P", "32.KQ432.K32.K32", "P"),
+        ]);
+    }
+
+    /// Competitive decisions after they raise or reopen (#P12 batch 6): opener raises
+    /// responder's forcing suit over their jump raise, the 1NT opener reopens with a double when
+    /// short in their suit, and responder competes to three with a fourth trump.
+    #[test]
+    fn competitive_decisions_after_they_raise() {
+        check_system(&[
+            ("1D 1S 2C 3S", "32.K32.AQ32.K432", "4C"),
+            ("1D 1S 2C 3S", "32.KQ32.AQ432.32", "P"),
+            ("1NT 2H P P", "AQ32.3.KQ32.A432", "X"),
+            ("1NT 2H P P", "AQ3.Q32.KQ32.A32", "P"),
+            ("1H P 2H 2S P P", "32.Q432.K432.Q32", "3H"),
+            ("1H P 2H 2S P P", "Q32.Q32.K432.Q32", "P"),
+        ]);
+    }
+
+    /// Continuations after rows that stopped short (#P12 batch 7): responder after opener's
+    /// rebid over the Jacoby 2NT, responder after the weak two's rebid, opener after responder's
+    /// preference or rebid.
+    #[test]
+    fn continuations_after_jacoby_weak_twos_and_preference() {
+        check_system(&[
+            ("1S P 2NT P 3C P", "KQ32.AK3.AQ32.K2", "6S"),
+            ("1S P 2NT P 3C P", "KQ32.K32.AQ32.32", "4S"),
+            ("1H P 2NT P 4H P", "A32.KQ32.AK32.K2", "6H"),
+            ("1H P 2NT P 4H P", "A32.KQ32.KQ32.32", "P"),
+            ("2S P 3C P 3S P", "Q2.AK3.K32.AQ432", "4S"),
+            ("2S P 3C P 3S P", "2.AK32.K32.AQ432", "3NT"),
+            ("2S P 3C P 3S P", "2.KQ32.K32.AQ432", "P"),
+            ("1D P 1S P 2C P 2D P", "32.A2.AKQ432.K32", "3D"),
+            ("1D P 1S P 2C P 2D P", "32.A2.KQ9432.K32", "P"),
+            ("1D P 1S P 2C P 2S P", "K2.A2.AKQ32.Q432", "3S"),
+            ("1D P 1S P 2C P 2S P", "K2.32.AKJ32.Q432", "P"),
+        ]);
+    }
+
+    /// Competitive continuations (#P12 batch 7): opener after a forcing new major over their
+    /// three-level overcall, after a penalty double of their 1NT, the 1NT opener after
+    /// responder's takeout double, the cue-bid raise, and advancing a weak jump overcall when
+    /// they bid on (their suit above or below the opening's).
+    #[test]
+    fn competitive_continuations_after_rows_that_stopped() {
+        check_system(&[
+            ("1D 3C 3H P", "A2.K32.AKJ32.432", "4H"),
+            ("1D 3C 3H P", "AQ32.32.AKJ32.32", "3S"),
+            ("1D 3C 3H P", "A32.32.AKJ32.K32", "3NT"),
+            ("1D 3C 3H P", "A32.32.AKJ432.32", "4D"),
+            ("1S 1NT X P", "AKJ432.K32.Q32.3", "2S"),
+            ("1S 1NT X P", "AKJ32.K32.Q32.32", "P"),
+            ("1NT 2H X P", "AQ32.K32.KQ2.Q32", "2S"),
+            ("1NT 2H X P", "AQ2.KJ32.KQ2.Q32", "P"),
+            ("1NT 2H X P", "AQ2.K32.KQ32.Q32", "3D"),
+            ("1S 2C 3C P", "AKJ32.KQ2.32.K32", "4S"),
+            ("1S 2C 3C P", "AKJ32.Q32.32.K32", "3S"),
+            ("1S 2C 3C P 3S P", "Q32.AK32.KQ32.32", "4S"),
+            ("1S 2C 3C P 3S P", "Q32.AK32.Q432.32", "P"),
+            ("1D 2S 3C", "Q32.AK32.KQ32.32", "4S"),
+            ("1D 2S 3C", "Q32.K432.Q432.32", "3S"),
+            ("1D 2S 3C", "32.K432.Q432.Q32", "P"),
+            ("1H 2S 3C", "Q32.K432.Q432.32", "3S"),
+            ("1S 3C 3S", "32.AK32.KQ32.Q32", "4C"),
+            ("1S 3C 3S", "432.K432.Q432.32", "P"),
+            ("1H 3C 3D", "32.AK32.KQ32.Q32", "4C"),
+            ("1C 2D 2H", "K32.Q432.Q432.32", "3D"),
+        ]);
+    }
+
+    /// Uncontested continuations (#P12 batch 8): opener after responder's 1NT over his
+    /// one-level new suit, responder after 1m-1NT-2m, the reverse, the jump shift over a minor
+    /// and opener's rebid after it, and the notrump opener's answer to a forcing 2!s.
+    #[test]
+    fn uncontested_continuations_batch_8() {
+        check_system(&[
+            ("1C P 1D P 1H P 1NT P", "A2.AK32.32.AKJ32", "3NT"),
+            ("1C P 1D P 1H P 1NT P", "A2.AK32.32.KQJ32", "2NT"),
+            ("1C P 1D P 1H P 1NT P", "2.KQ32.32.AKJ432", "2C"),
+            ("1C P 1D P 1H P 1NT P", "32.KQ32.K2.AJ432", "P"),
+            ("1C P 1NT P 2C P", "Q32.K32.J432.Q32", "3C"),
+            ("1C P 1NT P 2C P", "Q32.J32.J432.Q32", "P"),
+            ("1C P 1NT P 2C P 3C P", "A2.K32.32.AQJ432", "3NT"),
+            ("1C P 1NT P 2C P 3C P", "A2.Q32.32.KQJ432", "P"),
+            ("1C P 1H P 2D P", "32.AQJ32.K32.Q32", "2H"),
+            ("1C P 1H P 2D P", "32.KJ32.Q432.432", "3D"),
+            ("1C P", "AQ2.AKJ32.K2.Q32", "2H"),
+            ("1C P", "32.AKJ32.K32.432", "1H"),
+            ("1C P 2H P", "A2.K32.Q32.KJ432", "3H"),
+            ("1C P 2H P", "AQ32.32.KJ2.K432", "2S"),
+            ("1C P 2H P", "KQ2.32.QJ2.KJ432", "2NT"),
+            ("1C P 1D P 1NT P 2S P", "K32.Q32.A2.KJ432", "3S"),
+            ("1C P 1D P 1NT P 2S P", "K2.Q32.A32.KJ432", "2NT"),
+            ("1NT P 2D P 2H P 2NT P 3H P", "32.KQ432.K32.432", "P"),
+            ("2C P 2D P 2H P 2NT P 3H P", "32.Q2.5432.65432", "4H"),
+            ("2C P 2D P 2H P 2NT P 3H P", "432.2.5432.65432", "3NT"),
+        ]);
+    }
+
+    /// Competitive continuations (#P12 batch 8): the weak two and the 1NT overcaller sit for
+    /// partner's penalty double, the overcaller accepts advancer's 2NT, opener after the raise
+    /// over their Michaels cue bid, after a preemptive raise, the notrump opener after a forcing
+    /// new suit over their overcall, advancing a balancing three-level suit, and opener after
+    /// responder's double of a three-level preempt.
+    #[test]
+    fn competitive_continuations_batch_8() {
+        check_system(&[
+            ("2H 2S X P", "32.KQJ432.432.32", "P"),
+            ("1C 1NT 2H X P", "AQ2.KJ2.KQ32.J32", "P"),
+            ("1S 1NT P 2NT P", "AQ2.KJ2.KQ32.K32", "3NT"),
+            ("1S 1NT P 2NT P", "AQ2.KJ2.Q432.K32", "P"),
+            ("1S 2S 3S P", "AKJ32.K2.AQ2.432", "4S"),
+            ("1S 2S 3S P", "AKJ32.Q2.Q32.432", "P"),
+            ("1D 2C 3D P", "A2.AK2.KQ432.K32", "3NT"),
+            ("1D 2C 3D P", "A2.K32.KQ432.432", "P"),
+            ("1NT 2H 3C P", "AK32.32.KQ2.QJ32", "4C"),
+            ("1NT 2H 3C P", "AK32.32.AKJ32.32", "3S"),
+            ("2S P P 3H P", "32.K2.AKQ32.Q432", "4H"),
+            ("2S P P 3H P", "AQ2.2.KQ32.K5432", "3NT"),
+            ("1C 3D X P", "A2.KQ32.32.AK432", "3H"),
+            ("1C 3D X P", "A2.K32.2.AKQ5432", "4C"),
+        ]);
+    }
+
+    /// P12 batch 9: passes that end a limited uncontested auction (the system's stop
+    /// pass or an explicit pass row), next to the invitational or game calls that share
+    /// the position.
+    #[test]
+    fn limited_auction_passes_batch_9() {
+        check_system(&[
+            ("1H P 1NT P", "AK2.KQ432.432.32", "P"),
+            ("1H P 1NT P", "AK2.AKQ32.K32.32", "2NT"),
+            ("1H P 2H P", "AK2.KQ432.432.32", "P"),
+            ("1H P 2H P", "AK2.AKJ32.Q32.32", "3H"),
+            ("1S P 1NT P 2NT P", "32.Q432.Q432.J32", "P"),
+            ("1S P 1NT P 2NT P", "32.K432.KJ32.Q32", "3NT"),
+            ("1C P 1H P 2H P", "32.K432.Q432.J32", "P"),
+            ("1C P 1H P 2H P", "32.KQ32.KQ32.J32", "3H"),
+            ("1S P 1NT P 2H P", "32.K432.Q432.J32", "P"),
+            ("1S P 1NT P 2H P", "32.KJ32.KQ32.J32", "3H"),
+            ("1S X 2S P", "AKJ32.K32.Q32.32", "P"),
+            ("1S X 2S P", "AKJ32.AK2.KQ2.32", "4S"),
+            ("1S P 1NT P 2H P 2S P", "AK432.KQ32.32.32", "P"),
+            ("1S P 1NT P 2H P 2S P", "AK432.AKJ32.K2.2", "3H"),
+            ("1C P 1S P 2S P 4S P", "A32.K32.K32.Q432", "P"),
+        ]);
+    }
+
+    /// P12 batch 9: competitive continuations (jump overcalls raised, their
+    /// preempt over our takeout double, rebids after a two-over-one overcall).
+    #[test]
+    fn competitive_continuations_batch_9() {
+        check_system(&[
+            ("1C 2H 3H", "A32.K32.KQ32.432", "4H"),
+            ("1C 2H 2NT", "5432.K32.Q432.32", "3H"),
+            ("1H X 3H", "AQ32.32.KQ32.K32", "4S"),
+            ("1H X 3H", "Q432.32.KJ32.Q32", "3S"),
+            ("1D 2H 2S 3H", "A32.32.AK432.432", "3S"),
+            ("1C P 2C X", "A2.32.K32.AQ5432", "3C"),
+            ("1C P 2C X", "AK2.KQ2.Q32.AJ32", "2NT"),
+            ("1S P 2D 2H", "AKJ432.32.K2.432", "2S"),
+            ("1S P 2D 2H", "AKJ32.32.K32.432", "3D"),
+            ("1NT 2D 2H X P", "32.32.KQJ432.A32", "P"),
+            ("1H P 2C 2S P", "K32.432.KJ32.432", "3S"),
+        ]);
+    }
+
+    /// P12 batch 10: opener passes partner's game sign-off with a minimum (a hand with
+    /// slam values has no row there and is left to the natural engine).
+    #[test]
+    fn game_sign_off_passes_batch_10() {
+        check_system(&[
+            ("1D P 1H P 1S P 3NT P", "AK76.65.KQ532.82", "P"),
+            ("1D P 1S P 2C P 3NT P", "A2.32.KQ432.KJ32", "P"),
+            ("1S 3D 4S P", "AKJ32.K32.Q32.32", "P"),
+            ("1C 1H 3NT P", "A32.32.KQ3.K5432", "P"),
+            ("1C 3H 3NT P", "A32.32.KQ3.K5432", "P"),
+            ("1H P 2C P 2H P 4H P", "A2.KQJ432.32.Q32", "P"),
+            ("1S P 2NT P 3C P 4S P", "AKJ32.K32.Q432.2", "P"),
+        ]);
+    }
+}
+
+/// Lane D2's review (`systems/sayc/NOTES.md` #P12, review fixes): stops that made a player pass
+/// partner's forcing call, a game force below game, or a strong or unlimited hand. Dealer North,
+/// none vulnerable, hands `S.H.D.C`.
+mod d2_review {
+    use super::*;
+    use bridge_bidding::{BidChoice, ChoiceSource};
+    use bridge_core::{Auction, Call, Hand};
+
+    fn choose(calls: &str, hand: &str) -> BidChoice {
+        let table = sayc();
+        let mut a = Auction::new(Seat::North, Vulnerability::None);
+        for c in calls.split_whitespace() {
+            a = a
+                .with(c.parse::<Call>().expect("valid call"))
+                .expect("legal call");
+        }
+        let h: Hand = hand.parse().expect("valid hand");
+        choose_bid(table, h, &a, &ctx(table))
+    }
+
+    /// Every case must get a call (no `NoCandidate`) and must not pass.
+    fn check_not_pass(cases: &[(&str, &str)]) {
+        let mut failures = Vec::new();
+        for &(calls, hand) in cases {
+            match choose(calls, hand) {
+                BidChoice::Chosen(c) if c.call != Call::Pass => {}
+                other => failures.push(format!("  [{calls}] {hand}: {other:?}")),
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "passed or no call:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    /// Every case must get the expected call from a system row.
+    fn check_system(cases: &[(&str, &str, &str)]) {
+        let mut failures = Vec::new();
+        for &(calls, hand, expected) in cases {
+            let expected: Call = expected.parse().expect("valid call");
+            match choose(calls, hand) {
+                BidChoice::Chosen(c) if c.call == expected && c.source == ChoiceSource::System => {}
+                other => failures.push(format!(
+                    "  [{calls}] {hand}: expected {expected}, got {other:?}"
+                )),
+            }
+        }
+        assert!(failures.is_empty(), "wrong calls:\n{}", failures.join("\n"));
+    }
+
+    /// Opener never passes responder's forcing new suit after their takeout double; a strong
+    /// doubler and a 12+ advancer are not swallowed by a stop; the forced advances have a call.
+    #[test]
+    fn competing_stops_leave_strong_hands_and_forcing_calls_alone() {
+        check_not_pass(&[
+            // 1C-(X)-1H-(P): 19 unbalanced and 13 with four spades.
+            ("1C X 1H P", "AKQ2.2.AK3.QJ432"),
+            ("1C X 1H P", "AQ32.2.K32.KJ432"),
+            // The 22-count balancing doubler after advancer's 2S.
+            ("1H P 2H P P X P 2S P", "AKQ2.2.AKJ2.KQ32"),
+            // The 21-count doubler after advancer's pass over their redouble-less 1H.
+            ("1C X 1H P P", "AKJ2.AK32.AQ32.2"),
+        ]);
+        check_system(&[
+            // Minimum rebids stay on the system.
+            ("1C X 1H P", "K32.KQ32.K32.Q32", "2H"),
+            // A 12+ advancer: 3NT with a stopper, game with four spades.
+            ("1C X 1H", "KQ2.AJ2.K432.432", "3NT"),
+            ("1H P 2H P P X P", "AQ32.32.KJ2.Q432", "4S"),
+            ("1H P 3H X P", "AQ32.32.KJ2.Q432", "4S"),
+            // A weak 3=3=3=4 advancer of a balancing double of 3C: three diamonds.
+            ("3C P P X P", "432.432.432.5432", "3D"),
+            // The doubler of 1H-2H passes advancer's 2S with his minimum.
+            ("1H P 2H P P X P 2S P", "AQ32.2.KJ32.Q432", "P"),
+            // Over their new suit: a penalty double needs four of it; 13+ with support cue-bids.
+            ("1D 2C 2H", "AQ2.KJ32.Q432.32", "X"),
+            ("1D 2C 2H", "AK2.32.K432.KQ32", "3D"),
+            // A game-going advance with no stopper and no major: the cue bid.
+            ("2S P 3S P P X P", "T32.K63.T42.AQJ3", "4S"),
+            ("3S P P X P", "83.K98.KQT75.A63", "4S"),
+            ("2H P 3H X P", "A54.T54.A986.Q86", "4H"),
+            // The strong doubler doubles again after advancer's pass, also when they bid on.
+            ("1C X 1H P P", "A62.65.AKJ83.AK9", "X"),
+        ]);
+        check_not_pass(&[("1C X 1H P 2H", "A62.65.AKJ83.AK9")]);
+    }
+
+    /// Every case must be decided by something other than a system stop's pass: a system row
+    /// or, off-system, the natural engine.
+    fn check_not_stopped(cases: &[(&str, &str)]) {
+        let mut failures = Vec::new();
+        for &(calls, hand) in cases {
+            match choose(calls, hand) {
+                BidChoice::Chosen(c)
+                    if c.call != Call::Pass || c.source != ChoiceSource::System => {}
+                other => failures.push(format!("  [{calls}] {hand}: {other:?}")),
+            }
+        }
+        assert!(failures.is_empty(), "stopped:\n{}", failures.join("\n"));
+    }
+
+    /// No system stop ends the auction below game after a game force (the jump shift,
+    /// 1m-1X-1NT-2S) or after responder's forcing new suit over their overcall of 1NT; opener's
+    /// answers to that forcing new suit are system calls, the cue bid included, and never a
+    /// pass. (Responder's own continuation after the game force is off-system; the natural
+    /// engine does not yet carry the game force forward, `systems/sayc/NOTES.md` #P12.)
+    #[test]
+    fn game_forces_and_forcing_calls_are_not_stopped() {
+        check_not_stopped(&[
+            // Responder's jump shift (17+, game force) after opener's raise or new suit.
+            ("1C P 2H P 3H P", "A2.AKQJ32.K32.32"),
+            ("1C P 2H P 2S P", "A2.AKQJ32.K32.32"),
+            // Responder's 2S game force after 1C-1H-1NT: opener's 2NT is not the end.
+            ("1C P 1H P 1NT P 2S P 2NT P", "AK32.KQJ32.32.32"),
+            // 1NT-(2H)-3D (forcing) raised to 4D.
+            ("1NT 2H 3D P 4D P", "32.KQ2.AQJ432.K2"),
+        ]);
+        check_not_pass(&[
+            ("1NT 2H 3D P", "A32.432.K2.AKQ32"),
+            ("1NT 2S 3C P", "432.AK2.KQ2.A432"),
+        ]);
+        check_system(&[
+            // Opener shows his four-card major over 1NT-(2S)-3D.
+            ("1NT 2S 3D P", "432.AKQ2.K2.AQ32", "3H"),
+            // No stopper, no fit, no major: the cue bid.
+            ("1NT 2S 3D P", "432.AKQ.Q2.AQ432", "3S"),
+            ("1NT 2H 3D P", "A32.432.K2.AKQ32", "3H"),
+        ]);
+    }
 }

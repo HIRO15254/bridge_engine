@@ -486,6 +486,9 @@ struct Frame {
     /// variable are forbidden below one (`docs/design/06-system.md` §4.2 point 3), since neither
     /// has a real anchor once the opponents' actual call is unknown.
     under_wildcard: bool,
+    /// The table has `#ANYORDER` (`docs/design/06-system.md` §4.7): fresh `X`/`Y`/`Z` bindings
+    /// ignore the `X < Y < Z` order.
+    any_order: bool,
 }
 
 impl Frame {
@@ -500,6 +503,7 @@ impl Frame {
             last_by_seat: [None; 4],
             hcp_by_seat: [None, None, None, None],
             under_wildcard: false,
+            any_order: false,
         }
     }
 
@@ -517,6 +521,23 @@ impl Frame {
             Edge::Call(Call::Bid(b)) => Some(*b),
             _ => None,
         })
+    }
+
+    /// Whether the last bid of the path is known: always above any wildcard; below one, when no
+    /// wildcard step after the last concrete bid could itself be a bid. A relative level (`c`,
+    /// `j`, §4.6) needs it.
+    fn last_bid_known(&self) -> bool {
+        if !self.under_wildcard {
+            return true;
+        }
+        for edge in self.edges.iter().rev() {
+            match edge {
+                Edge::Call(Call::Bid(_)) => return true,
+                Edge::Class(class) if class_admits_a_bid(*class) => return false,
+                _ => {}
+            }
+        }
+        true
     }
 
     /// Whether `call` can be the next call. Exact on the concrete auction; below a wildcard,
@@ -661,6 +682,18 @@ struct Candidate {
     binding: Binding,
 }
 
+/// [`generate_candidates_in_order`] with the `X < Y < Z` order applied (tests).
+#[cfg(test)]
+fn generate_candidates(
+    pattern: &CallPattern,
+    env: &Binding,
+    used: StrainSet,
+    last_bid: Option<Bid>,
+    under_wildcard: bool,
+) -> Vec<Candidate> {
+    generate_candidates_in_order(pattern, env, used, last_bid, under_wildcard, true)
+}
+
 /// Generates the candidate edges for `pattern` (`docs/design/06-system.md` §4.2 point 3), pure
 /// and independent of any particular auction position beyond `last_bid` (used by
 /// [`CallPattern::Step`]).
@@ -670,12 +703,16 @@ struct Candidate {
 /// caller can report `IllegalCall`. A `Level::Any` wildcard, by contrast, is explicitly "whatever
 /// level is needed" (`docs/design/06-system.md` §1.3), so only the minimum sufficient level per
 /// strain is generated; this cannot itself be illegal.
-fn generate_candidates(
+///
+/// The `X < Y < Z` order of fresh variables applies only when `ordered` is set (`false` in an
+/// `#ANYORDER` table, `docs/design/06-system.md` §4.7).
+fn generate_candidates_in_order(
     pattern: &CallPattern,
     env: &Binding,
     used: StrainSet,
     last_bid: Option<Bid>,
     under_wildcard: bool,
+    ordered: bool,
 ) -> Vec<Candidate> {
     match pattern {
         CallPattern::Exact(call) => vec![Candidate {
@@ -683,6 +720,14 @@ fn generate_candidates(
             binding: *env,
         }],
         CallPattern::Strains { level, strains } => match level {
+            Level::Cheapest | Level::Jump => strains
+                .iter()
+                .flat_map(|s| bids_at_level(*level, s, last_bid))
+                .map(|b| Candidate {
+                    edge: Edge::Call(Call::Bid(b)),
+                    binding: *env,
+                })
+                .collect(),
             Level::At(n) => strains
                 .iter()
                 .filter_map(|s| Bid::new(*n, s))
@@ -718,7 +763,7 @@ fn generate_candidates(
                 // A fresh variable only offers *sufficient* bids as candidates (bss.py's
                 // `check_vars` silently drops `bid <= last_bid`); an insufficient one is simply
                 // not a real choice here, not an authored call to flag as `IllegalCall`.
-                env.candidates(*var, used)
+                env.candidates_in_order(*var, used, ordered)
                     .into_iter()
                     .flat_map(|strain| {
                         bids_at_level(*level, strain, last_bid)
@@ -746,7 +791,9 @@ fn generate_candidates(
         }
         CallPattern::AnyOf(alts) => alts
             .iter()
-            .flat_map(|p| generate_candidates(p, env, used, last_bid, under_wildcard))
+            .flat_map(|p| {
+                generate_candidates_in_order(p, env, used, last_bid, under_wildcard, ordered)
+            })
             .collect(),
         CallPattern::Class(k) => vec![Candidate {
             edge: Edge::Class(*k),
@@ -759,12 +806,23 @@ fn generate_candidates(
 /// `Level::Any` (`docs/design/06-system.md` §4.2: `n` means "whatever level is needed", which is
 /// every level above the last bid, not only the lowest one -- real files write `(nX)-3N` meaning
 /// "over an opening at any level").
+///
+/// The relative levels (`c`, `j`, §4.6) give at most one bid: the minimum sufficient bid in
+/// `strain`, or one level above it; none past `7`. The caller has made sure `last_bid` is known
+/// ([`Frame::last_bid_known`]).
 fn bids_at_level(level: Level, strain: Strain, last_bid: Option<Bid>) -> Vec<Bid> {
     match level {
         Level::At(n) => Bid::new(n, strain).into_iter().collect(),
         Level::Any => (1..=7)
             .filter_map(|n| Bid::new(n, strain))
             .filter(|b| last_bid.is_none_or(|last| *b > last))
+            .collect(),
+        Level::Cheapest => minimum_sufficient_bid(strain, last_bid)
+            .into_iter()
+            .collect(),
+        Level::Jump => minimum_sufficient_bid(strain, last_bid)
+            .and_then(|b| Bid::new(b.level() + 1, strain))
+            .into_iter()
             .collect(),
     }
 }
@@ -961,7 +1019,10 @@ fn expand_table(table: &BidTable, meta: &SystemMeta, opts: &CompileOptions, ex: 
         return; // an empty table (parse recovery already dropped everything): nothing to expand.
     };
     let we_opened = first_side == Side::Us;
-    let root = Frame::root();
+    let root = Frame {
+        any_order: table.any_order,
+        ..Frame::root()
+    };
 
     expand_history(
         &table.history,
@@ -1205,6 +1266,15 @@ struct Claimed {
     pattern: Vec<Edge>,
 }
 
+/// Whether `pattern` (or one of its alternatives) uses a relative level (`c`, `j`, §4.6).
+fn pattern_has_relative_level(pattern: &CallPattern) -> bool {
+    match pattern {
+        CallPattern::Strains { level, .. } | CallPattern::Var { level, .. } => level.is_relative(),
+        CallPattern::AnyOf(alts) => alts.iter().any(pattern_has_relative_level),
+        _ => false,
+    }
+}
+
 fn is_exact_row(row: &BmlNode) -> bool {
     matches!(row.calls[0].pattern, CallPattern::Exact(_))
 }
@@ -1260,12 +1330,37 @@ fn expand_row(
     };
 
     let last_bid = frame.last_bid();
-    let candidates = generate_candidates(
+    if pattern_has_relative_level(&tok.pattern) && !frame.last_bid_known() {
+        // One authoring mistake, one lint: a row under a variable history expands once per
+        // binding, and every expansion lands here with the same source span.
+        let reported = ex
+            .lints
+            .iter()
+            .any(|l| l.code == LintCode::LevelWithoutAnchor && l.span.as_ref() == Some(&tok.span));
+        if reported {
+            return Vec::new();
+        }
+        ex.lints.push(
+            Lint::error(
+                LintCode::LevelWithoutAnchor,
+                format!(
+                    "{}: a relative level below an opponents' wildcard that may be a bid: the \
+                     last bid is unknown",
+                    tok.raw
+                ),
+            )
+            .with_span(tok.span.clone())
+            .with_row(row_id),
+        );
+        return Vec::new();
+    }
+    let candidates = generate_candidates_in_order(
         &tok.pattern,
         &frame.env,
         frame.used,
         last_bid,
         frame.under_wildcard,
+        !frame.any_order,
     );
 
     if candidates.is_empty() {
@@ -1465,6 +1560,44 @@ fn report_empty_candidates(
                 Lint::error(
                     LintCode::StepWithoutAnchor,
                     format!("{}: no prior bid to step from", tok.raw),
+                )
+                .with_span(tok.span.clone()),
+            );
+        }
+        CallPattern::Strains { level, .. } if level.is_relative() => {
+            ex.lints.push(
+                Lint::info(
+                    LintCode::NoSufficientLevel,
+                    format!("{}: the level would pass 7", tok.raw),
+                )
+                .with_span(tok.span.clone()),
+            );
+        }
+        CallPattern::Var { level, var } if level.is_relative() && frame.env.get(*var).is_some() => {
+            ex.lints.push(
+                Lint::info(
+                    LintCode::NoSufficientLevel,
+                    format!("{}: the level would pass 7", tok.raw),
+                )
+                .with_span(tok.span.clone()),
+            );
+        }
+        CallPattern::AnyOf(alts)
+            if pattern_has_relative_level(pattern)
+                && alts.iter().all(|alt| match alt {
+                    CallPattern::Strains { level, .. } => level.is_relative(),
+                    CallPattern::Var { level, var } => {
+                        level.is_relative() && frame.env.get(*var).is_some()
+                    }
+                    _ => false,
+                }) =>
+        {
+            // `jS/jN` over 7H: every alternative is a relative level with a known strain, and
+            // none has a level left.
+            ex.lints.push(
+                Lint::info(
+                    LintCode::NoSufficientLevel,
+                    format!("{}: the level would pass 7", tok.raw),
                 )
                 .with_span(tok.span.clone()),
             );
@@ -2235,6 +2368,7 @@ mod tests {
             history_desc: None,
             rows,
             stop: false,
+            any_order: false,
             span: test_span(),
         }
     }

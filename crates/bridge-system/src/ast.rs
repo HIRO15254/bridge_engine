@@ -128,6 +128,9 @@ pub struct BidTable {
     /// A `#STOP` directive at the table's top level: the position the history row names is a
     /// system stop (see [`BmlNode::stop`]).
     pub stop: bool,
+    /// An `#ANYORDER` directive anywhere in the table: its fresh `X`/`Y`/`Z` bindings ignore the
+    /// `X < Y < Z` strain order (they stay distinct and unused; `docs/design/06-system.md` §4.7).
+    pub any_order: bool,
     /// Location.
     pub span: Span,
 }

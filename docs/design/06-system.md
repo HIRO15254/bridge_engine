@@ -134,13 +134,14 @@ enum            = { WS0 , DIGIT , { DIGIT } , "." , WS , { CHAR } , NL } ;
 paragraph       = { non-blank-line } ;
 
 bidtable        = { tdirective } , ( history-row | row ) , { row | tdirective } ;
-tdirective      = hide | bidtable-kw | copy | cut | paste | stop ;
+tdirective      = hide | bidtable-kw | copy | cut | paste | stop | anyorder ;
 hide            = WS0 , "#HIDE" , NL ;
 bidtable-kw     = WS0 , "#BIDTABLE" , NL ;
 copy            = WS0 , "#COPY" , WS , NAME , NL , { rawline } , WS0 , "#ENDCOPY" , NL ;
 cut             = WS0 , "#CUT"  , WS , NAME , NL , { rawline } , WS0 , "#ENDCUT"  , NL ;
 paste           = WS0 , "#PASTE" , WS , NAME , { WS , TARGET , "=" , REPL } , NL ;
 stop            = WS0 , "#STOP" , NL ;          (* ext: a system stop after the enclosing row, or at the table's history (§4.5) *)
+anyorder        = WS0 , "#ANYORDER" , NL ;      (* ext: the table's fresh X/Y/Z ignore the X<Y<Z order (§4.7) *)
 
 history-row     = WS0 , seq , [ WS , [ "=" , WS0 ] , description ] , NL , { contline } ;
 seq             = calltok , { "-" , calltok } , { "-" | ";" } ;    (* at least one "-" or ";" present *)
@@ -153,7 +154,7 @@ callcore        = "P" | "D" | "R"
                 | level , strainspec
                 | level , ( "step" | "steps" )                      (* case-insensitive *)
                 | callcore , "/" , ( callcore | strainspec ) ;      (* ext: 2S/3H, 4D/H *)
-level           = "1".."7" | "n" ;                                  (* "n" ext: any level *)
+level           = "1".."7" | "n" | "c" | "j" ;                      (* "n" ext: any level; "c"/"j" ext: cheapest / jump (§4.6) *)
 strainspec      = literal | variable | "red" | "black" ;            (* red/black case-insensitive *)
 literal         = "NT" | "N" | ( "C"|"D"|"H"|"S" ) , { "C"|"D"|"H"|"S" } ;   (* 1CD, 2HS, 3CDH *)
 variable        = "M" | "m" | "oM" | "om" | "X" | "Y" | "Z" | "x" | "y" | "z" ;
@@ -285,10 +286,12 @@ impl VulCond { pub const fn matches(self, we: bool, they: bool) -> bool; pub con
 | インデントが開いている祖先のどれとも一致しない (例: 2 と 4 の間の 3) | 最寄りの浅い行の子として付ける | `IndentationMismatch` (Warning) |
 | 末尾記号の無い履歴行の後の列 0 行 (§1.4 の 2) | 履歴の子として付ける | `ColumnZeroContinuation` (Info) |
 | 説明文が空 | 許容。コンパイル時に Info | `EmptyDescription` (Info) |
-| 拡張トークン (`X`, `XX`, `2S/3H`, `4D/H`, `nX`, `x/y/z`, `(any)`) | 受理 | `NonStandardToken` (Info) |
+| 拡張トークン (`X`, `XX`, `2S/3H`, `4D/H`, `nX`, `x/y/z`, `(any)`, `cS`/`jY` (§4.6)) | 受理 | `NonStandardToken` (Info) |
+| 段落の先頭語が相対レベルのトークン (`cS is …`) | 表ではなく段落として扱う (相対レベルは直前のビッドが無いと意味を持たないので表を始めない) | 先頭行が行の形 (`cS = …`) なら `UnknownCallToken` (Warning、後続の行も散文になるため)。それ以外はなし |
 | 先頭以外の行に `-`/`;` | 行と部分木をスキップ | `SequenceNotFirst` (Error) |
 | include の欠落 / 循環 | 行を落とす / include を無視 | `IncludeNotFound` (Warning) / `IncludeCycle` (Error) |
 | 不明な `#DIRECTIVE` | 行を除去し段落の残りを処理 | `UnknownDirective` (Warning) |
+| 表の指示子 (`#ANYORDER`、`#STOP`) だけの段落 (空行の後に表) | 表を名指さないので効果なし | `UnknownDirective` (Warning) |
 | `#PASTE` の未定義名 | 行を除去 | `PasteUnknownName` (Warning) |
 
 公開 API は `lexer::load` → `parser::parse` の 2 段で、単独の `parse_str` は無い。通常は `compile` (§9.4) を使い、AST だけが要るツール (`insta` スナップショット) は `parser::parse(lexer::load(path, text, &loader))` と書く。
@@ -315,7 +318,8 @@ impl StrainSet {
     pub const fn with(self, strain: Strain) -> StrainSet;
     pub fn iter(self) -> impl Iterator<Item = Strain>;   // ビッド順 C D H S N
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)] pub enum Level { At(u8), Any /* "n" */ }
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)] pub enum Level { At(u8), Any /* "n" */, Cheapest /* "c" */, Jump /* "j" */ }   // c/j: §4.6
+impl Level { pub const fn is_relative(self) -> bool; }   // Cheapest | Jump
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum CallPattern {
@@ -476,9 +480,65 @@ impl<'a> LookupKey<'a> {
 - 合成ノードは `flags.synthesised` を持つ (`Node::is_synthesised()`。`path` と `calls` も空だが、手組みの IR も `path` が空なので、判定は印で行う)。停止のパスの内容で埋めたプレースホルダは合成ノードではない。行 (`Row`) も合成で、`span` は file 0・行 0、認識率 1.0。`Lookup.by_depth` には合成ノードが入る。兄弟の曖昧さの Lint (`check_sibling_ambiguity`) は合成ノードを根にしない。
 - 等価性: 鎖を 8 巡書いた系と停止で書いた系を比べる `tests/stop.rs` で、ランダムな 46,570 位置 (うち停止のパスを出すもの 15,208) の照合結果 (深さ、ワイルドカード、各深さのノード、子) が一致する。SAYC 全体では、鎖の 6 巡を超える位置だけが異なる (鎖は 6 巡で尽き、停止は尽きない)。停止の接ぎ木を 6 巡に制限した試験版では、`xtask coverage` の全指標と、生成したリプレイ 24,269 位置での `choose_bid`・`call_distribution`・`interpret` の尤度 (|Δ ln p| の最大 0.0) がフェーズ 4 の鎖版と完全に一致した。
 
-**費用 (SAYC、release)。** 38,737 行 / 49,800 ノード → 6,496 行 / 7,174 ノード (合成ノード 2)。コンパイル 914〜941 ms → 437〜441 ms (best of 3、loadavg 3.2〜3.4)。排他索引の再構築 44.7 ms → 12.8 ms (§5.4)。postcard IR 16,415,084 → 2,524,018 バイト。コンパイル 1 回のピーク RSS 158 MB → 33 MB (`/usr/bin/time -l`)。`IR_FORMAT` は 2、`COMPILE_REVISION` は 3 (§10.2)。レビュー修正 (条件ごとの輪、`NodeFlags::synthesised`、合成ノードの説明) の後は `IR_FORMAT` 3、`COMPILE_REVISION` 5、postcard IR 2,531,202 バイト (SAYC のトライとノードは、合成ノードの印と説明文を除いて同一)。説明文の注釈をコンパイル時に 1 度だけ除くようにして `COMPILE_REVISION` 6 (§10.2)、postcard IR 2,476,329 バイト。
+**費用 (SAYC、release)。** 38,737 行 / 49,800 ノード → 6,496 行 / 7,174 ノード (合成ノード 2)。コンパイル 914〜941 ms → 437〜441 ms (best of 3、loadavg 3.2〜3.4)。排他索引の再構築 44.7 ms → 12.8 ms (§5.4)。postcard IR 16,415,084 → 2,524,018 バイト。コンパイル 1 回のピーク RSS 158 MB → 33 MB (`/usr/bin/time -l`)。`IR_FORMAT` は 2、`COMPILE_REVISION` は 3 (§10.2)。レビュー修正 (条件ごとの輪、`NodeFlags::synthesised`、合成ノードの説明) の後は `IR_FORMAT` 3、`COMPILE_REVISION` 5、postcard IR 2,531,202 バイト (SAYC のトライとノードは、合成ノードの印と説明文を除いて同一)。説明文の注釈をコンパイル時に 1 度だけ除くようにして `COMPILE_REVISION` 6 (§10.2。レーン D2 のマージ後は 9)、postcard IR 2,476,329 バイト。
+
+
+### 4.6 相対レベル (`cS`、`jY`、フェーズ 4 拡張)
+
+**目的。** BML のレベルは `1`〜`7` か `n` (全レベル) しか書けないので、「相手のスートより上なら 2 レベル、下なら 3 レベル」のように、直前のビッドによって最小レベルが変わるコールは、相手のスートやレベルごとに表を書き分けるしかなかった (SAYC の P10 の 6 組 18 表、`competition.bml` の「下位スートのオーバーコールはオープニングごとに書き出す」)。相対レベルは、そのコールを 1 行で書く。
+
+**構文。** `level` に 2 つの値を加える (§2.1)。
+
+- `c` (cheapest): そのストレインで十分 (合法) な最低のレベル。
+- `j` (jump): `c` の 1 つ上 (シングルジャンプ)。
+
+ストレインには他のレベルと同じものが書ける: リテラル (`cS`、`cN`、複数ストレインの `cHS`、`cred`)、変数 (`cM`、`coM`、`cm`、`cY`、`jX`)、代替 (`cD/H`、`/` の後の裸のストレインは直前のレベル `c` を引き継ぐ)。相手のコール (`(cX)`) にも書ける。
+
+**意味。** 基準は経路の最後のビッド (どちらの側でもよい。P/D/R は数えない。`step` と同じ基準)。ビッドが無ければ (オープニングの位置) `c` は 1 レベル、`j` は 2 レベル。
+
+| 直前のビッド | `cS` | `jS` | `cH` | `cN` |
+| --- | --- | --- | --- | --- |
+| なし | 1S | 2S | 1H | 1N |
+| 1H | 1S | 2S | 2H | 1N |
+| 2H | 2S | 3S | 3H | 2N |
+| 2S | 3S | 4S | 3H | 2N |
+| 7H | 7S | (候補なし) | (候補なし) | 7N |
+
+- 変数は通常どおり束縛する。未束縛の変数の候補は §4.2 の規則 (未使用のストレイン、`X<Y<Z`) で選び、各候補のレベルをそのストレインの `c`/`j` にする。束縛済みの変数はそのストレインで `c`/`j`。例えば `(1X)-P-(2X)-` の下の `cM` は、`(1H)-P-(2H)` では `2S`、`(1S)-P-(2S)` では `3H` になる。
+- 説明文の変数置換は他のレベルと同じ (`cM = 5+M` は `5+!s` に)。
+- 候補は各ストレインにつき 1 つなので、`n` と違い `WideWildcard` は出ない。候補が `Level::At` と違って不十分になることは無いので、`IllegalCall` も出ない。
+- Exact 行ではない (パターン行として、兄弟の Exact 行の後に処理する。§4.2 の 2)。同じコールを先の兄弟が作っていれば、パターン行の規則どおり黙って (Exact なら `ShadowedByExact` で) 捨てる。
+
+**端の場合と Lint。**
+
+- **ワイルドカードの下** (`(any)`、`(bid)`、`(suit)` の後): 最後の具体的なビッドより後に、ビッドでありうるワイルドカードがあれば、最後のビッドは不明である。そのとき相対レベルを含む行 (代替の一部だけが相対でも行全体) は `LevelWithoutAnchor` (Error) を出して、その位置では行と部分木を捨てる。ワイルドカードの後に我々の具体的なビッドがあれば基準は既知に戻る (`1C-(any)-1H-(P)-` の下の `cS` は `1S`)。変数の履歴の下で行が束縛ごとに展開されても、Lint は元の行 1 つにつき 1 件 (同じスパンの重複は出さない)。
+- **7 を超える**: `j` (または最後のビッドが 7 レベルの `c`) が 7 を超えるストレインは候補にならない。束縛済み変数かリテラルで候補が 1 つも無ければ `NoSufficientLevel` (Info)。代替 (`jS/jN`) も、全ての代替が相対レベル (リテラルか束縛済み変数) なら同じ。`NonStandardToken` の理由は代替ごとに判定する (`2S/cH` も相対レベルとして知らせる)。未束縛の変数で候補が無ければ従来どおり `VariableNoCandidate` (Info)。
+- **段落の先頭**: 相対レベルのトークンだけで始まる段落は表として扱わない (§3.2)。履歴行 (`-`/`;` を含む先頭行) の中の相対レベルは使える。
+- **可搬性**: `bml.py` の `bid_type()` は `c`/`j` をレベルとして読まない (`nX` と同じく既存ツールでは読めない)。したがって D16 の「既存ツールが無視するか説明文として読む」原則から外れる。`NonStandardToken` (Info) を必ず出し、著者に知らせる (D16 の補遺、`13-decisions.md`)。
+
+**実装。** `pattern.rs::Level::{Cheapest, Jump}`、`Level::is_relative`; `parser/call.rs::level` (`'c'`、`'j'`)、`nonstandard_reasons` ("relative level (c = cheapest, j = jump)"); `parser/mod.rs::is_bidtable_start` / `has_relative_level`; `compile/expand.rs::bids_at_level` (`minimum_sufficient_bid` とその 1 つ上)、`generate_candidates` (`Strains` の相対レベル)、`Frame::last_bid_known`、`pattern_has_relative_level`、`expand_row` (`LevelWithoutAnchor`)、`report_empty_candidates` (`NoSufficientLevel`)。試験: `parser/call.rs` の `relative_levels`、`tests/relative_level.rs`。`COMPILE_REVISION` 6。
 
 ---
+
+### 4.7 変数の順序を外す表 (`#ANYORDER`、フェーズ 4 拡張)
+
+**目的。** BML の変数 `X`、`Y`、`Z` は、新しく束縛するとき *未使用* のストレインを取るだけでなく、束縛済みのものと `X < Y < Z` (C < D < H < S) の順序を保つ (§4.2 の (c)、`bss.py` の規則)。そのため「相手のスートが我々のスートより上か下か」を問わない合意 (相手のスートを束縛変数として使う競り合いの表) は、上下で表を書き分けるか、スートごとのリテラル表を並べるしかなかった (SAYC の P12 バッチ 6 の `1C-(1D)-2H-(3D)-` など 10 表)。`M`/`m` には順序が無いが、定義域が 2 つのスートに限られる。
+
+**構文。** 表の段落の中の 1 行 `#ANYORDER` (前後の空白は無視)。表の履歴行の前でも、行の間でも、行の下に字下げして書いてもよく、どこに書いても *その表全体* に効く (字下げは範囲を狭めない)。クリップボード (`#CUT`) の中に書けば、`#PASTE` した先の表に効く。`#SEAT`/`#VUL` のように独立した段落 (空行の後に表) に書くと表を名指さないので効果が無く、`UnknownDirective` (Warning) を出す (`#STOP` だけの段落も同じ。試験 `a_directive_in_its_own_paragraph_is_reported_not_silently_dropped`)。
+
+**意味。** その表の展開では、新しい `X`/`Y`/`Z` の候補を「定義域 (C, D, H, S) のうち、どちらの側もまだビッドしていないストレイン」とし、束縛済みの `X`/`Y`/`Z` との大小を問わない。それ以外は通常どおり:
+
+- 束縛済みの変数は束縛のまま。束縛したストレインはビッドされているので `used` にあり、異なる変数が同じストレインを取ることはない (区別は保たれる)。
+- 新しい変数の候補は十分な (合法な) ビッドだけ (§4.2 の 3。`(1Y)` の下位スートは 1 レベルでは不十分なので候補にならない。`(2Y)` なら候補になる)。
+- 説明文の置換、`M`/`m`/`oM`/`om`、相対レベル (§4.6)、ワイルドカードの下の規則は変わらない。
+- 順序つきの展開の集合は、同じ表の `#ANYORDER` 版の展開の部分集合である (試験 `ordered_expansions_are_a_subset_of_any_order_ones`)。
+- 表の間では独立: 同じファイルの他の表は順序を保つ。
+
+**Lint。** `#ANYORDER` の表の履歴と行 (子孫を含む) が `X`/`Y`/`Z` のうち 2 つ以上を使っていなければ、外す順序が無いので `AnyOrderWithoutVariables` (Info) を出す (表は普通にコンパイルする)。
+
+**可搬性 (D16 の補遺)。** `bml.py` はこの指示子を知らない。`#STOP` と同じく表の中の未知の行であり、`bml.py` では順序つきで展開される (こちらの展開の部分集合になる) か、未知の指示子として扱われる。本実装の旧版 (`COMPILE_REVISION` 6 以前) では `UnknownDirective` (Warning) を出して無視していた。
+
+**実装。** `ast.rs::BidTable::any_order`; `parser/mod.rs::parse_table_paragraph` (`#ANYORDER`)、`xyz_variables` (Lint の判定); `pattern.rs::Binding::candidates_in_order` (`ordered == false` で順序の下限・上限を外す。`candidates` は `ordered = true` の版); `compile/expand.rs::Frame::any_order` (`expand_table` が表の値で根を作る)、`generate_candidates_in_order` (`expand_row` が `!frame.any_order` を渡す); `lint.rs::LintCode::AnyOrderWithoutVariables`。試験: `parser/mod.rs` の `any_order_is_a_table_directive`、`any_order_without_two_variables_is_reported`、`tests/any_order.rs` (9 件)。`COMPILE_REVISION` 7。
 
 ## 5. IR (`ir.rs`)
 
@@ -881,7 +941,8 @@ callref     = call { ( "-" | "/" ) call } ;   (* call = 1-7 + スート記号 | 
 | `CONST`, `constructive`, `positive`, `sound` | v2 | `StrengthWord` に variant が無い。未認識 (`Unrecognized`) として認識率に計上 |
 | `CTRL` (cue-bid の意味), `no outside A/K`, `0--1 outside A/K`, `9 tricks`, `playing tricks`, `QT` | v2 | 未認識 |
 | `1st/2nd`, `3rd seat`, `by passed hand`, `PH`, `NV`, `VUL` (文中の席/vul 条件) | v2 | 未認識 (行レベルの条件は `#SEAT`/`#VUL` で書く) |
-| スート間の相対比較 (`longer major`, `better minor`, `longest suit`, `5+ in a major`)、オナー位置 (`values in the bid suits`, `K or Q in partner's suit`, `CONC`)、`stoppers in two side suits`、相互参照 (`same structure as over 1NT-2!d`, `see 2M opening`) | v2 | 未認識 (`Unrecognized`) として認識率に計上。`description` にはそのまま残る |
+| `!s>=!h`, `!s > !h`, `!h=!s`, `!d<=!c`, `!c<!d`, `M>oM`, `m>=om` (ext、フェーズ 4) | `LengthOrder(a, cmp, b)` | `shapes ∩= {a の枚数 cmp b の枚数 である全シェイプ}` (560 シェイプから前計算)。演算子は `>=` `>` `=` `<=` `<` の 5 つで、前後に空白 1 つまで置ける。両辺はスート記号 (`!c !d !h !s`) か、展開時にそれへ置換される束縛済み変数 (`M`、`oM`、`m`、`om`、`X/Y/Z`) で、同じスート同士は認識しない。右辺の直後が英数字か `+`/`-` なら認識しない (`!s>=!hx`、`!h>=!s+1`。差の指定は無く、`!h>=!s` と読むと著者が除いた同数を認めてしまう)。`suit_len` を固定しないので、`NAT` の既定長を打ち消さない (`Shape` と違い `suit_len_pins` の対象外)。`tokens.rs::match_length_order`、`length_order_shapes`、`context.rs::resolve_one` |
+| 言葉によるスート間の相対比較 (`longer major`, `better minor`, `longest suit`, `5+ in a major`)、オナー位置 (`values in the bid suits`, `K or Q in partner's suit`, `CONC`)、`stoppers in two side suits`、相互参照 (`same structure as over 1NT-2!d`, `see 2M opening`) | v2 | 未認識 (`Unrecognized`) として認識率に計上。`description` にはそのまま残る |
 
 ### 7.5 Pass 2 の解決規則 (`context.rs`)
 
@@ -1318,10 +1379,14 @@ impl LintSummary { pub fn of(lints: &[Lint]) -> LintSummary; }
 | coverage | `MissingResponseCoverage` | Info | あるノードの子のどれも満たさない手の割合 |
 | exclusive | `ShadowedBranch` | Warning | 上位の兄弟に全域を覆われ、`choose_bid` が決して選ばない我々側の枝 (§9.3 の 8) |
 | exclusive | `OverlappingBranches` | Info | 同じノードの枝どうしが重なり、排他索引が後の枝を素化した (§9.3 の 8) |
+| expansion | `LevelWithoutAnchor` | Error | 相対レベル (`cS`、`jY`) の基準となる最後のビッドがワイルドカードのため不明 (その位置で行と部分木を捨てる。§4.6) |
+| expansion | `NoSufficientLevel` | Info | 相対レベルが 7 を超え、候補が無い (§4.6) |
+| parse | `AnyOrderWithoutVariables` | Info | `#ANYORDER` の表が `X`/`Y`/`Z` のうち 2 つ以上を使っていない (順序が無いので効果が無い。§4.7) |
+| stop | `StopUnderForcing` | Warning | パートナーのフォーシングのコールに相手がパスした後、またはゲームフォース中でゲーム未満の位置で、停止のパス (`{prio:-100} {stop} any hand`、書いたものか合成) が候補になる (§4.5、§9.3 の 9) |
 
-### 9.3 コンパイル後の八つの検査
+### 9.3 コンパイル後の九つの検査
 
-parse / expansion の Lint は各段階が発生時に出す。`lint.rs` は完成した IR に対して次の 8 検査を順に走らせる (`bridge-constraint` の DNF / 交差が要る)。
+parse / expansion の Lint は各段階が発生時に出す。`lint.rs` は完成した IR に対して次の 9 検査を順に走らせる (`bridge-constraint` の DNF / 交差が要る)。
 
 1. **充足可能性**: 全ノードで `constraint.is_satisfiable()` (DNF に非空の `Atom` が無い)。偽なら `UnsatisfiableConstraint` (Error)。ノードは残してフラグを付け、L3 は `Diagnostic::UnsatisfiableNode` として飛ばす。
 2. **自分の履歴との整合**: ノードの `side` と同じ側の祖先ノード (`path` 上) の制約を `And` して `is_satisfiable()`。偽なら `ContradictsOwnHistory` (Warning。例: `1N 15-17` の後のリビッドが `18+` を示す)。
@@ -1332,6 +1397,8 @@ parse / expansion の Lint は各段階が発生時に出す。`lint.rs` は完�
 7. **カバレッジ** (任意、`CompileOptions.coverage_samples` (既定 10,000、0 で無効)): 手を一様に引き、各 `SeatCond` (`opener_pos` 1..=4) について `hcp ≥ opening_min` なのに `Pass` 以外のどのオープニングノードも満たさない手の割合を `MissingOpeningCoverage` (Warning) に添える。同様に子を持つ各ノードについて、親文脈から (一様に) レスポンダーの手を引き、どの子も満たさない割合を `MissingResponseCoverage` (Info) に添える (L3 の `NoCandidate` 集計のコンパイル時版)。サンプル数はノード数に応じて `min(coverage_samples, 10^6 / nodes)` に落とす。閾値は設けず割合を報告するだけで、判断は `coverage_report.json` (`11-testing.md` §2) と合わせて行う。
 
 8. **排他領域** (フェーズ 4、`check_exclusive_branches`): §5.4 の索引を読む。(a) ある (ノード, 枝) の片がどのグループにも無く、そのノードを含む全グループで「枝 − 上位」がグリッドで空と証明できる (`grid_proves_empty`) とき `ShadowedBranch` (Warning)。枝単独で空のもの (検査 1 の対象) と、相手側のノード (`Side::Them`) は除く。相手側のコールは我々の方策の選択ではなく木の辺にすぎず、多くは要件の無い表見出し (`1C-(1H)-` など) なので、同じ位置の他のコールより下位ならすべて覆われて見えてしまう。メッセージは「never chosen: higher-ranked siblings cover it」(複数枝なら「branch j/n never chosen: …」)。(b) 同じノードの枝 j と k の sup グリッドが実行可能なセルで交わるとき `OverlappingBranches` (Info)。行ごとに (j, k) 1 件にまとめる。SAYC では `ShadowedBranch` 18 件 (すべて我々側。相手側を数えていた時点ではフェーズ 3 の SAYC で 249 件、うち相手側 231 件)、`OverlappingBranches` 268 件 (フェーズ 3 の SAYC では 90 件、行ごとにまとめる前は 186 件)、Error 0 件 (フェーズ 4 統合時、P1〜P10 の SAYC)。
+
+9. **フォーシングの下の停止** (レーン D2 のレビュー、`check_stop_under_forcing`): 両方の根からトライをたどり、(a) 我々の側の最後のコールがフォーシング (`Forcing::OneRound`/`ToGame`) で相手がその後パスした、(b) 我々の側がゲームフォース (`ToGame`) のコールをし、その後にゲーム以上のビッド (3NT、4H/4S、5C/5D 以上) が無い、のどちらかが成り立つ我々の手番で、停止のパス (`Pass`、`flags.stop`、優先度 -100 以下) が、排他索引 (§5.4) のあるクラスの組 (`group_for`) で上位の行に覆われずに (`is_shadowed(Pass)` でない) 候補になるなら `StopUnderForcing` (Warning) を位置ごとに 1 件出す。どの行にも当たらない手はフォーシングのコールをパスすることになるからである。メッセージは位置 (BML の記法、相手のコールは括弧、ワイルドカードは `(any)`) とフォーシングのコールを示し、行はフォーシングのコールの行を指す。相手のビッドは 1 巡のフォーシングを解く。相手の手番では、パスが通る辺 (完全一致の `Pass`、無ければパスを含む最初のワイルドカード) をパスとして続け、他のワイルドカードは水準の分からないコールとして両方を解く。停止のパスの先 (停止の輪) へは進まない。試験 `tests/stop.rs` の `a_stop_under_partners_forcing_call_is_reported`、`a_stop_below_game_after_a_game_force_is_reported`。SAYC ではレーン D2 のレビュー修正の後 27 件で、すべてフェーズ 4 のレーン D が `continuations.bml` に置いた開始者の再ビッドの `{stop}` 受け (1 段の応答、2/1、1M-2NT、1S-2C-2H-3D/3S、1H-1S-2C-2D、相手の割り込み後の自由なビッド) である。これらの表はまだすべての手を覆っていないので、受けを外すと暗黙のパスになって監査から消えるだけであり、既知の警告として残す (`systems/sayc/NOTES.md` #P12)。その集合は `crates/bridge-system/tests/sayc.rs` の `sayc_stops_under_forcing_calls_are_only_the_known_rebid_sinks` が固定する (新しい位置が増えても、直った位置が残っても失敗する)。
 
 検査 6 と 7 は `Sampler::prepare` (20〜60 μs) を使うので、コンパイル 1 秒の予算を圧迫する場合は `coverage_samples = 0` で 7 を無効化できる (`load_or_compile` のキャッシュがあれば実質 1 回だけ)。
 
@@ -1381,7 +1448,7 @@ impl SystemCache {
 }
 ```
 
-`compile_revision` は `COMPILE_REVISION` (フェーズ 3 が 1、フェーズ 4 が 2、システム停止 §4.5 が 3、条件の違う停止が共有する輪が 4、合成された停止のパスの説明文が 5、ノードの説明文から注釈を除いて格納するのが 6) である。`compile()` の出力が形式を変えずに変わるとき (新しい Lint など) に上げる。クレートのバージョンと `IR_FORMAT` が同じでも、古いコンパイラが書いたエントリは別のキーになり、読まれずに再コンパイルされる (フェーズ 4 の排他索引の Lint を持たない IR が、温まったキャッシュから返るのを防ぐ。回帰テスト `an_entry_under_the_pre_revision_key_is_a_miss`)。
+`compile_revision` は `COMPILE_REVISION` (フェーズ 3 が 1、フェーズ 4 が 2、システム停止 §4.5 が 3、条件の違う停止が共有する輪が 4、合成された停止のパスの説明文が 5、相対レベル §4.6 とスート長の比較 §7.4 が 6、`#ANYORDER` §4.7 が 7、レーン D2 のレビュー修正 (指示子だけの段落・相対レベルで始まる行・代替の相対レベルの Lint、`LevelWithoutAnchor` の重複除去、`!h>=!s+1` を比較と読まない、`StopUnderForcing`) が 8、ノードの説明文から注釈を除いて格納するのが 9 (統合線ではレーン D2 のマージ前に 6 だった)) である。`compile()` の出力が形式を変えずに変わるとき (新しい Lint など) に上げる。クレートのバージョンと `IR_FORMAT` が同じでも、古いコンパイラが書いたエントリは別のキーになり、読まれずに再コンパイルされる (フェーズ 4 の排他索引の Lint を持たない IR が、温まったキャッシュから返るのを防ぐ。回帰テスト `an_entry_under_the_pre_revision_key_is_a_miss`)。
 
 手順: (1) `loader` で `path` を読み、`lexer::load` で include を解決して `resolved source` (全ファイルの連結、`Loaded.files` の順) を得る。(2) `key` を計算し `dir/<hex(key)>.ir` を探す。(3) あれば `postcard` でデコードする。ヘッダの `ir_format` が `IR_FORMAT` と違う、`compiler_version` が違う、デコードに失敗する、のいずれも「不一致」として再コンパイルし上書きする (エラーにはしない)。(4) 無ければ `compile` して書く。書き込みは一時ファイル + rename で原子的に行い、I/O の失敗だけが `Err`。`std` 無し (wasm) では `SystemCache` を提供せず、`compile` だけを使う。
 
