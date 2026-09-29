@@ -31,7 +31,11 @@
 //!   the SAYC-compatible-opening subset (the true opener's hand lies in the exclusive region X of
 //!   the recorded opening, from `SystemIR::exclusive`), seats with empty strict support, seats
 //!   whose default-mode support is empty (what the sampler would report as `EmptySupport`), the
-//!   `resolve_lenient` usage rate, the true-deal policy agreement (system / natural positions),
+//!   `resolve_lenient` usage rate, the system-resolution rate raw and *strict*
+//!   (`system_resolution_strict_rate`, the phase-4 `[C]` criterion: an Exact or Partial call
+//!   where the caller's system offers nothing but default passes is not counted as resolved,
+//!   `resolved_at_default_pass`; the `[C]` counterpart of strict `[G]`), the true-deal policy
+//!   agreement (system / natural positions),
 //!   and the maximum-likelihood `(ε, δ)` of `p(c|h) = (1−ε)[(1−δ)S + δM] + ε/n` on the tune
 //!   split with its log-likelihood curves. For the subset it also lists where its calls leave
 //!   the system (every natural call and the first one per auction, by trie position, with the
@@ -41,8 +45,8 @@
 //! - **lints / exclusive**: lint counts by severity and code, our own non-pass calls with no
 //!   requirement at all (`unconstrained_own_calls`: a table header naming a call no row
 //!   defines), and the members/branches the
-//!   exclusive index shows as never chosen (shadowed), a fresh index build time (best of 3) and
-//!   the postcard size of the compiled IR.
+//!   exclusive index shows as never chosen (shadowed), also split by side (`_us` / `_them`), a
+//!   fresh index build time (best of 3) and the postcard size of the compiled IR.
 //!
 //! Sizing: `COVERAGE_REPLAYS`, `COVERAGE_POSITIONS`, `COVERAGE_CORPUS_LIMIT` (default: all),
 //! `COVERAGE_SEED` (replay seed, default `0xC0FE_4001`). `BRIDGE_CORPUS_DIR` and
@@ -334,7 +338,9 @@ fn lint_report(ir: &SystemIR, lints: &[bridge_system::Lint]) -> Value {
 /// whose call has no piece at all (`ExclusiveGroup::is_shadowed`), and a branch of a member's
 /// top-level `Or` for which no piece of that node survives. Counted over distinct nodes /
 /// `(node, branch)` pairs, "in some group" (some seat/vulnerability class) and "in every group
-/// the node appears in".
+/// the node appears in". Each count is also split by side (`_us`: the partnership's own calls,
+/// the ones `choose_bid` makes and the `ShadowedBranch` lint reports; `_them`: the opponents'
+/// interference nodes, which only the interpretation reads).
 fn exclusive_report(ir: &SystemIR) -> Value {
     let t = Instant::now();
     let index = ir.exclusive();
@@ -354,7 +360,13 @@ fn exclusive_report(ir: &SystemIR) -> Value {
     // (node, branch) -> (groups where shadowed, groups where present)
     let mut branch_stats: HashMap<(u32, u16), (u32, u32)> = HashMap::new();
     let mut call_shadowed: HashMap<u32, (u32, u32)> = HashMap::new();
+    let (mut groups_us, mut groups_them) = (0usize, 0usize);
     for group in index.groups() {
+        match group.members.first() {
+            Some(&(_, node)) if ir.node(node).side == bridge_system::Side::Us => groups_us += 1,
+            Some(_) => groups_them += 1,
+            None => {}
+        }
         for &(call, node) in &group.members {
             let pieces = group.pieces(call).unwrap_or(&[]);
             let e = call_shadowed.entry(node.0).or_default();
@@ -379,6 +391,22 @@ fn exclusive_report(ir: &SystemIR) -> Value {
     fn all<K>(m: &HashMap<K, (u32, u32)>) -> usize {
         m.values().filter(|(s, n)| *s == *n).count()
     }
+    let is_us = |node: u32| ir.node(bridge_system::NodeId(node)).side == bridge_system::Side::Us;
+    let split = |m: &HashMap<u32, (u32, u32)>, us: bool| -> HashMap<u32, (u32, u32)> {
+        m.iter()
+            .filter(|&(&n, _)| is_us(n) == us)
+            .map(|(&k, &v)| (k, v))
+            .collect()
+    };
+    let split_branches = |us: bool| -> HashMap<(u32, u16), (u32, u32)> {
+        branch_stats
+            .iter()
+            .filter(|&(&(n, _), _)| is_us(n) == us)
+            .map(|(&k, &v)| (k, v))
+            .collect()
+    };
+    let (calls_us, calls_them) = (split(&call_shadowed, true), split(&call_shadowed, false));
+    let (branches_us, branches_them) = (split_branches(true), split_branches(false));
     json!({
         "build_ms": build_ms,
         "fresh_build_ms_best_of_3": fresh_build_ms,
@@ -391,6 +419,20 @@ fn exclusive_report(ir: &SystemIR) -> Value {
         "branches": branch_stats.len(),
         "shadowed_branches_in_some_group": any(&branch_stats),
         "shadowed_branches_in_every_group": all(&branch_stats),
+        "groups_us": groups_us,
+        "groups_them": groups_them,
+        "nodes_us": calls_us.len(),
+        "nodes_them": calls_them.len(),
+        "shadowed_calls_in_some_group_us": any(&calls_us),
+        "shadowed_calls_in_some_group_them": any(&calls_them),
+        "shadowed_calls_in_every_group_us": all(&calls_us),
+        "shadowed_calls_in_every_group_them": all(&calls_them),
+        "branches_us": branches_us.len(),
+        "branches_them": branches_them.len(),
+        "shadowed_branches_in_some_group_us": any(&branches_us),
+        "shadowed_branches_in_some_group_them": any(&branches_them),
+        "shadowed_branches_in_every_group_us": all(&branches_us),
+        "shadowed_branches_in_every_group_them": all(&branches_them),
     })
 }
 
@@ -1192,6 +1234,11 @@ struct KindStats {
     empty_strict_seats: u64,
     empty_default_seats: u64,
     lenient_calls: u64,
+    /// Exact or Partial calls made where the caller's system offers nothing but default passes
+    /// ([`default_pass_only`]: a `{stop}` row or the synthesised stop pass): the system "resolves"
+    /// them with any hand, so the strict rate does not count them as resolved (the [C]
+    /// counterpart of strict [G]).
+    resolved_at_default_pass: u64,
 }
 
 impl KindStats {
@@ -1205,6 +1252,9 @@ impl KindStats {
             "kinds": { "exact": self.exact, "partial": self.partial, "natural": self.natural, "fallback": self.fallback },
             "shadowed": self.shadowed,
             "system_resolution_rate": (self.exact + self.partial) as f64 / c,
+            "resolved_at_default_pass": self.resolved_at_default_pass,
+            "system_resolution_strict_rate":
+                (self.exact + self.partial - self.resolved_at_default_pass) as f64 / c,
             "exact_rate": self.exact as f64 / c,
             "partial_rate": self.partial as f64 / c,
             "natural_rate": self.natural as f64 / c,
@@ -1464,6 +1514,21 @@ fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path) -> Value {
                 ResolutionKind::Natural => st.natural += 1,
                 ResolutionKind::Fallback => st.fallback += 1,
             }
+            if matches!(
+                pc.kind,
+                ResolutionKind::Exact | ResolutionKind::Partial { .. }
+            ) {
+                if let Ok(prefix) = Auction::from_calls(
+                    auction.dealer(),
+                    auction.vulnerability(),
+                    auction.calls()[..pc.call_index].iter().copied(),
+                ) {
+                    let system = &table.systems[prefix.next_seat().index() as usize];
+                    if default_pass_only(system, &prefix) {
+                        st.resolved_at_default_pass += 1;
+                    }
+                }
+            }
             if pc.kind != ResolutionKind::Exact {
                 every_exact = false;
             }
@@ -1652,4 +1717,5 @@ fn add_stats(into: &mut KindStats, st: &KindStats) {
     into.empty_strict_seats += st.empty_strict_seats;
     into.empty_default_seats += st.empty_default_seats;
     into.lenient_calls += st.lenient_calls;
+    into.resolved_at_default_pass += st.resolved_at_default_pass;
 }
