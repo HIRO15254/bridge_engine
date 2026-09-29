@@ -10,7 +10,8 @@ The 1NT response is 6--10. Responder passes with a fit for the new suit, gives
 preference to opener's major with two cards (`later-rounds.bml`), raises the
 new suit with five cards (four in hearts) and 8--10, invites with 2NT on a
 maximum, and shows a six-card suit of his own at the two level with a weak
-hand. The suit-length comparison says the pass is for the longer suit.
+hand. A hand no row takes passes the new suit (the complement): no row
+compares the lengths of opener's two suits here.
 
 1M-1N-2m-
 3m = {prio:2} 8--10 hcp, 5+m
