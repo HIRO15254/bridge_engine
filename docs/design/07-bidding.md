@@ -275,6 +275,15 @@ impl InterpretOptions {
 
 **先頭パスと暗黙パス**：ルート（またはその位置）のグループの `complement` を、そのまま X_Pass とする（`implicit_pass = Complement` のとき）。明示的な `Pass` 行があるときは、それを通常の member として扱う。
 
+**システム停止のパス（`06-system.md` §4.5）**：停止の後の我々の手番では、L2 の `children` が停止のパス（`Pass`、priority −100、制約 `ANY`、`flags.stop`）を返す。L3 はこれを特別扱いしない。フェーズ 4 の SAYC がパスの鎖で書いていた `P = {prio:-100} any hand` の行と同じく、ふつうのシステム候補（member）として扱う。
+
+- 候補：`enumerate_position` の手順 1 で他の子と並ぶ。最下位の候補で、`choose_bid` は他の合法な候補がどれも満たされないときだけ選ぶ（`source = System`、`node` は合成ノード）。`Pass` が候補にあるので、暗黙パス（`ImplicitPass`）は合成しない。
+- 鏡像：X_Pass は `ANY` から上位の全メンバーを引いたもの（kind = Exact）で、索引が前計算する。グループの `complement` は空なので N^sys の片は無い。上位の兄弟が非合法なときの実行時の再計算も、同じ `subtract` を使う。
+- 照合：`Lookup.by_depth` には合成ノードが入る（`Node::is_synthesised()`：`path` と `calls` が空）。停止の後に我々がパス以外をコールすると、照合はその手前で止まり、以後はナチュラルになる。相手の具体的なコールに表があれば、そちらが優先される。
+- 説明：合成ノードの説明文は `any hand (system stop)` である。
+- 集計：`xtask coverage` の strict [G] は、行が priority ≤ −100 のパスだけの位置を「既定パスだけの位置」として数える。停止のパスもこれに含まれるので、strict 集計は鎖のときと同じ規則で働く（`generated.system_stop_passes` は合成された停止のパスの選択数）。
+- 等価性：接ぎ木を鎖と同じ 6 巡に制限した試験版では、生成したリプレイ 24,269 位置で `choose_bid` の選択、`call_distribution`（`system_players()` と (ε, δ) = (0.3357, 0.335)）、コールごとの `interpret` の尤度が、鎖版とすべて一致した（|Δ ln p| の最大 0.0）。停止は際限が無いので、実際の版では 6 巡を超える位置だけが変わる（24,266 位置のうち `choose_bid` の結果の違い 22、分布の違い 2。例：`1D P 1H P 1NT P 2S P 2NT P 3NT P 4H P 5D` の後、鎖は 6 巡で尽きてナチュラルが答え、停止はシステムのパスを出す）。
+
 **ナチュラル排他領域**：ナチュラル候補を順位順に c_1, c_2, … とし、C_k = `infer(classify(prefix.with(c_k)))` とする。
 
   Y_c = C_c ∧ ¬ ∪_{k が c より上位} C_k

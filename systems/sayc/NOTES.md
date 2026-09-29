@@ -648,39 +648,45 @@ when no call needed it. The booklet stops at the first round or two, so most of 
 text is this file's own limit-bidding interpolation, written per auction; none of it adds a
 convention. Every table ends with the partnership passing from then on.
 
-P1. **Pass chains** (`passes.bml`). Our own pass is a trie edge only where a row names it, so
-    a partnership that stopped used to leave the system at the partner's next turn. The
-    clipboards `pass-chain` (our pass, then `(any)` of theirs, six rounds deep) and
-    `after-chain` (starting with their call, pasted under a row whose call ends our bidding)
-    write the stop out. Chain passes carry `{prio:-100}` and no requirement, so under the
-    phase-4 rank policy they are chosen exactly when no other listed call applies, like the
-    implicit pass they replace. Six rounds are needed: with four the generated all-system rate
-    falls from 0.883 to 0.824, with three to 0.614 (the opponents often compete for several
-    rounds). The chains are about 37k of the 45k compiled nodes (see "Cost" below).
-    **Caveat (review of lane D).** A chain continues through `(any)`: once one of us has
-    passed, the partner passes with *any* hand whatever the opponents do, and every
-    later level of the chain is the only row of its position. Those positions count as
-    system positions, so the chains also suppress the natural completion that would mark
-    them as holes: without them the generated all-system rate is 0.044, not 0.894. At many
-    of them SAYC has a real decision (a reopening double, competing after a negative double
-    and their raise, a penalty double of a balancing bid). `cargo xtask coverage` therefore
-    reports the *strict* rate as well: a position whose only rows are default passes
-    counts as a departure whenever the natural choice there is not `Pass` (see P4' below).
-    The fitted `(ε, δ)` depends on the chains too (without them ε 0.361, δ 0.412). A chain
-    that continues only over the opponents' pass (`(P)` for `(any)`, trimmed where the
-    auction must already be over) was measured and rejected: all-system 0.333, because
-    the partnership then leaves the system in every auction the opponents keep bidding
-    in, mostly where the natural choice is a pass as well (10,675 rows, 613 ms compile,
-    index 27.7 ms, IR 3.84 MB). The right fix is structural (a stop marker in the trie
-    and a synthesised system pass in bridge-bidding, lanes S and B), with the same strict
-    accounting.
+P1. **System stops** (`passes.bml`; docs/design/06-system.md §4.5). Our own pass is a trie
+    edge only where a row names it, so a partnership that stopped used to leave the system at
+    the partner's next turn. Phase 4 first wrote the stop out: the clipboards `pass-chain`
+    (our pass, then `(any)` of theirs, six rounds deep) and `after-chain` (starting with their
+    call, pasted under a row whose call ends our bidding), 2,543 pastes and about 87% of the
+    38,737 rows. They are now replaced by stop markers at the same places:
+    `P = {prio:-100} {stop} any hand` for each `#PASTE pass-chain` (1,146) and `#STOP` at the
+    paste's indentation for each `#PASTE after-chain` (1,397). The compiler grafts every stop
+    onto the trie: from the stop it follows the opponents' `(any)` and our `P` alternately,
+    through any edge a table writes there itself, and links the first missing edge to one
+    shared pair of nodes that loop. The stop pass is an ordinary `{prio:-100}` `any hand` node,
+    so under the phase-4 rank policy it is still chosen exactly when no other listed call
+    applies, and every consumer sees what it saw of the chain rows. Unlike the chains a stop
+    never runs out (the chains stopped after six rounds; with four the generated all-system
+    rate fell from 0.883 to 0.824, with three to 0.614). With the graft cut at six rounds the
+    stop-based file is indistinguishable from the chains (every `cargo xtask coverage` number,
+    and `choose_bid`, `call_distribution` and `interpret` on 24,269 generated positions);
+    unbounded, only positions past the sixth round differ.
+    **Caveat (review of lane D), unchanged by the stops.** Once one of us has passed, the
+    partner passes with *any* hand whatever the opponents do, and the stop pass is the only
+    row of those positions. They count as system positions, so the stop also suppresses the
+    natural completion that would mark them as holes: without chains or stops the generated
+    all-system rate is 0.044, not 0.896. At many of them SAYC has a real decision (a
+    reopening double, competing after a negative double and their raise, a penalty double of
+    a balancing bid). `cargo xtask coverage` therefore reports the *strict* rate as well: a
+    position whose only rows are default passes (priority -100 or lower, the stop pass
+    included) counts as a departure whenever the natural choice there is not `Pass` (see P4'
+    below). The fitted `(ε, δ)` depends on the stops too (without them ε 0.361, δ 0.412). A
+    chain that continued only over the opponents' pass (`(P)` for `(any)`) was measured and
+    rejected: all-system 0.333, because the partnership then leaves the system in every
+    auction the opponents keep bidding in, mostly where the natural choice is a pass as well.
 P2. **Defense to their two-level and higher openings** (`defense.bml`): the one-level methods
     one level higher (takeout double short in their suit, 12--16 or any 17+; a natural
     overcall with five cards at the two level and six at the three level; 2NT 15--18 with a
     stopper over a weak two; 3NT to play), with the advances of the double and of the
     overcall. Over a four-level preempt double with 16+, else pass; over their strong 2!c and
     2NT a natural overcall needs a good hand and a long suit.
-P3. **Continuations after our pass** (`continuations.bml`): the `pass-chain` pasted as the
+P3. **Continuations after our pass** (`continuations.bml`): the stop pass
+    (`P = {prio:-100} {stop} any hand`, the `pass-chain` paste before the system stops) as the
     lowest-ranked call of every table that has no pass of its own, and opener's reopening
     after an overcall and responder's pass (double short in their suit with 12+, rebid a
     six-card suit; responder then passes for penalty with four cards in their suit, bids
@@ -754,14 +760,17 @@ itself keeps its pieces; the base system has 231 lints of exactly this kind. P10
 the lint now skips `Side::Them` nodes (phase-4 integration): SAYC reports `ShadowedBranch` 18,
 all on our side, and `OverlappingBranches` 268. The "theirs" counts below predate that change.
 
-Cost: the system grew from 1,611 rows / 2,415 nodes to about 36k rows / 46k nodes (the pass
-chains are about 37k of them). Release compile about 0.84 s best of 3 and 1.2--1.7 s cold
-(loadavg 5--11), of which `run_post_compile_checks` is about 0.7 s (`check_satisfiability` 0.2 s,
-`check_own_history` 0.47 s: one `is_satisfiable` per node); the exclusive index takes 43--74 ms
-to rebuild; the postcard IR is 14.9 MB (845,860 bytes before). `tests/compile_time.rs`'
-release-only `< 1 s` assertion on `sayc.bml` fails on a cold compile. A trie-level "the
-partnership passes from here on" marker in BML would replace the chains; so would skipping
-the satisfiability checks for `any hand` constraints.
+Cost: with the pass chains the system grew from 1,611 rows / 2,415 nodes to 38,737 rows /
+49,800 nodes (the chains about 87% of them); release compile 0.91--0.94 s best of 3 and
+`tests/compile_time.rs`' release-only `< 1 s` assertion on `sayc.bml` failed on some runs
+(1.03--1.49 s at loadavg 3.3--5.9); the exclusive index took
+44.7--47.5 ms to rebuild (24,067 groups); the postcard IR was 16,415,084 bytes (845,860 before
+phase 4); one compile peaked at 158 MB RSS. With the system stops (phase-4 integration,
+stage 2; release, best of 3, loadavg 3.2--3.5): 6,496 rows / 7,174 nodes (2 of them the
+synthesised stop pair), compile 437--441 ms, `compiling_sayc_is_fast` 436--474 ms, index
+rebuild 12.8--13.0 ms (2,754 groups; 21.8 ms before three build-time shortcuts that leave the
+index byte-identical), postcard IR 2,524,018 bytes, one compile peaks at 33 MB RSS, and a
+default-sizing `cargo xtask coverage` run at 65 MB (241 MB with the chains).
 
 ## Phase 4 coverage (`cargo xtask coverage`)
 
@@ -909,3 +918,25 @@ P4'. **After P10, with the strict accounting** (this branch; release; `COVERAGE_
       5,010 rows / 5,499 nodes, compile 396 ms, index 17.9 ms, IR 1,913,553 bytes;
       all-system 0.044 (strict 0.044); corpus all-Exact 0.047 / 0.047 / 0.044, system
       resolution 0.443 / 0.450 / 0.463; MLE ε 0.361, δ 0.412.
+
+P11. **Phase-4 integration: the chains replaced by system stops** (P1; default sizing,
+    release). Stage 1 (0928a7b, the merged lanes with the chains; loadavg 6.2) against
+    stage 2 (the stops; loadavg 6.9--7.4); every difference comes from the stop not running
+    out after six rounds (with the graft cut at six rounds every number below is identical to
+    stage 1):
+    - System: 38,737 rows / 49,800 nodes -> 6,496 / 7,174; compile 1028 -> 471 ms (single
+      run inside the coverage tool); index 24,067 -> 2,754 groups, fresh build 47.5 -> 12.5 ms;
+      IR 16,415,084 -> 2,524,018 bytes; peak RSS of the whole run 65 MB. Lints:
+      `EmptyDescription` 23,017 -> 1,703, `NonStandardToken` 37,998 -> 734, warning
+      `SiblingSubset` 2,318 -> 2,271, `ShadowedBranch` 18 (all ours) and `OverlappingBranches`
+      268 unchanged, `DuplicatePath` 5 (the placeholders the stop pass fills).
+    - Generated: all-system 0.894 -> 0.896, strict 0.550 -> 0.552; default-pass-only
+      positions 2,706 -> 2,710 with 461 overrides both times; 2,463 calls are the synthesised
+      stop pass (`generated.system_stop_passes`).
+    - Corpus: all-Exact 0.305 / 0.309 / 0.326 unchanged; system resolution 0.641 -> 0.658,
+      eval 0.661 -> 0.675, subset 0.665 -> 0.683 (subset eval 0.692 -> 0.707); subset first
+      natural calls unchanged (`call_not_a_row` 137, `..._default_pass_only` 80); subset
+      natural calls because their call / their pass is not in the trie 154 -> 85 / 99 -> 85.
+      MLE ε 0.3483 unchanged, δ 0.3253 -> 0.3246, ln L -7418.7 -> -7416.2.
+    - Forward consistency (release, seed `0x5a1c0002`): 10^5 0 non-gap / 2 gap-induced
+      (stage 1 26), 10^6 0 / 14 (426), `NoCandidate` 149 per 10^6 (3,009).

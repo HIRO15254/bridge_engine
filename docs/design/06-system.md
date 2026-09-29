@@ -134,12 +134,13 @@ enum            = { WS0 , DIGIT , { DIGIT } , "." , WS , { CHAR } , NL } ;
 paragraph       = { non-blank-line } ;
 
 bidtable        = { tdirective } , ( history-row | row ) , { row | tdirective } ;
-tdirective      = hide | bidtable-kw | copy | cut | paste ;
+tdirective      = hide | bidtable-kw | copy | cut | paste | stop ;
 hide            = WS0 , "#HIDE" , NL ;
 bidtable-kw     = WS0 , "#BIDTABLE" , NL ;
 copy            = WS0 , "#COPY" , WS , NAME , NL , { rawline } , WS0 , "#ENDCOPY" , NL ;
 cut             = WS0 , "#CUT"  , WS , NAME , NL , { rawline } , WS0 , "#ENDCUT"  , NL ;
 paste           = WS0 , "#PASTE" , WS , NAME , { WS , TARGET , "=" , REPL } , NL ;
+stop            = WS0 , "#STOP" , NL ;          (* ext: a system stop after the enclosing row, or at the table's history (§4.5) *)
 
 history-row     = WS0 , seq , [ WS , [ "=" , WS0 ] , description ] , NL , { contline } ;
 seq             = calltok , { "-" , calltok } , { "-" | ";" } ;    (* at least one "-" or ";" present *)
@@ -160,7 +161,7 @@ variable        = "M" | "m" | "oM" | "om" | "X" | "Y" | "Z" | "x" | "y" | "z" ;
 description     = [ "!" , not-suit-letter ] , { CHAR } ;            (* "!" = alert marker (inferred) *)
 ```
 
-説明文の内容は別の文法を持つ (§7.3)。`seq` の末尾記号が無い履歴行 (§1.3) は、先頭行のトークン列に `-` を含むことで `history-row` と判定する。
+説明文の内容は別の文法を持つ (§7.3)。説明文の `{stop}` 注釈 (ext) はその行の後にシステム停止を置く (§4.5)。`seq` の末尾記号が無い履歴行 (§1.3) は、先頭行のトークン列に `-` を含むことで `history-row` と判定する。
 
 ### 2.2 AST (`ast.rs`)
 
@@ -203,6 +204,7 @@ pub struct BidTable {
     pub history: Vec<CallToken>,    // オープニング表なら空、それ以外は先頭行の系列
     pub history_desc: Option<Description>,   // 履歴行に書かれた説明 (最後のコールに帰属)
     pub rows: Vec<BmlNode>,         // トップレベル行 (履歴の子、またはオープニング)
+    pub stop: bool,                 // 表の最上位の #STOP: 履歴の位置のシステム停止 (§4.5)
     pub span: Span,
 }
 
@@ -211,6 +213,7 @@ pub struct BmlNode {
     pub description: Description,
     pub children: Vec<BmlNode>,
     pub indent: u16,
+    pub stop: bool,                 // 子の位置の #STOP: この行の後のシステム停止 (§4.5)
     pub span: Span,
 }
 
@@ -381,7 +384,7 @@ impl Binding {
 
 `get_sequence` の移植: 具体経路を歩き、次のコールの側が直前のコールの側と同じなら反対側に `Pass` を挿入する。競り合いなしの `1N` → `2C` → `2D` は `1N (P) 2C (P) 2D` の 5 コールになる (BSS `001NP2CP2D` と一致)。暗黙パスはトライノードを持つが **`Node` は持たない** (行が無いので): `Lookup.by_depth[i] == None`。したがって `Node.calls` はオープニング以降の実際のコール 1 つにつき具体 `Call` を 1 つ持つ。
 
-**補集合の前計算 (フェーズ 4)。** 上の「暗黙パス」(展開時にトライへ挿入する相手側の `Pass`) とは別に、`choose_bid` の `ImplicitPass::Complement` が合成する `Pass` は「兄弟のどれも満たさない手」を示す。この補集合は §5.4 の派生索引が、兄弟グループ × 条件クラスごとに `ExclusiveGroup::complement` として前計算する。形は素な原子の平坦な `Or` で、48 原子を超えるときだけ木 `Not(Or(...))` に退避する (集合としては同じ)。グリッド (`05-constraint.md` §2.6) で空と証明できる補集合は `Or([])` にする。SAYC では 714 グループのうち 711 が平坦、3 が木である。
+**補集合の前計算 (フェーズ 4)。** 上の「暗黙パス」(展開時にトライへ挿入する相手側の `Pass`) とは別に、`choose_bid` の `ImplicitPass::Complement` が合成する `Pass` は「兄弟のどれも満たさない手」を示す。この補集合は §5.4 の派生索引が、兄弟グループ × 条件クラスごとに `ExclusiveGroup::complement` として前計算する。形は素な原子の平坦な `Or` で、48 原子を超えるときだけ木 `Not(Or(...))` に退避する (集合としては同じ)。グリッド (`05-constraint.md` §2.6) で空と証明できる補集合は `Or([])` にする。SAYC では 714 グループのうち 711 が平坦、3 が木である (フェーズ 4 のシステム停止 §4.5 の後は 2,754 グループのうち木が 3。停止のパスを持つグループの補集合は空である)。
 
 ### 4.4 先頭パス、席、バルネラビリティ (D17)
 
@@ -429,6 +432,44 @@ impl<'a> LookupKey<'a> {
 `for_auction` の手順: (1) `k = auction.leading_passes()`; `calls.len() == k` (空かパスアウト) なら `None`。(2) `opener = auction.seat_at(k)`; `we_opened = opener.side() == owner.side()`。(3) `calls = &auction.calls()[k..]`、`opener_pos = auction.position_of(opener)` (= `k + 1`)。(4) `vul.we = auction.vulnerability().is_vulnerable(owner)`、`vul.they = is_vulnerable(owner.next())`。`SystemIR::resolve(auction, owner)` は `for_auction` と `index.resolve` をまとめた便宜関数。
 
 トライは `we_opened` の真偽で **2 つのルート** を持つ (BSS の `*` 接頭辞に対応)。したがってオープナーの側も経路の要素ではない。
+
+### 4.5 システム停止 (`#STOP`、`{stop}`、フェーズ 4)
+
+**目的。** 我々のパスは、行がそれを書いた所にしかトライの辺を持たない。したがって、パートナーシップが競りを止めた後の手番 (相手が何か言った後のパートナー、パートナーのパスの後の自分) ではシステムを外れ、ナチュラル推論が答える。フェーズ 4 の SAYC はこれを「パスの鎖」で書き出していた: クリップボード `pass-chain` (`P = {prio:-100} any hand`、その下に `(any)` と `P` を 6 巡) と `after-chain` (`(any)` から始まる同じ鎖。我々の最後のコールの行の下に貼る) を 2,543 か所に `#PASTE` し、38,737 行 / 49,800 ノードのうち約 87% を鎖が占めた。コンパイル 0.9〜1.0 s、排他索引 45〜47 ms、postcard IR 16.4 MB で、`tests/compile_time.rs` の `< 1 s` が落ちていた。システム停止は、同じ意味を 1 行の印で書き、鎖のノードを作らずにトライの構造で表す。
+
+**BML 拡張 (`(* ext *)`)。**
+
+- `P = {prio:-100} {stop} any hand`: 説明の `{stop}` 注釈 (`{prio:N}` と同じく説明文のどこに書いてもよく、本文からは取り除く。`{stopper}` などは該当しない) が付いた行は、自分自身の後に停止を置く。`pass-chain` を貼っていた位置の置き換えで、この行自体は普通の行 (最下位のパス) としてコンパイルする。
+- `#STOP`: 行の子の位置 (その行より深い字下げ) に書くと、その行の後に停止を置く。`after-chain` を貼っていた位置の置き換えである。表の最上位に書くと、表の履歴 (`1C-1H-` など) の位置に停止を置く。履歴の無い表の最上位の `#STOP` は位置を名指さないので無視し、`UnknownDirective` Warning を出す。
+- 停止の位置のノードには `NodeFlags::stop` を立てる (情報用。選択や解釈は読まない)。
+
+**意味。** 位置 S の停止は、S の下に次の行を *際限なく* (表の `#SEAT` / `#VUL` の条件で) 書いたのと同じである。
+
+```text
+(any)
+  P = {prio:-100} any hand
+    (any)
+      P = {prio:-100} any hand
+        ...
+```
+
+つまり、S からは相手の `(any)` (ワイルドカード辺) と我々の `P` が交互に続き、我々の手番では「どんな手でもパス」が `{prio:-100}` の最下位の候補として出る。鎖と違って 6 巡で尽きない。
+
+**トライへの接ぎ木 (`compile/expand.rs::graft_stops`)。** 展開は停止の位置 `StopSite { we_opened, edges, seat, vul, span }` を記録するだけで、展開の最後 (不正コールの降格の前) にまとめてトライへ接ぐ。
+
+1. (席条件、バル条件) の組ごとに共有の分離ノード対 `StopPair` を 1 度だけ作る: 相手ノード `any_trie` (エントリ: `Side::Them`、空の説明、`ANY`) と我々のノード `pass_trie` (エントリ: `Side::Us`、`Pass`、`{prio:-100}`、`ANY`、説明 `any hand (system stop)`、`flags.stop`)。`any_trie --Pass--> pass_trie` と `pass_trie --(AnyCall)--> any_trie` で輪にする。これが際限の無さを表す。トライは木でなくなるが、`resolve` / `children` / `resolve_lenient` は辺をたどるだけなので変更は要らない。
+2. 各位置 S から、次の手番の側 (`(edges.len() が偶数) == we_opened` なら我々) に応じて `P` の辺と `(any)` の辺を交互にたどる。辺が既にある所 (表が自分で `(any)` や我々の `P` を書いている所) は既存のノードを通り、鎖の行が加えたはずのエントリを加える: `(any)` のエントリは覆う条件のエントリが無ければ加え、停止のパスは同じ条件のエントリが無ければ加える。同じ条件のエントリがあり、その説明が空のプレースホルダ (§4.4) なら停止のパスの内容で埋める (`DuplicatePath` Info)。停止のパスの条件に覆われる空のプレースホルダも同様に埋める。
+3. 最初に辺が無い所で、共有の `pass_trie` (我々の手番) か `any_trie` (相手の手番) へつなぐ。共有ノードに着いたらそこで止める。
+
+**解決の結果。** 消費側 (`choose_bid`、`ExclusiveIndex`、`interpret`、`AuctionPolicy`、説明、ハーネス) は、鎖の行が作っていたのと同じものを見る。
+
+- 停止の後の我々の手番では、`children` の結果に停止のパス (`Pass`、priority −100、`ANY`) が並ぶ。他の行があればその下位の候補で、他の候補がどれも当てはまらないときだけ選ばれる。排他領域 (§5.4) は `ANY` から上位の全メンバーを引いたもの。
+- 相手の具体的なコールに表があれば、その辺がワイルドカードに勝つ (照合は後戻りしない)。例えば `1C-1N-(2S)-` に表があれば、`1C P 1N 2S` の子はその表の行だけで、停止のパスは出ない。
+- 停止の後で我々がパス以外のコールをすると、それは行ではないので照合はその手前で止まり (`matched_depth` はそのコールの手前)、以後はシステム外 (ナチュラル) になる。鎖と同じである。
+- 合成ノードは `path` と `calls` が空である (`Node::is_synthesised()`)。行 (`Row`) も合成で、`span` は file 0・行 0、認識率 1.0。`Lookup.by_depth` には合成ノードが入る。兄弟の曖昧さの Lint (`check_sibling_ambiguity`) は合成ノードを根にしない。
+- 等価性: 鎖を 8 巡書いた系と停止で書いた系を比べる `tests/stop.rs` で、ランダムな 46,570 位置 (うち停止のパスを出すもの 15,208) の照合結果 (深さ、ワイルドカード、各深さのノード、子) が一致する。SAYC 全体では、鎖の 6 巡を超える位置だけが異なる (鎖は 6 巡で尽き、停止は尽きない)。停止の接ぎ木を 6 巡に制限した試験版では、`xtask coverage` の全指標と、生成したリプレイ 24,269 位置での `choose_bid`・`call_distribution`・`interpret` の尤度 (|Δ ln p| の最大 0.0) がフェーズ 4 の鎖版と完全に一致した。
+
+**費用 (SAYC、release)。** 38,737 行 / 49,800 ノード → 6,496 行 / 7,174 ノード (合成ノード 2)。コンパイル 914〜941 ms → 437〜441 ms (best of 3、loadavg 3.2〜3.4)。排他索引の再構築 44.7 ms → 12.8 ms (§5.4)。postcard IR 16,415,084 → 2,524,018 バイト。コンパイル 1 回のピーク RSS 158 MB → 33 MB (`/usr/bin/time -l`)。`IR_FORMAT` は 2、`COMPILE_REVISION` は 3 (§10.2)。
 
 ---
 
@@ -501,6 +542,7 @@ pub struct NodeFlags {
     pub transfer_to: Option<Strain>,
     pub agreed_suit: Option<Suit>,
     pub sign_off: bool,                   // S/O, T/P
+    pub stop: bool,                       // a system stop's position or its pass (§4.5; informational)
 }
 
 /// Recognition statistics of one description (§7.7).
@@ -590,11 +632,12 @@ pub struct ConventionDefaults { pub transfer_len: u8 /* 5 */, pub stayman_major:
 `SystemIR` は、システムコールの排他領域の索引 `ExclusiveIndex` を派生データとして持つ。
 
 - **置き場所**: `SystemIR.exclusive_cell: OnceLock<ExclusiveIndex>` (`#[serde(skip)]`)。参照は `SystemIR::exclusive()` で行う。`compile()` の最後 (コンパイル後検査 §9.3 の直前) に先行して構築するので、コンパイル直後の IR では初回参照のコストは無い。直列化から復元した IR と手組みの IR は、初回参照時に構築する。
-- **直列化しない**: 直列化形式と `IR_FORMAT` (1) は変えない。索引を除いた SAYC の postcard は 826,962 バイトで、フェーズ 3 と同一である。§9.2 の新しい Lint 2 種が `lints` に入る分だけ 845,860 バイト (+18,898、+2.3%) になる。プロトタイプ A のように索引まで直列化すると 1.24 MB (1.51 倍) になり、wasm の転送量に効くので避けた。
+- **直列化しない**: 直列化形式と `IR_FORMAT` (1。§4.5 のシステム停止で 2) は変えない。索引を除いた SAYC の postcard は 826,962 バイトで、フェーズ 3 と同一である。§9.2 の新しい Lint 2 種が `lints` に入る分だけ 845,860 バイト (+18,898、+2.3%) になる。プロトタイプ A のように索引まで直列化すると 1.24 MB (1.51 倍) になり、wasm の転送量に効くので避けた。
 - **排他領域の定義**: 位置 (親 `TrieId`、条件クラス) で、`choose_bid` がコール c を選ぶ手の集合を X_c とする。X_c は、rank 順 (`exclusive::rank_cmp`: priority 降順 → `SystemMeta::tie_break` → コール index 昇順) で最初に満たされるメンバーのコールが c である手の集合である。各枝の片 (`ExclusivePiece`) は、同じノードの先の枝と上位のメンバー全部を `subtract` で引いたものである。`subtract` は原子レベルの厳密な差集合で、結果は素な原子の平坦な `Or` (上限 48 原子) になる。上限を超えたときだけ木 `And([base, Not(Or(minus))])` に退避する。したがって片は互いに素である。DNF が空の片と、グリッドで空と証明できる片 (`exclusive::grid_proves_empty`) は落とす。
 - **条件クラス**: `(opener_pos − 1) | we << 2 | they << 3` の 16 通りで、`AuctionTrie::children` が席・バル条件で絞る単位と同じである。子が席・バル条件を持たない位置 (`AuctionTrie::children_are_conditioned` が偽) では子の計算を 1 回で済ませ、16 キーを同じグループに向ける。同じメンバー列を持つグループは重複除去する。
 - **API**: `ExclusiveIndex::build(&ir)`、`group(parent, class)`、`entries()` (キーとグループの列挙)、`stats(&ir) -> ExclusiveStats`、`exclusive::grid_proves_empty(c)`、`AuctionTrie::has_children(at)` / `children_are_conditioned(at)`。
-- **実測 (SAYC)**: 714 グループ、11,424 キー、2,270 メンバー、2,794 枝、2,545 片、木へ退避した片 3 (0.12%)、平坦な原子 3,931、木の補集合 3、決して選ばれないコール 238。構築時間と compile 全体に占める割合は 次のとおり (release、best of 3、`tests/compile_time.rs` の `sayc_exclusive_index_share`)。索引の構築は 9.2〜9.5 ms で、compile 全体 161〜167 ms の約 5.7% (loadavg 7〜8)。フェーズ 3 の基点 (0f63599) の compile は同じ負荷で 152 ms なので、増分はほぼ索引の構築分であり、§9.3 の検査 8 の費用は測定誤差に収まる。
+- **実測 (SAYC、システム停止の後)**: 2,754 グループ、44,064 キー、6,477 メンバー、7,586 枝、7,186 片、木へ退避した片 3、平坦な原子 10,838、木の補集合 3、決して選ばれないコール 389。構築は 12.6〜12.8 ms (release、best of 3、loadavg 3.2〜3.5)、compile 全体 437〜441 ms の約 2.9%。停止の前 (パスの鎖、24,067 グループ) は 44.7〜47.5 ms だった。停止のパスを持つグループが多い (その片は `ANY` から上位を引いたもの) ので、構築では次の 3 点で手間を省く (結果の索引は Debug 出力でバイト単位まで同一): `subtract` は引くものに `ANY` の原子があれば DNF の計算をせずに空の `Or` を返す (停止のパスを持つグループの補集合)、`grid_proves_empty` は平坦な片を原子ごとに実行可能セルと照らし、グリッドを組み立てない (`Or` の上界は原子の箱の和なので同じ答え)、1 回の構築の中では引く側の DNF を 1 度だけ求める (`DnfCache`、借りた IR の制約のアドレスをキーにする)。
+- **実測 (SAYC、フェーズ 4 の SAYC 追加前)**: 714 グループ、11,424 キー、2,270 メンバー、2,794 枝、2,545 片、木へ退避した片 3 (0.12%)、平坦な原子 3,931、木の補集合 3、決して選ばれないコール 238。構築時間と compile 全体に占める割合は 次のとおり (release、best of 3、`tests/compile_time.rs` の `sayc_exclusive_index_share`)。索引の構築は 9.2〜9.5 ms で、compile 全体 161〜167 ms の約 5.7% (loadavg 7〜8)。フェーズ 3 の基点 (0f63599) の compile は同じ負荷で 152 ms なので、増分はほぼ索引の構築分であり、§9.3 の検査 8 の費用は測定誤差に収まる。
 - **検証** (`tests/exclusive.rs`): ランダムな (キー、手) の組で、手が X_c に入ることと「rank 順で最初に満たすメンバーのコールが c」であることが一致するか、補集合と片が素か、1 グループで手の入る片が高々 1 つかを確かめる。既定スイートは 1e4 組、`#[ignore]` 版は 1e5 組で、どちらも不一致 0 (1e5 組のうち X_c に入る組は 71,028、release で 283 ms)。
 
 ## 6. `AuctionTrie` (`trie.rs`)
@@ -1317,7 +1360,7 @@ pub fn compile(root_path: &str, source: &str, loader: &dyn SourceLoader, opts: &
 ```rust
 // lib.rs
 pub const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const IR_FORMAT: u32 = 1;
+pub const IR_FORMAT: u32 = 2;   // 1: phase 3; 2: NodeFlags::stop and the system-stop trie links (§4.5)
 
 // cache.rs
 pub struct SystemCache { dir: PathBuf }
@@ -1330,7 +1373,7 @@ impl SystemCache {
 }
 ```
 
-`compile_revision` は `COMPILE_REVISION` (フェーズ 3 が 1、フェーズ 4 が 2) である。`compile()` の出力が形式を変えずに変わるとき (新しい Lint など) に上げる。クレートのバージョンと `IR_FORMAT` が同じでも、古いコンパイラが書いたエントリは別のキーになり、読まれずに再コンパイルされる (フェーズ 4 の排他索引の Lint を持たない IR が、温まったキャッシュから返るのを防ぐ。回帰テスト `an_entry_under_the_pre_revision_key_is_a_miss`)。
+`compile_revision` は `COMPILE_REVISION` (フェーズ 3 が 1、フェーズ 4 が 2、システム停止 §4.5 が 3) である。`compile()` の出力が形式を変えずに変わるとき (新しい Lint など) に上げる。クレートのバージョンと `IR_FORMAT` が同じでも、古いコンパイラが書いたエントリは別のキーになり、読まれずに再コンパイルされる (フェーズ 4 の排他索引の Lint を持たない IR が、温まったキャッシュから返るのを防ぐ。回帰テスト `an_entry_under_the_pre_revision_key_is_a_miss`)。
 
 手順: (1) `loader` で `path` を読み、`lexer::load` で include を解決して `resolved source` (全ファイルの連結、`Loaded.files` の順) を得る。(2) `key` を計算し `dir/<hex(key)>.ir` を探す。(3) あれば `postcard` でデコードする。ヘッダの `ir_format` が `IR_FORMAT` と違う、`compiler_version` が違う、デコードに失敗する、のいずれも「不一致」として再コンパイルし上書きする (エラーにはしない)。(4) 無ければ `compile` して書く。書き込みは一時ファイル + rename で原子的に行い、I/O の失敗だけが `Err`。`std` 無し (wasm) では `SystemCache` を提供せず、`compile` だけを使う。
 
