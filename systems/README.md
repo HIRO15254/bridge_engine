@@ -1,7 +1,10 @@
 # systems/
 
 Bidding-system definitions in BML (Bridge Bidding Markup Language, gpaulissen/bml syntax with
-the extensions documented in `docs/design/06-system.md`).
+our extensions). The dialect the compiler accepts -- file structure, call tokens, the description
+vocabulary, `#+KEY:` meta lines, `{prio:N}`/`{w:X}`/`{stop}`, resolution semantics, every lint,
+the full EBNF and worked examples -- is specified in `docs/design/16-extended-bml.md` (in
+Japanese); start there when writing a new system file.
 
 Production system definitions live outside this repository (users bring their own `.bml`).
 This directory holds only what the library's own tests need.
@@ -19,8 +22,18 @@ This directory holds only what the library's own tests need.
 Tests locate this directory through `BRIDGE_SYSTEMS_DIR` or, by default, relative to the crate
 manifest (`../../systems`), and skip (never fail) when vendored files are absent.
 
-Compile a system and inspect its diagnostics with (phase 3):
+There is no command-line lint runner. To inspect a system's diagnostics, compile it with
+`bridge_system::compile` and print each `Lint` (`file:line: severity[Code]: message`):
 
-```bash
-cargo run -p bridge-system --example lint -- systems/sayc/sayc.bml
+```rust
+use bridge_system::{CompileOptions, compile, lexer::FsLoader};
+
+let path = "systems/sayc/sayc.bml";
+let text = std::fs::read_to_string(path)?;
+let (_ir, lints) = compile(path, &text, &FsLoader, &CompileOptions::default());
+for lint in &lints {
+    println!("{lint}");
+}
 ```
+
+`docs/design/16-extended-bml.md` §8 lists every lint code with its trigger and fix.

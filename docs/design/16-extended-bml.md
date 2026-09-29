@@ -72,7 +72,7 @@ for lint in &lints {
 | 代替コール | `2S/3H`、`4D/H` | §4.5 | 非互換: `2S/3H` は末尾 2 文字だけ黙って残り、`4D/H` はクラッシュ | `NonStandardToken` (Info) |
 | 全レベル | `nX`、`(nX)`、`nS` | §4.3 | 非互換: クラッシュ | `NonStandardToken` (Info)、候補が 8 を超えると `WideWildcard` (Info) |
 | 相対レベル | `cS`、`jY`、`cM` | §4.3 | 非互換: レベルとして読まない | `NonStandardToken` (Info)、`LevelWithoutAnchor` (Error)、`NoSufficientLevel` (Info) |
-| 小文字の変数 | `1x`、`2y`、`3z` | §4.2 | 非互換 | `NonStandardToken` (Info) |
+| 小文字の変数 | `1x`、`2y`、`3z` | §4.2 | 非互換: 誤読かクラッシュ (`06-system.md` §1.4) | `NonStandardToken` (Info) |
 | 相手のコールの類 | `(any)`、`(bid)`、`(suit)` | §4.6 | 非互換 | `NonStandardToken` (Info) |
 | アラート印 | 説明文の先頭の `!` (直後が小文字の `c d h s` でないとき) | §3.6 | 説明文の一部として表示される (上流の著者の慣例) | なし |
 | 説明文中の `#` | `5+#`、`0--1#` | §5.3 | 説明文の一部として表示される | なし |
