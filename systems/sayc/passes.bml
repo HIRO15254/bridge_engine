@@ -1,0 +1,45 @@
+* Pass chains
+
+Phase 4 (NOTES.md #P1). A position with no rows is off-system: its call is chosen
+by natural inference, and so is every later call of the partnership, because our
+own pass is a trie edge only where some row names it. Where this file's answer is
+"pass from now on" -- we defend quietly while the opponents bid on, or the
+partnership has reached its contract -- the passes are written out: our pass, then
+the opponents' next call as the `(any)` wildcard (any call, their pass included),
+then our next pass, several rounds deep. The chain's passes carry no requirement
+("any hand"). A chain pass pasted into a table is the lowest-ranked call there, so
+under the phase-4 policy it is chosen exactly when no other listed call applies,
+like the implicit pass it replaces, but the auction stays on the system for the
+calls that follow.
+
+`pass-chain` starts with our pass (paste it into a table); `after-chain` starts
+with the opponents' call (paste it under a row whose call ends our bidding).
+
+#CUT pass-chain
+P = {prio:-100} any hand
+  (any)
+    P = {prio:-100} any hand
+      (any)
+        P = {prio:-100} any hand
+          (any)
+            P = {prio:-100} any hand
+              (any)
+                P = {prio:-100} any hand
+                  (any)
+                    P = {prio:-100} any hand
+#ENDCUT
+
+#CUT after-chain
+(any)
+  P = {prio:-100} any hand
+    (any)
+      P = {prio:-100} any hand
+        (any)
+          P = {prio:-100} any hand
+            (any)
+              P = {prio:-100} any hand
+                (any)
+                  P = {prio:-100} any hand
+                    (any)
+                      P = {prio:-100} any hand
+#ENDCUT

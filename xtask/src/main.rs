@@ -6,7 +6,7 @@
 //! | `systems fetch [--pin] [--force] [--only <name>]...` | 3 | Download external BML files and expected `.bss` outputs listed in `systems/vendor/manifest.toml` into `systems/vendor/data/` |
 //! | `dds vendor` | 5 | Download DDS v2.9.0 sources into `crates/bridge-dds/vendor/dds-2.9.0/` and verify the hash |
 //! | `dds regen-bindings` | 5 | Regenerate `crates/bridge-dds/src/sys.rs` with bindgen (offline check against the hand-written file) |
-//! | `coverage` | 3 | Run the bidirectional-consistency harness and write `target/coverage_report.json` |
+//! | `coverage` | 4 | Write the SAYC coverage report `target/coverage_report.json` (generated replays, NoCandidate tops, corpus rates, true-deal agreement, the `(ε, δ)` MLE; see `coverage.rs`). Built in release: a debug build re-runs itself with `--release` |
 //!
 //! `fetch` options: `--pin` writes the SHA-256 of a not-yet-pinned entry back into the manifest,
 //! `--force` re-downloads entries that are already present and verified, `--only <name>` limits
@@ -15,6 +15,7 @@
 //!
 //! `.cargo/config.toml` has `[alias] xtask = "run --package xtask --"`, so invoke as `cargo xtask`.
 
+mod coverage;
 mod dds;
 mod fetch;
 
@@ -37,7 +38,7 @@ fn main() -> ExitCode {
         ["systems", "fetch", rest @ ..] => fetch::run(fetch::Target::Systems, rest),
         ["dds", "vendor"] => dds::vendor(),
         ["dds", "regen-bindings"] => Ok(not_implemented("dds regen-bindings", 5)),
-        ["coverage", ..] => Ok(not_implemented("coverage", 3)),
+        ["coverage", rest @ ..] => coverage_in_release(rest),
         _ => {
             eprintln!("{USAGE}");
             Ok(ExitCode::from(2))
@@ -50,6 +51,34 @@ fn main() -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// `cargo xtask coverage` must run optimised (the report replays thousands of auctions); the
+/// `xtask` alias builds in debug, so a debug build re-runs the same command under
+/// `cargo run --release`.
+fn coverage_in_release(rest: &[&str]) -> Result<ExitCode> {
+    if !cfg!(debug_assertions) || std::env::var_os("XTASK_COVERAGE_DEBUG").is_some() {
+        return coverage::run(rest);
+    }
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let status = std::process::Command::new(cargo)
+        .current_dir(workspace_root())
+        .args([
+            "run",
+            "--release",
+            "--quiet",
+            "--package",
+            "xtask",
+            "--",
+            "coverage",
+        ])
+        .args(rest)
+        .status()?;
+    Ok(if status.success() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    })
 }
 
 fn not_implemented(command: &str, phase: u8) -> ExitCode {

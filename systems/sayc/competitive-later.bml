@@ -1,0 +1,3066 @@
+* Later rounds of competitive auctions (tables)
+
+Phase 4 (NOTES.md #P6). The competitive counterpart of `later-rounds.bml`,
+written out per auction where the calls depend on the suits: opener's answer
+to a negative double of a two-level overcall, the continuations after
+responder's raise or notrump over a one-level overcall, and the overcaller's
+side after an advance. Every continuation ends with the partnership passing.
+
+** Opener's answer to a negative double of a two-level overcall
+
+The double shows the values to compete, usually with the unbid major(s).
+Opener bids a four-card unbid major at the cheapest level with 12--15 and at
+game with 16+ (hearts before spades), bids 2NT with 12--14 balanced and a
+stopper, 3NT with 18--19, and otherwise makes the cheapest rebid of the
+opening suit, which carries no requirement of its own (the double is
+forcing). Responder then passes.
+
+1C-(2D)-D-(P)-
+4H = {prio:5} 16+ hcp, 4+!h
+  #PASTE after-chain
+2H = {prio:5} 12--15 hcp, 4+!h
+  #PASTE after-chain
+4S = {prio:4} 16+ hcp, 4+!s
+  #PASTE after-chain
+2S = {prio:4} 12--15 hcp, 4+!s
+  #PASTE after-chain
+2N = {prio:2} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+3N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+3C = {prio:-1} any hand
+  #PASTE after-chain
+
+1C-(2D)-D-(any)-
+#PASTE pass-chain
+
+1C-(2H)-D-(P)-
+4S = {prio:5} 16+ hcp, 4+!s
+  #PASTE after-chain
+2S = {prio:5} 12--15 hcp, 4+!s
+  #PASTE after-chain
+2N = {prio:2} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+3N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+3C = {prio:-1} any hand
+  #PASTE after-chain
+
+1C-(2H)-D-(any)-
+#PASTE pass-chain
+
+1C-(2S)-D-(P)-
+4H = {prio:5} 16+ hcp, 4+!h
+  #PASTE after-chain
+3H = {prio:5} 12--15 hcp, 4+!h
+  #PASTE after-chain
+2N = {prio:2} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+3N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+3C = {prio:-1} any hand
+  #PASTE after-chain
+
+1C-(2S)-D-(any)-
+#PASTE pass-chain
+
+1D-(2C)-D-(P)-
+4H = {prio:5} 16+ hcp, 4+!h
+  #PASTE after-chain
+2H = {prio:5} 12--15 hcp, 4+!h
+  #PASTE after-chain
+4S = {prio:4} 16+ hcp, 4+!s
+  #PASTE after-chain
+2S = {prio:4} 12--15 hcp, 4+!s
+  #PASTE after-chain
+2N = {prio:2} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+3N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+2D = {prio:-1} any hand
+  #PASTE after-chain
+
+1D-(2C)-D-(any)-
+#PASTE pass-chain
+
+1D-(2H)-D-(P)-
+4S = {prio:5} 16+ hcp, 4+!s
+  #PASTE after-chain
+2S = {prio:5} 12--15 hcp, 4+!s
+  #PASTE after-chain
+2N = {prio:2} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+3N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+3D = {prio:-1} any hand
+  #PASTE after-chain
+
+1D-(2H)-D-(any)-
+#PASTE pass-chain
+
+1D-(2S)-D-(P)-
+4H = {prio:5} 16+ hcp, 4+!h
+  #PASTE after-chain
+3H = {prio:5} 12--15 hcp, 4+!h
+  #PASTE after-chain
+2N = {prio:2} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+3N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+3D = {prio:-1} any hand
+  #PASTE after-chain
+
+1D-(2S)-D-(any)-
+#PASTE pass-chain
+
+1H-(2C)-D-(P)-
+4S = {prio:5} 16+ hcp, 4+!s
+  #PASTE after-chain
+2S = {prio:5} 12--15 hcp, 4+!s
+  #PASTE after-chain
+2N = {prio:2} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+3N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+2H = {prio:-1} any hand
+  #PASTE after-chain
+
+1H-(2C)-D-(any)-
+#PASTE pass-chain
+
+1H-(2D)-D-(P)-
+4S = {prio:5} 16+ hcp, 4+!s
+  #PASTE after-chain
+2S = {prio:5} 12--15 hcp, 4+!s
+  #PASTE after-chain
+2N = {prio:2} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+3N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+2H = {prio:-1} any hand
+  #PASTE after-chain
+
+1H-(2D)-D-(any)-
+#PASTE pass-chain
+
+1H-(2S)-D-(P)-
+2N = {prio:2} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+3N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+3H = {prio:-1} any hand
+  #PASTE after-chain
+
+1H-(2S)-D-(any)-
+#PASTE pass-chain
+
+1S-(2C)-D-(P)-
+4H = {prio:5} 16+ hcp, 4+!h
+  #PASTE after-chain
+2H = {prio:5} 12--15 hcp, 4+!h
+  #PASTE after-chain
+2N = {prio:2} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+3N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+2S = {prio:-1} any hand
+  #PASTE after-chain
+
+1S-(2C)-D-(any)-
+#PASTE pass-chain
+
+1S-(2D)-D-(P)-
+4H = {prio:5} 16+ hcp, 4+!h
+  #PASTE after-chain
+2H = {prio:5} 12--15 hcp, 4+!h
+  #PASTE after-chain
+2N = {prio:2} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+3N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+2S = {prio:-1} any hand
+  #PASTE after-chain
+
+1S-(2D)-D-(any)-
+#PASTE pass-chain
+
+1S-(2H)-D-(P)-
+2N = {prio:2} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+3N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+2S = {prio:-1} any hand
+  #PASTE after-chain
+
+1S-(2H)-D-(any)-
+#PASTE pass-chain
+
+** Opener after responder's raise or notrump over a one-level overcall
+
+Responder's single raise (6--10) is passed with a minimum, invited with 16--17
+(accepted with 9--10) and raised to game with 18+; the limit-raise cuebid is
+accepted with 14+ (a major at game, a minor in 3NT) and otherwise answered by
+the cheapest rebid of the suit; the preemptive jump raise ends the auction.
+Responder's 1NT (7--10) is raised to 2NT with 16--17 (accepted with 9--10) and
+to 3NT with 18+; 2NT (11--12) is raised with 14+.
+
+#CUT opener-after-major-raise
+4\M = {prio:2} 18+ hcp
+  #PASTE after-chain
+3\M = {prio:1} 16--17 hcp
+  (P)
+    4\M = {prio:1} 9--10 hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+#PASTE pass-chain
+#ENDCUT
+
+#CUT opener-after-1n
+3N = {prio:2} 18+ hcp
+  #PASTE after-chain
+2N = {prio:1} 16--17 hcp
+  (P)
+    3N = {prio:1} 9--10 hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+#PASTE pass-chain
+#ENDCUT
+
+#CUT opener-after-2n
+3N = {prio:1} 14+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+#ENDCUT
+
+1C-(1D)-2C-(P)-
+3N = {prio:1} 18+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-(1D)-2D-(P)-
+3N = {prio:1} 14+ hcp
+  #PASTE after-chain
+3C = any hand
+  #PASTE after-chain
+
+1C-(1D)-3C-
+#PASTE after-chain
+
+1C-(1D)-2C-(any)-
+#PASTE pass-chain
+
+1C-(1D)-2D-(any)-
+#PASTE pass-chain
+
+1C-(1D)-1N-(any)-
+#PASTE pass-chain
+
+1C-(1D)-2N-(any)-
+#PASTE pass-chain
+
+1C-(1D)-1N-(P)-
+#PASTE opener-after-1n
+
+1C-(1D)-2N-(P)-
+#PASTE opener-after-2n
+
+1C-(1H)-2C-(P)-
+3N = {prio:1} 18+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-(1H)-2H-(P)-
+3N = {prio:1} 14+ hcp
+  #PASTE after-chain
+3C = any hand
+  #PASTE after-chain
+
+1C-(1H)-3C-
+#PASTE after-chain
+
+1C-(1H)-2C-(any)-
+#PASTE pass-chain
+
+1C-(1H)-2H-(any)-
+#PASTE pass-chain
+
+1C-(1H)-1N-(any)-
+#PASTE pass-chain
+
+1C-(1H)-2N-(any)-
+#PASTE pass-chain
+
+1C-(1H)-1N-(P)-
+#PASTE opener-after-1n
+
+1C-(1H)-2N-(P)-
+#PASTE opener-after-2n
+
+1C-(1S)-2C-(P)-
+3N = {prio:1} 18+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-(1S)-2S-(P)-
+3N = {prio:1} 14+ hcp
+  #PASTE after-chain
+3C = any hand
+  #PASTE after-chain
+
+1C-(1S)-3C-
+#PASTE after-chain
+
+1C-(1S)-2C-(any)-
+#PASTE pass-chain
+
+1C-(1S)-2S-(any)-
+#PASTE pass-chain
+
+1C-(1S)-1N-(any)-
+#PASTE pass-chain
+
+1C-(1S)-2N-(any)-
+#PASTE pass-chain
+
+1C-(1S)-1N-(P)-
+#PASTE opener-after-1n
+
+1C-(1S)-2N-(P)-
+#PASTE opener-after-2n
+
+1D-(1H)-2D-(P)-
+3N = {prio:1} 18+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-(1H)-2H-(P)-
+3N = {prio:1} 14+ hcp
+  #PASTE after-chain
+3D = any hand
+  #PASTE after-chain
+
+1D-(1H)-3D-
+#PASTE after-chain
+
+1D-(1H)-2D-(any)-
+#PASTE pass-chain
+
+1D-(1H)-2H-(any)-
+#PASTE pass-chain
+
+1D-(1H)-1N-(any)-
+#PASTE pass-chain
+
+1D-(1H)-2N-(any)-
+#PASTE pass-chain
+
+1D-(1H)-1N-(P)-
+#PASTE opener-after-1n
+
+1D-(1H)-2N-(P)-
+#PASTE opener-after-2n
+
+1D-(1S)-2D-(P)-
+3N = {prio:1} 18+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-(1S)-2S-(P)-
+3N = {prio:1} 14+ hcp
+  #PASTE after-chain
+3D = any hand
+  #PASTE after-chain
+
+1D-(1S)-3D-
+#PASTE after-chain
+
+1D-(1S)-2D-(any)-
+#PASTE pass-chain
+
+1D-(1S)-2S-(any)-
+#PASTE pass-chain
+
+1D-(1S)-1N-(any)-
+#PASTE pass-chain
+
+1D-(1S)-2N-(any)-
+#PASTE pass-chain
+
+1D-(1S)-1N-(P)-
+#PASTE opener-after-1n
+
+1D-(1S)-2N-(P)-
+#PASTE opener-after-2n
+
+1H-(1S)-2H-(P)-
+#PASTE opener-after-major-raise \M=H
+
+1H-(1S)-2S-(P)-
+4H = {prio:1} 14+ hcp
+  #PASTE after-chain
+3H = any hand
+  #PASTE after-chain
+
+1H-(1S)-3H-
+#PASTE after-chain
+
+1H-(1S)-2H-(any)-
+#PASTE pass-chain
+
+1H-(1S)-2S-(any)-
+#PASTE pass-chain
+
+1H-(1S)-1N-(any)-
+#PASTE pass-chain
+
+1H-(1S)-2N-(any)-
+#PASTE pass-chain
+
+1H-(1S)-1N-(P)-
+#PASTE opener-after-1n
+
+1H-(1S)-2N-(P)-
+#PASTE opener-after-2n
+
+** The overcaller's side after an advance
+
+After a single raise (7--10) the overcaller invites with 13--14 (accepted with
+9--10) and bids game in a major with 15+; after the preemptive jump raise he
+passes. After the cuebid (11+ with support) and the overcaller's minimum
+rebid, advancer bids game in a major with 13+ and invites with 11--12
+(accepted with 11+); after the overcaller's jump or 2NT, advancer bids game.
+After 1NT (8--11) the overcaller bids 3NT with 16+ and invites with 14--15;
+after 2NT (12--14) he bids 3NT with 11+. A non-forcing new suit is raised
+with three-card support and otherwise passed.
+
+#CUT overcaller-after-raise
+4\M = {prio:2} 15+ hcp
+  #PASTE after-chain
+3\M = {prio:1} 13--14 hcp
+  (P)
+    4\M = {prio:1} 9--10 hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+#PASTE pass-chain
+#ENDCUT
+
+#CUT advancer-after-cue-min
+4\M = {prio:2} 13+ hcp
+  #PASTE after-chain
+3\M = {prio:1} 11--12 hcp
+  (P)
+    4\M = {prio:1} 11+ hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+#PASTE pass-chain
+#ENDCUT
+
+#CUT overcaller-after-1n
+3N = {prio:2} 16+ hcp
+  #PASTE after-chain
+2N = {prio:1} 14--15 hcp
+  (P)
+    3N = {prio:1} 10--11 hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+#PASTE pass-chain
+#ENDCUT
+
+(1C)-1D-(P)-2D-(P)-
+#PASTE pass-chain
+
+(1C)-1D-(P)-2D-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(P)-3D-
+#PASTE after-chain
+
+(1C)-1D-(P)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1C)-1D-(P)-1N-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(P)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1D-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(P)-3N-
+#PASTE after-chain
+
+(1C)-1D-(P)-2C-(P)-2D-(P)-
+3N = {prio:1} 13+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1D-(P)-2C-(P)-3D-(P)-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+(1C)-1D-(P)-2C-(P)-2N-(P)-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+(1C)-1D-(P)-2C-(P)-2D-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(P)-2C-(P)-3D-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(P)-2C-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(P)-2C-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(D)-2C-(P)-2D-(P)-
+3N = {prio:1} 13+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1D-(D)-2C-(P)-3D-(P)-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+(1C)-1D-(D)-2C-(P)-2N-(P)-
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+(1C)-1D-(D)-2C-(P)-2D-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(D)-2C-(P)-3D-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(D)-2C-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(D)-2C-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(P)-2H-(P)-
+#PASTE overcaller-after-raise \M=H
+
+(1C)-1H-(P)-2H-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(P)-3H-
+#PASTE after-chain
+
+(1C)-1H-(P)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1C)-1H-(P)-1N-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(P)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1H-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(P)-3N-
+#PASTE after-chain
+
+(1C)-1H-(P)-2C-(P)-2H-(P)-
+#PASTE advancer-after-cue-min \M=H
+
+(1C)-1H-(P)-2C-(P)-3H-(P)-
+4H = {prio:1} any hand
+  #PASTE after-chain
+
+(1C)-1H-(P)-2C-(P)-2N-(P)-
+4H = {prio:2} 4+!h
+  #PASTE after-chain
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+(1C)-1H-(P)-2C-(P)-2H-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(P)-2C-(P)-3H-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(P)-2C-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(P)-2C-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(D)-2C-(P)-2H-(P)-
+#PASTE advancer-after-cue-min \M=H
+
+(1C)-1H-(D)-2C-(P)-3H-(P)-
+4H = {prio:1} any hand
+  #PASTE after-chain
+
+(1C)-1H-(D)-2C-(P)-2N-(P)-
+4H = {prio:2} 4+!h
+  #PASTE after-chain
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+(1C)-1H-(D)-2C-(P)-2H-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(D)-2C-(P)-3H-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(D)-2C-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(D)-2C-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(P)-2S-(P)-
+#PASTE overcaller-after-raise \M=S
+
+(1C)-1S-(P)-2S-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(P)-3S-
+#PASTE after-chain
+
+(1C)-1S-(P)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1C)-1S-(P)-1N-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(P)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1S-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(P)-3N-
+#PASTE after-chain
+
+(1C)-1S-(P)-2C-(P)-2S-(P)-
+#PASTE advancer-after-cue-min \M=S
+
+(1C)-1S-(P)-2C-(P)-3S-(P)-
+4S = {prio:1} any hand
+  #PASTE after-chain
+
+(1C)-1S-(P)-2C-(P)-2N-(P)-
+4S = {prio:2} 4+!s
+  #PASTE after-chain
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+(1C)-1S-(P)-2C-(P)-2S-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(P)-2C-(P)-3S-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(P)-2C-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(P)-2C-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(D)-2C-(P)-2S-(P)-
+#PASTE advancer-after-cue-min \M=S
+
+(1C)-1S-(D)-2C-(P)-3S-(P)-
+4S = {prio:1} any hand
+  #PASTE after-chain
+
+(1C)-1S-(D)-2C-(P)-2N-(P)-
+4S = {prio:2} 4+!s
+  #PASTE after-chain
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+(1C)-1S-(D)-2C-(P)-2S-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(D)-2C-(P)-3S-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(D)-2C-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(D)-2C-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(P)-2H-(P)-
+#PASTE overcaller-after-raise \M=H
+
+(1D)-1H-(P)-2H-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(P)-3H-
+#PASTE after-chain
+
+(1D)-1H-(P)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1D)-1H-(P)-1N-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(P)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-1H-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(P)-3N-
+#PASTE after-chain
+
+(1D)-1H-(P)-2D-(P)-2H-(P)-
+#PASTE advancer-after-cue-min \M=H
+
+(1D)-1H-(P)-2D-(P)-3H-(P)-
+4H = {prio:1} any hand
+  #PASTE after-chain
+
+(1D)-1H-(P)-2D-(P)-2N-(P)-
+4H = {prio:2} 4+!h
+  #PASTE after-chain
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+(1D)-1H-(P)-2D-(P)-2H-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(P)-2D-(P)-3H-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(P)-2D-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(P)-2D-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(D)-2D-(P)-2H-(P)-
+#PASTE advancer-after-cue-min \M=H
+
+(1D)-1H-(D)-2D-(P)-3H-(P)-
+4H = {prio:1} any hand
+  #PASTE after-chain
+
+(1D)-1H-(D)-2D-(P)-2N-(P)-
+4H = {prio:2} 4+!h
+  #PASTE after-chain
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+(1D)-1H-(D)-2D-(P)-2H-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(D)-2D-(P)-3H-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(D)-2D-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(D)-2D-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(P)-2S-(P)-
+#PASTE overcaller-after-raise \M=S
+
+(1D)-1S-(P)-2S-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(P)-3S-
+#PASTE after-chain
+
+(1D)-1S-(P)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1D)-1S-(P)-1N-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(P)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-1S-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(P)-3N-
+#PASTE after-chain
+
+(1D)-1S-(P)-2D-(P)-2S-(P)-
+#PASTE advancer-after-cue-min \M=S
+
+(1D)-1S-(P)-2D-(P)-3S-(P)-
+4S = {prio:1} any hand
+  #PASTE after-chain
+
+(1D)-1S-(P)-2D-(P)-2N-(P)-
+4S = {prio:2} 4+!s
+  #PASTE after-chain
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+(1D)-1S-(P)-2D-(P)-2S-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(P)-2D-(P)-3S-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(P)-2D-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(P)-2D-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(D)-2D-(P)-2S-(P)-
+#PASTE advancer-after-cue-min \M=S
+
+(1D)-1S-(D)-2D-(P)-3S-(P)-
+4S = {prio:1} any hand
+  #PASTE after-chain
+
+(1D)-1S-(D)-2D-(P)-2N-(P)-
+4S = {prio:2} 4+!s
+  #PASTE after-chain
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+(1D)-1S-(D)-2D-(P)-2S-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(D)-2D-(P)-3S-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(D)-2D-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(D)-2D-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(P)-2S-(P)-
+#PASTE overcaller-after-raise \M=S
+
+(1H)-1S-(P)-2S-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(P)-3S-
+#PASTE after-chain
+
+(1H)-1S-(P)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1H)-1S-(P)-1N-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(P)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-1S-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(P)-3N-
+#PASTE after-chain
+
+(1H)-1S-(P)-2H-(P)-2S-(P)-
+#PASTE advancer-after-cue-min \M=S
+
+(1H)-1S-(P)-2H-(P)-3S-(P)-
+4S = {prio:1} any hand
+  #PASTE after-chain
+
+(1H)-1S-(P)-2H-(P)-2N-(P)-
+4S = {prio:2} 4+!s
+  #PASTE after-chain
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+(1H)-1S-(P)-2H-(P)-2S-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(P)-2H-(P)-3S-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(P)-2H-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(P)-2H-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(D)-2H-(P)-2S-(P)-
+#PASTE advancer-after-cue-min \M=S
+
+(1H)-1S-(D)-2H-(P)-3S-(P)-
+4S = {prio:1} any hand
+  #PASTE after-chain
+
+(1H)-1S-(D)-2H-(P)-2N-(P)-
+4S = {prio:2} 4+!s
+  #PASTE after-chain
+3N = {prio:1} any hand
+  #PASTE after-chain
+
+(1H)-1S-(D)-2H-(P)-2S-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(D)-2H-(P)-3S-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(D)-2H-(P)-2N-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(D)-2H-(any)-
+#PASTE pass-chain
+
+** After a two-level overcall and after a weak jump overcall
+
+The raise of a two-level overcall (6--11) is passed, except that 3NT is bid
+with 15+ and a stopper; after the cuebid (12+) the overcaller bids 3NT with a
+stopper and otherwise game in his suit. The raise of a weak jump overcall
+ends the auction; after the 2NT inquiry the overcaller rebids his suit and
+advancer places the contract (game in a major with 17+).
+
+(1C)-2D-(P)-3D-
+#PASTE after-chain
+
+(1C)-2D-(P)-2N-(P)-
+3D = {prio:-1} any hand
+  (P)
+    4D = {prio:1} 17+ hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+
+(1C)-2H-(P)-3H-
+#PASTE after-chain
+
+(1C)-2H-(P)-4H-
+#PASTE after-chain
+
+(1C)-2H-(P)-2N-(P)-
+3H = {prio:-1} any hand
+  (P)
+    4H = {prio:1} 17+ hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+
+(1C)-2S-(P)-3S-
+#PASTE after-chain
+
+(1C)-2S-(P)-4S-
+#PASTE after-chain
+
+(1C)-2S-(P)-2N-(P)-
+3S = {prio:-1} any hand
+  (P)
+    4S = {prio:1} 17+ hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+
+(1D)-2C-(P)-3C-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-2C-(P)-3C-(any)-
+#PASTE pass-chain
+
+(1D)-2C-(P)-3D-(P)-
+3N = {prio:2} stopper
+  #PASTE after-chain
+4C = {prio:-1} any hand
+  #PASTE after-chain
+
+(1D)-2C-(P)-2N-(P)-
+3N = {prio:1} 12+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-2C-(P)-3N-
+#PASTE after-chain
+
+(1D)-2H-(P)-3H-
+#PASTE after-chain
+
+(1D)-2H-(P)-4H-
+#PASTE after-chain
+
+(1D)-2H-(P)-2N-(P)-
+3H = {prio:-1} any hand
+  (P)
+    4H = {prio:1} 17+ hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+
+(1D)-2S-(P)-3S-
+#PASTE after-chain
+
+(1D)-2S-(P)-4S-
+#PASTE after-chain
+
+(1D)-2S-(P)-2N-(P)-
+3S = {prio:-1} any hand
+  (P)
+    4S = {prio:1} 17+ hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+
+(1H)-2C-(P)-3C-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-2C-(P)-3C-(any)-
+#PASTE pass-chain
+
+(1H)-2C-(P)-3H-(P)-
+3N = {prio:2} stopper
+  #PASTE after-chain
+4C = {prio:-1} any hand
+  #PASTE after-chain
+
+(1H)-2C-(P)-2N-(P)-
+3N = {prio:1} 12+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-2C-(P)-3N-
+#PASTE after-chain
+
+(1H)-2D-(P)-3D-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-2D-(P)-3D-(any)-
+#PASTE pass-chain
+
+(1H)-2D-(P)-3H-(P)-
+3N = {prio:2} stopper
+  #PASTE after-chain
+4D = {prio:-1} any hand
+  #PASTE after-chain
+
+(1H)-2D-(P)-2N-(P)-
+3N = {prio:1} 12+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-2D-(P)-3N-
+#PASTE after-chain
+
+(1H)-2S-(P)-3S-
+#PASTE after-chain
+
+(1H)-2S-(P)-4S-
+#PASTE after-chain
+
+(1H)-2S-(P)-2N-(P)-
+3S = {prio:-1} any hand
+  (P)
+    4S = {prio:1} 17+ hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+
+(1S)-2C-(P)-3C-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-2C-(P)-3C-(any)-
+#PASTE pass-chain
+
+(1S)-2C-(P)-3S-(P)-
+3N = {prio:2} stopper
+  #PASTE after-chain
+4C = {prio:-1} any hand
+  #PASTE after-chain
+
+(1S)-2C-(P)-2N-(P)-
+3N = {prio:1} 12+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-2C-(P)-3N-
+#PASTE after-chain
+
+(1S)-2D-(P)-3D-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-2D-(P)-3D-(any)-
+#PASTE pass-chain
+
+(1S)-2D-(P)-3S-(P)-
+3N = {prio:2} stopper
+  #PASTE after-chain
+4D = {prio:-1} any hand
+  #PASTE after-chain
+
+(1S)-2D-(P)-2N-(P)-
+3N = {prio:1} 12+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-2D-(P)-3N-
+#PASTE after-chain
+
+(1S)-2H-(P)-3H-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-2H-(P)-3H-(any)-
+#PASTE pass-chain
+
+(1S)-2H-(P)-3S-(P)-
+3N = {prio:2} stopper
+  #PASTE after-chain
+4H = {prio:-1} any hand
+  #PASTE after-chain
+
+(1S)-2H-(P)-2N-(P)-
+3N = {prio:1} 12+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-2H-(P)-3N-
+#PASTE after-chain
+
+** Michaels and the unusual notrump
+
+Advancer's choice of suit over a Michaels cuebid ends the auction; after the
+2NT inquiry over a major-suit Michaels cuebid the cuebidder names his minor
+(clubs with five, else diamonds), and advancer passes.
+
+(1C)-2C-(P)-2H-
+#PASTE after-chain
+
+(1C)-2C-(P)-2S-
+#PASTE after-chain
+
+(1C)-2C-(P)-3H-
+#PASTE after-chain
+
+(1C)-2C-(P)-3S-
+#PASTE after-chain
+
+(1D)-2D-(P)-2H-
+#PASTE after-chain
+
+(1D)-2D-(P)-2S-
+#PASTE after-chain
+
+(1D)-2D-(P)-3H-
+#PASTE after-chain
+
+(1D)-2D-(P)-3S-
+#PASTE after-chain
+
+(1H)-2H-(P)-2N-(P)-
+3C = {prio:1} 5+!c
+  #PASTE after-chain
+3D = any hand
+  #PASTE after-chain
+
+(1H)-2H-(P)-2S-
+#PASTE after-chain
+
+(1H)-2H-(P)-3S-
+#PASTE after-chain
+
+(1S)-2S-(P)-2N-(P)-
+3C = {prio:1} 5+!c
+  #PASTE after-chain
+3D = any hand
+  #PASTE after-chain
+
+(1S)-2S-(P)-3H-
+#PASTE after-chain
+
+(1S)-2S-(P)-3H-
+#PASTE after-chain
+
+** Balancing: advancing the reopening bid
+
+The balancing overcall (6--16) is raised with three-card support (to the three
+level with 12+, a single raise with 7--11); the balancing 1NT (10--15) is
+raised to 3NT with 12+ and invited with 10--11; the jump overcall is passed.
+The balancing double is answered like a direct takeout double (`competition.bml`),
+and the partnership then stops.
+
+(1C)-P-(P)-1D-(P)-
+3D = {prio:2} 12+ hcp, 3+!d
+  #PASTE after-chain
+2D = {prio:1} 7--11 hcp, 3+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(P)-2D-
+#PASTE after-chain
+
+(1C)-P-(P)-1H-(P)-
+3H = {prio:2} 12+ hcp, 3+!h
+  #PASTE after-chain
+2H = {prio:1} 7--11 hcp, 3+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(P)-2H-
+#PASTE after-chain
+
+(1C)-P-(P)-1S-(P)-
+3S = {prio:2} 12+ hcp, 3+!s
+  #PASTE after-chain
+2S = {prio:1} 7--11 hcp, 3+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(P)-2S-
+#PASTE after-chain
+
+(1C)-P-(P)-1N-(P)-
+3N = {prio:2} 12+ hcp
+  #PASTE after-chain
+2N = {prio:1} 10--11 hcp
+  (P)
+    3N = {prio:1} 13+ hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+#PASTE pass-chain
+
+(1C)-P-(P)-D-(P)-
+#PASTE adv-dbl-1c
+2C = {prio:10} F, 12+ hcp
+1N = 8--10 hcp
+#PASTE pass-chain
+
+(1C)-P-(P)-D-(any)-
+#PASTE pass-chain
+
+(1D)-P-(P)-1H-(P)-
+3H = {prio:2} 12+ hcp, 3+!h
+  #PASTE after-chain
+2H = {prio:1} 7--11 hcp, 3+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-P-(P)-2H-
+#PASTE after-chain
+
+(1D)-P-(P)-1S-(P)-
+3S = {prio:2} 12+ hcp, 3+!s
+  #PASTE after-chain
+2S = {prio:1} 7--11 hcp, 3+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-P-(P)-2S-
+#PASTE after-chain
+
+(1D)-P-(P)-1N-(P)-
+3N = {prio:2} 12+ hcp
+  #PASTE after-chain
+2N = {prio:1} 10--11 hcp
+  (P)
+    3N = {prio:1} 13+ hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+#PASTE pass-chain
+
+(1D)-P-(P)-D-(P)-
+#PASTE adv-dbl-1d
+2D = {prio:10} F, 12+ hcp
+1N = 8--10 hcp
+#PASTE pass-chain
+
+(1D)-P-(P)-D-(any)-
+#PASTE pass-chain
+
+(1H)-P-(P)-1S-(P)-
+3S = {prio:2} 12+ hcp, 3+!s
+  #PASTE after-chain
+2S = {prio:1} 7--11 hcp, 3+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-P-(P)-2S-
+#PASTE after-chain
+
+(1H)-P-(P)-1N-(P)-
+3N = {prio:2} 12+ hcp
+  #PASTE after-chain
+2N = {prio:1} 10--11 hcp
+  (P)
+    3N = {prio:1} 13+ hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+#PASTE pass-chain
+
+(1H)-P-(P)-D-(P)-
+#PASTE adv-dbl-1h
+2H = {prio:10} F, 12+ hcp
+1N = 8--10 hcp
+#PASTE pass-chain
+
+(1H)-P-(P)-D-(any)-
+#PASTE pass-chain
+
+(1S)-P-(P)-1N-(P)-
+3N = {prio:2} 12+ hcp
+  #PASTE after-chain
+2N = {prio:1} 10--11 hcp
+  (P)
+    3N = {prio:1} 13+ hcp
+      #PASTE after-chain
+    #PASTE pass-chain
+  (any)
+    #PASTE pass-chain
+#PASTE pass-chain
+
+(1S)-P-(P)-D-(P)-
+#PASTE adv-dbl-1s
+2S = {prio:10} F, 12+ hcp
+1N = 8--10 hcp
+#PASTE pass-chain
+
+(1S)-P-(P)-D-(any)-
+#PASTE pass-chain
+
+** The doubler's rebid after the advance
+
+After a minimum advance the takeout doubler raises with four-card support
+(one level with 17--18, two levels with 19+) or bids 1NT/2NT with 18--19
+balanced and a stopper, and otherwise passes; opposite the invitational jump
+he bids game in a major with four-card support and 14+, 3NT with a stopper and
+14+; opposite 1NT (8--10) he bids 3NT with 17+. Advancer then passes. The same
+applies to the balancing double.
+
+(1C)-D-(P)-2H-(P)-
+4H = {prio:2} 14+ hcp, 4+!h
+  #PASTE after-chain
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-D-(P)-2H-(any)-
+#PASTE pass-chain
+
+(1C)-D-(P)-2S-(P)-
+4S = {prio:2} 14+ hcp, 4+!s
+  #PASTE after-chain
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-D-(P)-2S-(any)-
+#PASTE pass-chain
+
+(1C)-D-(P)-2D-(P)-
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-D-(P)-2D-(any)-
+#PASTE pass-chain
+
+(1C)-D-(P)-1H-(P)-
+3H = {prio:3} 19+ hcp, 4+!h
+  #PASTE after-chain
+2H = {prio:3} 17--18 hcp, 4+!h
+  #PASTE after-chain
+1N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-D-(P)-1H-(any)-
+#PASTE pass-chain
+
+(1C)-D-(P)-1S-(P)-
+3S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+2S = {prio:3} 17--18 hcp, 4+!s
+  #PASTE after-chain
+1N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-D-(P)-1S-(any)-
+#PASTE pass-chain
+
+(1C)-D-(P)-1D-(P)-
+3D = {prio:3} 19+ hcp, 4+!d
+  #PASTE after-chain
+2D = {prio:3} 17--18 hcp, 4+!d
+  #PASTE after-chain
+1N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-D-(P)-1D-(any)-
+#PASTE pass-chain
+
+(1C)-D-(P)-1N-(P)-
+3N = {prio:1} 17+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-D-(P)-1N-(any)-
+#PASTE pass-chain
+
+(1C)-P-(P)-D-(P)-2H-(P)-
+4H = {prio:2} 14+ hcp, 4+!h
+  #PASTE after-chain
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(P)-D-(P)-2H-(any)-
+#PASTE pass-chain
+
+(1C)-P-(P)-D-(P)-2S-(P)-
+4S = {prio:2} 14+ hcp, 4+!s
+  #PASTE after-chain
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(P)-D-(P)-2S-(any)-
+#PASTE pass-chain
+
+(1C)-P-(P)-D-(P)-2D-(P)-
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(P)-D-(P)-2D-(any)-
+#PASTE pass-chain
+
+(1C)-P-(P)-D-(P)-1H-(P)-
+3H = {prio:3} 19+ hcp, 4+!h
+  #PASTE after-chain
+2H = {prio:3} 17--18 hcp, 4+!h
+  #PASTE after-chain
+1N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(P)-D-(P)-1H-(any)-
+#PASTE pass-chain
+
+(1C)-P-(P)-D-(P)-1S-(P)-
+3S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+2S = {prio:3} 17--18 hcp, 4+!s
+  #PASTE after-chain
+1N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(P)-D-(P)-1S-(any)-
+#PASTE pass-chain
+
+(1C)-P-(P)-D-(P)-1D-(P)-
+3D = {prio:3} 19+ hcp, 4+!d
+  #PASTE after-chain
+2D = {prio:3} 17--18 hcp, 4+!d
+  #PASTE after-chain
+1N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(P)-D-(P)-1D-(any)-
+#PASTE pass-chain
+
+(1C)-P-(P)-D-(P)-1N-(P)-
+3N = {prio:1} 17+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(P)-D-(P)-1N-(any)-
+#PASTE pass-chain
+
+(1D)-D-(P)-2H-(P)-
+4H = {prio:2} 14+ hcp, 4+!h
+  #PASTE after-chain
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-D-(P)-2H-(any)-
+#PASTE pass-chain
+
+(1D)-D-(P)-2S-(P)-
+4S = {prio:2} 14+ hcp, 4+!s
+  #PASTE after-chain
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-D-(P)-2S-(any)-
+#PASTE pass-chain
+
+(1D)-D-(P)-3C-(P)-
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-D-(P)-3C-(any)-
+#PASTE pass-chain
+
+(1D)-D-(P)-1H-(P)-
+3H = {prio:3} 19+ hcp, 4+!h
+  #PASTE after-chain
+2H = {prio:3} 17--18 hcp, 4+!h
+  #PASTE after-chain
+1N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-D-(P)-1H-(any)-
+#PASTE pass-chain
+
+(1D)-D-(P)-1S-(P)-
+3S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+2S = {prio:3} 17--18 hcp, 4+!s
+  #PASTE after-chain
+1N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-D-(P)-1S-(any)-
+#PASTE pass-chain
+
+(1D)-D-(P)-2C-(P)-
+4C = {prio:3} 19+ hcp, 4+!c
+  #PASTE after-chain
+3C = {prio:3} 17--18 hcp, 4+!c
+  #PASTE after-chain
+2N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-D-(P)-2C-(any)-
+#PASTE pass-chain
+
+(1D)-D-(P)-1N-(P)-
+3N = {prio:1} 17+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-D-(P)-1N-(any)-
+#PASTE pass-chain
+
+(1D)-P-(P)-D-(P)-2H-(P)-
+4H = {prio:2} 14+ hcp, 4+!h
+  #PASTE after-chain
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-P-(P)-D-(P)-2H-(any)-
+#PASTE pass-chain
+
+(1D)-P-(P)-D-(P)-2S-(P)-
+4S = {prio:2} 14+ hcp, 4+!s
+  #PASTE after-chain
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-P-(P)-D-(P)-2S-(any)-
+#PASTE pass-chain
+
+(1D)-P-(P)-D-(P)-3C-(P)-
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-P-(P)-D-(P)-3C-(any)-
+#PASTE pass-chain
+
+(1D)-P-(P)-D-(P)-1H-(P)-
+3H = {prio:3} 19+ hcp, 4+!h
+  #PASTE after-chain
+2H = {prio:3} 17--18 hcp, 4+!h
+  #PASTE after-chain
+1N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-P-(P)-D-(P)-1H-(any)-
+#PASTE pass-chain
+
+(1D)-P-(P)-D-(P)-1S-(P)-
+3S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+2S = {prio:3} 17--18 hcp, 4+!s
+  #PASTE after-chain
+1N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-P-(P)-D-(P)-1S-(any)-
+#PASTE pass-chain
+
+(1D)-P-(P)-D-(P)-2C-(P)-
+4C = {prio:3} 19+ hcp, 4+!c
+  #PASTE after-chain
+3C = {prio:3} 17--18 hcp, 4+!c
+  #PASTE after-chain
+2N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-P-(P)-D-(P)-2C-(any)-
+#PASTE pass-chain
+
+(1D)-P-(P)-D-(P)-1N-(P)-
+3N = {prio:1} 17+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-P-(P)-D-(P)-1N-(any)-
+#PASTE pass-chain
+
+(1H)-D-(P)-2S-(P)-
+4S = {prio:2} 14+ hcp, 4+!s
+  #PASTE after-chain
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-D-(P)-2S-(any)-
+#PASTE pass-chain
+
+(1H)-D-(P)-3C-(P)-
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-D-(P)-3C-(any)-
+#PASTE pass-chain
+
+(1H)-D-(P)-3D-(P)-
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-D-(P)-3D-(any)-
+#PASTE pass-chain
+
+(1H)-D-(P)-1S-(P)-
+3S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+2S = {prio:3} 17--18 hcp, 4+!s
+  #PASTE after-chain
+1N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-D-(P)-1S-(any)-
+#PASTE pass-chain
+
+(1H)-D-(P)-2C-(P)-
+4C = {prio:3} 19+ hcp, 4+!c
+  #PASTE after-chain
+3C = {prio:3} 17--18 hcp, 4+!c
+  #PASTE after-chain
+2N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-D-(P)-2C-(any)-
+#PASTE pass-chain
+
+(1H)-D-(P)-2D-(P)-
+4D = {prio:3} 19+ hcp, 4+!d
+  #PASTE after-chain
+3D = {prio:3} 17--18 hcp, 4+!d
+  #PASTE after-chain
+2N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-D-(P)-2D-(any)-
+#PASTE pass-chain
+
+(1H)-D-(P)-1N-(P)-
+3N = {prio:1} 17+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-D-(P)-1N-(any)-
+#PASTE pass-chain
+
+(1H)-P-(P)-D-(P)-2S-(P)-
+4S = {prio:2} 14+ hcp, 4+!s
+  #PASTE after-chain
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-P-(P)-D-(P)-2S-(any)-
+#PASTE pass-chain
+
+(1H)-P-(P)-D-(P)-3C-(P)-
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-P-(P)-D-(P)-3C-(any)-
+#PASTE pass-chain
+
+(1H)-P-(P)-D-(P)-3D-(P)-
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-P-(P)-D-(P)-3D-(any)-
+#PASTE pass-chain
+
+(1H)-P-(P)-D-(P)-1S-(P)-
+3S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+2S = {prio:3} 17--18 hcp, 4+!s
+  #PASTE after-chain
+1N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-P-(P)-D-(P)-1S-(any)-
+#PASTE pass-chain
+
+(1H)-P-(P)-D-(P)-2C-(P)-
+4C = {prio:3} 19+ hcp, 4+!c
+  #PASTE after-chain
+3C = {prio:3} 17--18 hcp, 4+!c
+  #PASTE after-chain
+2N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-P-(P)-D-(P)-2C-(any)-
+#PASTE pass-chain
+
+(1H)-P-(P)-D-(P)-2D-(P)-
+4D = {prio:3} 19+ hcp, 4+!d
+  #PASTE after-chain
+3D = {prio:3} 17--18 hcp, 4+!d
+  #PASTE after-chain
+2N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-P-(P)-D-(P)-2D-(any)-
+#PASTE pass-chain
+
+(1H)-P-(P)-D-(P)-1N-(P)-
+3N = {prio:1} 17+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-P-(P)-D-(P)-1N-(any)-
+#PASTE pass-chain
+
+(1S)-D-(P)-3H-(P)-
+4H = {prio:2} 14+ hcp, 4+!h
+  #PASTE after-chain
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-D-(P)-3H-(any)-
+#PASTE pass-chain
+
+(1S)-D-(P)-3C-(P)-
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-D-(P)-3C-(any)-
+#PASTE pass-chain
+
+(1S)-D-(P)-3D-(P)-
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-D-(P)-3D-(any)-
+#PASTE pass-chain
+
+(1S)-D-(P)-2H-(P)-
+4H = {prio:3} 19+ hcp, 4+!h
+  #PASTE after-chain
+3H = {prio:3} 17--18 hcp, 4+!h
+  #PASTE after-chain
+2N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-D-(P)-2H-(any)-
+#PASTE pass-chain
+
+(1S)-D-(P)-2C-(P)-
+4C = {prio:3} 19+ hcp, 4+!c
+  #PASTE after-chain
+3C = {prio:3} 17--18 hcp, 4+!c
+  #PASTE after-chain
+2N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-D-(P)-2C-(any)-
+#PASTE pass-chain
+
+(1S)-D-(P)-2D-(P)-
+4D = {prio:3} 19+ hcp, 4+!d
+  #PASTE after-chain
+3D = {prio:3} 17--18 hcp, 4+!d
+  #PASTE after-chain
+2N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-D-(P)-2D-(any)-
+#PASTE pass-chain
+
+(1S)-D-(P)-1N-(P)-
+3N = {prio:1} 17+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-D-(P)-1N-(any)-
+#PASTE pass-chain
+
+(1S)-P-(P)-D-(P)-3H-(P)-
+4H = {prio:2} 14+ hcp, 4+!h
+  #PASTE after-chain
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-P-(P)-D-(P)-3H-(any)-
+#PASTE pass-chain
+
+(1S)-P-(P)-D-(P)-3C-(P)-
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-P-(P)-D-(P)-3C-(any)-
+#PASTE pass-chain
+
+(1S)-P-(P)-D-(P)-3D-(P)-
+3N = {prio:1} 14+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-P-(P)-D-(P)-3D-(any)-
+#PASTE pass-chain
+
+(1S)-P-(P)-D-(P)-2H-(P)-
+4H = {prio:3} 19+ hcp, 4+!h
+  #PASTE after-chain
+3H = {prio:3} 17--18 hcp, 4+!h
+  #PASTE after-chain
+2N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-P-(P)-D-(P)-2H-(any)-
+#PASTE pass-chain
+
+(1S)-P-(P)-D-(P)-2C-(P)-
+4C = {prio:3} 19+ hcp, 4+!c
+  #PASTE after-chain
+3C = {prio:3} 17--18 hcp, 4+!c
+  #PASTE after-chain
+2N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-P-(P)-D-(P)-2C-(any)-
+#PASTE pass-chain
+
+(1S)-P-(P)-D-(P)-2D-(P)-
+4D = {prio:3} 19+ hcp, 4+!d
+  #PASTE after-chain
+3D = {prio:3} 17--18 hcp, 4+!d
+  #PASTE after-chain
+2N = {prio:2} 18--19 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-P-(P)-D-(P)-2D-(any)-
+#PASTE pass-chain
+
+(1S)-P-(P)-D-(P)-1N-(P)-
+3N = {prio:1} 17+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-P-(P)-D-(P)-1N-(any)-
+#PASTE pass-chain
+
+** Opener after a response and an overcall
+
+Phase 4 replaces the natural fallback of NOTES.md #C4 at the most frequent of
+these positions (a one-level response, then a suit overcall, 1NT or a double
+by opener's left-hand opponent): opener raises responder's suit with four-card
+support at the cheapest level with 12--15, a level higher with 16--18 (game
+in a major with 19+), rebids a six-card suit with 12--16, bids 1NT with 12--14
+balanced and a stopper when it is still available, and otherwise passes.
+Responder then passes.
+
+1C-1D-(D)-
+2D = {prio:3} 12--15 hcp, 4+!d
+  #PASTE after-chain
+3D = {prio:3} 16--18 hcp, 4+!d
+  #PASTE after-chain
+2C = {prio:2} 12--16 hcp, 6+!c
+  #PASTE after-chain
+1N = {prio:1} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1D-(1H)-
+2D = {prio:3} 12--15 hcp, 4+!d
+  #PASTE after-chain
+3D = {prio:3} 16--18 hcp, 4+!d
+  #PASTE after-chain
+2C = {prio:2} 12--16 hcp, 6+!c
+  #PASTE after-chain
+1N = {prio:1} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1D-(1S)-
+2D = {prio:3} 12--15 hcp, 4+!d
+  #PASTE after-chain
+3D = {prio:3} 16--18 hcp, 4+!d
+  #PASTE after-chain
+2C = {prio:2} 12--16 hcp, 6+!c
+  #PASTE after-chain
+1N = {prio:1} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1D-(1N)-
+2D = {prio:3} 12--15 hcp, 4+!d
+  #PASTE after-chain
+3D = {prio:3} 16--18 hcp, 4+!d
+  #PASTE after-chain
+2C = {prio:2} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1D-(2H)-
+3D = {prio:3} 12--15 hcp, 4+!d
+  #PASTE after-chain
+3C = {prio:2} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1D-(2S)-
+3D = {prio:3} 12--15 hcp, 4+!d
+  #PASTE after-chain
+3C = {prio:2} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1H-(D)-
+2H = {prio:3} 12--15 hcp, 4+!h
+  #PASTE after-chain
+3H = {prio:3} 16--18 hcp, 4+!h
+  #PASTE after-chain
+4H = {prio:3} 19+ hcp, 4+!h
+  #PASTE after-chain
+2C = {prio:2} 12--16 hcp, 6+!c
+  #PASTE after-chain
+1N = {prio:1} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1H-(1S)-
+2H = {prio:3} 12--15 hcp, 4+!h
+  #PASTE after-chain
+3H = {prio:3} 16--18 hcp, 4+!h
+  #PASTE after-chain
+4H = {prio:3} 19+ hcp, 4+!h
+  #PASTE after-chain
+2C = {prio:2} 12--16 hcp, 6+!c
+  #PASTE after-chain
+1N = {prio:1} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1H-(1N)-
+2H = {prio:3} 12--15 hcp, 4+!h
+  #PASTE after-chain
+3H = {prio:3} 16--18 hcp, 4+!h
+  #PASTE after-chain
+4H = {prio:3} 19+ hcp, 4+!h
+  #PASTE after-chain
+2C = {prio:2} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1H-(2D)-
+2H = {prio:3} 12--15 hcp, 4+!h
+  #PASTE after-chain
+3H = {prio:3} 16--18 hcp, 4+!h
+  #PASTE after-chain
+4H = {prio:3} 19+ hcp, 4+!h
+  #PASTE after-chain
+3C = {prio:2} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1H-(2S)-
+3H = {prio:3} 12--15 hcp, 4+!h
+  #PASTE after-chain
+4H = {prio:3} 16--18 hcp, 4+!h
+  #PASTE after-chain
+3C = {prio:2} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1S-(D)-
+2S = {prio:3} 12--15 hcp, 4+!s
+  #PASTE after-chain
+3S = {prio:3} 16--18 hcp, 4+!s
+  #PASTE after-chain
+4S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+2C = {prio:2} 12--16 hcp, 6+!c
+  #PASTE after-chain
+1N = {prio:1} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1S-(1N)-
+2S = {prio:3} 12--15 hcp, 4+!s
+  #PASTE after-chain
+3S = {prio:3} 16--18 hcp, 4+!s
+  #PASTE after-chain
+4S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+2C = {prio:2} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1S-(2D)-
+2S = {prio:3} 12--15 hcp, 4+!s
+  #PASTE after-chain
+3S = {prio:3} 16--18 hcp, 4+!s
+  #PASTE after-chain
+4S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+3C = {prio:2} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1S-(2H)-
+2S = {prio:3} 12--15 hcp, 4+!s
+  #PASTE after-chain
+3S = {prio:3} 16--18 hcp, 4+!s
+  #PASTE after-chain
+4S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+3C = {prio:2} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1H-(D)-
+2H = {prio:3} 12--15 hcp, 4+!h
+  #PASTE after-chain
+3H = {prio:3} 16--18 hcp, 4+!h
+  #PASTE after-chain
+4H = {prio:3} 19+ hcp, 4+!h
+  #PASTE after-chain
+2D = {prio:2} 12--16 hcp, 6+!d
+  #PASTE after-chain
+1N = {prio:1} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1H-(1S)-
+2H = {prio:3} 12--15 hcp, 4+!h
+  #PASTE after-chain
+3H = {prio:3} 16--18 hcp, 4+!h
+  #PASTE after-chain
+4H = {prio:3} 19+ hcp, 4+!h
+  #PASTE after-chain
+2D = {prio:2} 12--16 hcp, 6+!d
+  #PASTE after-chain
+1N = {prio:1} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1H-(1N)-
+2H = {prio:3} 12--15 hcp, 4+!h
+  #PASTE after-chain
+3H = {prio:3} 16--18 hcp, 4+!h
+  #PASTE after-chain
+4H = {prio:3} 19+ hcp, 4+!h
+  #PASTE after-chain
+2D = {prio:2} 12--16 hcp, 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1H-(2C)-
+2H = {prio:3} 12--15 hcp, 4+!h
+  #PASTE after-chain
+3H = {prio:3} 16--18 hcp, 4+!h
+  #PASTE after-chain
+4H = {prio:3} 19+ hcp, 4+!h
+  #PASTE after-chain
+2D = {prio:2} 12--16 hcp, 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1H-(2S)-
+3H = {prio:3} 12--15 hcp, 4+!h
+  #PASTE after-chain
+4H = {prio:3} 16--18 hcp, 4+!h
+  #PASTE after-chain
+3D = {prio:2} 12--16 hcp, 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1S-(D)-
+2S = {prio:3} 12--15 hcp, 4+!s
+  #PASTE after-chain
+3S = {prio:3} 16--18 hcp, 4+!s
+  #PASTE after-chain
+4S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+2D = {prio:2} 12--16 hcp, 6+!d
+  #PASTE after-chain
+1N = {prio:1} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1S-(1N)-
+2S = {prio:3} 12--15 hcp, 4+!s
+  #PASTE after-chain
+3S = {prio:3} 16--18 hcp, 4+!s
+  #PASTE after-chain
+4S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+2D = {prio:2} 12--16 hcp, 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1S-(2C)-
+2S = {prio:3} 12--15 hcp, 4+!s
+  #PASTE after-chain
+3S = {prio:3} 16--18 hcp, 4+!s
+  #PASTE after-chain
+4S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+2D = {prio:2} 12--16 hcp, 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1S-(2H)-
+2S = {prio:3} 12--15 hcp, 4+!s
+  #PASTE after-chain
+3S = {prio:3} 16--18 hcp, 4+!s
+  #PASTE after-chain
+4S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+3D = {prio:2} 12--16 hcp, 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-1S-(D)-
+2S = {prio:3} 12--15 hcp, 4+!s
+  #PASTE after-chain
+3S = {prio:3} 16--18 hcp, 4+!s
+  #PASTE after-chain
+4S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+2H = {prio:2} 12--16 hcp, 6+!h
+  #PASTE after-chain
+1N = {prio:1} 12--14 hcp, bal, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-1S-(1N)-
+2S = {prio:3} 12--15 hcp, 4+!s
+  #PASTE after-chain
+3S = {prio:3} 16--18 hcp, 4+!s
+  #PASTE after-chain
+4S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+2H = {prio:2} 12--16 hcp, 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-1S-(2C)-
+2S = {prio:3} 12--15 hcp, 4+!s
+  #PASTE after-chain
+3S = {prio:3} 16--18 hcp, 4+!s
+  #PASTE after-chain
+4S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+2H = {prio:2} 12--16 hcp, 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-1S-(2D)-
+2S = {prio:3} 12--15 hcp, 4+!s
+  #PASTE after-chain
+3S = {prio:3} 16--18 hcp, 4+!s
+  #PASTE after-chain
+4S = {prio:3} 19+ hcp, 4+!s
+  #PASTE after-chain
+2H = {prio:2} 12--16 hcp, 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1N-(D)-
+2C = {prio:1} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1N-(2D)-
+3C = {prio:1} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1N-(2H)-
+3C = {prio:1} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1C-1N-(2S)-
+3C = {prio:1} 12--16 hcp, 6+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1N-(D)-
+2D = {prio:1} 12--16 hcp, 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1N-(2C)-
+2D = {prio:1} 12--16 hcp, 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1N-(2H)-
+3D = {prio:1} 12--16 hcp, 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+1D-1N-(2S)-
+3D = {prio:1} 12--16 hcp, 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-1N-(D)-
+2H = {prio:1} 12--16 hcp, 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-1N-(2C)-
+2H = {prio:1} 12--16 hcp, 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-1N-(2D)-
+2H = {prio:1} 12--16 hcp, 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-1N-(2S)-
+3H = {prio:1} 12--16 hcp, 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-1N-(D)-
+2S = {prio:1} 12--16 hcp, 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-1N-(2C)-
+2S = {prio:1} 12--16 hcp, 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-1N-(2D)-
+2S = {prio:1} 12--16 hcp, 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-1N-(2H)-
+2S = {prio:1} 12--16 hcp, 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-2H-(D)-
+4H = {prio:2} 18+ hcp
+  #PASTE after-chain
+3H = {prio:1} 15--17 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-2H-(2S)-
+4H = {prio:2} 18+ hcp
+  #PASTE after-chain
+3H = {prio:1} 15--17 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-2H-(3C)-
+4H = {prio:2} 18+ hcp
+  #PASTE after-chain
+3H = {prio:1} 15--17 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1H-2H-(3D)-
+4H = {prio:2} 18+ hcp
+  #PASTE after-chain
+3H = {prio:1} 15--17 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-2S-(D)-
+4S = {prio:2} 18+ hcp
+  #PASTE after-chain
+3S = {prio:1} 15--17 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-2S-(3C)-
+4S = {prio:2} 18+ hcp
+  #PASTE after-chain
+3S = {prio:1} 15--17 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-2S-(3D)-
+4S = {prio:2} 18+ hcp
+  #PASTE after-chain
+3S = {prio:1} 15--17 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+1S-2S-(3H)-
+4S = {prio:2} 18+ hcp
+  #PASTE after-chain
+3S = {prio:1} 15--17 hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+** The overcaller's side after opener's partner acts
+
+After opener's partner has bid over the overcall and advancer has raised,
+doubled or bid notrump, the overcaller passes; so does the overcaller after a
+negative double and advancer's raise.
+
+(1X)-1Y-(1Z)-2Y-
+#PASTE after-chain
+
+(1X)-1Y-(1Z)-3Y-
+#PASTE after-chain
+
+(1X)-1Y-(1Z)-1N-
+#PASTE after-chain
+
+(1X)-1Y-(1Z)-2X-
+#PASTE after-chain
+
+(1X)-1Y-(1N)-2Y-
+#PASTE after-chain
+
+(1X)-1Y-(1N)-3Y-
+#PASTE after-chain
+
+(1X)-1Y-(1N)-D-
+#PASTE after-chain
+
+(1X)-1Y-(2X)-2Y-
+#PASTE after-chain
+
+(1X)-1Y-(2X)-3Y-
+#PASTE after-chain
+
+(1X)-1Y-(2X)-D-
+#PASTE after-chain
+
+(1X)-1Y-(2N)-3Y-
+#PASTE after-chain
+
+(1X)-1Y-(2N)-D-
+#PASTE after-chain
+
+(1X)-1Y-(2Y)-3Y-
+#PASTE after-chain
+
+(1X)-1Y-(3X)-3Y-
+#PASTE after-chain
+
+(1X)-1Y-(3X)-D-
+#PASTE after-chain
+
+(1X)-1Y-(2Z)-3Y-
+#PASTE after-chain
+
+(1X)-1Z-(2Y)-2Z-
+#PASTE after-chain
+
+(1X)-1Z-(2Y)-3Z-
+#PASTE after-chain
+
+(1Y)-1Z-(2X)-2Z-
+#PASTE after-chain
+
+(1Y)-1Z-(2X)-3Z-
+#PASTE after-chain
+
+(1Y)-1Z-(2X)-2Y-
+#PASTE after-chain
+
+(1X)-2Y-(D)-3Y-
+#PASTE after-chain
+
+(1Y)-2X-(D)-3X-
+#PASTE after-chain
+
+(1Y)-2X-(2Y)-3X-
+#PASTE after-chain
+
+(1Y)-2X-(2Y)-D-
+#PASTE after-chain
+
+(1X)-2Y-(3X)-3Y-
+#PASTE after-chain
+
+(1X)-2Y-(3X)-4Y-
+#PASTE after-chain
+
+(1C)-2D-(3C)-
+#PASTE pass-chain
+
+(1C)-2H-(3C)-
+#PASTE pass-chain
+
+(1C)-2S-(3C)-
+#PASTE pass-chain
+
+(1D)-2C-(3D)-
+#PASTE pass-chain
+
+(1D)-2H-(3D)-
+#PASTE pass-chain
+
+(1D)-2S-(3D)-
+#PASTE pass-chain
+
+(1H)-2C-(3H)-
+#PASTE pass-chain
+
+(1H)-2D-(3H)-
+#PASTE pass-chain
+
+(1H)-2S-(3H)-
+#PASTE pass-chain
+
+(1S)-2C-(3S)-
+#PASTE pass-chain
+
+(1S)-2D-(3S)-
+#PASTE pass-chain
+
+(1S)-2H-(3S)-
+#PASTE pass-chain
+
+** Other advances
+
+A three-level jump overcall is passed unless advancer has 15+ and a stopper
+(3NT); over the unusual 2NT advancer picks the longer of the two suits shown
+(the higher-ranking one with equal length); a double of their 1NT is left in;
+our raise of an overcall of their 1NT ends the auction, and so does opener's
+signoff after our 1NT and their overcall.
+
+(1C)-3D-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-3D-(any)-
+#PASTE pass-chain
+
+(1C)-3H-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-3H-(any)-
+#PASTE pass-chain
+
+(1C)-3S-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-3S-(any)-
+#PASTE pass-chain
+
+(1D)-3C-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-3C-(any)-
+#PASTE pass-chain
+
+(1D)-3H-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-3H-(any)-
+#PASTE pass-chain
+
+(1D)-3S-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-3S-(any)-
+#PASTE pass-chain
+
+(1H)-3C-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-3C-(any)-
+#PASTE pass-chain
+
+(1H)-3D-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-3D-(any)-
+#PASTE pass-chain
+
+(1H)-3S-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-3S-(any)-
+#PASTE pass-chain
+
+(1S)-3C-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-3C-(any)-
+#PASTE pass-chain
+
+(1S)-3D-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-3D-(any)-
+#PASTE pass-chain
+
+(1S)-3H-(P)-
+3N = {prio:1} 15+ hcp, stopper
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-3H-(any)-
+#PASTE pass-chain
+
+(1C)-2N-(P)-
+3H = {prio:1} 4+!h
+  #PASTE after-chain
+3D = any hand
+  #PASTE after-chain
+
+(1C)-2N-(any)-
+#PASTE pass-chain
+
+(1D)-2N-(P)-
+3H = {prio:1} 4+!h
+  #PASTE after-chain
+3C = any hand
+  #PASTE after-chain
+
+(1D)-2N-(any)-
+#PASTE pass-chain
+
+(1H)-2N-(P)-
+3D = {prio:1} 4+!d
+  #PASTE after-chain
+3C = any hand
+  #PASTE after-chain
+
+(1H)-2N-(any)-
+#PASTE pass-chain
+
+(1S)-2N-(P)-
+3D = {prio:1} 4+!d
+  #PASTE after-chain
+3C = any hand
+  #PASTE after-chain
+
+(1S)-2N-(any)-
+#PASTE pass-chain
+
+(1N)-D-(P)-
+#PASTE pass-chain
+
+(1N)-D-(any)-
+#PASTE pass-chain
+
+(1N)-2X-(P)-3X-
+#PASTE after-chain
+
+1N-(2X)-2Y-
+#PASTE after-chain
+
+** Advances after they raise over Michaels, and of the sandwich overcall over 1NT
+
+Phase 4 (NOTES.md #P8). When the opponents raise over our Michaels cuebid,
+advancer still chooses a suit: over a minor-suit cuebid (both majors) game in a
+major with 11+ and three-card support, otherwise the cheapest major with
+three-card support (spades only with a doubleton or less in hearts, or four
+spades and three hearts); over a major-suit cuebid game in the known major
+with 11+ (8+ when that is already the four level) and, over 2!h, the cheapest
+spade bid with 0--10. With no fit advancer passes. After the sandwich overcall
+over their 1NT response and opener's pass, advancer raises with three-card
+support and 8--11; the partnership then stops, as in `competitive-extra.bml`.
+
+(1C)-2C-(3C)-
+4H = {prio:3} 11+ hcp, 3+!h
+  #PASTE after-chain
+4S = {prio:3} 11+ hcp, 3+!s, 0--2!h
+  #PASTE after-chain
+3S = {prio:2} 0--10 hcp and 3+!s and 0--2!h or 0--10 hcp and 4+!s and 3=!h
+  #PASTE after-chain
+3H = {prio:1} 0--10 hcp, 3+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-2D-(3D)-
+4H = {prio:3} 11+ hcp, 3+!h
+  #PASTE after-chain
+4S = {prio:3} 11+ hcp, 3+!s, 0--2!h
+  #PASTE after-chain
+3S = {prio:2} 0--10 hcp and 3+!s and 0--2!h or 0--10 hcp and 4+!s and 3=!h
+  #PASTE after-chain
+3H = {prio:1} 0--10 hcp, 3+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-2H-(3H)-
+4S = {prio:3} 11+ hcp, 3+!s
+  #PASTE after-chain
+3S = {prio:2} 0--10 hcp, 3+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-2S-(3S)-
+4H = {prio:3} 8+ hcp, 3+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(1N)-2D-
+3D = {prio:1} 8--11 hcp, 3+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(1N)-2D-(any)-
+#PASTE pass-chain
+
+(1C)-P-(1N)-2H-
+3H = {prio:1} 8--11 hcp, 3+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(1N)-2H-(any)-
+#PASTE pass-chain
+
+(1C)-P-(1N)-2S-
+3S = {prio:1} 8--11 hcp, 3+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-P-(1N)-2S-(any)-
+#PASTE pass-chain
+
+(1D)-P-(1N)-2C-
+3C = {prio:1} 8--11 hcp, 3+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-P-(1N)-2C-(any)-
+#PASTE pass-chain
+
+(1H)-P-(1N)-2C-
+3C = {prio:1} 8--11 hcp, 3+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-P-(1N)-2C-(any)-
+#PASTE pass-chain
+
+(1H)-P-(1N)-2D-
+3D = {prio:1} 8--11 hcp, 3+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-P-(1N)-2D-(any)-
+#PASTE pass-chain
+
+(1S)-P-(1N)-2C-
+3C = {prio:1} 8--11 hcp, 3+!c
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-P-(1N)-2C-(any)-
+#PASTE pass-chain
+
+(1S)-P-(1N)-2D-
+3D = {prio:1} 8--11 hcp, 3+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-P-(1N)-2D-(any)-
+#PASTE pass-chain
+
+(1S)-P-(1N)-2H-
+3H = {prio:1} 8--11 hcp, 3+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1S)-P-(1N)-2H-(any)-
+#PASTE pass-chain
+
+(1X)-P-(2X)-2Y-
+3Y = {prio:1} 8--11 hcp, 3+Y
+  #PASTE after-chain
+#PASTE pass-chain
+
+** The overcaller after an advance over a negative double
+
+The same continuations as after an advance over opener's partner's pass: the negative double
+does not change what the advance shows (NOTES.md P9).
+
+(1C)-1D-(D)-1H-
+2H = {prio:2} 4+!h
+  #PASTE after-chain
+2D = {prio:1} 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1D-(D)-1S-
+2S = {prio:2} 4+!s
+  #PASTE after-chain
+2D = {prio:1} 6+!d
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1H-(D)-2D-
+3D = {prio:2} 4+!d
+  #PASTE after-chain
+2H = {prio:1} 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1H-(D)-1S-
+2S = {prio:2} 4+!s
+  #PASTE after-chain
+2H = {prio:1} 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1S-(D)-2D-
+3D = {prio:2} 4+!d
+  #PASTE after-chain
+2S = {prio:1} 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-1H-(D)-2C-
+3C = {prio:2} 4+!c
+  #PASTE after-chain
+2H = {prio:1} 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-1H-(D)-1S-
+2S = {prio:2} 4+!s
+  #PASTE after-chain
+2H = {prio:1} 6+!h
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-1S-(D)-2C-
+3C = {prio:2} 4+!c
+  #PASTE after-chain
+2S = {prio:1} 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-1S-(D)-2H-
+3H = {prio:2} 4+!h
+  #PASTE after-chain
+2S = {prio:1} 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-1S-(D)-2C-
+3C = {prio:2} 4+!c
+  #PASTE after-chain
+2S = {prio:1} 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-1S-(D)-2D-
+3D = {prio:2} 4+!d
+  #PASTE after-chain
+2S = {prio:1} 6+!s
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1D-(D)-1H-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(D)-1S-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(D)-2D-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(D)-1S-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(D)-2D-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(D)-2C-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(D)-1S-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(D)-2C-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(D)-2H-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(D)-2C-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(D)-2D-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(D)-2D-(P)-
+#PASTE pass-chain
+
+(1C)-1D-(D)-2D-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(D)-3D-
+#PASTE after-chain
+
+(1C)-1D-(D)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1C)-1D-(D)-1N-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(D)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1D-(D)-2N-(any)-
+#PASTE pass-chain
+
+(1C)-1D-(D)-3N-
+#PASTE after-chain
+
+(1C)-1H-(D)-2H-(P)-
+#PASTE overcaller-after-raise \M=H
+
+(1C)-1H-(D)-2H-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(D)-3H-
+#PASTE after-chain
+
+(1C)-1H-(D)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1C)-1H-(D)-1N-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(D)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1H-(D)-2N-(any)-
+#PASTE pass-chain
+
+(1C)-1H-(D)-3N-
+#PASTE after-chain
+
+(1C)-1S-(D)-2S-(P)-
+#PASTE overcaller-after-raise \M=S
+
+(1C)-1S-(D)-2S-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(D)-3S-
+#PASTE after-chain
+
+(1C)-1S-(D)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1C)-1S-(D)-1N-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(D)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1C)-1S-(D)-2N-(any)-
+#PASTE pass-chain
+
+(1C)-1S-(D)-3N-
+#PASTE after-chain
+
+(1D)-1H-(D)-2H-(P)-
+#PASTE overcaller-after-raise \M=H
+
+(1D)-1H-(D)-2H-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(D)-3H-
+#PASTE after-chain
+
+(1D)-1H-(D)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1D)-1H-(D)-1N-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(D)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-1H-(D)-2N-(any)-
+#PASTE pass-chain
+
+(1D)-1H-(D)-3N-
+#PASTE after-chain
+
+(1D)-1S-(D)-2S-(P)-
+#PASTE overcaller-after-raise \M=S
+
+(1D)-1S-(D)-2S-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(D)-3S-
+#PASTE after-chain
+
+(1D)-1S-(D)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1D)-1S-(D)-1N-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(D)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1D)-1S-(D)-2N-(any)-
+#PASTE pass-chain
+
+(1D)-1S-(D)-3N-
+#PASTE after-chain
+
+(1H)-1S-(D)-2S-(P)-
+#PASTE overcaller-after-raise \M=S
+
+(1H)-1S-(D)-2S-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(D)-3S-
+#PASTE after-chain
+
+(1H)-1S-(D)-1N-(P)-
+#PASTE overcaller-after-1n
+
+(1H)-1S-(D)-1N-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(D)-2N-(P)-
+3N = {prio:1} 11+ hcp
+  #PASTE after-chain
+#PASTE pass-chain
+
+(1H)-1S-(D)-2N-(any)-
+#PASTE pass-chain
+
+(1H)-1S-(D)-3N-
+#PASTE after-chain

@@ -19,4 +19,14 @@ sha2 = { workspace = true }
 zip = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
+# `cargo xtask coverage` (phase 4.1) runs the engine itself.
+bridge-core = { workspace = true, features = ["std"] }
+bridge-format = { workspace = true, features = ["std"] }
+bridge-eval = { workspace = true, features = ["std"] }
+bridge-constraint = { workspace = true, features = ["std"] }
+bridge-system = { workspace = true, features = ["std", "serde"] }
+bridge-bidding = { workspace = true, features = ["std"] }
+rand_xoshiro = { workspace = true }
+postcard = { workspace = true }
+serde_json = { workspace = true }
 # Phase 5 adds: bindgen (dds regen-bindings)

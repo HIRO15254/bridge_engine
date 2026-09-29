@@ -134,6 +134,7 @@ fn bench_system() -> SystemIR {
         nodes: Vec::new(),
         index: bridge_system::AuctionTrie::new(),
         lints: Vec::new(),
+        exclusive_cell: Default::default(),
     };
 
     let strains = [
@@ -180,6 +181,7 @@ fn bench_system_realistic() -> SystemIR {
         nodes: Vec::new(),
         index: bridge_system::AuctionTrie::new(),
         lints: Vec::new(),
+        exclusive_cell: Default::default(),
     };
 
     let strains = [

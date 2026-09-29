@@ -46,6 +46,64 @@ pub struct NaturalParams {
     pub balancing_shift: i8,
     /// A raise of partner's suit implies support even without text.
     pub implicit_raise_support: bool,
+    /// Level-aware strength floor for natural continuation bids (see [`LevelFloor`]). Not
+    /// serialised (the serialised IR bytes and `IR_FORMAT` do not depend on it): a deserialised
+    /// IR carries `LevelFloor::default()`.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub level_floor: LevelFloor,
+}
+
+/// Combined HCP a partnership needs before a natural *continuation* bid at a given level is a
+/// contract rather than a runaway escalation (docs/design/06-system.md §8, "level floor").
+///
+/// When [`NaturalInference::infer`] reads a natural bid at level `L` in strain `s` by a player
+/// who, or whose partner, has already acted, and `CallContext::partner_constraint` is known, it
+/// adds `own HCP >= combined(L, s) - min HCP(partner_constraint)` to the inferred constraint. An
+/// opening, a first action with partner silent, and a context without a partner constraint get
+/// no floor. A `0` entry means "no floor at this level".
+///
+/// The default is [`LevelFloor::STANDARD`] (prototype C's table, kept after the phase-4.6
+/// tuning on the corpus tune split); [`LevelFloor::NONE`] restores the phase-3 behaviour. The
+/// field is not serialised, so a deserialised IR gets the default table too.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct LevelFloor {
+    /// Combined HCP for a suit bid at levels 1..=7 (index `level - 1`).
+    pub suit: [u8; 7],
+    /// Combined HCP for a notrump bid at levels 1..=7 (index `level - 1`).
+    pub nt: [u8; 7],
+}
+
+impl Default for LevelFloor {
+    /// [`LevelFloor::STANDARD`].
+    fn default() -> LevelFloor {
+        LevelFloor::STANDARD
+    }
+}
+
+impl LevelFloor {
+    /// No floor at any level (the phase-3 behaviour).
+    pub const NONE: LevelFloor = LevelFloor {
+        suit: [0; 7],
+        nt: [0; 7],
+    };
+
+    /// The default table: levels 1-2 need nothing extra; a suit continuation at level 3 needs
+    /// 18 combined HCP (a minimum opening opposite a minimum response), 4 → 22, 5 → 26,
+    /// 6 → 31, 7 → 35; notrump 3 → 24, 4 → 28, 5 → 30, 6 → 32, 7 → 36.
+    pub const STANDARD: LevelFloor = LevelFloor {
+        suit: [0, 0, 18, 22, 26, 31, 35],
+        nt: [0, 0, 24, 28, 30, 32, 36],
+    };
+
+    /// The combined HCP required for a bid at `level` (`1..=7`) in a suit (`nt == false`) or
+    /// notrump; `0` (no floor) for an out-of-range level.
+    pub fn combined(&self, level: u8, nt: bool) -> u8 {
+        let table = if nt { &self.nt } else { &self.suit };
+        match level {
+            1..=7 => table[level as usize - 1],
+            _ => 0,
+        }
+    }
 }
 
 /// Response parameters.
@@ -115,6 +173,7 @@ impl Default for NaturalParams {
             advance: AdvanceParams::default(),
             balancing_shift: -3,
             implicit_raise_support: true,
+            level_floor: LevelFloor::default(),
         }
     }
 }
@@ -272,101 +331,177 @@ pub struct CallContext {
 /// appended by a caller such as [`NaturalInference::candidates`]) is ignored, so `classify` is
 /// stable under `auction.with(candidate_call)`.
 pub fn classify(auction: &Auction, index: usize, owner: Seat) -> CallContext {
-    let call = auction.calls()[index];
-    let history = &auction.calls()[..index];
+    let history = HistoryContext::new(auction, index, owner);
+    history.classify_call(auction, auction.calls()[index])
+}
 
-    let our_suits = suits_bid_by(auction, history, |s| s.side() == owner.side());
-    let their_suits = suits_bid_by(auction, history, |s| s.side() != owner.side());
-    let owner_suits = suits_bid_by(auction, history, |s| s == owner);
-    let partner_suits = suits_bid_by(auction, history, |s| s == owner.partner());
+/// Everything [`classify`] derives from the history `auction.calls()[..index]` and `owner`
+/// alone, computed once and shared by every candidate call at that position
+/// ([`NaturalInference::infer_batch`]).
+struct HistoryContext {
+    index: usize,
+    owner: Seat,
+    our_suits: StrainSet,
+    their_suits: StrainSet,
+    owner_suits: StrainSet,
+    partner_suits: StrainSet,
+    role: Role,
+    opener_first_suit: Option<(Suit, u8)>,
+    opener_first_bid: Option<Bid>,
+    position: u8,
+    passed_hand: bool,
+    vul: (bool, bool),
+    competitive: bool,
+    partner_last: Option<Call>,
+    agreed_suit: Option<Suit>,
+    last_bid: Option<Bid>,
+    owner_acted: bool,
+    partner_actions: u8,
+    partner_first: Option<(usize, Call)>,
+    partner_first_jump: u8,
+}
 
-    let role = classify_role(auction, history, index, owner);
-    let opener_first_suit = owner_first_suit(auction, history, owner);
-    let opener_first_bid = owner_first_bid(auction, history, owner);
-    let kind = classify_kind(
-        auction,
-        history,
-        owner,
-        call,
-        role,
-        our_suits,
-        their_suits,
-        owner_suits,
-        partner_suits,
-        opener_first_suit,
-    );
+impl HistoryContext {
+    /// Reads only `auction.calls()[..index]` (and the dealer/vulnerability), so `auction` may be
+    /// the prefix itself (`index == auction.len()`) or any continuation of it.
+    fn new(auction: &Auction, index: usize, owner: Seat) -> HistoryContext {
+        let history = &auction.calls()[..index];
 
-    let level = match call {
-        Call::Bid(b) => b.level(),
-        _ => 0,
-    };
-    let position = auction.position_of(owner);
-    let passed_hand = history
-        .iter()
-        .enumerate()
-        .any(|(i, c)| auction.seat_at(i) == owner && *c == Call::Pass);
-    let vul = (
-        auction.vulnerability().is_vulnerable_side(owner.side()),
-        auction
-            .vulnerability()
-            .is_vulnerable_side(owner.side().other()),
-    );
-    let competitive = our_suits.0 != 0 && their_suits.0 != 0;
-    let partner_last = history
-        .iter()
-        .enumerate()
-        .rev()
-        .find(|(i, _)| auction.seat_at(*i) == owner.partner())
-        .map(|(_, c)| *c);
-    let agreed_suit = Suit::ALL.into_iter().find(|&s| {
-        let strain = Strain::from_suit(s);
-        owner_suits.contains(strain) && partner_suits.contains(strain)
-    });
-    let last_bid = history.iter().rev().find_map(|c| c.bid());
-    let owner_acted = history
-        .iter()
-        .enumerate()
-        .any(|(i, c)| auction.seat_at(i) == owner && *c != Call::Pass);
-    let mut partner_actions = 0u8;
-    let mut partner_first: Option<(usize, Call)> = None;
-    for (i, c) in history.iter().enumerate() {
-        if auction.seat_at(i) == owner.partner() && *c != Call::Pass {
-            partner_actions = partner_actions.saturating_add(1);
-            if partner_first.is_none() {
-                partner_first = Some((i, *c));
+        let our_suits = suits_bid_by(auction, history, |s| s.side() == owner.side());
+        let their_suits = suits_bid_by(auction, history, |s| s.side() != owner.side());
+        let owner_suits = suits_bid_by(auction, history, |s| s == owner);
+        let partner_suits = suits_bid_by(auction, history, |s| s == owner.partner());
+
+        let role = classify_role(auction, history, index, owner);
+        let opener_first_suit = owner_first_suit(auction, history, owner);
+        let opener_first_bid = owner_first_bid(auction, history, owner);
+
+        let position = auction.position_of(owner);
+        let passed_hand = history
+            .iter()
+            .enumerate()
+            .any(|(i, c)| auction.seat_at(i) == owner && *c == Call::Pass);
+        let vul = (
+            auction.vulnerability().is_vulnerable_side(owner.side()),
+            auction
+                .vulnerability()
+                .is_vulnerable_side(owner.side().other()),
+        );
+        let competitive = our_suits.0 != 0 && their_suits.0 != 0;
+        let partner_last = history
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(i, _)| auction.seat_at(*i) == owner.partner())
+            .map(|(_, c)| *c);
+        let agreed_suit = Suit::ALL.into_iter().find(|&s| {
+            let strain = Strain::from_suit(s);
+            owner_suits.contains(strain) && partner_suits.contains(strain)
+        });
+        let last_bid = history.iter().rev().find_map(|c| c.bid());
+        let owner_acted = history
+            .iter()
+            .enumerate()
+            .any(|(i, c)| auction.seat_at(i) == owner && *c != Call::Pass);
+        let mut partner_actions = 0u8;
+        let mut partner_first: Option<(usize, Call)> = None;
+        for (i, c) in history.iter().enumerate() {
+            if auction.seat_at(i) == owner.partner() && *c != Call::Pass {
+                partner_actions = partner_actions.saturating_add(1);
+                if partner_first.is_none() {
+                    partner_first = Some((i, *c));
+                }
             }
         }
-    }
-    let partner_first_jump = match partner_first {
-        Some((i, Call::Bid(b))) => {
-            let before = history[..i].iter().rev().find_map(|c| c.bid());
-            b.level().saturating_sub(minimal_level(before, b.strain()))
-        }
-        _ => 0,
-    };
+        let partner_first_jump = match partner_first {
+            Some((i, Call::Bid(b))) => {
+                let before = history[..i].iter().rev().find_map(|c| c.bid());
+                b.level().saturating_sub(minimal_level(before, b.strain()))
+            }
+            _ => 0,
+        };
 
-    CallContext {
-        role,
-        kind,
-        call,
-        level,
-        position,
-        passed_hand,
-        vul,
-        competitive,
-        partner_last,
-        partner_constraint: None,
-        our_suits,
-        their_suits,
-        agreed_suit,
-        last_bid,
-        forcing_situation: false,
-        opener_first_suit,
-        opener_first_bid,
-        owner_acted,
-        partner_actions,
-        partner_first_action: partner_first.map(|(_, c)| c),
-        partner_first_jump,
+        HistoryContext {
+            index,
+            owner,
+            our_suits,
+            their_suits,
+            owner_suits,
+            partner_suits,
+            role,
+            opener_first_suit,
+            opener_first_bid,
+            position,
+            passed_hand,
+            vul,
+            competitive,
+            partner_last,
+            agreed_suit,
+            last_bid,
+            owner_acted,
+            partner_actions,
+            partner_first,
+            partner_first_jump,
+        }
+    }
+
+    /// Re-targets `ctx` (built by [`HistoryContext::classify_call`] from `self`) at `call`: only
+    /// the call-dependent fields change, the partner context set by the caller is kept.
+    fn set_call(&self, ctx: &mut CallContext, auction: &Auction, call: Call) {
+        ctx.kind = self.kind_of(auction, call);
+        ctx.call = call;
+        ctx.level = match call {
+            Call::Bid(b) => b.level(),
+            _ => 0,
+        };
+    }
+
+    fn kind_of(&self, auction: &Auction, call: Call) -> CallKind {
+        classify_kind(
+            auction,
+            &auction.calls()[..self.index],
+            self.owner,
+            call,
+            self.role,
+            self.our_suits,
+            self.their_suits,
+            self.owner_suits,
+            self.partner_suits,
+            self.opener_first_suit,
+        )
+    }
+
+    /// The [`CallContext`] of `call` as the call at `self.index` (`auction` as in
+    /// [`HistoryContext::new`]; `call` need not be in it).
+    fn classify_call(&self, auction: &Auction, call: Call) -> CallContext {
+        let kind = self.kind_of(auction, call);
+        let level = match call {
+            Call::Bid(b) => b.level(),
+            _ => 0,
+        };
+        CallContext {
+            role: self.role,
+            kind,
+            call,
+            level,
+            position: self.position,
+            passed_hand: self.passed_hand,
+            vul: self.vul,
+            competitive: self.competitive,
+            partner_last: self.partner_last,
+            partner_constraint: None,
+            our_suits: self.our_suits,
+            their_suits: self.their_suits,
+            agreed_suit: self.agreed_suit,
+            last_bid: self.last_bid,
+            forcing_situation: false,
+            opener_first_suit: self.opener_first_suit,
+            opener_first_bid: self.opener_first_bid,
+            owner_acted: self.owner_acted,
+            partner_actions: self.partner_actions,
+            partner_first_action: self.partner_first.map(|(_, c)| c),
+            partner_first_jump: self.partner_first_jump,
+        }
     }
 }
 
@@ -640,6 +775,43 @@ pub struct Inference {
     pub explanation: String,
 }
 
+/// Context of a natural call that [`classify`] cannot derive from the auction alone: what the
+/// caller's interpretation of partner's calls says (docs/design/07-bidding.md §2.2). The default
+/// is "nothing known" (`None`, `false`), which is what a bare `classify` gives.
+#[derive(Clone, Debug, Default)]
+pub struct PartnerContext {
+    /// Fills [`CallContext::partner_constraint`].
+    pub partner_constraint: Option<HandConstraint>,
+    /// Fills [`CallContext::forcing_situation`].
+    pub forcing_situation: bool,
+}
+
+/// One natural reading of a candidate call, without the explanation string (see
+/// [`NaturalInference::infer_batch`]).
+#[derive(Clone, Debug)]
+pub struct NaturalCandidate {
+    /// The call.
+    pub call: Call,
+    /// The inferred constraint.
+    pub constraint: HandConstraint,
+    /// Confidence in `0..=1`.
+    pub confidence: f32,
+    /// The rule that fired (`"fallback"` when none did).
+    pub rule: &'static str,
+}
+
+impl NaturalCandidate {
+    /// The rank priority `round(confidence·100)` (what `choose_bid` sorts natural candidates by).
+    pub fn priority(&self) -> i16 {
+        (self.confidence * 100.0).round() as i16
+    }
+
+    /// `true` when no natural rule fired (the call is not a natural candidate).
+    pub fn is_fallback(&self) -> bool {
+        self.rule == "fallback"
+    }
+}
+
 /// The natural-inference engine.
 #[derive(Clone, Debug)]
 pub struct NaturalInference {
@@ -659,33 +831,139 @@ impl NaturalInference {
 
     /// The first matching rule for `ctx` (§8.3's ordered table).
     pub fn infer(&self, ctx: &CallContext) -> Inference {
+        self.infer_inner(ctx, true)
+    }
+
+    /// [`NaturalInference::infer`], building the explanation string only when `ex`.
+    fn infer_inner(&self, ctx: &CallContext, ex: bool) -> Inference {
         let p = &self.params;
-        rule_open_1major(p, ctx)
-            .or_else(|| rule_open_1m(p, ctx))
-            .or_else(|| rule_open_nt(p, ctx))
-            .or_else(|| rule_open_weak2(p, ctx))
-            .or_else(|| rule_open_2c(p, ctx))
-            .or_else(|| rule_open_preempt(p, ctx))
-            .or_else(|| rule_open_pass(p, ctx))
-            .or_else(|| rule_overcall(p, ctx))
-            .or_else(|| rule_jump_overcall(p, ctx))
-            .or_else(|| rule_nt_overcall(p, ctx))
-            .or_else(|| rule_takeout_x(p, ctx))
-            .or_else(|| rule_penalty_x(p, ctx))
-            .or_else(|| rule_negative_x(p, ctx))
-            .or_else(|| rule_raise(p, ctx))
-            .or_else(|| rule_new_suit_resp_1(p, ctx))
-            .or_else(|| rule_new_suit_resp_2(p, ctx))
-            .or_else(|| rule_resp_nt(p, ctx))
-            .or_else(|| rule_rebid_own(p, ctx))
-            .or_else(|| rule_reverse(p, ctx))
-            .or_else(|| rule_rebid_nt(p, ctx))
-            .or_else(|| rule_rebid_new_suit(p, ctx))
-            .or_else(|| rule_advance_new_suit(p, ctx))
-            .or_else(|| rule_cue(p, ctx))
-            .or_else(|| rule_pass_forcing(ctx))
-            .or_else(|| rule_pass_default(p, ctx))
+        rule_open_1major(p, ctx, ex)
+            .or_else(|| rule_open_1m(p, ctx, ex))
+            .or_else(|| rule_open_nt(p, ctx, ex))
+            .or_else(|| rule_open_weak2(p, ctx, ex))
+            .or_else(|| rule_open_2c(p, ctx, ex))
+            .or_else(|| rule_open_preempt(p, ctx, ex))
+            .or_else(|| rule_open_pass(p, ctx, ex))
+            .or_else(|| rule_overcall(p, ctx, ex))
+            .or_else(|| rule_jump_overcall(p, ctx, ex))
+            .or_else(|| rule_nt_overcall(p, ctx, ex))
+            .or_else(|| rule_takeout_x(p, ctx, ex))
+            .or_else(|| rule_penalty_x(p, ctx, ex))
+            .or_else(|| rule_negative_x(p, ctx, ex))
+            .or_else(|| rule_raise(p, ctx, ex))
+            .or_else(|| rule_new_suit_resp_1(p, ctx, ex))
+            .or_else(|| rule_new_suit_resp_2(p, ctx, ex))
+            .or_else(|| rule_resp_nt(p, ctx, ex))
+            .or_else(|| rule_rebid_own(p, ctx, ex))
+            .or_else(|| rule_reverse(p, ctx, ex))
+            .or_else(|| rule_rebid_nt(p, ctx, ex))
+            .or_else(|| rule_rebid_new_suit(p, ctx, ex))
+            .or_else(|| rule_advance_new_suit(p, ctx, ex))
+            .or_else(|| rule_cue(p, ctx, ex))
+            .or_else(|| rule_pass_forcing(ctx, ex))
+            .or_else(|| rule_pass_default(p, ctx, ex))
+            .map(|inf| apply_level_floor(&p.level_floor, ctx, inf, ex))
             .unwrap_or_else(rule_fallback)
+    }
+
+    /// [`NaturalInference::infer`] for every call of `calls` as the next call after `auction`
+    /// by `owner`, with `partner`'s context filled in: one [`NaturalCandidate`] per input call,
+    /// in input order. The constraint, confidence and rule of each result are identical to
+    /// `infer` on `classify(&auction.with(call), auction.len(), owner)` with
+    /// `partner_constraint`/`forcing_situation` taken from `partner`. A call that is not legal
+    /// after `auction` yields the `fallback` result (`ANY`, rule `"fallback"`).
+    ///
+    /// The history-dependent part of `classify` (roles, suits bid, partner's actions, …) is
+    /// computed once for all calls, the partner context is set once (not cloned per call), no
+    /// continuation auction is built, and no explanation string is formatted.
+    pub fn infer_batch(
+        &self,
+        auction: &Auction,
+        owner: Seat,
+        partner: &PartnerContext,
+        calls: &[Call],
+    ) -> Vec<NaturalCandidate> {
+        let history = HistoryContext::new(auction, auction.len(), owner);
+        let mut ctx = history.classify_call(auction, Call::Pass);
+        ctx.partner_constraint = partner.partner_constraint.clone();
+        ctx.forcing_situation = partner.forcing_situation;
+        calls
+            .iter()
+            .map(|&call| {
+                if !auction.is_legal(call) {
+                    return NaturalCandidate {
+                        call,
+                        constraint: HandConstraint::ANY,
+                        confidence: FALLBACK_CONFIDENCE,
+                        rule: FALLBACK_RULE,
+                    };
+                }
+                history.set_call(&mut ctx, auction, call);
+                let inf = self.infer_inner(&ctx, false);
+                NaturalCandidate {
+                    call,
+                    constraint: inf.constraint,
+                    confidence: inf.confidence,
+                    rule: inf.rule,
+                }
+            })
+            .collect()
+    }
+
+    /// The natural candidates for `owner`'s next call after `auction` (every legal call whose
+    /// inference is not the `fallback` rule), sorted in the natural rank order
+    /// [`crate::exclusive::natural_rank_cmp`]: `round(confidence·100)` descending, then
+    /// `tie_break` when it is `LowestCall`/`HighestCall`, then call index ascending. The natural
+    /// policy picks the first candidate the hand satisfies; `choose_bid`'s natural branch and the
+    /// natural exclusion of `interpret` both use this order. `partner` supplies the context that
+    /// `classify` cannot derive from the auction alone (see [`NaturalInference::infer_batch`]).
+    pub fn ranked_candidates(
+        &self,
+        auction: &Auction,
+        owner: Seat,
+        partner: &PartnerContext,
+        tie_break: crate::TieBreak,
+    ) -> Vec<NaturalCandidate> {
+        let calls: Vec<Call> = auction.legal_calls().collect();
+        let mut out: Vec<NaturalCandidate> = self
+            .infer_batch(auction, owner, partner, &calls)
+            .into_iter()
+            .filter(|c| !c.is_fallback())
+            .collect();
+        out.sort_by(|a, b| {
+            crate::exclusive::natural_rank_cmp(
+                tie_break,
+                (a.call, a.priority()),
+                (b.call, b.priority()),
+            )
+        });
+        out
+    }
+
+    /// The natural implicit `Pass` (docs/design/07-bidding.md §4.1 and §5.2 step 3,
+    /// 06-system.md §8.6): with `ImplicitPass::Complement`, a hand that satisfies none of the
+    /// natural candidates passes. `ranked` is [`NaturalInference::ranked_candidates`]'s output.
+    /// The result is a candidate for `Pass` whose constraint is `¬(C_1 ∨ … ∨ C_k)` over every
+    /// ranked candidate (`ANY` when there are none), with confidence `0` and rule
+    /// [`IMPLICIT_PASS_RULE`]. It ranks after every natural candidate (`choose_bid` gives it
+    /// priority `i16::MIN + 1`); since it is disjoint from them by construction, its region is
+    /// also its exclusive region.
+    ///
+    /// A `Pass` that is itself a ranked candidate (a limited `pass_default`, say 0-5 HCP after
+    /// `1H P`) does not suppress it: the natural region of `Pass` is then `(pass rule ∧ ¬higher)
+    /// ∨ ¬(C_1 ∨ … ∨ C_k)`, so a 17-count that fits no natural call after `1H P` still passes.
+    pub fn implicit_pass(ranked: &[NaturalCandidate]) -> NaturalCandidate {
+        let constraint = ranked
+            .iter()
+            .map(|c| c.constraint.clone())
+            .reduce(HandConstraint::or)
+            .map_or(HandConstraint::ANY, HandConstraint::not);
+        NaturalCandidate {
+            call: Call::Pass,
+            constraint,
+            confidence: 0.0,
+            rule: IMPLICIT_PASS_RULE,
+        }
     }
 
     /// Candidate calls with their natural constraints and priorities, for `choose_bid` when the
@@ -709,6 +987,58 @@ impl NaturalInference {
     }
 }
 
+/// Applies `floor` to a natural bid's inference (see [`LevelFloor`]): a continuation bid (the
+/// caller or partner has acted) at a level with a non-zero combined target, with a known
+/// `partner_constraint`, also requires `own HCP >= combined - partner's minimum HCP`.
+fn apply_level_floor(
+    floor: &LevelFloor,
+    ctx: &CallContext,
+    mut inf: Inference,
+    ex: bool,
+) -> Inference {
+    let Some(bid) = ctx.call.bid() else {
+        return inf;
+    };
+    if !ctx.owner_acted && ctx.partner_actions == 0 {
+        return inf;
+    }
+    let combined = floor.combined(bid.level(), bid.strain() == Strain::NoTrump);
+    if combined == 0 {
+        return inf;
+    }
+    let Some(partner) = ctx.partner_constraint.as_ref() else {
+        return inf;
+    };
+    let partner_min = *partner.hcp_range().start();
+    let own_min = combined.saturating_sub(partner_min);
+    if own_min <= *inf.constraint.hcp_range().start() {
+        return inf;
+    }
+    inf.constraint = inf
+        .constraint
+        .and(HandConstraint::Atom(Atom::ANY.with_hcp(own_min..=37)));
+    if ex {
+        inf.explanation = format!(
+            "{} (level {}: {own_min}+ hcp)",
+            inf.explanation,
+            bid.level()
+        );
+    }
+    inf
+}
+
+/// `format!(..)` when the explanation is wanted (`$ex`), an empty (non-allocating) string
+/// otherwise ([`NaturalInference::infer_batch`]).
+macro_rules! expl {
+    ($ex:expr, $($arg:tt)*) => {
+        if $ex {
+            format!($($arg)*)
+        } else {
+            String::new()
+        }
+    };
+}
+
 /// Rough combined-points target for game: the §8.3 `cue` formula's `gf_total`, and the upper
 /// bound of a pass of partner's notrump (`pass_default`). Not a field of [`NaturalParams`]
 /// because §8.3 only uses it as a fallback formula, not a tunable.
@@ -728,7 +1058,7 @@ fn opener_or_balancer_hcp(
     }
 }
 
-fn rule_open_1m(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_open_1m(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.role != Role::Opener || ctx.our_suits.0 != 0 {
         return None;
     }
@@ -740,13 +1070,14 @@ fn rule_open_1m(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     let constraint = HandConstraint::Atom(
         Atom::ANY
             .with_hcp(p.opening_hcp.clone())
-            .with_suit_len(suit, p.open_1m_len..=13),
+            .with_len(suit, p.open_1m_len..=13),
     );
     Some(Inference {
         constraint,
-        confidence: 0.6,
+        confidence: 0.55,
         rule: "open_1m",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "opening {}: {}+ cards, {}-{} hcp",
             ctx.call,
             p.open_1m_len,
@@ -756,7 +1087,7 @@ fn rule_open_1m(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     })
 }
 
-fn rule_open_1major(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_open_1major(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.role != Role::Opener || ctx.our_suits.0 != 0 {
         return None;
     }
@@ -768,13 +1099,14 @@ fn rule_open_1major(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     let constraint = HandConstraint::Atom(
         Atom::ANY
             .with_hcp(p.opening_hcp.clone())
-            .with_suit_len(suit, p.open_1major_len..=13),
+            .with_len(suit, p.open_1major_len..=13),
     );
     Some(Inference {
         constraint,
         confidence: 0.6,
         rule: "open_1M",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "opening {}: {}+ cards, {}-{} hcp",
             ctx.call,
             p.open_1major_len,
@@ -784,7 +1116,7 @@ fn rule_open_1major(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     })
 }
 
-fn rule_open_nt(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_open_nt(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.role != Role::Opener || ctx.our_suits.0 != 0 {
         return None;
     }
@@ -803,7 +1135,8 @@ fn rule_open_nt(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
         constraint,
         confidence: 0.7,
         rule: "open_nt",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "opening {}: balanced, {}-{} hcp",
             ctx.call,
             hcp.start(),
@@ -812,7 +1145,7 @@ fn rule_open_nt(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     })
 }
 
-fn rule_open_weak2(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_open_weak2(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.role != Role::Opener || ctx.our_suits.0 != 0 {
         return None;
     }
@@ -825,13 +1158,14 @@ fn rule_open_weak2(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     let constraint = HandConstraint::Atom(
         Atom::ANY
             .with_hcp(hcp.clone())
-            .with_suit_len(suit, *min_len..=13),
+            .with_len(suit, *min_len..=13),
     );
     Some(Inference {
         constraint,
         confidence: 0.5,
         rule: "open_weak2",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "weak two {}: {}+ cards, {}-{} hcp",
             ctx.call,
             min_len,
@@ -841,7 +1175,7 @@ fn rule_open_weak2(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     })
 }
 
-fn rule_open_2c(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_open_2c(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.role != Role::Opener || ctx.our_suits.0 != 0 {
         return None;
     }
@@ -854,11 +1188,11 @@ fn rule_open_2c(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
         constraint,
         confidence: 0.5,
         rule: "open_2c",
-        explanation: format!("strong 2C: {}+ hcp", p.strong_two_c),
+        explanation: expl!(ex, "strong 2C: {}+ hcp", p.strong_two_c),
     })
 }
 
-fn rule_open_preempt(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_open_preempt(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.role != Role::Opener || ctx.our_suits.0 != 0 {
         return None;
     }
@@ -874,13 +1208,14 @@ fn rule_open_preempt(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> 
     let constraint = HandConstraint::Atom(
         Atom::ANY
             .with_hcp(hcp.clone())
-            .with_suit_len(suit, *min_len..=13),
+            .with_len(suit, *min_len..=13),
     );
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        confidence: 0.55,
         rule: "open_preempt",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "preempt {}: {}+ cards, {}-{} hcp",
             ctx.call,
             min_len,
@@ -890,7 +1225,7 @@ fn rule_open_preempt(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> 
     })
 }
 
-fn rule_open_pass(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_open_pass(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     // Only the pass in the opening seat, before anyone has bid (§8.3). `classify_role` keeps the
     // opener in `Role::Opener` for the whole auction, so without the `last_bid` guard every later
     // pass by the opener (of partner's raise, of 3NT, ...) would claim 0-11 HCP.
@@ -905,9 +1240,11 @@ fn rule_open_pass(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     let constraint = HandConstraint::Atom(Atom::ANY.with_hcp(0..=hi));
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        // Below `open_weak2` (0.5): the weak-two range lies inside 0-11 HCP, and at an equal
+        // priority `Pass` wins by call order, so the natural policy never opened a weak two.
+        confidence: 0.45,
         rule: "open_pass",
-        explanation: format!("declines to open: 0-{hi} hcp"),
+        explanation: expl!(ex, "declines to open: 0-{hi} hcp"),
     })
 }
 
@@ -918,7 +1255,7 @@ fn is_first_overcall(ctx: &CallContext) -> bool {
     matches!(ctx.role, Role::Overcaller | Role::Balancer) && !ctx.owner_acted
 }
 
-fn rule_overcall(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if !is_first_overcall(ctx) {
         return None;
     }
@@ -943,13 +1280,14 @@ fn rule_overcall(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     let constraint = HandConstraint::Atom(
         Atom::ANY
             .with_hcp(hcp.clone())
-            .with_suit_len(suit, *min_len..=13),
+            .with_len(suit, *min_len..=13),
     );
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        confidence: 0.35,
         rule: "overcall",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "overcall {}: {}+ cards, {}-{} hcp",
             ctx.call,
             min_len,
@@ -959,7 +1297,7 @@ fn rule_overcall(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     })
 }
 
-fn rule_jump_overcall(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_jump_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if !is_first_overcall(ctx) {
         return None;
     }
@@ -979,13 +1317,14 @@ fn rule_jump_overcall(p: &NaturalParams, ctx: &CallContext) -> Option<Inference>
     let constraint = HandConstraint::Atom(
         Atom::ANY
             .with_hcp(hcp.clone())
-            .with_suit_len(suit, *min_len..=13),
+            .with_len(suit, *min_len..=13),
     );
     Some(Inference {
         constraint,
-        confidence: 0.4,
+        confidence: 0.5,
         rule: "jump_overcall",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "jump overcall {}: {}+ cards, {}-{} hcp",
             ctx.call,
             min_len,
@@ -995,7 +1334,7 @@ fn rule_jump_overcall(p: &NaturalParams, ctx: &CallContext) -> Option<Inference>
     })
 }
 
-fn rule_nt_overcall(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_nt_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if !is_first_overcall(ctx) {
         return None;
     }
@@ -1025,7 +1364,8 @@ fn rule_nt_overcall(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
         constraint,
         confidence: 0.6,
         rule: "nt_overcall",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "notrump overcall {}: balanced, {}-{} hcp, stopper",
             ctx.call,
             hcp.start(),
@@ -1034,7 +1374,7 @@ fn rule_nt_overcall(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     })
 }
 
-fn rule_takeout_x(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_takeout_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.call != Call::Double {
         return None;
     }
@@ -1048,7 +1388,7 @@ fn rule_takeout_x(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     let mut constraint = HandConstraint::Atom(Atom::ANY.with_hcp(min_hcp.clone()));
     if let Some(their_suit) = their_suit {
         constraint = constraint.and(HandConstraint::Atom(
-            Atom::ANY.with_suit_len(their_suit, 0..=their_max),
+            Atom::ANY.with_len(their_suit, 0..=their_max),
         ));
     }
     let unbid: Vec<Suit> = Suit::ALL
@@ -1062,13 +1402,13 @@ fn rule_takeout_x(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
 
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        confidence: 0.45,
         rule: "takeout_x",
-        explanation: format!("takeout double: {}+ hcp", min_hcp.start()),
+        explanation: expl!(ex, "takeout double: {}+ hcp", min_hcp.start()),
     })
 }
 
-fn rule_penalty_x(_p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_penalty_x(_p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.call != Call::Double {
         return None;
     }
@@ -1078,19 +1418,17 @@ fn rule_penalty_x(_p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     let their_suit = ctx.last_bid.and_then(|b| b.strain().suit());
     let mut constraint = HandConstraint::Atom(Atom::ANY.with_hcp(10..=37));
     if let Some(their_suit) = their_suit {
-        constraint = constraint.and(HandConstraint::Atom(
-            Atom::ANY.with_suit_len(their_suit, 4..=13),
-        ));
+        constraint = constraint.and(HandConstraint::Atom(Atom::ANY.with_len(their_suit, 4..=13)));
     }
     Some(Inference {
         constraint,
         confidence: 0.3,
         rule: "penalty_x",
-        explanation: "penalty double: 10+ hcp, 4+ of their suit".to_string(),
+        explanation: expl!(ex, "penalty double: 10+ hcp, 4+ of their suit"),
     })
 }
 
-fn rule_negative_x(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_negative_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.call != Call::Double {
         return None;
     }
@@ -1104,26 +1442,54 @@ fn rule_negative_x(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
         .1
         .saturating_add(2u8.saturating_mul(their_level.saturating_sub(1)));
     // Only the major(s) neither side has bid yet count: holding length in the suit the
-    // opponents just showed (their overcall) says nothing about an unbid major.
-    let majors = [Suit::Hearts, Suit::Spades]
+    // opponents just showed (their overcall) says nothing about an unbid major. Where the new
+    // suits are still available at the 1 level the double is what they are not (SAYC):
+    //
+    // - both majors unbid (`1C (1D) X`): both majors, since `1H`/`1S` show one four-card major;
+    //   ranked with them (0.5, and the double wins the tie by call order) so a 4-4 hand doubles;
+    // - one major unbid (`1C (1H) X`): exactly four, since `1S` shows five.
+    //
+    // Otherwise (a 2-level overcall, `1D (2C) X`) it is four cards in either unbid major.
+    let unbid: Vec<Suit> = [Suit::Hearts, Suit::Spades]
         .into_iter()
         .filter(|&s| {
             let strain = Strain::from_suit(s);
             !ctx.our_suits.contains(strain) && !ctx.their_suits.contains(strain)
         })
-        .map(|s| HandConstraint::Atom(Atom::ANY.with_suit_len(s, 4..=13)))
-        .reduce(HandConstraint::or)
-        .unwrap_or(HandConstraint::ANY);
-    let constraint = majors.and(HandConstraint::Atom(Atom::ANY.with_hcp(min_hcp..=37)));
+        .collect();
+    let one_level = |s: Suit| {
+        ctx.last_bid
+            .is_some_and(|b| b.level() == 1 && Strain::from_suit(s) > b.strain())
+    };
+    let hcp = HandConstraint::Atom(Atom::ANY.with_hcp(min_hcp..=37));
+    let (majors, confidence) = match *unbid.as_slice() {
+        [h, s] if one_level(h) && one_level(s) => (
+            HandConstraint::Atom(Atom::ANY.with_len(h, 4..=13).with_len(s, 4..=13)),
+            0.5,
+        ),
+        [m] if one_level(m) => (
+            HandConstraint::Atom(Atom::ANY.with_len(m, 4..=MIN_NEW_SUIT_OVER_OVERCALL - 1)),
+            0.4,
+        ),
+        _ => (
+            unbid
+                .iter()
+                .map(|&s| HandConstraint::Atom(Atom::ANY.with_len(s, 4..=13)))
+                .reduce(HandConstraint::or)
+                .unwrap_or(HandConstraint::ANY),
+            0.4,
+        ),
+    };
+    let constraint = majors.and(hcp);
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        confidence,
         rule: "negative_x",
-        explanation: format!("negative double: {min_hcp}+ hcp, 4+ card unbid major"),
+        explanation: expl!(ex, "negative double: {min_hcp}+ hcp, 4+ card unbid major"),
     })
 }
 
-fn rule_raise(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_raise(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     let CallKind::Bid {
         raise: true, jump, ..
     } = ctx.kind
@@ -1140,16 +1506,14 @@ fn rule_raise(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
         Role::Opener => (p.response.raise.0, p.rebid.raise.clone()),
         _ => (p.advance.raise.0, p.advance.raise.1.clone()),
     };
-    let constraint = HandConstraint::Atom(
-        Atom::ANY
-            .with_hcp(hcp.clone())
-            .with_suit_len(suit, min_len..=13),
-    );
+    let constraint =
+        HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, min_len..=13));
     Some(Inference {
         constraint,
-        confidence: 0.6,
+        confidence: 0.45,
         rule: "raise",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "raise {}: {}+ support, {}-{} hcp",
             ctx.call,
             min_len,
@@ -1159,7 +1523,7 @@ fn rule_raise(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     })
 }
 
-fn rule_new_suit_resp_1(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_new_suit_resp_1(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.role != Role::Responder {
         return None;
     }
@@ -1172,23 +1536,36 @@ fn rule_new_suit_resp_1(p: &NaturalParams, ctx: &CallContext) -> Option<Inferenc
     let bid = ctx.call.bid()?;
     let suit = bid.strain().suit()?;
     let (min_len, min_hcp) = p.response.new_suit_1;
+    // After a 1-level overcall in a major (`1C (1H) 1S`), the new major shows five: with exactly
+    // four responder makes the negative double, which this rule, ranked above it, would
+    // otherwise shadow completely. Over a minor overcall (`1C (1D) 1H`) it stays 4+ (SAYC; the
+    // double then shows both majors).
+    let over_major = [Strain::Hearts, Strain::Spades]
+        .into_iter()
+        .any(|m| ctx.their_suits.contains(m));
+    let min_len = if ctx.competitive && over_major {
+        min_len.max(MIN_NEW_SUIT_OVER_OVERCALL)
+    } else {
+        min_len
+    };
     let constraint = HandConstraint::Atom(
         Atom::ANY
             .with_hcp(min_hcp..=37)
-            .with_suit_len(suit, min_len..=13),
+            .with_len(suit, min_len..=13),
     );
     Some(Inference {
         constraint,
         confidence: 0.5,
         rule: "new_suit_resp_1",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "1-level new suit {}: {min_len}+ cards, {min_hcp}+ hcp",
             ctx.call
         ),
     })
 }
 
-fn rule_new_suit_resp_2(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_new_suit_resp_2(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.role != Role::Responder {
         return None;
     }
@@ -1214,20 +1591,21 @@ fn rule_new_suit_resp_2(p: &NaturalParams, ctx: &CallContext) -> Option<Inferenc
     let constraint = HandConstraint::Atom(
         Atom::ANY
             .with_hcp(min_hcp..=37)
-            .with_suit_len(suit, min_len..=13),
+            .with_len(suit, min_len..=13),
     );
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        confidence: 0.6,
         rule: "new_suit_resp_2",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "2-level new suit {}: {min_len}+ cards, {min_hcp}+ hcp",
             ctx.call
         ),
     })
 }
 
-fn rule_resp_nt(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_resp_nt(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.role != Role::Responder {
         return None;
     }
@@ -1243,17 +1621,68 @@ fn rule_resp_nt(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     if ctx.level >= 2 {
         atom.shapes = ShapeSet::BALANCED;
     }
+    let constraint = if ctx.level == 1 && !ctx.owner_acted {
+        one_nt_response(p, ctx, atom)
+    } else {
+        HandConstraint::Atom(atom)
+    };
     Some(Inference {
-        constraint: HandConstraint::Atom(atom),
+        constraint,
         confidence: 0.5,
         rule: "resp_nt",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "notrump response {}: {}-{} hcp",
             ctx.call,
             hcp.start(),
             hcp.end()
         ),
     })
+}
+
+/// Minimum length of a 1-level new major after an overcall in the other major (`1C (1H) 1S`):
+/// with exactly four, responder makes the negative double (`negative_x`).
+const MIN_NEW_SUIT_OVER_OVERCALL: u8 = 5;
+
+/// Minimum support in partner's minor that a natural raise shows in place of a 1NT response
+/// (SAYC `1m-2m`: 5+). A major raise needs only `response.raise.0` (3).
+const MINOR_RAISE_SUPPORT: u8 = 5;
+
+/// Responder's first-response 1NT (`resp_nt` at the 1 level; `atom` carries its HCP range)
+/// denies a simple raise of partner's suit: support (`response.raise.0` in a major,
+/// [`MINOR_RAISE_SUPPORT`] in a minor) together with the raise's HCP range, as SAYC writes it
+/// (`1H-1NT`: 6-9, not 3+ hearts; `1C-1NT`: not 5+ clubs).
+///
+/// Without it the shape-free 1NT covers every simple-raise hand, so ranking it above `raise`
+/// (phase 4.6: 0.5 against 0.45) left the raise with an empty natural region: after `1H P` the
+/// natural policy never bid `2H`. A hand with support and more strength than a simple raise (10
+/// HCP and 3 hearts after `1H`) may still respond 1NT. A 4-card major biddable at the 1 level is
+/// not denied here: `new_suit_resp_1` ties with 1NT and wins by call order, so the natural
+/// exclusive region already leaves it out, and the raw constraint stays the node's own (as the
+/// SAYC tables write it; §8.5 measurement 1 compares raw constraints).
+fn one_nt_response(p: &NaturalParams, ctx: &CallContext, atom: Atom) -> HandConstraint {
+    let Some(Call::Bid(opening)) = ctx.partner_first_action else {
+        return HandConstraint::Atom(atom);
+    };
+    let Some(suit) = opening.strain().suit() else {
+        return HandConstraint::Atom(atom);
+    };
+    let support = if matches!(suit, Suit::Hearts | Suit::Spades) {
+        p.response.raise.0
+    } else {
+        MINOR_RAISE_SUPPORT
+    };
+    let (lo, hi) = (*atom.hcp.start(), *atom.hcp.end());
+    let raise_hi = *p.response.raise.1.end();
+    let short = atom.clone().with_len(suit, 0..=support.saturating_sub(1));
+    // The part of the 1NT range above the simple raise keeps any support.
+    let stronger = raise_hi.checked_add(1).filter(|&from| from.max(lo) <= hi);
+    match stronger {
+        Some(from) => {
+            HandConstraint::Atom(short).or(HandConstraint::Atom(atom.with_hcp(from.max(lo)..=hi)))
+        }
+        None => HandConstraint::Atom(short),
+    }
 }
 
 /// The HCP range implied by the *original* opening bid, for rules (`rebid_own`) that need to
@@ -1292,7 +1721,7 @@ fn opening_level_hcp(p: &NaturalParams, opener_first_bid: Option<Bid>) -> RangeI
     }
 }
 
-fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.role != Role::Opener {
         return None;
     }
@@ -1307,20 +1736,22 @@ fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
     let bid = ctx.call.bid()?;
     let suit = bid.strain().suit()?;
     if ctx.agreed_suit == Some(suit) && opened_one_of_a_suit(ctx) {
-        return Some(rule_reraise_agreed(p, ctx, suit, jump));
+        return Some(rule_reraise_agreed(p, ctx, suit, jump, ex));
     }
     let hcp = if jump >= 1 {
         p.rebid.jump_rebid.clone()
     } else {
         opening_level_hcp(p, ctx.opener_first_bid)
     };
-    let constraint =
-        HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_suit_len(suit, 6..=13));
+    let constraint = HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, 6..=13));
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        // A jump rebid (16-18) lies inside the plain rebid's range (12-21): at an equal
+        // priority the cheaper call would always win and the jump would never be made.
+        confidence: if jump >= 1 { 0.55 } else { 0.5 },
         rule: "rebid_own",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "rebids own suit {}: 6+ cards, {}-{} hcp",
             ctx.call,
             hcp.start(),
@@ -1341,7 +1772,13 @@ fn opened_one_of_a_suit(ctx: &CallContext) -> bool {
 /// re-raise without competition is a game try (`rebid.jump_rebid`); in competition it is
 /// merely competitive (`opening_hcp`); a jump (to game) shows `rebid.jump_rebid`'s minimum or
 /// more. Length is the opening's own minimum for the opened suit, 4 for a second suit.
-fn rule_reraise_agreed(p: &NaturalParams, ctx: &CallContext, suit: Suit, jump: u8) -> Inference {
+fn rule_reraise_agreed(
+    p: &NaturalParams,
+    ctx: &CallContext,
+    suit: Suit,
+    jump: u8,
+    ex: bool,
+) -> Inference {
     let min_len = match ctx.opener_first_bid {
         Some(b) if b.strain() == Strain::from_suit(suit) => {
             if b.strain().is_major() {
@@ -1361,13 +1798,12 @@ fn rule_reraise_agreed(p: &NaturalParams, ctx: &CallContext, suit: Suit, jump: u
     };
     Inference {
         constraint: HandConstraint::Atom(
-            Atom::ANY
-                .with_hcp(hcp.clone())
-                .with_suit_len(suit, min_len..=13),
+            Atom::ANY.with_hcp(hcp.clone()).with_len(suit, min_len..=13),
         ),
         confidence: 0.5,
         rule: "rebid_own",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "re-raises agreed suit {}: {}+ cards, {}-{} hcp",
             ctx.call,
             min_len,
@@ -1377,27 +1813,29 @@ fn rule_reraise_agreed(p: &NaturalParams, ctx: &CallContext, suit: Suit, jump: u
     }
 }
 
-fn rule_reverse(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_reverse(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     let CallKind::Bid { reverse: true, .. } = ctx.kind else {
         return None;
     };
     let bid = ctx.call.bid()?;
     let second_suit = bid.strain().suit()?;
-    let second = HandConstraint::Atom(Atom::ANY.with_suit_len(second_suit, 4..=13));
+    let second = HandConstraint::Atom(Atom::ANY.with_len(second_suit, 4..=13));
     // The suit opener actually opened (not the side-level `our_suits`, which by now also
     // contains responder's suit(s)): a reverse requires 5+ of *that* suit specifically.
     let (first_suit, _) = ctx.opener_first_suit?;
-    let first = HandConstraint::Atom(Atom::ANY.with_suit_len(first_suit, 5..=13));
+    let first = HandConstraint::Atom(Atom::ANY.with_len(first_suit, 5..=13));
     let constraint = HandConstraint::Atom(Atom::ANY.with_hcp(p.rebid.reverse..=37))
         .and(first)
         .and(second);
     Some(Inference {
         constraint,
-        confidence: 0.4,
+        confidence: 0.55,
         rule: "reverse",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "reverse into {}: {}+ hcp, 5+/4+ shape",
-            ctx.call, p.rebid.reverse
+            ctx.call,
+            p.rebid.reverse
         ),
     })
 }
@@ -1405,7 +1843,7 @@ fn rule_reverse(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
 /// Opener's notrump rebid after a 1-of-a-suit opening: the cheapest notrump shows
 /// `rebid.nt_1`, a jump `rebid.nt_2`, both balanced. Higher notrump rebids, and notrump once a
 /// suit is agreed (`1H-P-2H-P-2NT` is a game try, not a range rebid), are left to `fallback`.
-fn rule_rebid_nt(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_rebid_nt(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.role != Role::Opener
         || !opened_one_of_a_suit(ctx)
         || ctx.level > 2
@@ -1429,9 +1867,10 @@ fn rule_rebid_nt(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
             }
             .with_hcp(hcp.clone()),
         ),
-        confidence: 0.5,
+        confidence: 0.45,
         rule: "rebid_nt",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "notrump rebid {}: balanced, {}-{} hcp",
             ctx.call,
             hcp.start(),
@@ -1443,7 +1882,7 @@ fn rule_rebid_nt(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
 /// Opener's new suit that is not a reverse (`rule_reverse` runs first), after a 1-of-a-suit
 /// opening: 4+ cards, from the opening minimum up to `rebid.jump_raise`'s maximum; a jump shift
 /// shows more than `rebid.jump_rebid`.
-fn rule_rebid_new_suit(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_rebid_new_suit(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.role != Role::Opener || !opened_one_of_a_suit(ctx) {
         return None;
     }
@@ -1462,12 +1901,11 @@ fn rule_rebid_new_suit(p: &NaturalParams, ctx: &CallContext) -> Option<Inference
         *p.opening_hcp.start()..=*p.rebid.jump_raise.end()
     };
     Some(Inference {
-        constraint: HandConstraint::Atom(
-            Atom::ANY.with_hcp(hcp.clone()).with_suit_len(suit, 4..=13),
-        ),
-        confidence: 0.4,
+        constraint: HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, 4..=13)),
+        confidence: 0.35,
         rule: "rebid_new_suit",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "new suit rebid {}: 4+ cards, {}-{} hcp",
             ctx.call,
             hcp.start(),
@@ -1479,7 +1917,7 @@ fn rule_rebid_new_suit(p: &NaturalParams, ctx: &CallContext) -> Option<Inference
 /// The advancer's first action in a new suit (not a jump) over partner's overcall:
 /// `advance.new_suit`. An answer to partner's takeout double is a different animal (it can be a
 /// forced bid with nothing) and is left to `fallback`.
-fn rule_advance_new_suit(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_advance_new_suit(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.role != Role::Advancer
         || ctx.owner_acted
         || !matches!(ctx.partner_first_action, Some(Call::Bid(_)))
@@ -1500,18 +1938,19 @@ fn rule_advance_new_suit(p: &NaturalParams, ctx: &CallContext) -> Option<Inferen
         constraint: HandConstraint::Atom(
             Atom::ANY
                 .with_hcp(min_hcp..=37)
-                .with_suit_len(suit, min_len..=13),
+                .with_len(suit, min_len..=13),
         ),
         confidence: 0.5,
         rule: "advance_new_suit",
-        explanation: format!(
+        explanation: expl!(
+            ex,
             "new suit advance {}: {min_len}+ cards, {min_hcp}+ hcp",
             ctx.call
         ),
     })
 }
 
-fn rule_cue(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_cue(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     let CallKind::Bid { cue: true, .. } = ctx.kind else {
         return None;
     };
@@ -1530,11 +1969,11 @@ fn rule_cue(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
         constraint: HandConstraint::Atom(Atom::ANY.with_hcp(min_hcp..=37)),
         confidence: 0.3,
         rule: "cue",
-        explanation: format!("cue bid {}: {min_hcp}+ hcp, artificial", ctx.call),
+        explanation: expl!(ex, "cue bid {}: {min_hcp}+ hcp, artificial", ctx.call),
     })
 }
 
-fn rule_pass_forcing(ctx: &CallContext) -> Option<Inference> {
+fn rule_pass_forcing(ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.call != Call::Pass || !ctx.forcing_situation {
         return None;
     }
@@ -1542,27 +1981,32 @@ fn rule_pass_forcing(ctx: &CallContext) -> Option<Inference> {
         constraint: HandConstraint::Atom(Atom::ANY.with_hcp(0..=0)),
         confidence: 0.1,
         rule: "pass_forcing",
-        explanation: "pass over a forcing call: contradictory, near-unsatisfiable".to_string(),
+        explanation: expl!(
+            ex,
+            "pass over a forcing call: contradictory, near-unsatisfiable"
+        ),
     })
 }
 
-fn rule_pass_default(p: &NaturalParams, ctx: &CallContext) -> Option<Inference> {
+fn rule_pass_default(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.call != Call::Pass {
         return None;
     }
-    // An unbounded pass is satisfied by every hand, so it must rank below every bid rule
-    // (`choose_bid` breaks equal priorities by call order, where `Pass` comes first): at 0.4 it
-    // would shadow the 0.4 rules (`reverse`, `rebid_new_suit`, `jump_overcall`) entirely. A
+    // An unbounded pass is satisfied by every hand, so it shadows every rule it ties or
+    // outranks (`choose_bid` breaks equal priorities by call order, where `Pass` comes first).
+    // At 0.3 (phase 4.6, tuned on the corpus tune split; 06-system.md §8.6) it ranks below every
+    // bid rule except `cue` and `penalty_x`, which it ties and therefore shadows: the natural
+    // policy passes rather than cue-bids or doubles for penalty when nothing else fits. A
     // limited pass is disjoint from the bids it declines, so it keeps 0.4.
     let (constraint, confidence) = match pass_default_max_hcp(p, ctx) {
         Some(hi) => (HandConstraint::Atom(Atom::ANY.with_hcp(0..=hi)), 0.4),
-        None => (HandConstraint::ANY, 0.2),
+        None => (HandConstraint::ANY, 0.3),
     };
     Some(Inference {
         constraint,
         confidence,
         rule: "pass_default",
-        explanation: "pass: below the threshold to act".to_string(),
+        explanation: expl!(ex, "pass: below the threshold to act"),
     })
 }
 
@@ -1605,12 +2049,57 @@ fn pass_default_max_hcp(p: &NaturalParams, ctx: &CallContext) -> Option<u8> {
     }
 }
 
+/// The rule name of the "no rule matched" result.
+pub const FALLBACK_RULE: &str = "fallback";
+
+/// The rule name of the natural implicit `Pass` ([`NaturalInference::implicit_pass`]).
+pub const IMPLICIT_PASS_RULE: &str = "implicit_pass";
+
+/// The explanation of the natural implicit `Pass`.
+pub const IMPLICIT_PASS_EXPLANATION: &str = "pass: no natural call fits this hand";
+/// The confidence of the "no rule matched" result.
+const FALLBACK_CONFIDENCE: f32 = 0.05;
+
 fn rule_fallback() -> Inference {
     Inference {
         constraint: HandConstraint::ANY,
-        confidence: 0.05,
-        rule: "fallback",
+        confidence: FALLBACK_CONFIDENCE,
+        rule: FALLBACK_RULE,
         explanation: "no rule matched".to_string(),
+    }
+}
+
+/// Shapes by exact length per suit (`[suit][len]`), built once: a suit-length range is then a
+/// union of at most 14 precomputed sets instead of a scan over all 560 shapes.
+fn exact_len_sets() -> &'static [[ShapeSet; 14]; 4] {
+    static SETS: std::sync::OnceLock<[[ShapeSet; 14]; 4]> = std::sync::OnceLock::new();
+    SETS.get_or_init(|| {
+        let mut sets = [[ShapeSet::EMPTY; 14]; 4];
+        for suit in Suit::ALL {
+            for len in 0..14u8 {
+                sets[suit as usize][len as usize] = ShapeSet::from_suit_len(suit, len, len);
+            }
+        }
+        sets
+    })
+}
+
+/// `ShapeSet::from_suit_len(suit, lo, hi)` from the cached per-length sets.
+fn suit_len_set(suit: Suit, range: &RangeInclusive<u8>) -> ShapeSet {
+    let sets = &exact_len_sets()[suit as usize];
+    let hi = (*range.end()).min(13);
+    (*range.start()..=hi).fold(ShapeSet::EMPTY, |acc, len| acc.union(sets[len as usize]))
+}
+
+/// [`Atom::with_suit_len`] through the cached per-length sets (same result, no 560-shape scan).
+trait WithLen {
+    fn with_len(self, suit: Suit, range: RangeInclusive<u8>) -> Atom;
+}
+
+impl WithLen for Atom {
+    fn with_len(mut self, suit: Suit, range: RangeInclusive<u8>) -> Atom {
+        self.shapes = self.shapes.intersect(suit_len_set(suit, &range));
+        self
     }
 }
 
@@ -1630,7 +2119,7 @@ fn stopper(suit: Suit) -> HandConstraint {
                 Holding::EMPTY.with(Rank::King),
                 1..=1,
             ))
-            .with_suit_len(suit, 2..=13),
+            .with_len(suit, 2..=13),
     );
     let queen = HandConstraint::Atom(
         Atom::ANY
@@ -1639,7 +2128,7 @@ fn stopper(suit: Suit) -> HandConstraint {
                 Holding::EMPTY.with(Rank::Queen),
                 1..=1,
             ))
-            .with_suit_len(suit, 3..=13),
+            .with_len(suit, 3..=13),
     );
     ace.or(king).or(queen)
 }
@@ -1650,15 +2139,15 @@ fn at_least_two_of(suits: &[Suit], min_len: u8) -> HandConstraint {
     if suits.len() <= 2 {
         return suits
             .iter()
-            .map(|&s| HandConstraint::Atom(Atom::ANY.with_suit_len(s, min_len..=13)))
+            .map(|&s| HandConstraint::Atom(Atom::ANY.with_len(s, min_len..=13)))
             .reduce(HandConstraint::and)
             .unwrap_or(HandConstraint::ANY);
     }
     let mut combos = Vec::new();
     for i in 0..suits.len() {
         for j in (i + 1)..suits.len() {
-            let both = HandConstraint::Atom(Atom::ANY.with_suit_len(suits[i], min_len..=13)).and(
-                HandConstraint::Atom(Atom::ANY.with_suit_len(suits[j], min_len..=13)),
+            let both = HandConstraint::Atom(Atom::ANY.with_len(suits[i], min_len..=13)).and(
+                HandConstraint::Atom(Atom::ANY.with_len(suits[j], min_len..=13)),
             );
             combos.push(both);
         }
@@ -1680,6 +2169,169 @@ mod tests {
     use bridge_core::Vulnerability;
 
     use super::*;
+
+    #[test]
+    fn infer_batch_and_ranked_candidates_agree_with_infer() {
+        let engine = NaturalInference::default();
+        let auction = Auction::from_calls(
+            Seat::North,
+            Vulnerability::None,
+            [Call::Bid(Bid::new(1, Strain::Hearts).unwrap()), Call::Pass],
+        )
+        .unwrap();
+        let owner = auction.next_seat();
+        let partner = PartnerContext::default();
+        let calls: Vec<Call> = auction.legal_calls().collect();
+        let batch = engine.infer_batch(&auction, owner, &partner, &calls);
+        assert_eq!(batch.len(), calls.len());
+        for (call, got) in calls.iter().zip(&batch) {
+            let ctx = classify(&auction.with(*call).unwrap(), auction.len(), owner);
+            let want = engine.infer(&ctx);
+            assert_eq!(got.call, *call);
+            assert_eq!(got.rule, want.rule);
+            assert_eq!(got.confidence, want.confidence);
+            assert_eq!(
+                format!("{:?}", got.constraint),
+                format!("{:?}", want.constraint)
+            );
+        }
+        let ranked = engine.ranked_candidates(&auction, owner, &partner, crate::TieBreak::RowOrder);
+        let mut expected = engine.candidates(&auction, owner);
+        // `candidates` lists legal calls in call-index order; a stable sort by priority
+        // descending is the natural rank order under `RowOrder`.
+        expected.sort_by_key(|c| std::cmp::Reverse(c.2));
+        assert_eq!(
+            ranked
+                .iter()
+                .map(|c| (c.call, c.priority()))
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|(c, _, p)| (*c, *p))
+                .collect::<Vec<_>>()
+        );
+        assert!(!ranked.is_empty());
+    }
+
+    #[test]
+    fn implicit_pass_is_the_complement_of_the_ranked_candidates() {
+        let engine = NaturalInference::default();
+        // 1S P: responder has natural candidates, a limited Pass (pass_default, 0-5) among them.
+        let a = Auction::from_calls(
+            Seat::North,
+            Vulnerability::None,
+            [Call::Bid(Bid::new(1, Strain::Spades).unwrap()), Call::Pass],
+        )
+        .unwrap();
+        let ranked = engine.ranked_candidates(
+            &a,
+            Seat::South,
+            &PartnerContext::default(),
+            crate::TieBreak::RowOrder,
+        );
+        assert!(ranked.iter().any(|c| c.call == Call::Pass));
+        let without_pass: Vec<NaturalCandidate> = ranked
+            .iter()
+            .filter(|c| c.call != Call::Pass)
+            .cloned()
+            .collect();
+        for set in [&ranked, &without_pass] {
+            let pass = NaturalInference::implicit_pass(set);
+            assert_eq!(pass.call, Call::Pass);
+            assert_eq!(pass.rule, IMPLICIT_PASS_RULE);
+            assert!(!pass.is_fallback());
+            let mut seed = 0x1a55u64;
+            for _ in 0..2000 {
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                let hand = test_hand(seed);
+                let any = set.iter().any(|c| c.constraint.satisfies(hand));
+                assert_eq!(pass.constraint.satisfies(hand), !any);
+            }
+        }
+        // The listed limited Pass does not suppress the implicit one: after 1H P the 17-count
+        // AK2.32.AQ32.KJ32 fits no natural call (pass_default is 0-5 there), and passes.
+        let a = Auction::from_calls(
+            Seat::North,
+            Vulnerability::None,
+            [Call::Bid(Bid::new(1, Strain::Hearts).unwrap()), Call::Pass],
+        )
+        .unwrap();
+        let ranked = engine.ranked_candidates(
+            &a,
+            Seat::South,
+            &PartnerContext::default(),
+            crate::TieBreak::RowOrder,
+        );
+        assert!(ranked.iter().any(|c| c.call == Call::Pass));
+        let strong = bridge_core::Hand::from_holdings(
+            "KJ32".parse().unwrap(),
+            "AQ32".parse().unwrap(),
+            "32".parse().unwrap(),
+            "AK2".parse().unwrap(),
+        );
+        assert!(!ranked.iter().any(|c| c.constraint.satisfies(strong)));
+        assert!(
+            NaturalInference::implicit_pass(&ranked)
+                .constraint
+                .satisfies(strong)
+        );
+        let none = NaturalInference::implicit_pass(&[]);
+        assert!(matches!(none.constraint, HandConstraint::Atom(ref a) if *a == Atom::ANY));
+    }
+
+    /// A pseudo-random 13-card hand from `seed` (partial Fisher-Yates on a splitmix stream).
+    fn test_hand(seed: u64) -> bridge_core::Hand {
+        let mut z = seed;
+        let mut next = || {
+            z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut x = z;
+            x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            x ^ (x >> 31)
+        };
+        let mut cards: Vec<u8> = (0..52).collect();
+        let mut hand = bridge_core::Hand::EMPTY;
+        for i in 0..13 {
+            let j = i + (next() % (52 - i as u64)) as usize;
+            cards.swap(i, j);
+            hand = hand.with(bridge_core::Card::from_index(cards[i]).unwrap());
+        }
+        hand
+    }
+
+    #[test]
+    fn level_floor_is_standard_by_default_and_none_disables_it() {
+        assert_eq!(LevelFloor::default(), LevelFloor::STANDARD);
+        assert_eq!(NaturalParams::default().level_floor, LevelFloor::STANDARD);
+        let floor = LevelFloor::STANDARD;
+        assert_eq!(floor.combined(4, false), 22);
+        assert_eq!(floor.combined(3, true), 24);
+        assert_eq!(floor.combined(8, true), 0);
+        // 1H P 2H P 3H: opener invites after a raise, a level-3 continuation.
+        let calls = [
+            Call::Bid(Bid::new(1, Strain::Hearts).unwrap()),
+            Call::Pass,
+            Call::Bid(Bid::new(2, Strain::Hearts).unwrap()),
+            Call::Pass,
+            Call::Bid(Bid::new(3, Strain::Hearts).unwrap()),
+        ];
+        let auction = Auction::from_calls(Seat::North, Vulnerability::None, calls).unwrap();
+        let mut ctx = classify(&auction, 4, Seat::North);
+        ctx.partner_constraint = Some(HandConstraint::Atom(Atom::ANY.with_hcp(0..=9)));
+        let plain = NaturalInference::new(NaturalParams {
+            level_floor: LevelFloor::NONE,
+            ..NaturalParams::default()
+        })
+        .infer(&ctx);
+        let floored = NaturalInference::default().infer(&ctx);
+        assert_eq!(plain.rule, floored.rule);
+        assert_ne!(plain.rule, "fallback");
+        // 18 combined minus partner's 0: at least 18 of our own.
+        assert!(*floored.constraint.hcp_range().start() >= 18);
+        assert!(*plain.constraint.hcp_range().start() < 18);
+    }
 
     /// Regression for the hold-out measurement's finding (see `opening_level_hcp`'s doc comment):
     /// rebidding one's own suit after a *weak two* opening must be judged against `weak_two`'s

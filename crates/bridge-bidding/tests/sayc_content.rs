@@ -12,6 +12,14 @@ use bridge_bidding::{BidContext, ImplicitPass, PolicyParams, Scoring, choose_bid
 use bridge_core::{Seat, Strain, Vulnerability};
 use common::*;
 
+/// The compiled `systems/sayc/sayc.bml`, compiled once per test binary: the phase-4 system has
+/// about 45k nodes, and a debug compile of it takes several seconds, so every test here shares
+/// one table instead of compiling its own.
+fn sayc() -> &'static bridge_bidding::Table {
+    static TABLE: std::sync::OnceLock<bridge_bidding::Table> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| common::compile_sayc("sayc.bml"))
+}
+
 fn ctx(table: &bridge_bidding::Table) -> BidContext<'_> {
     BidContext {
         scoring: Scoring::Imp,
@@ -26,13 +34,13 @@ fn ctx(table: &bridge_bidding::Table) -> BidContext<'_> {
 /// must get that call, not the plain one-level overcall that also happens to fit it.
 #[test]
 fn michaels_outranks_plain_overcall() {
-    let table = common::compile_sayc("sayc.bml");
-    let ctx = ctx(&table);
+    let table = sayc();
+    let ctx = ctx(table);
     // 5 spades, 5 clubs, 10 hcp: qualifies for both Michaels (2H, over a 1H opening) and the
     // plain `1S` overcall (4+ spades, 8-16 hcp).
     let a = common::auction(Seat::North, Vulnerability::None, &[bid(1, Strain::Hearts)]);
     let h = common::hand("AJ432", "3", "32", "AJ432");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Hearts)),
@@ -44,13 +52,13 @@ fn michaels_outranks_plain_overcall() {
 /// must bid the unusual 2NT, not a plain one-level overcall of one of those same two suits.
 #[test]
 fn unusual_notrump_outranks_plain_overcall() {
-    let table = common::compile_sayc("sayc.bml");
-    let ctx = ctx(&table);
+    let table = sayc();
+    let ctx = ctx(table);
     // Over 1C, the unusual 2NT shows 5+ diamonds and 5+ hearts. 10 hcp also fits the plain `1D`/
     // `1H` overcall (4+, 8-16 hcp).
     let a = common::auction(Seat::North, Vulnerability::None, &[bid(1, Strain::Clubs)]);
     let h = common::hand("3", "AJ432", "AJ432", "32");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::NoTrump)),
@@ -63,13 +71,13 @@ fn unusual_notrump_outranks_plain_overcall() {
 /// range must jump, not settle for the plain one-level overcall the same hand also satisfies.
 #[test]
 fn weak_jump_overcall_outranks_plain_overcall() {
-    let table = common::compile_sayc("sayc.bml");
-    let ctx = ctx(&table);
+    let table = sayc();
+    let ctx = ctx(table);
     // Over 1H, 6 spades and 9 hcp fits both the plain `1S` (4+, 8-16 hcp) and the weak jump `2S`
     // (6=, 5-11 hcp).
     let a = common::auction(Seat::North, Vulnerability::None, &[bid(1, Strain::Hearts)]);
     let h = common::hand("32", "32", "432", "AJ9432");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Spades)),
@@ -81,8 +89,8 @@ fn weak_jump_overcall_outranks_plain_overcall() {
 /// shape, not always the cheapest unbid suit regardless of what advancer holds.
 #[test]
 fn takeout_double_advance_follows_shape_not_cheapest_suit() {
-    let table = common::compile_sayc("sayc.bml");
-    let ctx = ctx(&table);
+    let table = sayc();
+    let ctx = ctx(table);
     // West opens 1C, North doubles for takeout, East passes; South (the advancer) has 4 hearts
     // and no diamonds at all, so `1D` (the cheapest unbid suit) must not be picked.
     let a = common::auction(
@@ -91,7 +99,7 @@ fn takeout_double_advance_follows_shape_not_cheapest_suit() {
         &[bid(1, Strain::Clubs), DBL, PASS],
     );
     let h = common::hand("5432", "", "AJ32", "Q9432");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(1, Strain::Hearts)),
@@ -104,8 +112,8 @@ fn takeout_double_advance_follows_shape_not_cheapest_suit() {
 /// not folded into a plain minimum advance in a different suit.
 #[test]
 fn takeout_double_advance_invitational_jump_outranks_other_minimum_suits() {
-    let table = common::compile_sayc("sayc.bml");
-    let ctx = ctx(&table);
+    let table = sayc();
+    let ctx = ctx(table);
     let a = common::auction(
         Seat::West,
         Vulnerability::None,
@@ -114,7 +122,7 @@ fn takeout_double_advance_invitational_jump_outranks_other_minimum_suits() {
     // 5 spades, invitational values (11 hcp), and an incidental 4-card heart holding that also
     // fits the plain minimum `1H`.
     let h = common::hand("32", "32", "K432", "AKJ32");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Spades)),
@@ -127,15 +135,15 @@ fn takeout_double_advance_invitational_jump_outranks_other_minimum_suits() {
 /// (NOTES.md #C8) a major outranks a minor within a tier, so 4-4 in hearts and diamonds bids 2H.
 #[test]
 fn takeout_double_advance_of_1s_double_is_covered() {
-    let table = common::compile_sayc("sayc.bml");
-    let ctx = ctx(&table);
+    let table = sayc();
+    let ctx = ctx(table);
     let a = common::auction(
         Seat::West,
         Vulnerability::None,
         &[bid(1, Strain::Spades), DBL, PASS],
     );
     let h = common::hand("432", "AJ32", "Q432", "32");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Hearts)),
@@ -150,8 +158,8 @@ fn takeout_double_advance_of_1s_double_is_covered() {
 /// added at the 3 level, `NOTES.md` #21).
 #[test]
 fn natural_response_after_1nt_is_overcalled_is_on_system() {
-    let table = common::compile_sayc("sayc.bml");
-    let ctx = ctx(&table);
+    let table = sayc();
+    let ctx = ctx(table);
 
     // 1NT-(2D)-?: spades (above diamonds) is directly reachable at 2S.
     let a = common::auction(
@@ -160,7 +168,7 @@ fn natural_response_after_1nt_is_overcalled_is_on_system() {
         &[bid(1, Strain::NoTrump), bid(2, Strain::Diamonds)],
     );
     let h = common::hand("32", "32", "432", "AKQ432");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Spades)),
@@ -176,7 +184,7 @@ fn natural_response_after_1nt_is_overcalled_is_on_system() {
     );
     // 12 hcp: a three-level new suit is forcing (10+) since the phase-3 recheck (NOTES.md #C8).
     let h2 = common::hand("AKQ432", "32", "K32", "32");
-    let choice2 = choose_bid(&table, h2, &a2, &ctx);
+    let choice2 = choose_bid(table, h2, &a2, &ctx);
     assert_eq!(
         choice2.call(),
         Some(bid(3, Strain::Clubs)),
@@ -189,8 +197,8 @@ fn natural_response_after_1nt_is_overcalled_is_on_system() {
 /// require a four-card major, exactly like the direct (uninterfered) Stayman row.
 #[test]
 fn stayman_after_double_of_1nt_requires_a_major() {
-    let table = common::compile_sayc("sayc.bml");
-    let ctx = ctx(&table);
+    let table = sayc();
+    let ctx = ctx(table);
     let a = common::auction(
         Seat::North,
         Vulnerability::None,
@@ -198,7 +206,7 @@ fn stayman_after_double_of_1nt_requires_a_major() {
     );
     // 8 hcp, balanced, no four-card major: must not ask Stayman.
     let h = common::hand("QJ32", "KQ32", "32", "432");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_ne!(
         choice.call(),
         Some(bid(2, Strain::Clubs)),
@@ -210,8 +218,8 @@ fn stayman_after_double_of_1nt_requires_a_major() {
 /// four-card major.
 #[test]
 fn stayman_opposite_1nt_overcall_requires_a_major() {
-    let table = common::compile_sayc("sayc.bml");
-    let ctx = ctx(&table);
+    let table = sayc();
+    let ctx = ctx(table);
     let a = common::auction(
         Seat::West,
         Vulnerability::None,
@@ -219,7 +227,7 @@ fn stayman_opposite_1nt_overcall_requires_a_major() {
     );
     // 8 hcp, balanced, no four-card major: must not ask Stayman opposite partner's 1NT overcall.
     let h = common::hand("QJ32", "KQ32", "32", "432");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_ne!(
         choice.call(),
         Some(bid(2, Strain::Clubs)),
@@ -231,8 +239,8 @@ fn stayman_opposite_1nt_overcall_requires_a_major() {
 /// swallowed by the double when the hand actually holds a real 4-card suit.
 #[test]
 fn balancing_suit_overcall_outranks_double() {
-    let table = common::compile_sayc("sayc.bml");
-    let ctx = ctx(&table);
+    let table = sayc();
+    let ctx = ctx(table);
     // West opens 1C, North/East/South all pass; West's partner (East) already passed, so this is
     // the classic balancing seat for West's partner... rather, North reopens after 1C-P-P.
     let a = common::auction(
@@ -243,7 +251,7 @@ fn balancing_suit_overcall_outranks_double() {
     // 9 hcp, 4 hearts (only): a real balancing overcall, not merely a takeout double's own 8+
     // hcp.
     let h = common::hand("432", "432", "AJ32", "KJ2");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(1, Strain::Hearts)),
@@ -255,8 +263,8 @@ fn balancing_suit_overcall_outranks_double() {
 /// preemptive jump, not simply "the same hand as the plain overcall, one card longer."
 #[test]
 fn balancing_jump_overcall_is_preemptive_not_full_strength() {
-    let table = common::compile_sayc("sayc.bml");
-    let ctx = ctx(&table);
+    let table = sayc();
+    let ctx = ctx(table);
     let a = common::auction(
         Seat::West,
         Vulnerability::None,
@@ -265,7 +273,7 @@ fn balancing_jump_overcall_is_preemptive_not_full_strength() {
     // 14 hcp, 5 hearts: too strong for the preemptive jump; must overcall calmly at the one
     // level.
     let h = common::hand("32", "32", "AKQ32", "AJ32");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(1, Strain::Hearts)),
@@ -278,15 +286,15 @@ fn balancing_jump_overcall_is_preemptive_not_full_strength() {
 /// the cheap 2 level, not only as an unwarranted 3-level jump.
 #[test]
 fn weak_two_response_new_suit_above_opening_is_at_two_level() {
-    let table = common::compile_sayc("sayc.bml");
-    let ctx = ctx(&table);
+    let table = sayc();
+    let ctx = ctx(table);
     let a = common::auction(
         Seat::North,
         Vulnerability::None,
         &[bid(2, Strain::Diamonds), PASS],
     );
     let h = common::hand("32", "32", "AKQ32", "K432");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Hearts)),
@@ -298,8 +306,8 @@ fn weak_two_response_new_suit_above_opening_is_at_two_level() {
 /// negative double) must have a natural response, not be left with no call.
 #[test]
 fn negative_double_leaves_a_call_for_a_plain_four_card_major() {
-    let table = common::compile_sayc("sayc.bml");
-    let ctx = ctx(&table);
+    let table = sayc();
+    let ctx = ctx(table);
     let a = common::auction(
         Seat::West,
         Vulnerability::None,
@@ -307,7 +315,7 @@ fn negative_double_leaves_a_call_for_a_plain_four_card_major() {
     );
     // 8 hcp, exactly 4 hearts, 3 spades: no fit for the negative double (needs both majors).
     let h = common::hand("432", "432", "AJ32", "K32");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(1, Strain::Hearts)),
@@ -320,8 +328,8 @@ fn negative_double_leaves_a_call_for_a_plain_four_card_major() {
 /// satisfies.
 #[test]
 fn notrump_overcall_outranks_plain_overcall() {
-    let table = common::compile_sayc("sayc.bml");
-    let ctx = ctx(&table);
+    let table = sayc();
+    let ctx = ctx(table);
     // Over 1D, a balanced 15-count with a solid diamond stopper and an incidental 4-card major
     // also fits the plain `1H` overcall (4+ hearts, 8-16 hcp).
     let a = common::auction(
@@ -330,7 +338,7 @@ fn notrump_overcall_outranks_plain_overcall() {
         &[bid(1, Strain::Diamonds)],
     );
     let h = common::hand("K32", "AQJ", "KQ32", "432");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(1, Strain::NoTrump)),
@@ -349,11 +357,9 @@ mod notrump_lane {
     use super::ctx;
     use bridge_bidding::{BidChoice, ChoiceSource, Table, choose_bid};
     use bridge_core::{Auction, Call, Hand, Seat, Vulnerability};
-    use std::sync::OnceLock;
 
     fn table() -> &'static Table {
-        static TABLE: OnceLock<Table> = OnceLock::new();
-        TABLE.get_or_init(|| super::common::compile_sayc("sayc.bml"))
+        super::sayc()
     }
 
     /// `choose_bid` for `hand` (`S.H.D.C`) after `calls` (space-separated, North dealer).
@@ -697,8 +703,8 @@ mod sayc_comp {
 
     /// Asserts every `(auction, hand, expected call)` case against the compiled SAYC system.
     fn check(cases: &[(&str, &str, &str)]) {
-        let table = common::compile_sayc("sayc.bml");
-        let ctx = ctx(&table);
+        let table = sayc();
+        let ctx = ctx(table);
         let mut failures = Vec::new();
         for &(calls, hand, expected) in cases {
             let mut a = Auction::new(Seat::North, Vulnerability::None);
@@ -708,7 +714,7 @@ mod sayc_comp {
             }
             let h: Hand = hand.parse().expect("valid hand");
             let expected: Call = expected.parse().expect("valid call");
-            let choice = choose_bid(&table, h, &a, &ctx);
+            let choice = choose_bid(table, h, &a, &ctx);
             if choice.call() != Some(expected) {
                 failures.push(format!(
                     "  [{calls}] {hand}: expected {expected}, got {:?}",
@@ -1098,8 +1104,8 @@ mod sayc_comp {
         // The balancing table must not capture the opponents' own 1NT responses (lenient
         // matching reads an uncovered response as a pass): after their 1NT-2D transfer or
         // 1NT-2C Stayman our seat bids naturally, not from `(1N)-P-(P)-`.
-        let table = common::compile_sayc("sayc.bml");
-        let ctx = ctx(&table);
+        let table = sayc();
+        let ctx = ctx(table);
         for (calls, hand) in [
             ("P 1NT P 2D", "974.652.753.AKQ2"),
             ("P 1NT P 2C 2H 2S", "98432.8.632.K865"),
@@ -1112,9 +1118,189 @@ mod sayc_comp {
             }
             let h: Hand = hand.parse().expect("valid hand");
             assert!(
-                choose_bid(&table, h, &a, &ctx).call().is_some(),
+                choose_bid(table, h, &a, &ctx).call().is_some(),
                 "[{calls}] {hand}: no call"
             );
         }
+    }
+}
+
+/// Phase 4 (docs/design/15-phase4-plan.md lane D; `systems/sayc/NOTES.md` #P1-#P7): one case per
+/// family of the tables that keep generated auctions on the system past the phase-3 rows (pass
+/// chains, later uncontested rounds, opener after a negative double, Michaels and balancing
+/// continuations, defense to weak twos, opener's reopening, the sandwich advances), plus the three
+/// phase-3 `NoCandidate` tops. Every call must come from a system row (`ChoiceSource::System`),
+/// not from natural completion or an implicit pass. Dealer North, none vulnerable, hands `S.H.D.C`.
+mod phase4_tables {
+    use super::*;
+    use bridge_bidding::{BidChoice, ChoiceSource};
+    use bridge_core::{Auction, Call, Hand};
+
+    /// Asserts every `(auction, hand, expected call)` case, and that the call is a system row.
+    fn check_system(cases: &[(&str, &str, &str)]) {
+        let table = sayc();
+        let ctx = ctx(table);
+        let mut failures = Vec::new();
+        for &(calls, hand, expected) in cases {
+            let mut a = Auction::new(Seat::North, Vulnerability::None);
+            for c in calls.split_whitespace() {
+                let c: Call = c.parse().expect("valid call");
+                a = a.with(c).expect("legal call");
+            }
+            let h: Hand = hand.parse().expect("valid hand");
+            let expected: Call = expected.parse().expect("valid call");
+            match choose_bid(table, h, &a, &ctx) {
+                BidChoice::Chosen(c) if c.call == expected && c.source == ChoiceSource::System => {}
+                BidChoice::Chosen(c) => failures.push(format!(
+                    "  [{calls}] {hand}: expected {expected} from the system, got {} ({:?})",
+                    c.call, c.source
+                )),
+                other => failures.push(format!(
+                    "  [{calls}] {hand}: expected {expected} from the system, got {other:?}"
+                )),
+            }
+        }
+        assert!(failures.is_empty(), "wrong calls:\n{}", failures.join("\n"));
+    }
+
+    /// The phase-3 `NoCandidate` tops (12-roadmap: `1D-(3C)`, `P-P-1D-(1H)` and `1C-(1H)`
+    /// responder) are answered by system rows.
+    #[test]
+    fn phase3_no_candidate_tops_are_on_the_system() {
+        check_system(&[
+            ("1D 3C", "KJ7.Q84.KJ72.Q83", "3NT"),
+            ("P P 1D 1H", "KQ32.32.K32.5432", "X"),
+            ("1C 1H", "KQ32.32.K32.5432", "X"),
+        ]);
+    }
+
+    /// Pass chains (#P1): once the partnership has placed the contract it keeps passing, on
+    /// the system, while the opponents pass too.
+    #[test]
+    fn pass_chain_after_a_game_bid() {
+        check_system(&[
+            ("1NT P 3NT P", "K32.Q32.KJ2.Q432", "P"),
+            ("1C P 1H P 2H P 4H P", "A32.KQ54.K32.J32", "P"),
+        ]);
+    }
+
+    /// Competitive decisions after the partnership stopped (#P10): at these positions the pass
+    /// chain used to be the only row, so the system passed with any hand. A strong or short
+    /// hand now acts; a minimum still passes.
+    #[test]
+    fn acting_after_they_compete_over_our_stop() {
+        check_system(&[
+            // Negative double of 2H, their raise: the double showed the minors.
+            ("1S 2H X 3H", "AT853..KQ8.AKJ87", "4C"),
+            ("1S 2H X 3H", "KQ853.32.KQ8.Q87", "P"),
+            // Reopening over a three-level overcall, and responder's penalty pass.
+            ("1S 3D P P", "AK763.K9763.Q.83", "X"),
+            ("1S 3D P P X P", "Q32.J54.KJ92.T32", "P"),
+            // Their takeout double, responder's pass, advancer's natural 1NT.
+            ("1H X P 1NT", "AT5.AQT764.J2.A4", "2H"),
+            // Responder passed the overcall and they raised: a takeout double when short.
+            ("1C 1H P 2H", "KQT6..AQ96.QT865", "X"),
+            ("1C 1H P 2H", "KQ6.32.AJ65.QT86", "P"),
+            ("1C 1H P 2H X P", "J852.943.K82.T73", "2S"),
+            // 1NT-3NT and a passed hand balances at the four level: penalty double with 10+.
+            ("1NT P 3NT P P 4S", "K32.Q32.KJ2.Q432", "X"),
+        ]);
+    }
+
+    /// Later uncontested rounds (#P5): opener accepts or declines responder's invitation after
+    /// a 1NT rebid, responder places the contract after opener's single raise, and opener
+    /// accepts the re-raise invitation with the top of the range.
+    #[test]
+    fn later_uncontested_rounds() {
+        check_system(&[
+            ("1H P 1S P 1NT P 2NT P", "K3.AQ842.K32.Q32", "3NT"),
+            ("1C P 1H P 2H P", "A32.KQ54.K32.J32", "4H"),
+            ("1C P 1H P 2H P", "A32.KJ54.Q32.J32", "3H"),
+            ("1C P 1H P 2H P 3H P", "K2.Q543.A2.AJ432", "4H"),
+        ]);
+    }
+
+    /// Opener's rebid after a negative double, and responder's raise of the major (#P4).
+    #[test]
+    fn opener_after_a_negative_double() {
+        check_system(&[
+            ("1C 1D X P", "K32.AJ54.32.KJ32", "1H"),
+            ("1C 1D X P 1H P", "Q432.KQ32.A2.A32", "4H"),
+        ]);
+    }
+
+    /// Michaels over a major: after advancer's 2NT inquiry the cuebidder names his minor.
+    #[test]
+    fn michaels_answers_the_2nt_inquiry() {
+        check_system(&[
+            ("1H 2H P 2NT P", "KQJ32.32.2.AJ432", "3C"),
+            ("1H 2H P 2NT P", "KQJ32.32.AJ432.2", "3D"),
+        ]);
+    }
+
+    /// Advancing a balancing overcall: a raise with three-card support, to the three level
+    /// with 12+.
+    #[test]
+    fn advancing_a_balancing_overcall() {
+        check_system(&[
+            ("1C P P 1H P", "K32.K32.AQ32.J32", "3H"),
+            ("1C P P 1H P", "832.K32.Q832.K32", "2H"),
+        ]);
+    }
+
+    /// Defense to a weak two (`defense.bml`): the 2NT overcall, and advancing the takeout
+    /// double (game in a four-card major with 12+, else the cheapest four-card major).
+    #[test]
+    fn defense_to_a_weak_two() {
+        check_system(&[
+            ("2S", "AQ2.KJ3.KQ32.J32", "2NT"),
+            ("2D X P", "A32.KQ32.K32.Q32", "4H"),
+            ("2D X P", "KJ32.432.Q32.432", "2S"),
+        ]);
+    }
+
+    /// Opener's reopening double after an overcall and responder's pass, and responder's
+    /// penalty pass with length in their suit (`continuations.bml`).
+    #[test]
+    fn opener_reopens_after_an_overcall() {
+        check_system(&[
+            ("1D 1H P P", "KQ32.2.AQ32.J432", "X"),
+            ("1D 1H P P X P", "32.KJ54.Q32.J432", "P"),
+        ]);
+    }
+
+    /// The advancer of a sandwich overcall after opener's pass (`competitive-extra.bml`, and
+    /// over their 1NT response `competitive-later.bml` #P8), passing without a fit.
+    #[test]
+    fn advancing_a_sandwich_overcall_after_their_pass() {
+        check_system(&[
+            ("1C P 1D 1H P", "K32.Q32.K432.432", "2H"),
+            ("1S P 1NT 2H P", "872.QT4.J87.KQ97", "3H"),
+            ("1S P 1NT 2H P", "8742.T4.J873.K97", "P"),
+        ]);
+    }
+
+    /// Advancing Michaels after the opponents raise (#P8): the cheapest major with support.
+    #[test]
+    fn advancing_michaels_after_their_raise() {
+        check_system(&[
+            ("1C 2C 3C", "K32.Q432.432.432", "3H"),
+            ("1C 2C 3C", "KQ32.32.5432.432", "3S"),
+            ("1H 2H 3H", "Q32.32.K5432.432", "3S"),
+        ]);
+    }
+
+    /// Advancing our one-level overcall after a negative double (#P9): the double changes
+    /// nothing, so a weak hand passes (it used to cuebid with any hand, from a table header),
+    /// the single raise shows 7--10 with three-card support and the cuebid 11+; the overcaller
+    /// then bids game over the raise with 15+.
+    #[test]
+    fn advancing_an_overcall_after_a_negative_double() {
+        check_system(&[
+            ("1C 1S X", "832.8432.Q832.32", "P"),
+            ("1C 1S X", "K32.Q432.K432.32", "2S"),
+            ("1C 1S X", "KQ2.A432.K432.32", "2C"),
+            ("1C 1S X 2S P", "AKJ32.K32.A32.32", "4S"),
+        ]);
     }
 }

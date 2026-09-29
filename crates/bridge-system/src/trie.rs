@@ -81,6 +81,13 @@ pub struct Lookup {
     pub by_depth: SmallVec<[Option<NodeId>; 16]>,
     /// The trie node reached at `matched_depth` (for `children`).
     pub end: TrieId,
+    /// The trie node reached at `matched_depth - 1`: the position whose `children` are the
+    /// siblings of the last matched call (the root when nothing matched, where it equals `end`).
+    /// Tracked inside the walk at no extra cost, so a caller never has to re-resolve the
+    /// one-call-shorter key to find the siblings; every attempt returned by
+    /// [`AuctionTrie::resolve_lenient`] carries it too. Used with
+    /// [`crate::exclusive::ExclusiveIndex`] to find the sibling group of a call.
+    pub parent: TrieId,
     /// Number of wildcard edges taken (0 = pure exact match).
     pub via_class: u8,
 }
@@ -182,6 +189,7 @@ impl AuctionTrie {
         let root = Self::root_id(key.we_opened);
         let mut cur = root;
         let mut end = root;
+        let mut parent = root;
         let mut matched_depth = 0usize;
         let mut via_class = 0u8;
         let mut by_depth: SmallVec<[Option<NodeId>; 16]> = smallvec![None; key.calls.len()];
@@ -213,6 +221,7 @@ impl AuctionTrie {
                 break;
             }
 
+            parent = cur;
             cur = child_id;
             end = child_id;
             matched_depth = i + 1;
@@ -225,6 +234,7 @@ impl AuctionTrie {
             matched_depth,
             by_depth,
             end,
+            parent,
             via_class,
         }
     }
@@ -462,6 +472,24 @@ impl AuctionTrie {
     /// `true` when only the two roots exist.
     pub fn is_empty(&self) -> bool {
         self.nodes.len() <= 2
+    }
+
+    /// `true` when `at` has at least one exact child edge (a candidate of
+    /// [`AuctionTrie::children`] under some condition class).
+    pub fn has_children(&self, at: TrieId) -> bool {
+        !self.nodes[at.0 as usize].exact.is_empty()
+    }
+
+    /// `true` when some entry of an exact child of `at` carries a seat or vulnerability
+    /// condition, i.e. [`AuctionTrie::children`] may depend on `(opener_pos, vul)`. When
+    /// `false`, `children(at, ..)` is the same list for every condition.
+    pub fn children_are_conditioned(&self, at: TrieId) -> bool {
+        self.nodes[at.0 as usize].exact.iter().any(|&(_, child)| {
+            self.nodes[child.0 as usize]
+                .entries
+                .iter()
+                .any(|e| e.seat != SeatCond::Any || e.vul.specificity() != 0)
+        })
     }
 
     fn root_id(we_opened: bool) -> TrieId {

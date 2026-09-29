@@ -28,8 +28,11 @@
 //!
 //! This is a measurement harness, not a correctness gate: neither design document sets a
 //! threshold here (unlike, say, the recognition-ratio tests) -- the numbers landing in
-//! `target/natural_metrics.json` are phase 3's completion criterion; tuning `NaturalParams`
-//! against them is phase 4's job. Run once in release:
+//! `target/natural_metrics.json` are phase 3's completion criterion. Phase 4.6 tuned the rule
+//! confidences and the level floor against them (`natural_tuning`, docs/design/06-system.md
+//! §8.6): measurement 2 also reports a contextual rate that samples the constraints `choose_bid`
+//! itself ranks, and the corpus is split by game index (even = tune, odd = eval) for true-deal
+//! agreement. Run once in release:
 //! `cargo test -p bridge-bidding --release --test natural_metrics -- --ignored --nocapture`.
 
 mod common;
@@ -302,6 +305,7 @@ fn empty_system() -> SystemIR {
         nodes: Vec::new(),
         index: AuctionTrie::new(),
         lints: Vec::new(),
+        exclusive_cell: Default::default(),
     }
 }
 
@@ -596,6 +600,11 @@ struct ReproductionReport {
     n_decision_points: usize,
     n_candidates_tested: usize,
     overall_agreement_rate: f64,
+    /// The same agreement with each candidate's hands drawn from the constraint `choose_bid`
+    /// itself ranks (partner context from the prefix's interpretation, so the natural level
+    /// floor included; phase 4.6), over the same decision points with their own seeds. With
+    /// `LevelFloor::NONE` the two definitions sample the same constraints.
+    contextual_agreement_rate: f64,
     by_rule: Vec<RuleAgreement>,
 }
 
@@ -688,9 +697,14 @@ fn run_reproduction(sources: &[CompiledSource]) -> ReproductionReport {
         .collect();
     by_rule.sort_by(|a, b| a.rule.cmp(&b.rule));
 
+    let mut keys = RuleKeys::default();
+    let (_, contextual) = reproduction_positions(&points, natural.params(), &mut keys, false);
+    let contextual_agreement_rate = rate(tune_eval(&contextual, &keys.defaults(), false));
+
     ReproductionReport {
         n_decision_points,
         n_candidates_tested,
+        contextual_agreement_rate,
         overall_agreement_rate: if overall_total == 0 {
             0.0
         } else {
@@ -897,10 +911,12 @@ fn natural_inference_metrics() {
 
     let reproduction = run_reproduction(&sources);
     eprintln!(
-        "reproduction: {} decision point(s), {} candidate(s) tested, overall agreement {:.3}",
+        "reproduction: {} decision point(s), {} candidate(s) tested, overall agreement {:.3} \
+         (contextual {:.3})",
         reproduction.n_decision_points,
         reproduction.n_candidates_tested,
-        reproduction.overall_agreement_rate
+        reproduction.overall_agreement_rate,
+        reproduction.contextual_agreement_rate
     );
     assert!(
         reproduction.n_candidates_tested > 0,
@@ -927,4 +943,677 @@ fn natural_inference_metrics() {
     std::fs::create_dir_all(&target_dir).expect("create target/ directory");
     std::fs::write(target_dir.join("natural_metrics.json"), json)
         .expect("write target/natural_metrics.json");
+}
+
+// --------------------------------------------------------------------------------------------
+// Level floor (docs/design/06-system.md §8, lane-S acceptance "S, natural"): replay escalation.
+// --------------------------------------------------------------------------------------------
+
+/// SAYC compiled once, with the natural engine replaced by `params`.
+fn sayc_table(params: bridge_system::NaturalParams) -> Table {
+    let base = common::compile_sayc("sayc.bml");
+    Table {
+        natural: std::sync::Arc::new(NaturalInference::new(params)),
+        ..base
+    }
+}
+
+/// Final-contract levels `[passed out, 1..=7]` of `n` fixed-seed random deals replayed with
+/// SAYC plus natural completion (dealer rotating, vulnerability rotating), and the number of
+/// replays with a forced-pass gap.
+fn level_histogram(table: &Table, n: usize, seed: u64) -> ([usize; 8], usize) {
+    let ctx = BidContext {
+        scoring: Scoring::Imp,
+        natural: Some(table.natural.as_ref()),
+        implicit_pass: ImplicitPass::Complement,
+        policy: PolicyParams::system_players(),
+    };
+    let vuls = [
+        Vulnerability::None,
+        Vulnerability::NS,
+        Vulnerability::EW,
+        Vulnerability::Both,
+    ];
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+    let mut by_level = [0usize; 8];
+    let mut with_gaps = 0;
+    for i in 0..n {
+        let deal = common::random_deal(&mut rng);
+        let r = bridge_bidding::replay(table, &deal, Seat::ALL[i % 4], vuls[(i / 4) % 4], &ctx);
+        let level = r.auction.contract().map_or(0, |c| c.bid.level() as usize);
+        by_level[level] += 1;
+        with_gaps += usize::from(!r.gaps.is_empty());
+    }
+    (by_level, with_gaps)
+}
+
+/// The level-floor seed of the acceptance run.
+const LEVEL_FLOOR_SEED: u64 = 0x1e7e_1f10;
+
+fn assert_level_floor(n: usize) {
+    let started = std::time::Instant::now();
+    let floored = sayc_table(bridge_system::NaturalParams::default());
+    let (hist, gaps) = level_histogram(&floored, n, LEVEL_FLOOR_SEED);
+    let seven = hist[7];
+    let six_plus = hist[6] + hist[7];
+    eprintln!(
+        "level floor (default table): final levels [passout, 1..7] = {hist:?}, {gaps} replay(s) \
+         with gaps, {n} deals in {:?}",
+        started.elapsed()
+    );
+    assert!(seven * 100 <= n, "7-level contracts {seven}/{n} > 1%");
+    assert!(
+        six_plus * 100 <= 5 * n,
+        "6+-level contracts {six_plus}/{n} > 5%"
+    );
+}
+
+/// Default-suite version (200 deals).
+#[test]
+fn level_floor_limits_replay_escalation() {
+    assert_level_floor(200);
+}
+
+/// The acceptance size (2000 fixed-seed deals), with the no-floor baseline for comparison:
+/// `cargo test -p bridge-bidding --release --test natural_metrics -- --ignored level_floor`.
+#[test]
+#[ignore = "2000 replays twice; run in release with --ignored --nocapture"]
+fn level_floor_limits_replay_escalation_2000() {
+    let none = bridge_system::NaturalParams {
+        level_floor: bridge_system::LevelFloor::NONE,
+        ..Default::default()
+    };
+    let (hist, gaps) = level_histogram(&sayc_table(none), 2000, LEVEL_FLOOR_SEED);
+    eprintln!(
+        "level floor NONE: final levels [passout, 1..7] = {hist:?}, {gaps} replay(s) with gaps"
+    );
+    assert_level_floor(2000);
+}
+
+// --------------------------------------------------------------------------------------------
+// infer_batch == per-call infer at every position of generated and corpus auctions.
+// --------------------------------------------------------------------------------------------
+
+/// Checks `infer_batch` over every legal call at every position of `auction`, under the default
+/// partner context and a known partner range (which exercises the level floor).
+fn check_batch_positions(engine: &NaturalInference, auction: &Auction) -> usize {
+    use bridge_constraint::Atom;
+    use bridge_system::PartnerContext;
+
+    let partners = [
+        PartnerContext::default(),
+        PartnerContext {
+            partner_constraint: Some(HandConstraint::Atom(Atom::ANY.with_hcp(6..=10))),
+            forcing_situation: false,
+        },
+    ];
+    let mut checked = 0;
+    for j in 0..auction.len() {
+        let Ok(prefix) = Auction::from_calls(
+            auction.dealer(),
+            auction.vulnerability(),
+            auction.calls()[..j].iter().copied(),
+        ) else {
+            break;
+        };
+        let owner = prefix.next_seat();
+        let calls: Vec<Call> = prefix.legal_calls().collect();
+        for partner in &partners {
+            let batch = engine.infer_batch(&prefix, owner, partner, &calls);
+            for (got, &call) in batch.iter().zip(&calls) {
+                let next = prefix.with(call).expect("legal");
+                let mut ctx = classify(&next, prefix.len(), owner);
+                ctx.partner_constraint = partner.partner_constraint.clone();
+                ctx.forcing_situation = partner.forcing_situation;
+                let want = engine.infer(&ctx);
+                assert_eq!(got.rule, want.rule, "{prefix:?} {call}");
+                assert_eq!(got.confidence, want.confidence, "{prefix:?} {call}");
+                assert_eq!(
+                    format!("{:?}", got.constraint),
+                    format!("{:?}", want.constraint),
+                    "{prefix:?} {call}"
+                );
+                checked += 1;
+            }
+        }
+    }
+    checked
+}
+
+fn check_batch(n_generated: usize, n_corpus: usize) {
+    let table = sayc_table(bridge_system::NaturalParams::default());
+    let engine = table.natural.as_ref();
+    let ctx = BidContext {
+        scoring: Scoring::Imp,
+        natural: Some(engine),
+        implicit_pass: ImplicitPass::Complement,
+        policy: PolicyParams::system_players(),
+    };
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xba7c_4001);
+    let mut checked = 0;
+    for i in 0..n_generated {
+        let deal = common::random_deal(&mut rng);
+        let r = bridge_bidding::replay(&table, &deal, Seat::ALL[i % 4], Vulnerability::None, &ctx);
+        checked += check_batch_positions(engine, &r.auction);
+    }
+    let mut corpus = 0;
+    if let Some(dir) = corpus_dir(&workspace_root()) {
+        for (_, auction) in corpus_games(&dir).iter().take(n_corpus) {
+            checked += check_batch_positions(engine, auction);
+            corpus += 1;
+        }
+    }
+    eprintln!(
+        "infer_batch == infer: {n_generated} generated + {corpus} corpus auction(s), {checked} \
+         (position, partner, call) checks"
+    );
+}
+
+/// Default-suite version: 100 generated and 50 corpus auctions (corpus skipped when absent).
+#[test]
+fn infer_batch_matches_infer_on_generated_and_corpus_auctions() {
+    check_batch(100, 50);
+}
+
+/// The acceptance size: 1000 generated and 500 corpus auctions.
+#[test]
+#[ignore = "1000 + 500 auctions; run in release with --ignored --nocapture"]
+fn infer_batch_matches_infer_on_generated_and_corpus_auctions_full() {
+    check_batch(1000, 500);
+}
+
+// --------------------------------------------------------------------------------------------
+// Phase 4.6: tuning the natural rank (rule confidences) and the level floor on the corpus tune
+// split (docs/design/15-phase4-plan.md step 5, D20).
+// --------------------------------------------------------------------------------------------
+
+/// The partner context `choose_bid`'s natural branch computes for `seat`, about to make call
+/// `j`, on a natural-only table: the heaviest non-`Fallback` alternative of partner's last call
+/// in the (strict) interpretation of any auction extending the first `j` calls. Nothing is
+/// forcing (the table has no nodes).
+fn natural_partner_context(
+    interp: &bridge_bidding::Interpretation,
+    j: usize,
+    seat: Seat,
+) -> bridge_system::PartnerContext {
+    let partner = seat.partner();
+    let alt = interp.per_call[..j]
+        .iter()
+        .rev()
+        .find(|ci| ci.seat == partner)
+        .and_then(|last| {
+            last.alternatives
+                .iter()
+                .filter(|(_, _, ex)| ex.kind != bridge_bidding::ResolutionKind::Fallback)
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+        });
+    bridge_system::PartnerContext {
+        partner_constraint: alt.map(|a| a.0.clone()),
+        forcing_situation: false,
+    }
+}
+
+fn strict_interpret_options() -> bridge_bidding::InterpretOptions {
+    bridge_bidding::InterpretOptions {
+        strict: true,
+        ..bridge_bidding::InterpretOptions::default()
+    }
+}
+
+/// `(rule, default priority)` pairs seen so far; a pair's position is its key in a priority
+/// vector. A rule with two default confidences (`pass_default`, limited or not) gets two keys.
+#[derive(Default)]
+struct RuleKeys {
+    keys: Vec<(&'static str, i16)>,
+}
+
+impl RuleKeys {
+    fn id(&mut self, rule: &'static str, priority: i16) -> u16 {
+        match self.keys.iter().position(|&k| k == (rule, priority)) {
+            Some(i) => i as u16,
+            None => {
+                self.keys.push((rule, priority));
+                (self.keys.len() - 1) as u16
+            }
+        }
+    }
+
+    fn defaults(&self) -> Vec<i16> {
+        self.keys.iter().map(|k| k.1).collect()
+    }
+}
+
+/// One decision position prepared for re-ranking under any rule-priority vector: the natural
+/// candidates (call index, rule key) and the tested hands as `(mask of satisfied candidates,
+/// target call index, multiplicity)`.
+struct TunePos {
+    cands: Vec<(u8, u16)>,
+    pass_listed: bool,
+    hands: Vec<(u64, u8, u32)>,
+}
+
+impl TunePos {
+    fn new(ranked: &[bridge_system::NaturalCandidate], keys: &mut RuleKeys) -> TunePos {
+        assert!(ranked.len() <= 64);
+        TunePos {
+            cands: ranked
+                .iter()
+                .map(|c| (c.call.index(), keys.id(c.rule, c.priority())))
+                .collect(),
+            pass_listed: ranked.iter().any(|c| c.call == Call::Pass),
+            hands: Vec::new(),
+        }
+    }
+
+    fn mask(ranked: &[bridge_system::NaturalCandidate], hand: Hand) -> u64 {
+        ranked
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.constraint.satisfies(hand))
+            .fold(0, |m, (i, _)| m | 1 << i)
+    }
+
+    fn add(&mut self, mask: u64, target: u8) {
+        match self.hands.iter_mut().find(|h| h.0 == mask && h.1 == target) {
+            Some(h) => h.2 += 1,
+            None => self.hands.push((mask, target, 1)),
+        }
+    }
+}
+
+/// The natural policy's call over `positions` under rule priorities `pr` (priority descending,
+/// then call index ascending: `TieBreak::RowOrder`'s natural order), as `(agreeing hands, all
+/// hands)`. With `pass_when_none`, a hand satisfying no candidate passes (the natural implicit
+/// pass under `ImplicitPass::Complement`, and `NoCandidate` read as a pass); otherwise it is a
+/// miss (`ImplicitPass::Never`).
+fn tune_eval(positions: &[TunePos], pr: &[i16], pass_when_none: bool) -> (u64, u64) {
+    let pass = Call::Pass.index();
+    let mut order: Vec<usize> = Vec::with_capacity(38);
+    let (mut hits, mut total) = (0u64, 0u64);
+    for p in positions {
+        order.clear();
+        order.extend(0..p.cands.len());
+        order.sort_by(|&a, &b| {
+            pr[p.cands[b].1 as usize]
+                .cmp(&pr[p.cands[a].1 as usize])
+                .then(p.cands[a].0.cmp(&p.cands[b].0))
+        });
+        for &(mask, target, n) in &p.hands {
+            let chosen = order
+                .iter()
+                .find(|&&i| mask >> i & 1 == 1)
+                .map(|&i| p.cands[i].0)
+                .or_else(|| pass_when_none.then_some(pass));
+            total += u64::from(n);
+            if chosen == Some(target) {
+                hits += u64::from(n);
+            }
+        }
+    }
+    (hits, total)
+}
+
+fn rate((hits, total): (u64, u64)) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        hits as f64 / total as f64
+    }
+}
+
+/// Measurement 2 prepared for re-ranking, per decision point: `bare` samples each call's
+/// constraint from `NaturalInference::candidates` (the phase-3 definition, no partner context),
+/// `contextual` samples the constraint of the ranked candidate `choose_bid` itself uses (partner
+/// context from the prefix's interpretation, so the level floor included). Hands are drawn with
+/// a per-decision-point seed, so every parameter set sees the same hands for the same
+/// constraint. With `check`, every bare hand's prediction under the default priorities is
+/// asserted equal to `choose_bid` on the natural-only table.
+fn reproduction_positions(
+    points: &[DecisionPoint],
+    params: &bridge_system::NaturalParams,
+    keys: &mut RuleKeys,
+    check: bool,
+) -> (Vec<TunePos>, Vec<TunePos>) {
+    let natural = std::sync::Arc::new(NaturalInference::new(params.clone()));
+    let table = Table::uniform(std::sync::Arc::new(empty_system()), natural.clone());
+    let bid_ctx = BidContext {
+        scoring: Scoring::Mp,
+        natural: Some(&natural),
+        implicit_pass: ImplicitPass::Never,
+        policy: PolicyParams::default(),
+    };
+    let opts = SampleOptions::default();
+    let iopts = strict_interpret_options();
+    let tie_break = bridge_system::TieBreak::default();
+    let (mut bare, mut contextual) = (Vec::new(), Vec::new());
+    for (k, dp) in points.iter().enumerate() {
+        let Ok(prefix) = Auction::from_calls(
+            dp.auction.dealer(),
+            dp.auction.vulnerability(),
+            dp.auction.calls()[..dp.index].iter().copied(),
+        ) else {
+            continue;
+        };
+        let interp = bridge_bidding::interpret(&table, &prefix, &iopts);
+        let partner = natural_partner_context(&interp, prefix.len(), dp.owner);
+        let ranked = natural.ranked_candidates(&prefix, dp.owner, &partner, tie_break);
+        let mut pos_bare = TunePos::new(&ranked, keys);
+        let mut pos_ctx = TunePos::new(&ranked, keys);
+        let defaults = keys.defaults();
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x5475_6e65_0000_0000 ^ k as u64);
+        let bare_constraints: Vec<(Call, HandConstraint)> = natural
+            .candidates(&prefix, dp.owner)
+            .into_iter()
+            .map(|(call, c, _)| (call, c))
+            .collect();
+        let ctx_constraints: Vec<(Call, HandConstraint)> = ranked
+            .iter()
+            .map(|c| (c.call, c.constraint.clone()))
+            .collect();
+        for (pos, constraints, is_bare) in [
+            (&mut pos_bare, &bare_constraints, true),
+            (&mut pos_ctx, &ctx_constraints, false),
+        ] {
+            for (call, constraint) in constraints {
+                let Ok(sampler) = Sampler::prepare(constraint, Hand::FULL, Hand::EMPTY, &opts)
+                else {
+                    continue;
+                };
+                if sampler.count() == 0 {
+                    continue;
+                }
+                for _ in 0..REPRO_SAMPLES_PER_CANDIDATE {
+                    let hand = sampler.sample(&mut rng).expect("count() > 0").hand;
+                    let mask = TunePos::mask(&ranked, hand);
+                    pos.add(mask, call.index());
+                    if check && is_bare {
+                        let one = TunePos {
+                            cands: pos.cands.clone(),
+                            pass_listed: pos.pass_listed,
+                            hands: vec![(mask, call.index(), 1)],
+                        };
+                        let predicted = tune_eval(std::slice::from_ref(&one), &defaults, false);
+                        let got = matches!(
+                            choose_bid(&table, hand, &prefix, &bid_ctx),
+                            BidChoice::Chosen(chosen) if chosen.call == *call
+                        );
+                        assert_eq!(predicted.0 == 1, got, "{prefix:?} {call} {hand:?}");
+                    }
+                }
+            }
+        }
+        bare.push(pos_bare);
+        contextual.push(pos_ctx);
+    }
+    (bare, contextual)
+}
+
+/// Every call of every corpus game prepared for re-ranking against the real call with the real
+/// hand (true-deal agreement of the natural policy), split by game enumeration index: even
+/// games tune, odd games evaluate.
+fn corpus_positions(
+    games: &[(Deal, Auction)],
+    params: &bridge_system::NaturalParams,
+    keys: &mut RuleKeys,
+) -> (Vec<TunePos>, Vec<TunePos>) {
+    let natural = std::sync::Arc::new(NaturalInference::new(params.clone()));
+    let table = Table::uniform(std::sync::Arc::new(empty_system()), natural.clone());
+    let iopts = strict_interpret_options();
+    let tie_break = bridge_system::TieBreak::default();
+    let (mut tune, mut eval) = (Vec::new(), Vec::new());
+    for (g, (deal, auction)) in games.iter().enumerate() {
+        let interp = bridge_bidding::interpret(&table, auction, &iopts);
+        for (j, &call) in auction.calls().iter().enumerate() {
+            let Ok(prefix) = Auction::from_calls(
+                auction.dealer(),
+                auction.vulnerability(),
+                auction.calls()[..j].iter().copied(),
+            ) else {
+                break;
+            };
+            let owner = prefix.next_seat();
+            let partner = natural_partner_context(&interp, j, owner);
+            let ranked = natural.ranked_candidates(&prefix, owner, &partner, tie_break);
+            let mut pos = TunePos::new(&ranked, keys);
+            pos.add(TunePos::mask(&ranked, deal.hand(owner)), call.index());
+            if g % 2 == 0 {
+                tune.push(pos);
+            } else {
+                eval.push(pos);
+            }
+        }
+    }
+    (tune, eval)
+}
+
+/// Every position set of one parameter set, and its measured rates.
+struct TuneSets {
+    repro_bare: Vec<TunePos>,
+    repro_ctx: Vec<TunePos>,
+    corpus_tune: Vec<TunePos>,
+    corpus_eval: Vec<TunePos>,
+}
+
+#[derive(Clone, Copy)]
+struct TuneRates {
+    /// Measurement 2, phase-3 definition, all decision points / tune half / eval half.
+    repro_bare: [f64; 3],
+    /// Measurement 2, contextual constraints, all / tune half / eval half.
+    repro_ctx: [f64; 3],
+    /// True-deal agreement on the corpus tune / eval split.
+    corpus: [f64; 2],
+}
+
+impl std::fmt::Display for TuneRates {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let [ba, bt, be] = self.repro_bare;
+        let [ca, ct, ce] = self.repro_ctx;
+        let [pt, pe] = self.corpus;
+        write!(
+            f,
+            "repro(phase-3) all/tune/eval {ba:.4}/{bt:.4}/{be:.4}, repro(contextual) \
+             {ca:.4}/{ct:.4}/{ce:.4}, corpus true-deal tune/eval {pt:.4}/{pe:.4}"
+        )
+    }
+}
+
+impl TuneSets {
+    fn build(
+        points: &[DecisionPoint],
+        games: &[(Deal, Auction)],
+        params: &bridge_system::NaturalParams,
+        keys: &mut RuleKeys,
+        check: bool,
+    ) -> TuneSets {
+        let (repro_bare, repro_ctx) = reproduction_positions(points, params, keys, check);
+        let (corpus_tune, corpus_eval) = corpus_positions(games, params, keys);
+        TuneSets {
+            repro_bare,
+            repro_ctx,
+            corpus_tune,
+            corpus_eval,
+        }
+    }
+
+    fn rates(&self, pr: &[i16]) -> TuneRates {
+        let halves = |set: &[TunePos]| {
+            let (tune, eval): (Vec<_>, Vec<_>) =
+                set.iter().enumerate().partition(|(i, _)| i % 2 == 0);
+            let sum = |v: Vec<(usize, &TunePos)>| {
+                v.into_iter().fold((0, 0), |acc, (_, p)| {
+                    let r = tune_eval(std::slice::from_ref(p), pr, false);
+                    (acc.0 + r.0, acc.1 + r.1)
+                })
+            };
+            [
+                rate(tune_eval(set, pr, false)),
+                rate(sum(tune)),
+                rate(sum(eval)),
+            ]
+        };
+        TuneRates {
+            repro_bare: halves(&self.repro_bare),
+            repro_ctx: halves(&self.repro_ctx),
+            corpus: [
+                rate(tune_eval(&self.corpus_tune, pr, true)),
+                rate(tune_eval(&self.corpus_eval, pr, true)),
+            ],
+        }
+    }
+
+    /// The tuning objective: `w_corpus` times the true-deal agreement on the corpus tune split
+    /// plus `1 - w_corpus` times the contextual measurement-2 agreement on the tune half of the
+    /// decision points.
+    fn objective(&self, pr: &[i16], w_corpus: f64) -> f64 {
+        let tune_half: Vec<&TunePos> = self.repro_ctx.iter().step_by(2).collect();
+        let (mut hits, mut total) = (0, 0);
+        for p in tune_half {
+            let r = tune_eval(std::slice::from_ref(p), pr, false);
+            hits += r.0;
+            total += r.1;
+        }
+        (1.0 - w_corpus) * rate((hits, total))
+            + w_corpus * rate(tune_eval(&self.corpus_tune, pr, true))
+    }
+}
+
+/// Coordinate descent over rule priorities `0, 5, …, 100` on [`TuneSets::objective`]; a value
+/// replaces the current one only when it strictly improves the objective, and values are tried
+/// nearest first, so the result moves each priority as little as the objective allows.
+fn tune_priorities(sets: &TuneSets, start: &[i16], w_corpus: f64) -> (Vec<i16>, f64) {
+    let mut pr = start.to_vec();
+    let mut best = sets.objective(&pr, w_corpus);
+    for _sweep in 0..6 {
+        let mut improved = false;
+        for k in 0..pr.len() {
+            let keep = pr[k];
+            let mut best_v = keep;
+            // Nearest values first, so a plateau keeps the value closest to the current one.
+            let mut values: Vec<i16> = (0..=20).map(|v| v * 5).collect();
+            values.sort_by_key(|&v| ((v - keep).abs(), v));
+            for v in values {
+                pr[k] = v;
+                let j = sets.objective(&pr, w_corpus);
+                if j > best + 1e-9 {
+                    best = j;
+                    best_v = v;
+                    improved = true;
+                }
+            }
+            pr[k] = best_v;
+        }
+        if !improved {
+            break;
+        }
+    }
+    (pr, best)
+}
+
+/// Phase 4.6: for each candidate level-floor table, the measurement-2 agreement (phase-3 and
+/// contextual definitions) and the true-deal agreement on the corpus tune/eval split, under the
+/// default rule confidences and under confidences tuned on the tune split only
+/// (`cargo test -p bridge-bidding --release --test natural_metrics -- --ignored --nocapture
+/// natural_tuning`).
+#[test]
+#[ignore = "slow (samples every decision point and replays the corpus per floor table)"]
+fn natural_tuning() {
+    use bridge_system::{LevelFloor, NaturalParams};
+    let root = workspace_root();
+    let Some(dir) = corpus_dir(&root) else {
+        eprintln!("corpus/data not found; skipping");
+        return;
+    };
+    let games = corpus_games(&dir);
+    let sources = compiled_sources();
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x5265_7072_6f31_3233);
+    let points: Vec<DecisionPoint> = collect_decision_points(&sources)
+        .into_iter()
+        .filter(|dp| dp.index > 0)
+        .collect();
+    let points = cap_random(points, REPRO_CAP_DECISION_POINTS, &mut rng);
+    let shift = |d: i16| {
+        let f = |t: [u8; 7]| t.map(|v| if v == 0 { 0 } else { (v as i16 + d) as u8 });
+        LevelFloor {
+            suit: f(LevelFloor::STANDARD.suit),
+            nt: f(LevelFloor::STANDARD.nt),
+        }
+    };
+    let floors = [
+        ("none", LevelFloor::NONE),
+        ("standard", LevelFloor::STANDARD),
+        ("standard-2", shift(-2)),
+        ("standard+2", shift(2)),
+        (
+            "from-level-4",
+            LevelFloor {
+                suit: [0, 0, 0, 22, 26, 31, 35],
+                nt: [0, 0, 0, 28, 30, 32, 36],
+            },
+        ),
+    ];
+    let w_list: Vec<f64> = std::env::var("TUNE_W")
+        .ok()
+        .map(|v| v.split(',').map(|x| x.parse().expect("TUNE_W")).collect())
+        .unwrap_or_else(|| vec![0.5]);
+    let only: Option<String> = std::env::var("TUNE_FLOOR").ok();
+    let mut keys = RuleKeys::default();
+    for (i, (name, floor)) in floors.into_iter().enumerate() {
+        if only.as_deref().is_some_and(|o| o != name) {
+            continue;
+        }
+        let started = std::time::Instant::now();
+        let params = NaturalParams {
+            level_floor: floor,
+            ..NaturalParams::default()
+        };
+        let sets = TuneSets::build(&points, &games, &params, &mut keys, i < 2);
+        let defaults = keys.defaults();
+        let base = sets.rates(&defaults);
+        eprintln!("floor {name} ({:?})\n  default: {base}", started.elapsed());
+        for &w in &w_list {
+            let (tuned, j) = tune_priorities(&sets, &defaults, w);
+            let after = sets.rates(&tuned);
+            if let Ok(fixed) = std::env::var("TUNE_FIX") {
+                // "rule:default=value,..." applied on top of the tuned vector and of the
+                // defaults.
+                for (label, start) in [("tuned", &tuned), ("defaults", &defaults)] {
+                    let mut v = start.clone();
+                    for item in fixed.split(',') {
+                        let (key, value) = item.split_once('=').expect("rule:default=value");
+                        let (rule, d) = key.split_once(':').expect("rule:default");
+                        let d: i16 = d.parse().expect("default");
+                        let k = keys
+                            .keys
+                            .iter()
+                            .position(|&(r, p)| r == rule && p == d)
+                            .expect("key");
+                        v[k] = value.parse().expect("value");
+                    }
+                    eprintln!(
+                        "  fixed {fixed} on the {label}: objective {:.4}, {}",
+                        sets.objective(&v, w),
+                        sets.rates(&v)
+                    );
+                }
+            }
+            eprintln!(
+                "  w_corpus {w}: objective {:.4} -> {j:.4}\n  tuned:   {after}",
+                sets.objective(&defaults, w),
+            );
+            let changed: Vec<String> = keys
+                .keys
+                .iter()
+                .zip(&tuned)
+                .filter(|((_, d), t)| d != *t)
+                .map(|((r, d), t)| format!("{r}:{d}->{t}"))
+                .collect();
+            eprintln!("  changed priorities: {}", changed.join(", "));
+        }
+    }
+    eprintln!(
+        "decision points {}, corpus games {} (keys {:?})",
+        points.len(),
+        games.len(),
+        keys.keys
+    );
 }

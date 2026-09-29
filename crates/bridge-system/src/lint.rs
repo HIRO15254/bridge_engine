@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use bridge_constraint::{Atom, Dnf, DnfOptions};
+use bridge_constraint::{Atom, Dnf, DnfOptions, HandConstraint};
 
 use crate::{CompileOptions, NodeId, RowId, SystemIR, ast::Span};
 
@@ -55,6 +55,14 @@ pub enum LintCode {
     // coverage
     MissingOpeningCoverage,
     MissingResponseCoverage,
+    // exclusive index (appended last so the serialised indices of the codes above stay fixed)
+    /// A top-level branch of a node's constraint that higher-ranked siblings cover entirely at
+    /// every position where the node is a candidate: `choose_bid` never selects the node through
+    /// it (Warning).
+    ShadowedBranch,
+    /// Two top-level branches of one node's constraint overlap; the exclusive index
+    /// disjointifies them (a later branch keeps only hands outside the earlier ones) (Info).
+    OverlappingBranches,
 }
 
 /// One diagnostic.
@@ -195,7 +203,112 @@ pub fn run_post_compile_checks(ir: &mut SystemIR, opts: &CompileOptions) {
     check_own_history(ir);
     check_recognition(ir);
     check_sibling_ambiguity(ir);
+    check_exclusive_branches(ir);
     check_coverage(ir, opts);
+}
+
+/// The exclusive-index lints (docs/design/06-system.md §9):
+///
+/// - [`LintCode::ShadowedBranch`] (Warning): branch `b` of node `m` with
+///   `b ∧ ¬∪{members ranked above m}` empty in *every* sibling group (every condition class)
+///   where `m` is a candidate. `choose_bid` then never selects `m` through `b`; when every
+///   branch is shadowed, the call is never chosen there at all. A branch that is empty on its
+///   own is left to [`LintCode::UnsatisfiableConstraint`].
+/// - [`LintCode::OverlappingBranches`] (Info): a node whose top-level `Or` branches overlap on
+///   the (shape, HCP) grid (for branches with literals: their superset boxes overlap), reported
+///   once per row and branch pair. The index disjointifies them.
+fn check_exclusive_branches(ir: &mut SystemIR) {
+    use crate::exclusive::{branches_of, grid_proves_empty, subtract};
+
+    let index = ir.exclusive();
+    // (node, branch) -> (groups where it appears, groups where it is shadowed)
+    let mut seen: HashMap<(NodeId, u16), (u32, u32)> = HashMap::new();
+    for group in index.groups() {
+        for (i, &(call, node)) in group.members.iter().enumerate() {
+            let branches = branches_of(&ir.node(node).constraint);
+            let pieces = group.pieces(call).unwrap_or(&[]);
+            let mut above: Option<Vec<&HandConstraint>> = None;
+            for (j, branch) in branches.iter().enumerate() {
+                let j = j as u16;
+                let entry = seen.entry((node, j)).or_insert((0, 0));
+                entry.0 += 1;
+                if pieces.iter().any(|p| p.node == node && p.branch == j) {
+                    continue;
+                }
+                if grid_proves_empty(branch) {
+                    continue;
+                }
+                let above = above.get_or_insert_with(|| {
+                    group.members[..i]
+                        .iter()
+                        .map(|&(_, id)| &ir.node(id).constraint)
+                        .collect()
+                });
+                if grid_proves_empty(&subtract(branch, above)) {
+                    entry.1 += 1;
+                }
+            }
+        }
+    }
+    let mut shadowed: Vec<(NodeId, u16)> = seen
+        .into_iter()
+        .filter(|&(_, (appear, shadowed))| appear > 0 && shadowed == appear)
+        .map(|(key, _)| key)
+        .collect();
+    shadowed.sort_unstable();
+
+    let mut new_lints = Vec::new();
+    for (node_id, branch) in shadowed {
+        let node = ir.node(node_id);
+        let count = branches_of(&node.constraint).len();
+        // Messages are kept short: lints are part of the serialised IR.
+        let message = if count == 1 {
+            "never chosen: higher-ranked siblings cover it".to_string()
+        } else {
+            format!(
+                "branch {}/{count} never chosen: higher-ranked siblings cover it",
+                branch + 1
+            )
+        };
+        new_lints.push(
+            Lint::warning(LintCode::ShadowedBranch, message)
+                .with_row(node.row)
+                .with_node(node.id)
+                .with_span(ir.row(node.row).span.clone()),
+        );
+    }
+    // One OverlappingBranches lint per row and branch pair (a row's expansions usually share
+    // the overlap).
+    let mut reported: std::collections::HashSet<(RowId, usize, usize)> =
+        std::collections::HashSet::new();
+    for node in &ir.nodes {
+        let branches = branches_of(&node.constraint);
+        if branches.len() < 2 {
+            continue;
+        }
+        let sups: Vec<_> = branches
+            .iter()
+            .map(|b| bridge_constraint::grid::bounds(b).sup)
+            .collect();
+        let feasible = bridge_constraint::HcpShapeGrid::feasible();
+        let pair = (0..sups.len()).find_map(|j| {
+            (j + 1..sups.len())
+                .find(|&k| !sups[j].and(&sups[k]).and(feasible).is_empty())
+                .map(|k| (j, k))
+        });
+        if let Some((j, k)) = pair.filter(|&(j, k)| reported.insert((node.row, j, k))) {
+            new_lints.push(
+                Lint::info(
+                    LintCode::OverlappingBranches,
+                    format!("branches {} and {} overlap", j + 1, k + 1),
+                )
+                .with_row(node.row)
+                .with_node(node.id)
+                .with_span(ir.row(node.row).span.clone()),
+            );
+        }
+    }
+    ir.lints.extend(new_lints);
 }
 
 /// §9.3 check 1: every node's constraint must be satisfiable.
@@ -500,6 +613,7 @@ mod post_compile_tests {
             },
             balancing_shift: -3,
             implicit_raise_support: true,
+            level_floor: Default::default(),
         }
     }
 
@@ -617,6 +731,7 @@ mod post_compile_tests {
                 nodes: self.nodes,
                 index: AuctionTrie::new(),
                 lints: Vec::new(),
+                exclusive_cell: Default::default(),
             }
         }
     }
