@@ -764,7 +764,7 @@ impl InterpretCache {
 | 8 | `legacy_temperature` と `InterpretMode::Legacy` を削除する時期 | フェーズ 6 のリード評価で hard 方策と比較した後 |
 | 9 | 方策上選ばれない枝（`ShadowedBranch` lint）を SAYC の側で消すか残すか | 残す（解釈は shadowed として Fallback だけで読む） |
 | 10 | `human()` の (ε, δ) | 統合時にレーン D の最尤推定値で置き換える（現状の仮置き ε = 0.01、δ = 0.3） |
-| 11 | `interpret/sayc-12-call-auction` < 10 μs（中央値） | 3 回の最良値 9.90 μs、中央値 9.90〜10.75 μs で境界線上。統合時に静かな機械で測り直す。10 μs 以上のままなら、Step B の実体化（`CallExplanation.text` と片の共有化。公開 API の変更）を後続で行う |
+| 11 | `interpret/sayc-12-call-auction` < 10 μs（中央値） | 3 回の最良値 9.90 μs、中央値 9.90〜10.75 μs で境界線上。2026-09-29 の再計測（コード変更なし、loadavg 3.4〜11）でも 3 回ずつ 2 組で 10.17〜13.6 μs、最良 10.17 μs だった。統合時に静かな機械で測り直す。10 μs 以上のままなら、Step B の実体化（`CallExplanation.text` と片の共有化。公開 API の変更）を後続で行う |
 | 12 | `1C-1H-1S-2NT` の後の 3NT（ベンチ `sayc-12-call-auction` の最後の実質コール） | システム外の位置で、ナチュラル規則にも 3NT 候補が無いため shadowed。上位のナチュラル候補に覆われているのではない。レーン S（`rule_rebid_nt` がこの位置で発火しない。レベル下限が 6C などの充足不能な候補 `And([hcp 16..=18, hcp 20..=37])` を残す）とレーン D（SAYC に 1m-1M-1S-2NT の続きを足す）に回す |
 
 `classify` に解釈済み文脈を渡す方法は §2.2 のとおり `CallContext.partner_constraint` / `forcing_situation` を L3 が後から埋める形で確定した。
