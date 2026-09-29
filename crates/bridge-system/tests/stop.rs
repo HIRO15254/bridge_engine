@@ -304,6 +304,8 @@ fn stop_markers_parse_and_compile_cleanly() {
     let pass = lookup.by_depth[4].expect("the placeholder");
     assert_eq!(ir.node(pass).priority, -100);
     assert!(ir.node(pass).flags.stop);
+    // It took the stop pass's content, but it is still the header's own node.
+    assert!(!ir.node(pass).is_synthesised() && !ir.node(pass).path.is_empty());
     // Two synthesised nodes, both without a position.
     assert_eq!(ir.nodes.iter().filter(|n| n.is_synthesised()).count(), 2);
     // The nodes of the stop rows are flagged.

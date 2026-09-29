@@ -116,8 +116,9 @@ pub struct Node {
     pub row: RowId,
     /// Whose hand the constraint describes.
     pub side: Side,
-    /// Pattern path (shared with the row). Empty only for the two nodes the compiler
-    /// synthesises for system stops ([`Node::is_synthesised`]).
+    /// Pattern path (shared with the row). Empty for the nodes the compiler synthesises for
+    /// system stops ([`Node::is_synthesised`]); an empty path alone does not mark one (a
+    /// hand-built IR may leave every path empty).
     pub path: Arc<[SidedPattern]>,
     /// Concrete calls from the opening bid up to and including this call, implicit passes
     /// included. An opponents' wildcard step (`(any)`/`(bid)`/`(suit)`, a trie
@@ -152,13 +153,14 @@ pub struct Node {
 }
 
 impl Node {
-    /// `true` for a node the compiler synthesised rather than expanded from a row: the stop
-    /// pass (ours, `Pass` with any hand at `{prio:-100}`, flagged [`NodeFlags::stop`]) and the
-    /// opponents' `(any)` step before it, which every system stop shares
-    /// (`docs/design/06-system.md` §4.5). Such a node has no position of its own (an empty
-    /// [`Node::path`] and [`Node::calls`]) and no parent; its row is a synthesised row too.
+    /// `true` for a node the compiler synthesised rather than expanded from a row
+    /// ([`NodeFlags::synthesised`]): the stop pass (ours, `Pass` with any hand at `{prio:-100}`,
+    /// flagged [`NodeFlags::stop`]) and the opponents' `(any)` step before it, which the system
+    /// stops under one `#SEAT`/`#VUL` condition share (`docs/design/06-system.md` §4.5). Such a
+    /// node has no position of its own (an empty [`Node::path`] and [`Node::calls`]) and no
+    /// parent; its row is a synthesised row too.
     pub fn is_synthesised(&self) -> bool {
-        self.path.is_empty()
+        self.flags.synthesised
     }
 }
 
@@ -207,6 +209,9 @@ pub struct NodeFlags {
     /// of a stop row and on the synthesised stop pass itself ([`Node::is_synthesised`]).
     /// Informational: resolution follows the trie edges the compiler grafted for the stop.
     pub stop: bool,
+    /// The compiler synthesised this node for a system stop rather than expanding it from a row
+    /// ([`Node::is_synthesised`]). Never set by a description.
+    pub synthesised: bool,
 }
 
 /// Recognition statistics of one description.

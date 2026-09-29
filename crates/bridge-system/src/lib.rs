@@ -49,8 +49,8 @@ pub const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Bumped on every breaking change of the serialised IR.
 ///
 /// 1: phase 3. 2: phase 4 (`NodeFlags::stop`; the trie links system stops to shared detached
-/// nodes).
-pub const IR_FORMAT: u32 = 2;
+/// nodes). 3: `NodeFlags::synthesised`.
+pub const IR_FORMAT: u32 = 3;
 /// Revision of what [`crate::compile()`] produces for a given source and options, bumped
 /// whenever that output changes without a format change (so without an [`IR_FORMAT`] bump):
 /// new lints, a different expansion. It is part of the `cache::SystemCache` key (feature

@@ -283,6 +283,7 @@ fn new_stop_nodes(ex: &mut Expansion, seat: SeatCond, vul: VulCond) -> StopNodes
             alertable: Alertability::Unspecified,
             flags: crate::NodeFlags {
                 stop: side == Side::Us,
+                synthesised: true,
                 ..crate::NodeFlags::default()
             },
             description: description.to_string(),
@@ -428,7 +429,10 @@ fn graft_stop_pass_entry(
         node.branch_weights = None;
         node.priority = template.priority;
         node.volume_log2 = template.volume_log2;
-        node.flags = template.flags.clone();
+        node.flags = crate::NodeFlags {
+            synthesised: false,
+            ..template.flags.clone()
+        };
         node.description = template.description.clone();
         ex.lints.push(
             Lint::info(
