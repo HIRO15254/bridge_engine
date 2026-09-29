@@ -1,7 +1,7 @@
 //! Normalisation of description text.
 //!
 //! Strips the leading alert marker (`!` not immediately followed by a lowercase suit letter),
-//! extracts trailing `{prio:N}` / `{w:X}` annotations, maps the lowercase suit digraphs `!c !d
+//! extracts the `{prio:N}` / `{w:X}` / `{stop}` annotations, maps the lowercase suit digraphs `!c !d
 //! !h !s` to suit sentinel characters (`♣ ♦ ♥ ♠`), collapses `--` to `-` (en-dash ranges), and
 //! collapses runs of horizontal whitespace to a single space while keeping line breaks (each
 //! physical line becomes one `clause.rs` line, used for enumerations).
@@ -24,6 +24,8 @@ pub struct Normalized {
     pub priority: Option<i16>,
     /// `{w:X}` values in order of appearance.
     pub weights: Vec<f32>,
+    /// `{stop}`: the row is a system stop (`docs/design/06-system.md` §4.5).
+    pub stop: bool,
     /// Map from normalised byte offsets back to original offsets (for spans). One entry per
     /// byte of `text`, plus a trailing sentinel equal to the original text's length.
     pub offsets: Vec<u16>,
@@ -36,6 +38,7 @@ pub fn normalize(text: &str) -> Normalized {
     let mut offsets: Vec<u16> = Vec::with_capacity(text.len() + 1);
     let mut priority: Option<i16> = None;
     let mut weights: Vec<f32> = Vec::new();
+    let mut stop = false;
     let mut alert = false;
     let mut started = false;
     let mut last_was_space = false;
@@ -44,7 +47,7 @@ pub fn normalize(text: &str) -> Normalized {
     while i < bytes.len() {
         let b = bytes[i];
 
-        // `{prio:N}` / `{w:X}` annotations, anywhere in the text.
+        // `{prio:N}` / `{w:X}` / `{stop}` annotations, anywhere in the text.
         if b == b'{' {
             if let Some(rel_end) = text[i..].find('}') {
                 let inner = &text[i + 1..i + rel_end];
@@ -59,6 +62,9 @@ pub fn normalize(text: &str) -> Normalized {
                         weights.push(w);
                         consumed = true;
                     }
+                } else if inner.trim() == "stop" {
+                    stop = true;
+                    consumed = true;
                 }
                 if consumed {
                     i += rel_end + 1;
@@ -158,6 +164,7 @@ pub fn normalize(text: &str) -> Normalized {
         alert,
         priority,
         weights,
+        stop,
         offsets,
     }
 }
@@ -194,6 +201,11 @@ mod tests {
 
     #[test]
     fn priority_and_weight_extracted() {
+        let s = normalize("{prio:-100} {stop} any hand");
+        assert!(s.stop);
+        assert_eq!(s.priority, Some(-100));
+        assert_eq!(s.text, "any hand");
+        assert!(!normalize("any hand {stopper}").stop);
         let n = normalize("5+!c or 4+!h {w:0.6} {prio:3}");
         assert_eq!(n.priority, Some(3));
         assert_eq!(n.weights, vec![0.6]);

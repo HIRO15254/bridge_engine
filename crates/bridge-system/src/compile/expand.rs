@@ -19,6 +19,9 @@
 //! separately, seat `i` of this auction is simply "the `i`-th caller of the table", which lets
 //! [`bridge_core::Seat::partner`] identify `own_prev`/`partner_last` (the two individuals of one
 //! side alternate seats, e.g. opener/responder) without tracking player identity by hand.
+//!
+//! System stops (`#STOP`, `{stop}`, `docs/design/06-system.md` §4.5) are recorded while the
+//! tables are expanded and grafted onto the finished trie by [`graft_stops`].
 
 use std::ops::RangeInclusive;
 use std::sync::Arc;
@@ -55,6 +58,36 @@ pub(crate) struct Expansion {
     /// no longer counts physical BML rows, and per-row roll-ups (`LintCode::LowRecognition`, the
     /// recognition report's average) silently double- or quadruple-count the same source line.
     row_by_span: std::collections::HashMap<Span, RowId>,
+    /// The system stops met so far, grafted by [`graft_stops`] once every table is expanded.
+    stops: Vec<StopSite>,
+}
+
+/// One system stop: the trie position after which the partnership passes with any hand
+/// (`docs/design/06-system.md` §4.5), under the conditions of the table that wrote it.
+struct StopSite {
+    we_opened: bool,
+    /// The trie path of the stop position.
+    edges: Vec<Edge>,
+    seat: SeatCond,
+    vul: VulCond,
+    /// Where the stop was written (for lints).
+    span: Span,
+}
+
+/// Whether a row's description carries the `{stop}` annotation.
+fn has_stop_annotation(text: &str) -> bool {
+    text.contains("{stop") && crate::compile::desc::normalize::normalize(text).stop
+}
+
+/// Records a stop at `frame`'s position.
+fn record_stop(frame: &Frame, seat: SeatCond, vul: VulCond, span: &Span, ex: &mut Expansion) {
+    ex.stops.push(StopSite {
+        we_opened: we_opened_of(frame),
+        edges: frame.edges.clone(),
+        seat,
+        vul,
+        span: span.clone(),
+    });
 }
 
 /// Expands every [`BidTable`] block of a file, in order, into a shared [`Expansion`].
@@ -70,6 +103,7 @@ pub(crate) fn expand_file(
         lints: Vec::new(),
         too_many_nodes_reported: false,
         row_by_span: std::collections::HashMap::new(),
+        stops: Vec::new(),
     };
     for table in tables {
         if ex.nodes.len() >= opts.max_nodes {
@@ -81,6 +115,7 @@ pub(crate) fn expand_file(
         }
         expand_table(table, meta, opts, &mut ex);
     }
+    graft_stops(&mut ex);
     demote_illegal_call_for_bindings_that_succeeded(&mut ex);
     ex
 }
@@ -116,6 +151,219 @@ fn demote_illegal_call_for_bindings_that_succeeded(ex: &mut Expansion) {
                 lint.message
             );
         }
+    }
+}
+
+/// `{prio:N}` of the synthesised stop pass: the lowest-ranked call of every position it joins,
+/// so the policy makes it exactly when no other listed call applies.
+pub(crate) const STOP_PASS_PRIORITY: i16 = -100;
+
+/// The shared trie nodes and synthesised nodes of the system stops under one `(seat, vul)`
+/// condition: the opponents' `(any)` step and our stop pass, linked in a cycle
+/// (`any --P--> pass --(any)--> any`).
+#[derive(Clone, Copy)]
+struct StopPair {
+    any_trie: crate::trie::TrieId,
+    pass_trie: crate::trie::TrieId,
+    any_node: NodeId,
+    pass_node: NodeId,
+}
+
+/// Creates the synthesised rows, nodes and detached trie nodes of the stops under `(seat, vul)`.
+fn new_stop_pair(ex: &mut Expansion, seat: SeatCond, vul: VulCond) -> StopPair {
+    let synthesise = |ex: &mut Expansion, side: Side, priority: i16, description: &str| {
+        let row_id = RowId(ex.rows.len() as u32);
+        let node_id = NodeId(ex.nodes.len() as u32);
+        let path: Arc<[SidedPattern]> = Arc::from(Vec::new());
+        ex.rows.push(Row {
+            id: row_id,
+            span: Span {
+                file: crate::ast::FileId(0),
+                line: 0,
+                col: 0,
+                pasted_from: None,
+            },
+            path: Arc::clone(&path),
+            description_raw: description.to_string(),
+            // Nothing to recognise: defined as fully recognised, like an empty description.
+            recognition: Recognition {
+                ratio: 1.0,
+                ..Recognition::default()
+            },
+            expansions: vec![node_id],
+        });
+        ex.nodes.push(Node {
+            id: node_id,
+            row: row_id,
+            side,
+            path,
+            calls: Vec::new(),
+            call: Call::Pass,
+            binding: Binding::default(),
+            seat,
+            vul,
+            constraint: HandConstraint::ANY,
+            branch_weights: None,
+            priority,
+            volume_log2: estimate_volume_log2(&HandConstraint::ANY),
+            alertable: Alertability::Unspecified,
+            flags: crate::NodeFlags {
+                stop: side == Side::Us,
+                ..crate::NodeFlags::default()
+            },
+            description: description.to_string(),
+            children: Vec::new(),
+        });
+        node_id
+    };
+    let any_node = synthesise(ex, Side::Them, 0, "");
+    let pass_node = synthesise(ex, Side::Us, STOP_PASS_PRIORITY, "any hand (system stop)");
+    let any_trie = ex.trie.new_detached();
+    let pass_trie = ex.trie.new_detached();
+    let _ = ex.trie.push_entry(any_trie, seat, vul, any_node);
+    let _ = ex.trie.push_entry(pass_trie, seat, vul, pass_node);
+    ex.trie.link_call(any_trie, Call::Pass, pass_trie);
+    ex.trie.link_class(pass_trie, OppClass::AnyCall, any_trie);
+    StopPair {
+        any_trie,
+        pass_trie,
+        any_node,
+        pass_node,
+    }
+}
+
+/// Grafts every recorded system stop onto the trie (`docs/design/06-system.md` §4.5).
+///
+/// A stop at position `S` behaves exactly as if the rows
+///
+/// ```text
+/// (any)
+///   P = {prio:-100} any hand
+///     (any)
+///       P = {prio:-100} any hand
+///         ...
+/// ```
+///
+/// had been written under `S` without end (under the table's `#SEAT`/`#VUL`): from `S` the
+/// walk follows the `(any)` wildcard edge and our `P` edge alternately. Where such an edge
+/// already exists (a table that writes `(any)` or our pass there itself) the graft goes through
+/// the existing node, adding the entry the row would have added (an `(any)` entry unless one
+/// covers it; the stop pass unless an entry with the same conditions exists, whose empty
+/// placeholder description it fills, like [`handle_duplicate`] and
+/// [`fill_covered_placeholders`]); at the first missing edge it links to the shared
+/// [`StopPair`], whose two nodes loop. An exact opponents' call at `S` still wins over the
+/// wildcard (the walk never backtracks), so a table written for a particular call of theirs
+/// after the stop keeps its meaning.
+fn graft_stops(ex: &mut Expansion) {
+    if ex.stops.is_empty() {
+        return;
+    }
+    let sites = std::mem::take(&mut ex.stops);
+    let mut pairs: Vec<((SeatCond, VulCond), StopPair)> = Vec::new();
+    for site in &sites {
+        let Some(at) = ex.trie.find_path(site.we_opened, &site.edges) else {
+            continue;
+        };
+        let pair = match pairs.iter().find(|(k, _)| *k == (site.seat, site.vul)) {
+            Some(&(_, pair)) => pair,
+            None => {
+                let pair = new_stop_pair(ex, site.seat, site.vul);
+                pairs.push(((site.seat, site.vul), pair));
+                pair
+            }
+        };
+        let flagged: Vec<NodeId> = ex
+            .trie
+            .entries_at(at)
+            .filter(|&(s, v, _)| crate::trie::condition_covers(site.seat, site.vul, s, v))
+            .map(|(_, _, n)| n)
+            .collect();
+        for n in flagged {
+            ex.nodes[n.0 as usize].flags.stop = true;
+        }
+        let is_shared = |t: crate::trie::TrieId| {
+            pairs
+                .iter()
+                .any(|(_, p)| p.any_trie == t || p.pass_trie == t)
+        };
+        // The last call of the stop position is ours exactly when its depth has the parity of
+        // the opener's side (sides alternate from the opening bid).
+        let mut ours_next = (site.edges.len() % 2 == 0) == site.we_opened;
+        let mut cur = at;
+        loop {
+            if ours_next {
+                match ex.trie.find_child_call(cur, Call::Pass) {
+                    Some(next) if is_shared(next) => break,
+                    Some(next) => {
+                        graft_stop_pass_entry(ex, next, site, pair);
+                        cur = next;
+                    }
+                    None => {
+                        ex.trie.link_call(cur, Call::Pass, pair.pass_trie);
+                        break;
+                    }
+                }
+            } else {
+                match ex.trie.find_child_class(cur, OppClass::AnyCall) {
+                    Some(next) if is_shared(next) => break,
+                    Some(next) => {
+                        if !ex.trie.covering_entry_at(next, site.seat, site.vul) {
+                            let _ = ex.trie.push_entry(next, site.seat, site.vul, pair.any_node);
+                        }
+                        cur = next;
+                    }
+                    None => {
+                        ex.trie.link_class(cur, OppClass::AnyCall, pair.any_trie);
+                        break;
+                    }
+                }
+            }
+            ours_next = !ours_next;
+        }
+    }
+}
+
+/// Adds the stop pass at an existing trie node on a stop's path, as the row
+/// `P = {prio:-100} any hand` would have been added there (see [`graft_stops`]).
+fn graft_stop_pass_entry(
+    ex: &mut Expansion,
+    at: crate::trie::TrieId,
+    site: &StopSite,
+    pair: StopPair,
+) {
+    let targets: Vec<NodeId> = match ex.trie.push_entry(at, site.seat, site.vul, pair.pass_node) {
+        Ok(()) => ex
+            .trie
+            .entries_at(at)
+            .filter(|&(s, v, n)| {
+                n != pair.pass_node
+                    && !(s == site.seat && v == site.vul)
+                    && crate::trie::condition_covers(site.seat, site.vul, s, v)
+            })
+            .map(|(_, _, n)| n)
+            .collect(),
+        Err(existing) => vec![existing],
+    };
+    let template = ex.nodes[pair.pass_node.0 as usize].clone();
+    for target in targets {
+        let node = &mut ex.nodes[target.0 as usize];
+        if !node.description.is_empty() || node.is_synthesised() {
+            continue;
+        }
+        node.constraint = template.constraint.clone();
+        node.branch_weights = None;
+        node.priority = template.priority;
+        node.volume_log2 = template.volume_log2;
+        node.flags = template.flags.clone();
+        node.description = template.description.clone();
+        ex.lints.push(
+            Lint::info(
+                LintCode::DuplicatePath,
+                "a system stop filled this node's empty description with the stop pass",
+            )
+            .with_span(site.span.clone())
+            .with_node(target),
+        );
     }
 }
 
@@ -654,6 +902,24 @@ fn expand_table(table: &BidTable, meta: &SystemMeta, opts: &CompileOptions, ex: 
                 parent,
                 ex,
             );
+            let history_stop = table
+                .history_desc
+                .as_ref()
+                .is_some_and(|d| has_stop_annotation(&d.text));
+            if table.stop || history_stop {
+                if frame.edges.is_empty() {
+                    ex.lints.push(
+                        Lint::warning(
+                            LintCode::UnknownDirective,
+                            "#STOP at the top level of a table without a history row names no \
+                             position; ignored",
+                        )
+                        .with_span(table.span.clone()),
+                    );
+                } else {
+                    record_stop(frame, table.seat, table.vul, &table.span, ex);
+                }
+            }
         },
     );
 }
@@ -690,6 +956,7 @@ fn expand_history(
             Description::default()
         },
         children: Vec::new(),
+        stop: false,
         indent: 0,
         span: tok.span.clone(),
     };
@@ -785,6 +1052,9 @@ fn expand_children(
                     ex.nodes[p.0 as usize].children.push(node_id);
                 }
             }
+            if row.stop || has_stop_annotation(&row.description.text) {
+                record_stop(&next, seat, vul, &row.span, ex);
+            }
             expand_children(
                 &row.children,
                 we_opened,
@@ -822,6 +1092,9 @@ fn expand_children(
                 if !ex.nodes[p.0 as usize].children.contains(&node_id) {
                     ex.nodes[p.0 as usize].children.push(node_id);
                 }
+            }
+            if row.stop || has_stop_annotation(&row.description.text) {
+                record_stop(&next, seat, vul, &row.span, ex);
             }
             expand_children(
                 &row.children,
@@ -1863,6 +2136,7 @@ mod tests {
             calls,
             description: some_desc(text),
             children,
+            stop: false,
             indent: 0,
             span: test_span(),
         }
@@ -1876,6 +2150,7 @@ mod tests {
             history,
             history_desc: None,
             rows,
+            stop: false,
             span: test_span(),
         }
     }

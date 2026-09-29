@@ -116,7 +116,8 @@ pub struct Node {
     pub row: RowId,
     /// Whose hand the constraint describes.
     pub side: Side,
-    /// Pattern path (shared with the row).
+    /// Pattern path (shared with the row). Empty only for the two nodes the compiler
+    /// synthesises for system stops ([`Node::is_synthesised`]).
     pub path: Arc<[SidedPattern]>,
     /// Concrete calls from the opening bid up to and including this call, implicit passes
     /// included. An opponents' wildcard step (`(any)`/`(bid)`/`(suit)`, a trie
@@ -148,6 +149,17 @@ pub struct Node {
     pub description: String,
     /// Row-nodes one actual call deeper (implicit passes skipped).
     pub children: Vec<NodeId>,
+}
+
+impl Node {
+    /// `true` for a node the compiler synthesised rather than expanded from a row: the stop
+    /// pass (ours, `Pass` with any hand at `{prio:-100}`, flagged [`NodeFlags::stop`]) and the
+    /// opponents' `(any)` step before it, which every system stop shares
+    /// (`docs/design/06-system.md` §4.5). Such a node has no position of its own (an empty
+    /// [`Node::path`] and [`Node::calls`]) and no parent; its row is a synthesised row too.
+    pub fn is_synthesised(&self) -> bool {
+        self.path.is_empty()
+    }
 }
 
 /// Alert status of a call.
@@ -190,6 +202,11 @@ pub struct NodeFlags {
     pub agreed_suit: Option<Suit>,
     /// `S/O`, `T/P`.
     pub sign_off: bool,
+    /// A system stop (`{stop}`, `#STOP`, `docs/design/06-system.md` §4.5): once this call is
+    /// made, the partnership passes with any hand whatever the opponents call. Set on the nodes
+    /// of a stop row and on the synthesised stop pass itself ([`Node::is_synthesised`]).
+    /// Informational: resolution follows the trie edges the compiler grafted for the stop.
+    pub stop: bool,
 }
 
 /// Recognition statistics of one description.

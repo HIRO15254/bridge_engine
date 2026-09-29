@@ -443,6 +443,7 @@ fn parse_table_paragraph(
     let mut table_unit: Option<u16> = None;
     let mut skip_indent: Option<u16> = None;
     let mut history_no_trailing = false;
+    let mut table_stop = false;
 
     for line in &expanded {
         let indent = leading_ws(&line.text) as u16;
@@ -465,6 +466,26 @@ fn parse_table_paragraph(
             continue;
         }
         if trimmed.trim_end() == "#BIDTABLE" {
+            continue;
+        }
+        if trimmed.trim_end() == "#STOP" {
+            // A system stop for the enclosing row, i.e. the nearest open row indented less than
+            // the directive (exactly where a row at this indentation would be attached), or for
+            // the history row's position at the table's top level.
+            while let Some(top) = stack.last() {
+                if top.indent >= indent {
+                    let popped = stack.pop().expect("just checked non-empty");
+                    attach(&mut stack, &mut roots, popped.node);
+                } else {
+                    break;
+                }
+            }
+            match stack.last_mut() {
+                Some(parent) => parent.node.stop = true,
+                None => table_stop = true,
+            }
+            active = ActiveDesc::None;
+            active_col = None;
             continue;
         }
         if trimmed.starts_with('#') {
@@ -594,6 +615,7 @@ fn parse_table_paragraph(
                         col: head.desc_col,
                     },
                     children: Vec::new(),
+                    stop: false,
                     indent: head.indent,
                     span,
                 };
@@ -675,6 +697,7 @@ fn parse_table_paragraph(
         history,
         history_desc,
         rows: roots,
+        stop: table_stop,
         span: table_span,
     }))
 }

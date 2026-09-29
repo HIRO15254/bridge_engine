@@ -125,6 +125,9 @@ pub struct BidTable {
     pub history_desc: Option<Description>,
     /// Top-level rows.
     pub rows: Vec<BmlNode>,
+    /// A `#STOP` directive at the table's top level: the position the history row names is a
+    /// system stop (see [`BmlNode::stop`]).
+    pub stop: bool,
     /// Location.
     pub span: Span,
 }
@@ -138,6 +141,11 @@ pub struct BmlNode {
     pub description: Description,
     /// Sub-rows.
     pub children: Vec<BmlNode>,
+    /// A `#STOP` directive among the sub-rows: the partnership has stopped at this row's
+    /// position, so from here on it passes with any hand whatever the opponents call
+    /// (`docs/design/06-system.md` §4.5). The `{stop}` description annotation means the same
+    /// and is read from the description itself.
+    pub stop: bool,
     /// Indentation in columns.
     pub indent: u16,
     /// Location.

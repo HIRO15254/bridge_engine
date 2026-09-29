@@ -429,9 +429,11 @@ fn check_sibling_ambiguity(ir: &mut SystemIR) {
         check_sibling_group(ir, &parent.children, &opts, &mut new_lints);
     }
 
+    // The synthesised stop nodes have no parent either, but they are not openings.
     let roots: Vec<NodeId> = ir
         .nodes
         .iter()
+        .filter(|n| !n.is_synthesised())
         .map(|n| n.id)
         .filter(|id| !has_parent.contains(id))
         .collect();

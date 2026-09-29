@@ -671,6 +671,7 @@ fn derive_flags(
         transfer_to: None,
         agreed_suit: if has_support { ctx.agreed_suit } else { None },
         sign_off,
+        stop: normalized.stop,
     }
 }
 
