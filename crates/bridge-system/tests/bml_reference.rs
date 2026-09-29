@@ -152,9 +152,7 @@ fn every_bml_block_compiles_without_errors() {
 /// Every `LintCode` variant (parsed from the enum in `lint.rs`) is documented.
 #[test]
 fn every_lint_code_is_documented() {
-    let start = LINT_RS
-        .find("pub enum LintCode {")
-        .expect("LintCode enum");
+    let start = LINT_RS.find("pub enum LintCode {").expect("LintCode enum");
     let body = &LINT_RS[start..];
     let body = &body[..body.find("\n}").expect("end of LintCode")];
     let mut missing = Vec::new();
