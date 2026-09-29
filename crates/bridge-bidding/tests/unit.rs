@@ -701,3 +701,13 @@ fn recomputed_region_when_a_higher_sibling_is_illegal() {
     }
     assert!(with_hearts > 0 && without > 0);
 }
+
+/// A hand-built IR leaves every node's path empty; that does not make its nodes synthesised
+/// system-stop nodes (`Node::is_synthesised` reads the explicit flag).
+#[test]
+fn hand_built_nodes_are_not_synthesised() {
+    let sys = sayc_system();
+    assert!(!sys.sys.nodes.is_empty());
+    assert!(sys.sys.nodes.iter().all(|n| n.path.is_empty()));
+    assert!(!sys.sys.nodes.iter().any(|n| n.is_synthesised()));
+}

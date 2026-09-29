@@ -1206,11 +1206,8 @@ mod phase4_tables {
         assert_eq!(choice.source, ChoiceSource::System);
         let node = table.systems[0].node(choice.node.expect("a system node"));
         assert!(node.is_synthesised() && node.flags.stop, "{node:?}");
-        assert!(
-            choice.explanation.contains("system stop"),
-            "{}",
-            choice.explanation
-        );
+        // Explained like the `P = {prio:-100} {stop} any hand` rows it stands for.
+        assert_eq!(choice.explanation, "any hand");
     }
 
     /// Competitive decisions after the partnership stopped (#P10): at these positions the pass
@@ -1401,7 +1398,7 @@ mod phase4_tables {
     #[test]
     fn opener_competes_after_an_overcall() {
         check_system(&[
-            ("1C 1D P 1NT", "K32.32.A32.KQJ432", "2C"),
+            ("1C 1D P 1NT", "K3.32.A32.KQJ432", "2C"),
             ("1C 1D P 1NT", "K32.Q32.A32.K432", "P"),
             ("1D 1H X 1NT", "KJ32.32.AQ432.K2", "2S"),
             ("1D 1S 2D 2S", "32.K32.AKJ432.Q2", "3D"),

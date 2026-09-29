@@ -74,9 +74,11 @@ struct StopSite {
     span: Span,
 }
 
-/// Whether a row's description carries the `{stop}` annotation.
+/// Whether a row's description carries the `{stop}` annotation, in any spelling the description
+/// normaliser accepts (`{stop}`, `{ stop }`): the one that sets [`crate::NodeFlags::stop`].
 fn has_stop_annotation(text: &str) -> bool {
-    text.contains("{stop") && crate::compile::desc::normalize::normalize(text).stop
+    // A cheap pre-filter; `normalize` decides.
+    text.contains("stop") && crate::compile::desc::normalize::normalize(text).stop
 }
 
 /// Records a stop at `frame`'s position.
@@ -158,19 +160,91 @@ fn demote_illegal_call_for_bindings_that_succeeded(ex: &mut Expansion) {
 /// so the policy makes it exactly when no other listed call applies.
 pub(crate) const STOP_PASS_PRIORITY: i16 = -100;
 
-/// The shared trie nodes and synthesised nodes of the system stops under one `(seat, vul)`
-/// condition: the opponents' `(any)` step and our stop pass, linked in a cycle
-/// (`any --P--> pass --(any)--> any`).
+/// One `(seat, vul)` condition of a system stop (the `#SEAT`/`#VUL` of the table that wrote it).
+type StopCond = (SeatCond, VulCond);
+
+/// The synthesised nodes of the system stops under one `(seat, vul)` condition: the opponents'
+/// `(any)` step and our stop pass.
 #[derive(Clone, Copy)]
-struct StopPair {
-    any_trie: crate::trie::TrieId,
-    pass_trie: crate::trie::TrieId,
+struct StopNodes {
     any_node: NodeId,
     pass_node: NodeId,
 }
 
-/// Creates the synthesised rows, nodes and detached trie nodes of the stops under `(seat, vul)`.
-fn new_stop_pair(ex: &mut Expansion, seat: SeatCond, vul: VulCond) -> StopPair {
+/// A detached cycle of two trie nodes (`any --P--> pass --(any)--> any`) whose entries are those
+/// the stops under `conds` add, in the order the stops were written: the endless tail of the
+/// chain rows every stop under those conditions stands for.
+struct StopLoop {
+    conds: Vec<StopCond>,
+    any_trie: crate::trie::TrieId,
+    pass_trie: crate::trie::TrieId,
+}
+
+/// The synthesised nodes (one pair per condition) and the shared loops (one per set of
+/// conditions met at one edge) of every system stop of a file.
+#[derive(Default)]
+struct StopGraft {
+    nodes: Vec<(StopCond, StopNodes)>,
+    loops: Vec<StopLoop>,
+}
+
+impl StopGraft {
+    /// The synthesised nodes under `cond`, created on first use.
+    fn nodes_for(&mut self, ex: &mut Expansion, cond: StopCond) -> StopNodes {
+        if let Some(&(_, nodes)) = self.nodes.iter().find(|(c, _)| *c == cond) {
+            return nodes;
+        }
+        let nodes = new_stop_nodes(ex, cond.0, cond.1);
+        self.nodes.push((cond, nodes));
+        nodes
+    }
+
+    /// The index of the loop carrying exactly `conds` (in this order), created on first use.
+    fn loop_for(&mut self, ex: &mut Expansion, conds: &[StopCond]) -> usize {
+        if let Some(i) = self.loops.iter().position(|l| l.conds == conds) {
+            return i;
+        }
+        let any_trie = ex.trie.new_detached();
+        let pass_trie = ex.trie.new_detached();
+        for &(seat, vul) in conds {
+            let nodes = self.nodes_for(ex, (seat, vul));
+            // The entries the chain rows under each condition would have added, in order: the
+            // stop pass unless one with identical conditions is there, the `(any)` step unless
+            // an entry covers it (as `graft_stops` does at existing nodes).
+            let _ = ex.trie.push_entry(pass_trie, seat, vul, nodes.pass_node);
+            if !ex.trie.covering_entry_at(any_trie, seat, vul) {
+                let _ = ex.trie.push_entry(any_trie, seat, vul, nodes.any_node);
+            }
+        }
+        ex.trie.link_call(any_trie, Call::Pass, pass_trie);
+        ex.trie.link_class(pass_trie, OppClass::AnyCall, any_trie);
+        self.loops.push(StopLoop {
+            conds: conds.to_vec(),
+            any_trie,
+            pass_trie,
+        });
+        self.loops.len() - 1
+    }
+
+    /// The loop `t` belongs to, if it is a loop node.
+    fn loop_of(&self, t: crate::trie::TrieId) -> Option<usize> {
+        self.loops
+            .iter()
+            .position(|l| l.any_trie == t || l.pass_trie == t)
+    }
+
+    /// The trie node of loop `l` entered by our pass (`ours`) or by the opponents' `(any)`.
+    fn target(&self, l: usize, ours: bool) -> crate::trie::TrieId {
+        if ours {
+            self.loops[l].pass_trie
+        } else {
+            self.loops[l].any_trie
+        }
+    }
+}
+
+/// Creates the two synthesised rows and nodes of the stops under `(seat, vul)`.
+fn new_stop_nodes(ex: &mut Expansion, seat: SeatCond, vul: VulCond) -> StopNodes {
     let synthesise = |ex: &mut Expansion, side: Side, priority: i16, description: &str| {
         let row_id = RowId(ex.rows.len() as u32);
         let node_id = NodeId(ex.nodes.len() as u32);
@@ -209,6 +283,7 @@ fn new_stop_pair(ex: &mut Expansion, seat: SeatCond, vul: VulCond) -> StopPair {
             alertable: Alertability::Unspecified,
             flags: crate::NodeFlags {
                 stop: side == Side::Us,
+                synthesised: true,
                 ..crate::NodeFlags::default()
             },
             description: description.to_string(),
@@ -217,16 +292,14 @@ fn new_stop_pair(ex: &mut Expansion, seat: SeatCond, vul: VulCond) -> StopPair {
         node_id
     };
     let any_node = synthesise(ex, Side::Them, 0, "");
-    let pass_node = synthesise(ex, Side::Us, STOP_PASS_PRIORITY, "any hand (system stop)");
-    let any_trie = ex.trie.new_detached();
-    let pass_trie = ex.trie.new_detached();
-    let _ = ex.trie.push_entry(any_trie, seat, vul, any_node);
-    let _ = ex.trie.push_entry(pass_trie, seat, vul, pass_node);
-    ex.trie.link_call(any_trie, Call::Pass, pass_trie);
-    ex.trie.link_class(pass_trie, OppClass::AnyCall, any_trie);
-    StopPair {
-        any_trie,
-        pass_trie,
+    // The row every stop stands for, as SAYC writes it at its stop sites.
+    let pass_node = synthesise(
+        ex,
+        Side::Us,
+        STOP_PASS_PRIORITY,
+        "{prio:-100} {stop} any hand",
+    );
+    StopNodes {
         any_node,
         pass_node,
     }
@@ -244,34 +317,38 @@ fn new_stop_pair(ex: &mut Expansion, seat: SeatCond, vul: VulCond) -> StopPair {
 ///         ...
 /// ```
 ///
-/// had been written under `S` without end (under the table's `#SEAT`/`#VUL`): from `S` the
-/// walk follows the `(any)` wildcard edge and our `P` edge alternately. Where such an edge
-/// already exists (a table that writes `(any)` or our pass there itself) the graft goes through
-/// the existing node, adding the entry the row would have added (an `(any)` entry unless one
-/// covers it; the stop pass unless an entry with the same conditions exists, whose empty
-/// placeholder description it fills, like [`handle_duplicate`] and
-/// [`fill_covered_placeholders`]); at the first missing edge it links to the shared
-/// [`StopPair`], whose two nodes loop. An exact opponents' call at `S` still wins over the
-/// wildcard (the walk never backtracks), so a table written for a particular call of theirs
-/// after the stop keeps its meaning.
+/// had been written under `S` without end (under the table's `#SEAT`/`#VUL`) at the end of the
+/// system, after every table: from `S` the walk follows the `(any)` wildcard edge and our `P`
+/// edge alternately. Where such an edge already exists (a table that writes `(any)` or our pass
+/// there itself) the graft goes through the existing node, adding the entry the row would have
+/// added (an `(any)` entry unless one covers it; the stop pass unless an entry with the same
+/// conditions exists, whose empty placeholder description it fills, like [`handle_duplicate`]
+/// and [`fill_covered_placeholders`]); at the first missing edge it links to the shared
+/// [`StopLoop`] of the stop's condition, whose two nodes loop. Stops under several conditions
+/// that meet at one edge share a loop carrying the entries of all of them: when the walk reaches
+/// a loop that lacks the stop's condition, the edge is pointed at the loop of the union instead
+/// (the loop it left keeps serving the other positions linked to it).
+///
+/// Because the rows count as written last, every row and wildcard edge a table writes takes
+/// precedence over the stop, whatever the file order: an exact opponents' call at `S` wins over
+/// the wildcard, a table's `(bid)`/`(suit)`/`(X)` edge at `S` is tried before the stop's
+/// `(any)` (the walk never backtracks, so the stop does not continue into that subtree), and a
+/// table's own pass row on the walk keeps its priority and description.
 fn graft_stops(ex: &mut Expansion) {
     if ex.stops.is_empty() {
         return;
     }
     let sites = std::mem::take(&mut ex.stops);
-    let mut pairs: Vec<((SeatCond, VulCond), StopPair)> = Vec::new();
+    let mut graft = StopGraft::default();
     for site in &sites {
         let Some(at) = ex.trie.find_path(site.we_opened, &site.edges) else {
             continue;
         };
-        let pair = match pairs.iter().find(|(k, _)| *k == (site.seat, site.vul)) {
-            Some(&(_, pair)) => pair,
-            None => {
-                let pair = new_stop_pair(ex, site.seat, site.vul);
-                pairs.push(((site.seat, site.vul), pair));
-                pair
-            }
-        };
+        let cond = (site.seat, site.vul);
+        let StopNodes {
+            any_node,
+            pass_node,
+        } = graft.nodes_for(ex, cond);
         let flagged: Vec<NodeId> = ex
             .trie
             .entries_at(at)
@@ -281,43 +358,47 @@ fn graft_stops(ex: &mut Expansion) {
         for n in flagged {
             ex.nodes[n.0 as usize].flags.stop = true;
         }
-        let is_shared = |t: crate::trie::TrieId| {
-            pairs
-                .iter()
-                .any(|(_, p)| p.any_trie == t || p.pass_trie == t)
-        };
         // The last call of the stop position is ours exactly when its depth has the parity of
         // the opener's side (sides alternate from the opening bid).
         let mut ours_next = (site.edges.len() % 2 == 0) == site.we_opened;
         let mut cur = at;
         loop {
-            if ours_next {
-                match ex.trie.find_child_call(cur, Call::Pass) {
-                    Some(next) if is_shared(next) => break,
-                    Some(next) => {
-                        graft_stop_pass_entry(ex, next, site, pair);
-                        cur = next;
-                    }
-                    None => {
-                        ex.trie.link_call(cur, Call::Pass, pair.pass_trie);
-                        break;
-                    }
-                }
+            let (edge, next) = if ours_next {
+                (
+                    Edge::Call(Call::Pass),
+                    ex.trie.find_child_call(cur, Call::Pass),
+                )
             } else {
-                match ex.trie.find_child_class(cur, OppClass::AnyCall) {
-                    Some(next) if is_shared(next) => break,
-                    Some(next) => {
-                        if !ex.trie.covering_entry_at(next, site.seat, site.vul) {
-                            let _ = ex.trie.push_entry(next, site.seat, site.vul, pair.any_node);
-                        }
-                        cur = next;
-                    }
-                    None => {
-                        ex.trie.link_class(cur, OppClass::AnyCall, pair.any_trie);
-                        break;
-                    }
+                (
+                    Edge::Class(OppClass::AnyCall),
+                    ex.trie.find_child_class(cur, OppClass::AnyCall),
+                )
+            };
+            let Some(next) = next else {
+                let l = graft.loop_for(ex, &[cond]);
+                let to = graft.target(l, ours_next);
+                match edge {
+                    Edge::Call(call) => ex.trie.link_call(cur, call, to),
+                    Edge::Class(class) => ex.trie.link_class(cur, class, to),
                 }
+                break;
+            };
+            if let Some(l) = graft.loop_of(next) {
+                if !graft.loops[l].conds.contains(&cond) {
+                    let mut conds = graft.loops[l].conds.clone();
+                    conds.push(cond);
+                    let union = graft.loop_for(ex, &conds);
+                    let to = graft.target(union, ours_next);
+                    ex.trie.relink(cur, edge, to);
+                }
+                break;
             }
+            if ours_next {
+                graft_stop_pass_entry(ex, next, site, pass_node);
+            } else if !ex.trie.covering_entry_at(next, site.seat, site.vul) {
+                let _ = ex.trie.push_entry(next, site.seat, site.vul, any_node);
+            }
+            cur = next;
             ours_next = !ours_next;
         }
     }
@@ -329,14 +410,14 @@ fn graft_stop_pass_entry(
     ex: &mut Expansion,
     at: crate::trie::TrieId,
     site: &StopSite,
-    pair: StopPair,
+    pass_node: NodeId,
 ) {
-    let targets: Vec<NodeId> = match ex.trie.push_entry(at, site.seat, site.vul, pair.pass_node) {
+    let targets: Vec<NodeId> = match ex.trie.push_entry(at, site.seat, site.vul, pass_node) {
         Ok(()) => ex
             .trie
             .entries_at(at)
             .filter(|&(s, v, n)| {
-                n != pair.pass_node
+                n != pass_node
                     && !(s == site.seat && v == site.vul)
                     && crate::trie::condition_covers(site.seat, site.vul, s, v)
             })
@@ -344,7 +425,7 @@ fn graft_stop_pass_entry(
             .collect(),
         Err(existing) => vec![existing],
     };
-    let template = ex.nodes[pair.pass_node.0 as usize].clone();
+    let template = ex.nodes[pass_node.0 as usize].clone();
     for target in targets {
         let node = &mut ex.nodes[target.0 as usize];
         if !node.description.is_empty() || node.is_synthesised() {
@@ -354,7 +435,10 @@ fn graft_stop_pass_entry(
         node.branch_weights = None;
         node.priority = template.priority;
         node.volume_log2 = template.volume_log2;
-        node.flags = template.flags.clone();
+        node.flags = crate::NodeFlags {
+            synthesised: false,
+            ..template.flags.clone()
+        };
         node.description = template.description.clone();
         ex.lints.push(
             Lint::info(

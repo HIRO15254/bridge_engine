@@ -876,7 +876,7 @@ pub(crate) fn mirror_call<'t>(
         }
         if spec.want_text {
             if let Some(id) = node {
-                text = pos.system.node(id).description.clone();
+                text = pos.system.node(id).explanation().into_owned();
             } else if has_x {
                 text = if prefix.calls().iter().all(|&c| c == Call::Pass) {
                     "no opening bid".to_string()
@@ -962,7 +962,7 @@ pub(crate) fn mirror_call<'t>(
     let shadowed = !has_x && !has_y;
     if shadowed && spec.want_text {
         let base = match node {
-            Some(id) => pos.system.node(id).description.clone(),
+            Some(id) => pos.system.node(id).explanation().into_owned(),
             None => natural_position(
                 spec.table,
                 &pos,

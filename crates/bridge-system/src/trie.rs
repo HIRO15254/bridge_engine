@@ -508,6 +508,27 @@ impl AuctionTrie {
         classes.push((class, to));
     }
 
+    /// Points `at`'s existing exact (`Edge::Call`) or wildcard (`Edge::Class`) edge at `to`
+    /// instead, keeping its place among `at`'s wildcard edges; the edge must exist.
+    pub(crate) fn relink(&mut self, at: TrieId, edge: Edge, to: TrieId) {
+        let node = &mut self.nodes[at.0 as usize];
+        let slot = match edge {
+            Edge::Call(call) => {
+                let idx = call.index();
+                node.exact
+                    .iter_mut()
+                    .find(|(k, _)| *k == idx)
+                    .map(|(_, child)| child)
+            }
+            Edge::Class(class) => node
+                .classes
+                .iter_mut()
+                .find(|(c, _)| *c == class)
+                .map(|(_, child)| child),
+        };
+        *slot.expect("relink: the edge exists") = to;
+    }
+
     /// The `(seat, vul, node)` entries at `at`, in insertion order.
     pub(crate) fn entries_at(
         &self,

@@ -478,6 +478,7 @@ PHASE 4 (revised):
 (a) Coverage:
 - [G] >= 80% of 1000 fixed-seed SAYC-generated auctions (random deals, replay with natural completion) are all-system: no natural completion and no gap. This is the coverage the system author controls, and it is not tautological, because natural completion marks the holes.
 - [C] On the corpus SAYC-compatible-opening subset (the true opener's hand lies in X of the recorded opening), call-level system resolution (Exact or Partial) is >= 80%.
+  - 統合時の注記: [G] と同じく strict 集計に適用する。呼び手のシステムが既定パス (priority ≤ −100 のパス、`{stop}` の行やシステム停止の合成パス) しか出さない位置の Exact / Partial は解決に数えない (`xtask coverage` の `system_resolution_strict_rate`)。素の値も並べて報告する。理由: 停止は際限が無いので、停止の後の人のパスがすべて「解決」になり、作者が書いていないカバレッジが素の値に入る (`12-roadmap.md` フェーズ 4 の停止の節)。
 - The auction-level all-Exact rate is reported for the whole corpus, the eval split and the subset, compared against the 4.1 baseline and required not to fall.
 - EmptySupport: 0 sampler EmptySupport over the corpus under the default mode; seats with empty strict support are reported.
 (b) Reproduction:

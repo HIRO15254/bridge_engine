@@ -49,8 +49,8 @@ pub const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Bumped on every breaking change of the serialised IR.
 ///
 /// 1: phase 3. 2: phase 4 (`NodeFlags::stop`; the trie links system stops to shared detached
-/// nodes).
-pub const IR_FORMAT: u32 = 2;
+/// nodes). 3: `NodeFlags::synthesised`.
+pub const IR_FORMAT: u32 = 3;
 /// Revision of what [`crate::compile()`] produces for a given source and options, bumped
 /// whenever that output changes without a format change (so without an [`IR_FORMAT`] bump):
 /// new lints, a different expansion. It is part of the `cache::SystemCache` key (feature
@@ -59,5 +59,8 @@ pub const IR_FORMAT: u32 = 2;
 ///
 /// 1: phase 3. 2: phase 4 (the exclusive-index lints `ShadowedBranch` and
 /// `OverlappingBranches` are stored in `SystemIR::lints`). 3: system stops (`#STOP`, `{stop}`).
-/// 4: relative levels (`cS`, `jY`) and the lints `LevelWithoutAnchor` / `NoSufficientLevel`.
-pub const COMPILE_REVISION: u32 = 4;
+/// 4: stops under different `#SEAT`/`#VUL` conditions that meet at one edge share a loop
+/// carrying every condition's entries. 5: the synthesised stop pass's description is the row it
+/// stands for, `{prio:-100} {stop} any hand`. 6: relative levels (`cS`, `jY`) and the lints
+/// `LevelWithoutAnchor` / `NoSufficientLevel`; suit-length comparisons in descriptions.
+pub const COMPILE_REVISION: u32 = 6;
