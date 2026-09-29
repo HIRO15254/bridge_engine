@@ -68,7 +68,9 @@ D = 10+ hcp, 0--2Y
 ",
     );
     no_errors(&ir);
-    for pos in ["1H 2C X", "1H 2D X", "1H 2S X", "1S 2H X", "1D 2C X", "1C 2D X"] {
+    for pos in [
+        "1H 2C X", "1H 2D X", "1H 2S X", "1S 2H X", "1D 2C X", "1C 2D X",
+    ] {
         assert!(has_position(&ir, pos), "{pos} missing");
     }
     // Distinct and unused: Y never repeats X's strain.
