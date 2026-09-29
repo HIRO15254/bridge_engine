@@ -1408,4 +1408,31 @@ mod phase4_tables {
             ("1D 1S 2D 2S", "32.K432.AKJ4.Q32", "P"),
         ]);
     }
+
+    /// Over the response to their 1NT or weak two (#P12 batch 3): a natural six-card overcall,
+    /// a takeout double of the weak two with an opening hand, and a pass otherwise.
+    #[test]
+    fn over_the_response_to_their_notrump_or_weak_two() {
+        check_system(&[
+            ("1NT P 2C", "32.KQJ932.K32.32", "2H"),
+            ("1NT P 2C", "K32.Q432.K32.432", "P"),
+            ("1NT P 2NT", "32.32.AQJ932.K32", "3D"),
+            ("2H P 2NT", "AQ32.3.KQ32.A432", "X"),
+            ("2H P 2NT", "AKJ932.32.A32.32", "3S"),
+            ("2H P 2NT", "Q32.Q32.Q432.432", "P"),
+            ("2D P 2H P 3H P P", "AQ32.3.KJ32.A432", "X"),
+        ]);
+    }
+
+    /// Escaping from a doubled or passed-out notrump (#P12 batch 3): responder bids a five-card
+    /// suit; after their overcall of his response he rebids a six-card suit.
+    #[test]
+    fn responder_escapes_and_rebids() {
+        check_system(&[
+            ("1D 1H X 1NT P P", "KJ432.32.432.Q32", "2S"),
+            ("1D 1S 1NT X P P", "32.QJ432.K32.432", "2H"),
+            ("1D P 1H 2C P P", "32.KQJ932.432.Q2", "2H"),
+            ("1D P 1H 2C P P", "Q32.KJ32.432.Q32", "P"),
+        ]);
+    }
 }

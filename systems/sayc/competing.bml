@@ -449,3 +449,222 @@ cM = {prio:3} 14+ hcp, 4+M
 cX = {prio:2} 14+ hcp, 6+X
   #STOP
 #STOP
+
+** Over their response to a notrump opening (P12 batch 3)
+
+The booklet gives no conventional defense to 1NT, so over the response we stay
+natural: a suit bid is a natural overcall with a six-card suit (not in the suit
+a transfer shows); over their natural 2NT a three-level suit is natural.
+Everything else passes, and the partnership stops. (A lead-directing double of
+an artificial response is standard practice too, but the notrump tables have no
+continuation for the opener's side after it, so it is not written here: see
+NOTES.md #P12.)
+
+(1N)-P-(2C)-
+2D = {prio:1} 8--15 hcp, 6+!d
+  #STOP
+2H = {prio:1} 8--15 hcp, 6+!h
+  #STOP
+2S = {prio:1} 8--15 hcp, 6+!s
+  #STOP
+#STOP
+
+(1N)-P-(2D)-
+2S = {prio:1} 8--15 hcp, 6+!s
+  #STOP
+3C = {prio:1} 10--15 hcp, 6+!c
+  #STOP
+#STOP
+
+(1N)-P-(2H)-
+3C = {prio:1} 10--15 hcp, 6+!c
+  #STOP
+3D = {prio:1} 10--15 hcp, 6+!d
+  #STOP
+#STOP
+
+(1N)-P-(2S)-
+3D = {prio:1} 10--15 hcp, 6+!d
+  #STOP
+3H = {prio:1} 10--15 hcp, 6+!h
+  #STOP
+#STOP
+
+(1N)-P-(2N)-
+cM = {prio:1} 10--15 hcp, 6+M
+  #STOP
+cm = {prio:1} 10--15 hcp, 6+m
+  #STOP
+#STOP
+
+When the notrump responder doubles that overcall (for penalty, `notrump.bml`),
+the notrump side has nothing more to say.
+
+1N-(P)-2N-(3X)-D-
+#STOP
+
+** Over the response to their weak two-bid (P12 batch 3)
+
+Over the 2NT inquiry (and opener's answer), and over a forcing new suit, the
+direct seat acts as over the weak two itself (`defense.bml`), a little
+stronger since the responder has shown values: a takeout double of their suit
+with an opening hand and shortness, or a natural six-card suit with 11--16.
+In the balancing seat after they stop in three of a suit the same calls.
+(The tables name the weak twos, 2!d 2!h 2!s: a pattern `(2X)` would also
+match the strong 2!c.)
+
+#CUT over-weak-two-response
+D = {prio:1} 13+ hcp, 0--1!\t
+  #STOP
+cM = {prio:2} 11--16 hcp, 6+M
+  #STOP
+cm = {prio:2} 11--16 hcp, 6+m
+  #STOP
+#STOP
+#ENDCUT
+
+#CUT over-weak-two-new-suit
+cM = {prio:2} 12--16 hcp, 6+M
+  #STOP
+cm = {prio:2} 12--16 hcp, 6+m
+  #STOP
+#STOP
+#ENDCUT
+
+#CUT balancing-over-their-fit
+D = {prio:1} 12+ hcp, 0--1!\t
+  #STOP
+cM = {prio:2} 10--15 hcp, 6+M
+  #STOP
+cm = {prio:2} 10--15 hcp, 6+m
+  #STOP
+#STOP
+#ENDCUT
+
+(2D)-P-(2N)-
+#PASTE over-weak-two-response \t=d
+
+(2D)-P-(2N)-P-(3D)-
+#PASTE over-weak-two-response \t=d
+
+(2D)-P-(2N)-P-(3D)-P-(P)-
+#PASTE over-weak-two-response \t=d
+
+(2H)-P-(2N)-
+#PASTE over-weak-two-response \t=h
+
+(2H)-P-(2N)-P-(3H)-
+#PASTE over-weak-two-response \t=h
+
+(2H)-P-(2N)-P-(3H)-P-(P)-
+#PASTE over-weak-two-response \t=h
+
+(2S)-P-(2N)-
+#PASTE over-weak-two-response \t=s
+
+(2S)-P-(2N)-P-(3S)-
+#PASTE over-weak-two-response \t=s
+
+(2S)-P-(2N)-P-(3S)-P-(P)-
+#PASTE over-weak-two-response \t=s
+
+(2D)-P-(3C)-
+#PASTE over-weak-two-new-suit
+
+(2H)-P-(3C)-
+#PASTE over-weak-two-new-suit
+
+(2H)-P-(3D)-
+#PASTE over-weak-two-new-suit
+
+(2S)-P-(3C)-
+#PASTE over-weak-two-new-suit
+
+(2S)-P-(3D)-
+#PASTE over-weak-two-new-suit
+
+(2S)-P-(3H)-
+#PASTE over-weak-two-new-suit
+
+(2D)-P-(2H)-
+#STOP
+
+(2D)-P-(2H)-P-(3H)-
+#STOP
+
+(2D)-P-(2H)-P-(3H)-P-(P)-
+#PASTE balancing-over-their-fit \t=h
+
+(2D)-P-(2S)-
+#STOP
+
+(2D)-P-(2S)-P-(3S)-
+#STOP
+
+(2D)-P-(2S)-P-(3S)-P-(P)-
+#PASTE balancing-over-their-fit \t=s
+
+(2H)-P-(2S)-
+#STOP
+
+(2H)-P-(2S)-P-(3S)-
+#STOP
+
+(2H)-P-(2S)-P-(3S)-P-(P)-
+#PASTE balancing-over-their-fit \t=s
+
+** Responder and opener after they double or overcall again (P12 batch 3)
+
+Responder escapes from a doubled or passed-out notrump with a five-card suit
+at the two level; after responder's one-level response and their overcall, a
+responder with a six-card suit rebids it when opener passes.
+
+1X-(1Y)-D-(1N)-P-(P)-
+cM = {prio:2} 6--10 hcp, 5+M
+  #STOP
+cm = {prio:2} 6--10 hcp, 5+m
+  #STOP
+#STOP
+
+1X-(1Y)-1N-(D)-P-(P)-
+cM = {prio:2} 0--10 hcp, 5+M
+  #STOP
+cm = {prio:2} 0--10 hcp, 5+m
+  #STOP
+cX = {prio:1} 0--10 hcp, 4+X
+  #STOP
+#STOP
+
+1X-(P)-1Y-(2Z)-P-(P)-
+cY = {prio:1} 6--10 hcp, 6+Y
+  #STOP
+#STOP
+
+1X-(P)-1Z-(2Y)-P-(P)-
+cZ = {prio:1} 6--10 hcp, 6+Z
+  #STOP
+#STOP
+
+1Y-(P)-1Z-(2X)-P-(P)-
+cZ = {prio:1} 6--10 hcp, 6+Z
+  #STOP
+#STOP
+
+Opener, when the balancing double's partner has bid and responder has passed,
+and after a double of our 1NT response or a cuebid by their advancer, has the
+same calls as before.
+
+1X-(P)-P-(D)-P-(1Y)-P-(P)-
+#PASTE opener-after-their-balance \S=X
+
+1X-(P)-P-(D)-P-(2Y)-P-(P)-
+#PASTE opener-after-their-balance \S=X
+
+1Y-(P)-P-(D)-P-(2X)-P-(P)-
+#PASTE opener-after-their-balance \S=Y
+
+1X-(1Y)-1N-(D)-
+#PASTE opener-competes \S=X
+
+1X-(1Y)-P-(2X)-
+#PASTE opener-competes \S=X
