@@ -1263,4 +1263,18 @@ mod phase4_tables {
             ("1H 2H 3H", "Q32.32.K5432.432", "3S"),
         ]);
     }
+
+    /// Advancing our one-level overcall after a negative double (#P9): the double changes
+    /// nothing, so a weak hand passes (it used to cuebid with any hand, from a table header),
+    /// the single raise shows 7--10 with three-card support and the cuebid 11+; the overcaller
+    /// then bids game over the raise with 15+.
+    #[test]
+    fn advancing_an_overcall_after_a_negative_double() {
+        check_system(&[
+            ("1C 1S X", "832.8432.Q832.32", "P"),
+            ("1C 1S X", "K32.Q432.K432.32", "2S"),
+            ("1C 1S X", "KQ2.A432.K432.32", "2C"),
+            ("1C 1S X 2S P", "AKJ32.K32.A32.32", "4S"),
+        ]);
+    }
 }
