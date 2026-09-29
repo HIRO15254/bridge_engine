@@ -780,12 +780,26 @@ fn is_flat(c: &HandConstraint) -> bool {
 /// The derived index of exclusive regions of a [`SystemIR`]: one [`ExclusiveGroup`] per
 /// `(parent trie position, condition class)` with at least one candidate, groups with identical
 /// member lists shared.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct ExclusiveIndex {
     /// `(parent trie position, condition class, group)`, sorted by the first two.
     keys: Vec<(u32, u8, u32)>,
     /// Deduplicated groups.
     groups: Vec<ExclusiveGroup>,
+    /// `keys[starts[p]..starts[p + 1]]` are the keys of trie position `p` (one entry per trie
+    /// position, plus one): [`ExclusiveIndex::group`] reads a position's keys directly instead of
+    /// searching all of them.
+    starts: Vec<u32>,
+}
+
+impl core::fmt::Debug for ExclusiveIndex {
+    /// The keys and the groups (`starts` is a lookup table derived from the keys).
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ExclusiveIndex")
+            .field("keys", &self.keys)
+            .field("groups", &self.groups)
+            .finish()
+    }
 }
 
 /// Counts describing a built [`ExclusiveIndex`] (diagnostics, compile tracing and the lane-S
@@ -863,7 +877,18 @@ impl ExclusiveIndex {
             }
         }
         keys.sort_unstable();
-        ExclusiveIndex { keys, groups }
+        let mut starts = vec![0u32; sys.index.len() + 1];
+        for &(p, _, _) in &keys {
+            starts[p as usize + 1] += 1;
+        }
+        for p in 1..starts.len() {
+            starts[p] += starts[p - 1];
+        }
+        ExclusiveIndex {
+            keys,
+            groups,
+            starts,
+        }
     }
 
     /// Every key: `(parent trie position, condition class, group)`, sorted by position then
@@ -921,10 +946,17 @@ impl ExclusiveIndex {
     /// The group at trie position `parent` for condition class `class` (see
     /// [`condition_class`]), `None` when that position has no candidate under the class.
     pub fn group(&self, parent: TrieId, class: u8) -> Option<&ExclusiveGroup> {
-        self.keys
-            .binary_search_by(|&(p, c, _)| (p, c).cmp(&(parent.0, class)))
-            .ok()
-            .map(|i| &self.groups[self.keys[i].2 as usize])
+        let p = parent.0 as usize;
+        let (&lo, &hi) = (self.starts.get(p)?, self.starts.get(p + 1)?);
+        let keys = &self.keys[lo as usize..hi as usize];
+        // A position keyed under all 16 classes (the common, unconditioned case) holds them in
+        // class order.
+        let at = if keys.len() == 16 && class < 16 {
+            usize::from(class)
+        } else {
+            keys.binary_search_by_key(&class, |&(_, c, _)| c).ok()?
+        };
+        Some(&self.groups[keys[at].2 as usize])
     }
 
     /// [`ExclusiveIndex::group`] for `(opener_pos, vul)`.
