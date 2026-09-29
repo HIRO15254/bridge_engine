@@ -1332,4 +1332,51 @@ mod phase4_tables {
             ("1C 1S X 2S P", "AKJ32.K32.A32.32", "4S"),
         ]);
     }
+
+    /// Balancing after their raise to the two level (`competing.bml`, NOTES.md #P12): a
+    /// takeout double short in their suit, a five-card suit at the two level, a six-card lower
+    /// suit at the three level; a weak hand passes, and advancer answers the double in the
+    /// cheapest four-card major or passes for penalty with five trumps.
+    #[test]
+    fn balancing_after_their_two_level_raise() {
+        check_system(&[
+            ("1H P 2H P P", "KJ42.2.AQ32.J432", "X"),
+            ("1H P 2H P P", "KJ432.32.A32.Q32", "2S"),
+            ("1S P 2S P P", "32.K32.AQJ432.32", "3D"),
+            ("1H P 2H P P", "Q432.32.Q432.432", "P"),
+            ("1H P 2H P P X P", "Q432.32.K432.432", "2S"),
+            ("1H P 2H P P X P", "32.KJ432.Q32.Q32", "P"),
+        ]);
+    }
+
+    /// The direct seat over their raise to three (`competition.bml`, #P12): a natural five-card
+    /// major with an opening hand outranks the takeout double, and advancer bids the cheapest
+    /// four-card major; the double of a raise to game shows 16+ and shortness.
+    #[test]
+    fn competing_over_their_three_level_raise() {
+        check_system(&[
+            ("1H P 3H", "AKJ32.32.AQ32.32", "3S"),
+            ("1H P 3H", "KQ32.3.AQ32.K432", "X"),
+            ("1H P 3H", "Q32.32.Q5432.432", "P"),
+            ("1H P 3H X P", "Q432.432.K32.432", "3S"),
+            ("1S P 4S", "3.AK32.AQ32.KJ32", "X"),
+            ("1S P 4S", "32.K432.Q432.432", "P"),
+        ]);
+    }
+
+    /// Their raised weak two and a preempt passed round to us (#P12): the double shows an
+    /// opening hand short in their suit (lighter in the balancing seat), advancer bids the
+    /// cheapest four-card major, and a weak hand passes.
+    #[test]
+    fn competing_over_a_raised_weak_two_and_a_passed_preempt() {
+        check_system(&[
+            ("2H P 3H", "AQ32.3.KQ32.A432", "X"),
+            ("2H P 3H", "32.32.Q5432.Q432", "P"),
+            ("2H P 3H X P", "Q432.432.K32.432", "3S"),
+            ("3D P P", "AQ32.KJ32.3.Q432", "X"),
+            ("3D P P X P", "Q432.K43.32.5432", "3S"),
+            ("3H P P", "AQ32.3.KJ32.Q432", "X"),
+            ("3H P P", "432.Q32.Q432.432", "P"),
+        ]);
+    }
 }

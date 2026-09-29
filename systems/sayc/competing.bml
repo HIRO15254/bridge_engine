@@ -1,0 +1,315 @@
+* Competing after the opponents have bid twice (NOTES.md #P12)
+
+Phase 4 (lane D2). The booklet's competitive section stops at the first round:
+it says how to overcall and double an opening, not what to do once the opener's
+partner has raised, or when the opponents stop low after a fit. This file writes
+the standard practice (the booklet's own methods, adjusted by the level, and the
+"balancing" rule that one does not let the opponents play at the two level
+when they have found a fit and stopped there):
+
+- A double is for takeout, short in their suit; a suit bid is natural.
+- In the direct seat, after a raise to the three level, both need an opening
+  hand (13+) and a six-card suit at the four level.
+- In the balancing seat (their raise, then two passes) the double and a suit
+  bid can be about a king lighter, since partner is marked with some values.
+- Opposite a balancing or competitive double, advancer bids the cheapest
+  unbid suit with four cards (a major first; three cards of a minor when
+  there is nothing else), 3NT with a stopper and values, game in a major
+  with four cards and 10+, and passes for penalty with five good trumps.
+
+Every one of these calls ends our bidding (the doubler does not bid again),
+and every table ends in a system stop: with any other hand we pass, and keep
+passing while they bid on.
+
+The tables use the phase-4 relative levels (`cM` = a major at the cheapest
+level, `jM` one level higher; docs/design/06-system.md §4.6), so one table
+serves every suit the opponents can have raised.
+
+** Their raise of a one-level opening
+
+*** Balancing after 1X-2X (the opponents stop at the two level with a fit)
+
+(1X)-P-(2X)-P-(P)-
+D = {prio:1} 10--15 hcp and 0--2X or 16+ hcp
+  #STOP
+2Y = {prio:2} 8--15 hcp, 5+#
+  #STOP
+#STOP
+
+A lower-ranking suit costs the three level: a six-card suit.
+
+(1Y)-P-(2Y)-P-(P)-
+3X = {prio:2} 10--15 hcp, 6+X
+  #STOP
+
+(1X)-P-(2X)-P-(P)-D-(P)-
+P = {prio:5} 8+ hcp, 5+X
+  #STOP
+3N = {prio:4} 11+ hcp, stopper
+  #STOP
+cM = {prio:3} 0--11 hcp, 4+M
+  #STOP
+cm = {prio:2} 0--11 hcp, 3+m
+  #STOP
+#STOP
+
+*** The direct seat after their raise
+
+A lower-ranking suit over a raise to the two level needs a six-card suit
+(the higher-ranking suits are in `competition.bml`'s sandwich tables).
+
+(1Y)-P-(2Y)-
+3X = {prio:1} 10--16 hcp, 6+X
+  #STOP
+
+After a raise to the three level the double and the natural suit bids are in
+`competition.bml`'s table (a takeout double; a natural suit with an opening hand,
+five good cards at the three level, six at the four level; 3NT with 16--19 and a
+stopper). Advancing the double:
+
+(1X)-P-(3X)-D-(P)-
+P = {prio:5} 8+ hcp, 5+X
+  #STOP
+3N = {prio:4} 10+ hcp, stopper
+  #STOP
+cM = {prio:3} 0--11 hcp, 4+M
+  #STOP
+cm = {prio:2} 0--11 hcp, 3+m
+  #STOP
+#STOP
+
+*** Balancing after 1X-3X
+
+(1X)-P-(3X)-P-(P)-
+D = {prio:1} 11--16 hcp and 0--2X or 17+ hcp
+  #STOP
+cM = {prio:2} 11--16 hcp, 5+M
+  #STOP
+cm = {prio:2} 11--16 hcp, 6+m
+  #STOP
+#STOP
+
+(1X)-P-(3X)-P-(P)-D-(P)-
+P = {prio:5} 8+ hcp, 5+X
+  #STOP
+3N = {prio:4} 10+ hcp, stopper
+  #STOP
+cM = {prio:3} 0--11 hcp, 4+M
+  #STOP
+cm = {prio:2} 0--11 hcp, 3+m
+  #STOP
+#STOP
+
+*** Their raise to game in a major
+
+A double of a raise to game shows a strong hand (16+ direct, 14+ in the
+balancing seat) short in their suit; advancer passes it unless he has a long
+suit and shortness in theirs.
+
+(1M)-P-(4M)-
+D = {prio:1} 16+ hcp, 0--2M
+  #STOP
+#STOP
+
+(1M)-P-(4M)-P-(P)-
+D = {prio:1} 14+ hcp, 0--2M
+  #STOP
+#STOP
+
+** Their raise of a weak two-bid
+
+The raise is preemptive, so the direct seat needs an opening hand to act at
+the three level: a takeout double (13--17 and short, or any 18+), a five-card
+major, a six-card minor at the four level, 3NT with 16--19 and a stopper.
+In the balancing seat the same calls with 11+.
+
+#CUT raised-weak-two
+3N = {prio:3} 16--19 hcp, stopper
+  #STOP
+c\O = {prio:2} 13--17 hcp, 5+!\o
+  #STOP
+cm = {prio:2} 13--17 hcp, 6+m
+  #STOP
+D = {prio:1} 13--17 hcp and 0--2!\t or 18+ hcp
+  #STOP
+#STOP
+#ENDCUT
+
+#CUT raised-weak-two-balancing
+c\O = {prio:2} 11--16 hcp, 5+!\o
+  #STOP
+cm = {prio:2} 11--16 hcp, 6+m
+  #STOP
+D = {prio:1} 11--16 hcp and 0--2!\t or 17+ hcp
+  #STOP
+#STOP
+#ENDCUT
+
+(2H)-P-(3H)-
+#PASTE raised-weak-two \O=S \o=s \t=h
+
+(2H)-P-(3H)-P-(P)-
+#PASTE raised-weak-two-balancing \O=S \o=s \t=h
+
+(2S)-P-(3S)-
+#PASTE raised-weak-two \O=H \o=h \t=s
+
+(2S)-P-(3S)-P-(P)-
+#PASTE raised-weak-two-balancing \O=H \o=h \t=s
+
+(2D)-P-(3D)-
+3N = {prio:3} 16--19 hcp, stopper
+  #STOP
+cM = {prio:2} 13--17 hcp, 5+M
+  #STOP
+4C = {prio:2} 13--17 hcp, 6+!c
+  #STOP
+D = {prio:1} 13--17 hcp and 0--2!d or 18+ hcp
+  #STOP
+#STOP
+
+(2D)-P-(3D)-P-(P)-
+cM = {prio:2} 11--16 hcp, 5+M
+  #STOP
+4C = {prio:2} 11--16 hcp, 6+!c
+  #STOP
+D = {prio:1} 11--16 hcp and 0--2!d or 17+ hcp
+  #STOP
+#STOP
+
+Advancing the double: game in a major with four cards and 10+, 3NT with 10+
+and a stopper, otherwise the cheapest four-card suit (a major first), and a
+pass with five good trumps.
+
+(2D)-P-(3D)-D-(P)-
+P = {prio:6} 8+ hcp, 5+!d
+  #STOP
+4M = {prio:5} 10+ hcp, 4+M
+  #STOP
+3N = {prio:4} 10+ hcp, stopper
+  #STOP
+cM = {prio:3} 0--9 hcp, 4+M
+  #STOP
+4C = {prio:2} 0--9 hcp, 3+!c
+  #STOP
+#STOP
+
+(2D)-P-(3D)-P-(P)-D-(P)-
+P = {prio:6} 8+ hcp, 5+!d
+  #STOP
+4M = {prio:5} 10+ hcp, 4+M
+  #STOP
+3N = {prio:4} 10+ hcp, stopper
+  #STOP
+cM = {prio:3} 0--9 hcp, 4+M
+  #STOP
+4C = {prio:2} 0--9 hcp, 3+!c
+  #STOP
+#STOP
+
+#CUT adv-raised-weak-two-dbl
+P = {prio:6} 8+ hcp, 5+!\t
+  #STOP
+4\O = {prio:5} \g hcp, 4+!\o
+  #STOP
+3N = {prio:4} 10+ hcp, stopper
+  #STOP
+cm = {prio:2} 0--9 hcp, 4+m
+  #STOP
+#STOP
+#ENDCUT
+
+Over a raise of 2!h, 3!s is the cheap major (0--9) and 4!s game (10+); over a
+raise of 2!s the cheapest heart bid is already game, so 4!h shows four hearts
+with any strength.
+
+(2H)-P-(3H)-D-(P)-
+3S = {prio:3} 0--9 hcp, 4+!s
+  #STOP
+#PASTE adv-raised-weak-two-dbl \O=S \o=s \t=h \g=10+
+
+(2H)-P-(3H)-P-(P)-D-(P)-
+3S = {prio:3} 0--9 hcp, 4+!s
+  #STOP
+#PASTE adv-raised-weak-two-dbl \O=S \o=s \t=h \g=10+
+
+(2S)-P-(3S)-D-(P)-
+#PASTE adv-raised-weak-two-dbl \O=H \o=h \t=s \g=0+
+
+(2S)-P-(3S)-P-(P)-D-(P)-
+#PASTE adv-raised-weak-two-dbl \O=H \o=h \t=s \g=0+
+
+*** Their raise of a weak two to game
+
+(2M)-P-(4M)-
+D = {prio:1} 16+ hcp, 0--2M
+  #STOP
+#STOP
+
+(2M)-P-(4M)-P-(P)-
+D = {prio:1} 15+ hcp, 0--2M
+  #STOP
+#STOP
+
+** Balancing over a preempt
+
+Over a three-level preempt passed round to us, the direct-seat methods
+(`defense.bml`) apply about a king lighter: a takeout double with 11--17 and
+shortness (or any 18+), a natural six-card suit with 11--17, 3NT with 15--20
+and a stopper. Advancer answers the double as over the direct double.
+
+(3X)-P-(P)-
+3N = {prio:3} 15--20 hcp, stopper
+  #STOP
+cM = {prio:2} 11--17 hcp, 6+M
+  #STOP
+cm = {prio:2} 11--17 hcp, 6+m
+  #STOP
+D = {prio:1} 11--17 hcp and 0--2X or 18+ hcp
+  #STOP
+#STOP
+
+(3m)-P-(P)-D-(P)-
+P = {prio:6} 8+ hcp, 5+m
+  #STOP
+4M = {prio:5} 10+ hcp, 4+M
+  #STOP
+3N = {prio:4} 10+ hcp, stopper
+  #STOP
+cM = {prio:3} 0--9 hcp, 4+M
+  #STOP
+com = {prio:2} 0--9 hcp, 4+om
+  #STOP
+#STOP
+
+(3H)-P-(P)-D-(P)-
+P = {prio:6} 8+ hcp, 5+!h
+  #STOP
+4S = {prio:5} 10+ hcp, 4+!s
+  #STOP
+3N = {prio:4} 10+ hcp, stopper
+  #STOP
+3S = {prio:3} 0--9 hcp, 4+!s
+  #STOP
+cm = {prio:2} 0--9 hcp, 4+m
+  #STOP
+#STOP
+
+(3S)-P-(P)-D-(P)-
+P = {prio:6} 8+ hcp, 5+!s
+  #STOP
+3N = {prio:5} 10+ hcp, stopper
+  #STOP
+4H = {prio:4} 0+ hcp, 4+!h
+  #STOP
+cm = {prio:2} 0--9 hcp, 4+m
+  #STOP
+#STOP
+
+Over a four-level preempt passed round, a double shows 15+ (the direct seat
+needs 16+).
+
+(4X)-P-(P)-
+D = {prio:1} 15+ hcp
+  #STOP
+#STOP
