@@ -1175,10 +1175,36 @@ mod phase4_tables {
     }
 
     /// Pass chains (#P1): once the partnership has placed the contract it keeps passing, on
-    /// the system, while the opponents bid on.
+    /// the system, while the opponents pass too.
     #[test]
     fn pass_chain_after_a_game_bid() {
-        check_system(&[("1NT P 3NT P P 4S", "K32.Q32.KJ2.Q432", "P")]);
+        check_system(&[
+            ("1NT P 3NT P", "K32.Q32.KJ2.Q432", "P"),
+            ("1C P 1H P 2H P 4H P", "A32.KQ54.K32.J32", "P"),
+        ]);
+    }
+
+    /// Competitive decisions after the partnership stopped (#P10): at these positions the pass
+    /// chain used to be the only row, so the system passed with any hand. A strong or short
+    /// hand now acts; a minimum still passes.
+    #[test]
+    fn acting_after_they_compete_over_our_stop() {
+        check_system(&[
+            // Negative double of 2H, their raise: the double showed the minors.
+            ("1S 2H X 3H", "AT853..KQ8.AKJ87", "4C"),
+            ("1S 2H X 3H", "KQ853.32.KQ8.Q87", "P"),
+            // Reopening over a three-level overcall, and responder's penalty pass.
+            ("1S 3D P P", "AK763.K9763.Q.83", "X"),
+            ("1S 3D P P X P", "Q32.J54.KJ92.T32", "P"),
+            // Their takeout double, responder's pass, advancer's natural 1NT.
+            ("1H X P 1NT", "AT5.AQT764.J2.A4", "2H"),
+            // Responder passed the overcall and they raised: a takeout double when short.
+            ("1C 1H P 2H", "KQT6..AQ96.QT865", "X"),
+            ("1C 1H P 2H", "KQ6.32.AJ65.QT86", "P"),
+            ("1C 1H P 2H X P", "J852.943.K82.T73", "2S"),
+            // 1NT-3NT and a passed hand balances at the four level: penalty double with 10+.
+            ("1NT P 3NT P P 4S", "K32.Q32.KJ2.Q432", "X"),
+        ]);
     }
 
     /// Later uncontested rounds (#P5): opener accepts or declines responder's invitation after
