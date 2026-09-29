@@ -1258,3 +1258,275 @@ P = {prio:-100} {stop} 0--7 hcp
 - システムの穴を自然推論に任せたくなければ、表を書くか停止を置く。
 
 ---
+
+## 8. Lint の一覧
+
+`LintCode` の全ての値。重大度は既定のもの (状況で変わるものは両方を書く)。「例」の列は、本節の後の `bml,should-lint` の例があるものに印を付けた。
+
+### 8.1 読み込みと構文
+
+| コード | 重大度 | 出る条件 | 直し方 |
+| --- | --- | --- | --- |
+| `IncludeNotFound` | Warning | `#INCLUDE` のファイルが無い。その行は捨てる | パス (包含する側のファイルからの相対) を直す |
+| `IncludeCycle` | Error | `#INCLUDE` の循環、または 16 段を超える入れ子 | 循環を切る |
+| `UnknownDirective` | Warning | 未知の `#…` 指示子、`#SEAT`/`#VUL` の値の誤り、`#+KEY:` の値の誤り、`:` の無いメタ行、閉じていない `#CUT`/`#COPY`、16 段を超える `#PASTE`、表の外の `#STOP`/`#ANYORDER`、履歴の無い表の最上位の `#STOP` | 綴りと置き場所を直す (§2、§6) |
+| `PasteUnknownName` | Warning | `#PASTE` の名前のクリップボードが無い | 名前を直すか、`#CUT`/`#COPY` を先に書く |
+| `UnknownCallToken` | Warning | コールトークンとして読めない行 (その行と部分木を捨てる)。相対レベルで始まる段落 | §4.1 の形に直す |
+| `SequenceNotFirst` | Error | 表の 2 行目以降の `-`/`;` を含むトークン (その行と部分木を捨てる) | 別の表 (段落) に分ける |
+| `IndentationMismatch` | Warning | 親子の字下げの差が表の単位と違う | 字下げを揃える |
+| `NonStandardToken` | Info | 上流で読めない拡張のトークン: 裸の `X`/`XX`、`/`、`n`、`c`/`j`、小文字の `x`/`y`/`z`、相手の類 | 上流との互換が要らなければ無視してよい |
+| `ColumnZeroContinuation` | Info | 末尾に `-`/`;` の無い履歴行の後の列 0 の行 (履歴の子として読む) | 履歴行の末尾に `-` を付けるか、行を字下げする |
+
+### 8.2 展開
+
+| コード | 重大度 | 出る条件 | 直し方 |
+| --- | --- | --- | --- |
+| `IllegalCall` | Error (Info) | 束縛済みの変数や固定レベルのコールが、その経路で不十分 (その行と部分木を捨てる)。同じ行が他の束縛で成功していれば Info | レベルを直す。変数の展開の一部だけなら Info のままでよい |
+| `UnboundOther` | Error | `oM`/`om` の前に `M`/`m` が束縛されていない | 先に `M`/`m` を使う |
+| `VariableNoCandidate` | Info | 新しい変数の候補が無い (全て使用済みか不十分)。類の下の新しい変数 | 意図どおりなら無視してよい |
+| `StepWithoutAnchor` | Error | ステップの基準のビッドが無い、7NT を超える、類の下 | ステップを具体的なコールに直す |
+| `WideWildcard` | Info | `n` レベルや変数の候補が 8 を超える | 意図どおりなら無視してよい |
+| `DuplicatePath` | Warning (Info) | 同じ経路・同じ条件の再定義で説明が違う (Warning、後を捨てる)。空の説明を後の定義や停止のパスで埋めた (Info) | 重複を消す。Info は情報 |
+| `ShadowedByExact` | Info | パターン行の候補が、先の Exact 行の兄弟と同じコール | 意図どおりなら無視してよい |
+| `ConditionTie` | Info | 条件の違う 2 つの定義が同じ具体性で重なる (先に入れた方が勝つ) | 条件をより具体的にする |
+| `TooManyNodes` | Error | ノード数が `CompileOptions::max_nodes` (既定 50,000) に達し、展開を打ち切った | ワイルドカードを減らす。停止 (§7.7) を使う |
+
+### 8.3 制約
+
+| コード | 重大度 | 出る条件 | 直し方 |
+| --- | --- | --- | --- |
+| `UnsatisfiableConstraint` | Error | 行の制約を満たす手が無い | 説明文の矛盾を直す |
+| `ContradictsOwnHistory` | Warning | 行の制約と、同じプレイヤーの前のコールの制約を合わせると満たす手が無い | どちらかの説明を直す |
+| `LowRecognition` | Warning (Info) | 認識率がしきい値 (§5.7) 未満。一部が制約になっていれば Warning、何も制約にならなければ Info | 認識される語で書き直す (§5.4) |
+| `EmptyDescription` | Info | 説明文が空 (制約なし) | 意図どおりなら無視してよい |
+| `UnrecognizedFragment` | Info | 認識できない断片 (断片ごと) | 同上 |
+| `SoftConstraint` | Info | ヘッジ付きの断片がある | 情報 |
+| `AssumedContext` | Info | 文脈の値を仮定した、または解決できなかった (§5.5) | パートナーの行に HCP を書く。スートを明示する |
+| `SiblingSubset` | Warning (Info) | 後の兄弟の制約が先の兄弟の制約に含まれる (選ばれない)。優先度が違えば Info | 行の順序か優先度を直す |
+| `SiblingOverlap` | Info | 後の兄弟の制約が先の兄弟と重なる | 情報 (重なりは順位で解決される) |
+| `DnfTruncated` | Warning | 説明文の DNF が項の上限 (256) を超え、木のまま残した | 説明文を単純にする |
+
+### 8.4 網羅性、排他索引、相対レベル、その他
+
+| コード | 重大度 | 出る条件 | 直し方 |
+| --- | --- | --- | --- |
+| `MissingOpeningCoverage` | Warning | 予約済み。現在は出ない (網羅性の検査は未実装) | — |
+| `MissingResponseCoverage` | Warning | 予約済み。現在は出ない | — |
+| `ShadowedBranch` | Warning | 我々の行の枝が、全ての条件の組で上位の兄弟に覆われて選ばれない (§7.4) | 行の順序か優先度を直す |
+| `OverlappingBranches` | Info | 1 つの行の最上位の OR の枝どうしが重なる | 情報 |
+| `LevelWithoutAnchor` | Error | 相対レベル (`c`/`j`) の基準が、ビッドでありうる類のワイルドカードの下で決まらない | 具体的なコールを書く |
+| `NoSufficientLevel` | Info | 相対レベルの十分なビッドが無い (7 を超える) | 意図どおりなら無視してよい |
+| `AnyOrderWithoutVariables` | Info | `#ANYORDER` の表が `X`/`Y`/`Z` を 2 つ以上使っていない | `#ANYORDER` を消す |
+| `StopUnderForcing` | Warning | フォーシングのコールの後に、停止のパスが選ばれうる (§7.7) | 停止の位置を直すか、フォーシングの後の行を書く |
+
+### 8.5 例
+
+```bml,should-lint
+// expect-lint: IncludeNotFound
+#INCLUDE no/such/file.bml
+
+1C = 12--21 hcp
+```
+
+```bml,should-lint,file=cycle.bml
+// expect-lint: IncludeCycle
+#INCLUDE cycle.bml
+```
+
+```bml,should-lint
+// expect-lint: UnknownDirective
+1C = 12--21 hcp
+#FROBNICATE
+1D = 12--21 hcp
+```
+
+```bml,should-lint
+// expect-lint: PasteUnknownName
+1C = 12--21 hcp
+
+1C-
+#PASTE no-such-clipboard
+```
+
+```bml,should-lint
+// expect-lint: UnknownCallToken
+1C = 12--21 hcp
+1Cx = typo
+```
+
+```bml,should-lint
+// expect-lint: IndentationMismatch
+1C = 12--21 hcp
+  1D = 0--5 hcp
+     1H = 17+ hcp
+```
+
+```bml,should-lint
+// expect-lint: NonStandardToken
+1C = 12--21 hcp
+
+1C-(1D)-
+X = t/o, 12+ hcp
+```
+
+```bml,should-lint
+// expect-lint: ColumnZeroContinuation
+1N = 15--17 hcp, bal
+
+1N-2C
+2D = no 4 card major
+```
+
+```bml,should-lint
+// expect-lint: IllegalCall
+1S = 12--21 hcp, 5+!s
+
+1S-
+1H = 6+ hcp
+```
+
+```bml,should-lint
+// expect-lint: UnboundOther
+1N = 15--17 hcp, bal
+
+1N-
+2oM = 5+ hcp
+```
+
+```bml,should-lint
+// expect-lint: VariableNoCandidate
+1S = 12--21 hcp, 5+!s
+
+1S-
+1M = 6+ hcp
+```
+
+```bml,should-lint
+// expect-lint: StepWithoutAnchor
+1step = 12+ hcp
+```
+
+```bml,should-lint
+// expect-lint: WideWildcard
+(nX)-
+D = t/o, 12+ hcp
+```
+
+```bml,should-lint
+// expect-lint: ShadowedByExact
+1N = 15--17 hcp, bal
+
+1N-
+2H = !TRF, 5+!s
+2M = 5+M, 0--7 hcp
+```
+
+```bml,should-lint
+// expect-lint: ConditionTie
+#VUL Y0
+
+1N = 15--17 hcp, bal
+
+#VUL 0Y
+
+1N = 12--14 hcp, bal
+
+#VUL 00
+```
+
+```bml,should-lint
+// expect-lint: UnsatisfiableConstraint
+1C = 5+!c, 0--3!c
+```
+
+```bml,should-lint
+// expect-lint: ContradictsOwnHistory
+1C = 12--14 hcp
+
+1C-1H-
+2N = 18--19 hcp
+```
+
+```bml,should-lint
+// expect-lint: LowRecognition
+1C = Polish club, 12+ hcp, see the notes on the Wroclaw variant for details
+```
+
+```bml,should-lint
+// expect-lint: EmptyDescription
+1C
+```
+
+```bml,should-lint
+// expect-lint: UnrecognizedFragment
+1C = 12+ hcp, Polish
+```
+
+```bml,should-lint
+// expect-lint: SoftConstraint
+1D = 12--21 hcp, usually 4+!d
+```
+
+```bml,should-lint
+// expect-lint: AssumedContext
+1C = GF
+```
+
+```bml,should-lint
+// expect-lint: SiblingSubset
+1C = 12+ hcp
+1D = 15--17 hcp
+```
+
+```bml,should-lint
+// expect-lint: SiblingOverlap
+1C = 12--14 hcp
+1D = 12--17 hcp, 4+!d
+```
+
+```bml,should-lint
+// expect-lint: ShadowedBranch
+1C = 12+ hcp
+1D = 15--17 hcp
+```
+
+```bml,should-lint
+// expect-lint: OverlappingBranches
+1H = 12--21 hcp, 5+!h
+
+1H-(1S)-
+1N = 8--10 hcp, stopper in !s
+```
+
+```bml,should-lint
+// expect-lint: LevelWithoutAnchor
+1S = 12--21 hcp, 5+!s
+
+1S-(any)-
+cS = 6--10 hcp, 3+!s
+```
+
+```bml,should-lint
+// expect-lint: NoSufficientLevel
+7N = 30+ hcp
+
+7N-
+cS = 0+ hcp
+```
+
+```bml,should-lint
+// expect-lint: AnyOrderWithoutVariables
+1C = 12--21 hcp
+#ANYORDER
+```
+
+```bml,should-lint
+// expect-lint: StopUnderForcing
+1C = 12--21 hcp, 3+!c
+
+1C-
+1H = 6+ hcp, 4+!h, forcing
+  #STOP
+```
+
+---
