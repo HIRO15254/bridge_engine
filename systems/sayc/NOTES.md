@@ -957,3 +957,100 @@ P11. **Phase-4 integration: the chains replaced by system stops** (P1; default s
       `{ stop }` is a stop; `Node::is_synthesised()` reads `NodeFlags::synthesised`;
       explanations drop the `{prio}`/`{w}`/`{stop}` annotations, so every stop pass explains
       itself as `any hand`.
+
+P12. **Lane D2: thickening SAYC and extending BML** (wip/p4-D2; default sizing, release;
+    `COVERAGE_OUT` per batch). Ten batches of rows (`continuations-p12.bml`,
+    `later-rounds-extra.bml`, `competitive-extra.bml`, `competitive-later.bml`,
+    `continuations.bml`) and three BML extensions, measured against the stage-2 stops of
+    P11 with the strict accounting. Criteria: strict [G] >= 0.80 and strict [C] subset
+    >= 0.80. **Neither is met**: strict [G] 0.552 -> **0.751**, strict [C] subset 0.462 ->
+    **0.489**.
+    - Survey (batch 7's dump; the classes are (i) a SAYC decision the file does not write,
+      (ii) a SAYC decision BML cannot express, (iii) our passed hand in the opponents'
+      constructive auction, (iv) a method of the players or an off-system position, (v) a
+      convention SAYC has and the file lacks, (vi) other; a heuristic classification by
+      position and call, checked by hand on the tops):
+      [G] `default_pass_override_top50` 82 overrides: (i) 42, (iii) 33, (iv) 7;
+      `first_strict_departure_top50` 80: (i) 48, (ii) 3, (iii) 23, (iv) 6;
+      `natural_completion_top50` 64: (i) 43, (ii) 10, (iv) 11.
+      [C] `first_natural_top50` 109: (i) 90, (iii) 11, (iv) 8. The subset's 4,355 calls:
+      system 2,105, natural 1,261 ((i) 874, (ii) 123, (iii) 88, (iv) 95, (v) 81), resolved
+      only by a default pass 989 ((i) 328, (iii) 604, (iv) 57). By class: they opened and we
+      passed, default pass only, 604; we opened, uncontested, natural 365; we opened,
+      contested, natural 416; they opened and we acted, natural 357.
+      Class (ii) led to the extensions below; class (v) is mostly Blackwood responses, which
+      need an ace-count vocabulary (the description language has no ace metric), not added.
+    - BML extensions (06-system.md §4.6, §4.7, §7.4; 13-decisions.md D16 amendment items
+      1-4): relative levels `cS`/`jY`/`cN` (the cheapest sufficient level of a strain and
+      one above it; `LevelWithoutAnchor` Error, `NoSufficientLevel` Info); suit-length
+      comparisons in descriptions (`!s>=!h`, `M>oM`, `!h>!s`); the `#ANYORDER` table
+      directive (the table's fresh X/Y/Z drop the X<Y<Z order; `AnyOrderWithoutVariables`
+      Info). `COMPILE_REVISION` 7. P10's twelve literal negative-double tables and six
+      reopening tables became five variable tables with an identical compiled node set
+      (8,834 positions compared field by field).
+    - Rows by batch: 1 competing after their raise and over passed preempts (relative
+      levels); 2 opener's second turn when they come in again; 3 over their notrump and
+      weak-two responses, escapes; 4 advancing after their bid over our double or overcall;
+      5 responder's second call and opener's rebids over overcalls; 6 competitive decisions
+      after they raise or reopen; 7 continuations after rows that stopped short (Jacoby 2NT,
+      weak twos, preference, cue-bid raise); 8 uncontested rebids (1X-1Y-1Z-1NT, 1m-1NT-2m,
+      reverses, jump shifts), penalty sits (weak two, 1NT overcall) and takeout doubles of
+      three-level preempts; 9 advancing a raised weak jump overcall and a takeout double
+      over their jump raise, opener after our double of their Michaels cue bid and after a
+      two-over-one and their overcall, passes that end limited auctions; 10 opener passes
+      partner's game sign-off (12--15; hands with slam values have no row there and go to
+      the natural engine). Every explicit pass describes the hands that pass (a range the
+      earlier bidding leaves room above or below, or a shape); no row is `any hand`. A
+      position an earlier file already ends with `#STOP` keeps that stop pass: an explicit
+      pass written later is a `DuplicatePath` and never chosen (batch 9 removed 18 such).
+    - Curve (strict [G] / raw [G] / strict [C] subset / [C] subset / nodes / compile /
+      index / loadavg at the start of the run; strict [C] exists from the p4int merge on):
+
+      | batch | strict [G] | raw [G] | strict [C] sub | [C] sub | nodes | compile | index | loadavg |
+      | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+      | 0 (P11 stage 2) | 0.552 | 0.896 | 0.462 | 0.683 | 6,477 | 456 ms | 12.6 ms | 4.1 |
+      | 1 | 0.582 | 0.896 | — | 0.685 | 6,770 | 495 ms | 13.8 ms | 3.7 |
+      | 2 | 0.637 | 0.896 | — | 0.691 | 7,231 | 489 ms | 14.7 ms | 3.6 |
+      | 3 | 0.663 | 0.897 | — | 0.692 | 7,580 | 678 ms | 19.5 ms | 5.4 |
+      | 4 | 0.665 | 0.901 | — | 0.700 | 7,854 | 558 ms | 16.0 ms | 3.5 |
+      | 5 | 0.669 | 0.909 | — | 0.708 | 8,047 | 550 ms | 16.5 ms | 4.0 |
+      | 6 (+ p4int) | 0.684 | 0.910 | 0.482 | 0.708 | 8,137 | 590 ms | 16.7 ms | 6.4 |
+      | 7 | 0.704 | 0.938 | 0.483 | 0.710 | 8,439 | 717 ms | 17.4 ms | 5.5 |
+      | 8 | 0.727 | 0.960 | 0.487 | 0.716 | 8,721 | 617 ms | 17.5 ms | 2.1 |
+      | 9 | 0.739 | 0.974 | 0.489 | 0.717 | 8,939 | 633 ms | 18.3 ms | 3.1 |
+      | 10 | **0.751** | 0.969 | **0.489** | 0.717 | 9,021 | 670 ms | 18.9 ms | 2.4 |
+
+      Compile and index are single measurements inside the coverage run (one compile, one
+      fresh build). The index build is above the 15 ms target from batch 3 on (the node
+      count grew 39%); `sayc_exclusive_index_build_is_bounded` (< 30 ms) holds.
+    - Final (batch 10): lints Error 0, `ShadowedBranch` 18 (all ours, the phase-3 rows),
+      `DuplicatePath` warnings 23, unconstrained own calls 0. Generated: 2,495 positions
+      offer only default passes, 276 overrides in 229 auctions; strict first departures:
+      default-pass override 227, their pass not in the trie 7, their call 7, the system
+      exhausted 8 (P11: 357 / 60 / 13 / 18). Corpus: all-Exact 0.322 / 0.326 / 0.344 (all /
+      eval / subset); system resolution 0.689 / 0.707 / 0.717 (subset eval 0.742); strict
+      0.471 / 0.477 / 0.489 (subset eval 0.502), `resolved_at_default_pass` 992 in the
+      subset. Agreement: system positions 0.679, natural 0.543. MLE on the tune split: ε
+      0.345, δ 0.327, ln L -7378.6. Forward consistency (release, seed `0x5a1c0002`, 10^5):
+      0 non-gap violations after every batch; gap-induced 2 / 2 / 3 and `NoCandidate` 28 /
+      28 / 47 after batches 8 / 9 / 10 (batch 10's explicit passes leave slam-going hands
+      without a row).
+    - Why strict [G] stops at 0.751: 227 of the 249 departing auctions leave at a
+      default-pass override. The 276 overrides: 119 in auctions they opened with our side
+      silent (balancer 70, overcaller 49; e.g. `(2D)-P-(3C)-P-(3D)-P-(P)` 3H,
+      `(1H)-P-(2C)-P-(2H)-P-(4H)` 6D with 5 hcp, `(3H)-P-(4NT)` 6C), 78 in our contested
+      auctions (opener 43, responder 35; e.g. `1C-(1D)-1H-(1NT)-2H-(P)` 3C with 7 hcp), 38
+      uncontested (opener 30, mostly slam moves after partner's game or 3NT, responder 8)
+      and 41 after we competed (balancer 16, overcaller 15, advancer 10); by call kind 135
+      low suit bids, 63 suit bids at the five level or higher, 50 doubles, 28 notrump bids.
+      Most are the natural engine acting where SAYC passes. Writing an explicit pass there
+      would be a row that accepts every hand our earlier pass left (class (iii)) or would
+      stand in for slam methods the file does not have (Blackwood responses, cue bids); the
+      natural engine's appetite is a NaturalParams question (not tuned in this lane).
+    - Why strict [C] stops at 0.489: 604 of the subset's 989 calls (batch 7; 992 at batch 10) resolved only by a
+      default pass are our passes in the opponents' constructive auctions after our own
+      pass; every acting row there contradicts that pass (`ContradictsOwnHistory`), and the
+      SAYC answer is the stop pass itself, which the strict count excludes by definition.
+      Counting them would need a pass row describing every hand the earlier pass allows,
+      i.e. a sink. The natural calls left in the subset are a long tail (the most frequent
+      position has 5 calls).
