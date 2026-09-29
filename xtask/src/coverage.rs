@@ -1236,8 +1236,8 @@ struct KindStats {
     lenient_calls: u64,
     /// Exact or Partial calls made where the caller's system offers nothing but default passes
     /// ([`default_pass_only`]: a `{stop}` row or the synthesised stop pass): the system "resolves"
-    /// them with any hand, so the strict rate does not count them as resolved (the [C]
-    /// counterpart of strict [G]).
+    /// them with any hand, so the strict rate does not count them as resolved (the `[C]`
+    /// counterpart of strict `[G]`).
     resolved_at_default_pass: u64,
 }
 
