@@ -111,8 +111,9 @@ fn compiling_sayc_is_fast() {
 }
 
 /// A coarse release-only guard on SAYC's exclusive-index build (the lane-S criterion was
-/// <= 15 ms, met at 12-15 ms by the stop-default SAYC; lane D2's thickened SAYC, about 9,700
-/// nodes, measures 18-19 ms best of 3 at loadavg ~4; the pasted-chain SAYC took 45 ms): best of
+/// <= 15 ms, met at 12-15 ms by the stop-default SAYC; lane D2's thickened SAYC after its
+/// review fixes, about 9,500 index nodes, measures 19.8-20.0 ms best of 3 at loadavg ~3.9; the
+/// pasted-chain SAYC took 45 ms): best of
 /// 3 must stay under 30 ms, which catches an order-of-magnitude regression without flaking on a
 /// loaded machine. A debug build builds the index once and asserts nothing. Holds the SAYC
 /// timing lock so that its own compile never overlaps `compiling_sayc_is_fast`.
