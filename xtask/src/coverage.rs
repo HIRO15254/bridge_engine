@@ -197,15 +197,12 @@ pub fn run(args: &[&str]) -> Result<std::process::ExitCode> {
     let corpus_s = t.elapsed().as_secs_f64();
     eprintln!("coverage: corpus in {corpus_s:.1} s");
 
-    let system_hash = ir
-        .meta
-        .source_hash
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
+    // `ir.meta.source_hash` is not filled in by the compiler (all zeros), so fingerprint the
+    // sources here: FNV-1a 64 over every `.bml` file of the system directory, sorted by name.
+    let system_hash = sources_fingerprint(&systems.join("sayc"));
     let report = json!({
         "system": "sayc.bml",
-        "system_hash": format!("blake3:{system_hash}"),
+        "system_hash": format!("fnv1a64:{system_hash:016x}"),
         "compile_ms": compile_ms,
         "elapsed_s": started.elapsed().as_secs_f64(),
         "section_s": { "generated": generated_s, "positions": positions_s, "corpus": corpus_s },
@@ -233,6 +230,27 @@ pub fn run(args: &[&str]) -> Result<std::process::ExitCode> {
         loadavg()
     );
     Ok(std::process::ExitCode::SUCCESS)
+}
+
+/// FNV-1a 64 over the names and contents of the `.bml` files in `dir` (sorted by name): a stable
+/// fingerprint of the SAYC sources a report was measured on.
+fn sources_fingerprint(dir: &Path) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut feed = |bytes: &[u8]| {
+        for &b in bytes {
+            hash ^= u64::from(b);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    for file in files_with_ext(dir, "bml") {
+        if let Some(name) = file.file_name() {
+            feed(name.to_string_lossy().as_bytes());
+        }
+        if let Ok(bytes) = std::fs::read(&file) {
+            feed(&bytes);
+        }
+    }
+    hash
 }
 
 // ------------------------------------------------------------------------------------------
