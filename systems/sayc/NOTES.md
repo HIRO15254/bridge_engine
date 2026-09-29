@@ -1019,6 +1019,7 @@ P12. **Lane D2: thickening SAYC and extending BML** (wip/p4-D2; default sizing, 
       | 8 | 0.727 | 0.960 | 0.487 | 0.716 | 8,721 | 617 ms | 17.5 ms | 2.1 |
       | 9 | 0.739 | 0.974 | 0.489 | 0.717 | 8,939 | 633 ms | 18.3 ms | 3.1 |
       | 10 | **0.751** | 0.969 | **0.489** | 0.717 | 9,021 | 670 ms | 18.9 ms | 2.4 |
+      | review fixes | 0.745 | 0.957 | **0.491** | 0.716 | 9,524 | 708 ms | 19.9 ms | 2.8 |
 
       Compile and index are single measurements inside the coverage run (one compile, one
       fresh build). The index build is above the 15 ms target from batch 3 on (the node
@@ -1054,3 +1055,55 @@ P12. **Lane D2: thickening SAYC and extending BML** (wip/p4-D2; default sizing, 
       Counting them would need a pass row describing every hand the earlier pass allows,
       i.e. a sink. The natural calls left in the subset are a long tail (the most frequent
       position has 5 calls).
+    - Review fixes (after batch 10). The review found that several of the lane's stops
+      swallowed hands SAYC does not pass: a strong takeout doubler after advancer's
+      cheapest-suit answer, a 12+ advancer, opener after responder's forcing new suit over
+      their double, and positions below game after a game force. Fixes:
+      - `competing.bml`: after advancer's cheapest-suit answer the doubler passes only with
+        the double's minimum range (0--15/16/17 by table) and cue-bids with more; a 12+
+        advancer has game, 3NT and cue-bid rows; after advancer's pass over their response
+        the strong doubler doubles again (legal also when they bid on, where the cue bid
+        was not); a 10+ advance of a double of their raised weak two or of a balancing
+        double of a preempt with no stopper and no major cue-bids (the explicit pass rows
+        had dropped the table stop, so those hands had no call); the free-advance and
+        two-level-overcall advances take their suit as a parameter, so the cue bid is the
+        opener's suit; opener's rebid after responder's forcing new suit over a takeout
+        double covers every hand and stops only after limited calls.
+      - Game forces: the jump shifts (`responses-major.bml`, `continuations-p12.bml`) and
+        the 13+ new suits of `rebids.bml` are `GF` (were `F`); nothing stops below game
+        after the jump shift or 1m-1X-1NT-2S. Opener never passes 1NT-(2x)-3y (forcing):
+        the missing majors and a no-stopper cue bid were added, and only 3NT and the major
+        game raise stop. The any-hand sinks under those positions and under
+        1H-(1S)-2C-(any) (`competitive-extra.bml`) are gone.
+      - Prose: opener's one-level new suit is 12--18 unbalanced (batch 10's 3NT pass is for
+        its minimum only), Blackwood is in the system but not written as rows, and no row
+        at 1M-1NT-2m compares suit lengths.
+      - A new Warning lint, `StopUnderForcing` (06-system.md §9.3 check 9), reports a stop
+        pass that is a live candidate (an unshadowed member of some exclusive-index group)
+        after partner's forcing call and the opponents' pass, or below game after our game
+        force. SAYC has 27, all phase 4 lane D's opener-rebid sinks in `continuations.bml`
+        (rebids after one-level and two-over-one responses, 1M-2NT, 1S-2C-2H-3D/3S,
+        1H-1S-2C-2D, free bids after their overcall). Those tables do not cover every hand
+        yet, so removing the sinks would only turn the hands into implicit passes hidden
+        from the audit; they are kept as known warnings and
+        `crates/bridge-system/tests/sayc.rs::sayc_stops_under_forcing_calls_are_only_the_known_rebid_sinks`
+        pins the set.
+      - `xtask coverage` also reports a stop-audited strict [G]: a default pass chosen at a
+        position that is not default-pass-only, where the natural engine would not pass, is
+        a swallow. Before / after the fixes: strict [G] 0.751 / 0.745, raw [G] 0.969 /
+        0.957, stop-audited [G] 0.526 / 0.521, swallows 370 in 307 auctions both times (by
+        the natural call: suit 278, notrump 68, double 24; the tops are phase 3's tables:
+        the (2S) and (2H) overcaller, 1D-(1H) responder, 1S-(P)-P-(X) opener). The raw and
+        strict values fall because the removed stops now go to the natural engine
+        (auctions with a natural call 26 -> 38); it does not yet carry a game force forward,
+        so responder's own continuation after a jump shift is still a natural pass. Corpus:
+        all-Exact 0.320 / 0.323 / 0.341; system resolution 0.688 / 0.708 / 0.716 (subset eval
+        0.743); strict 0.472 / 0.479 / 0.491 (subset eval 0.503). MLE: epsilon 0.344, delta
+        0.327, ln L -7377.4. Generated positions with no candidate 75 (86 before, 118 before
+        the no-candidate fixes). Lints: Error 0, `ShadowedBranch` 18, `DuplicatePath`
+        warnings 23, `StopUnderForcing` 27, unconstrained own calls 0; 7,397 rows, 10,220
+        trie nodes, 9,524 index nodes. Compile 708 ms and index 19.9 ms in the coverage run
+        (loadavg 2.8); `compile_time` best of 3: 690 ms, index 19.8--20.0 ms (loadavg 3.7--3.9).
+        Forward consistency (release, seed `0x5a1c0002`, 10^5): 0 non-gap violations, 3
+        gap-induced, `NoCandidate` 42, chosen 88,492, implicit pass 11,466 (2.1 s, loadavg
+        4.2).
