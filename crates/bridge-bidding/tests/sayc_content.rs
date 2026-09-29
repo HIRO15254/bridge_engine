@@ -1379,4 +1379,33 @@ mod phase4_tables {
             ("3H P P", "432.Q32.Q432.432", "P"),
         ]);
     }
+
+    /// Opener when the fourth hand balances after responder's pass (#P12 batch 2): a six-card
+    /// rebid, a second five-card suit, a takeout double with 16+ that responder answers in his
+    /// cheapest four-card suit; a minimum balanced opener passes.
+    #[test]
+    fn opener_after_they_balance_over_responders_pass() {
+        check_system(&[
+            ("1S P P X", "AKJ832.K2.Q32.32", "2S"),
+            ("1S P P X", "AKJ32.2.KQ432.32", "2D"),
+            ("1S P P X", "AK32.K32.Q32.432", "P"),
+            ("1C P P 1H", "AK32.2.AQ32.KJ32", "X"),
+            ("1C P P 1H X P", "Q432.432.432.432", "1S"),
+            ("1C P P 1H X P", "32.QJ432.432.432", "P"),
+        ]);
+    }
+
+    /// Opener's second turn when they bid again after an overcall or a negative double (#P12
+    /// batch 2): a six-card rebid, the major the negative double promised, and a pass with a
+    /// minimum balanced hand.
+    #[test]
+    fn opener_competes_after_an_overcall() {
+        check_system(&[
+            ("1C 1D P 1NT", "K32.32.A32.KQJ432", "2C"),
+            ("1C 1D P 1NT", "K32.Q32.A32.K432", "P"),
+            ("1D 1H X 1NT", "KJ32.32.AQ432.K2", "2S"),
+            ("1D 1S 2D 2S", "32.K32.AKJ432.Q2", "3D"),
+            ("1D 1S 2D 2S", "32.K432.AKJ4.Q32", "P"),
+        ]);
+    }
 }

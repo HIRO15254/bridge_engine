@@ -313,3 +313,139 @@ needs 16+).
 D = {prio:1} 15+ hcp
   #STOP
 #STOP
+
+** Opener when the opponents come in after responder has passed (P12 batch 2)
+
+Responder's pass of the opening showed 0--5 hcp. When the fourth hand then
+balances, opener passes a minimum balanced hand; he rebids a six-card suit at
+the cheapest level, bids a second five-card suit, and with 16+ and shortness
+in their suit doubles for takeout. Responder answers that double as any
+takeout double: an unbid four-card major or minor at the cheapest level, three
+cards of opener's suit, or a pass with five cards in theirs. Over their
+balancing 1NT opener's double (16+) is for penalty.
+
+#CUT opener-after-their-balance
+c\S = {prio:2} 12--17 hcp, 6+\S
+  #STOP
+cM = {prio:3} 12--17 hcp, 5+\S, 5+M
+  #STOP
+cm = {prio:3} 12--17 hcp, 5+\S, 5+m
+  #STOP
+#STOP
+#ENDCUT
+
+#CUT answer-opener-takeout-double
+P = {prio:4} 5+\T
+  #STOP
+cM = {prio:3} 4+M
+  #STOP
+cm = {prio:2} 4+m
+  #STOP
+c\S = {prio:1} 3+\S
+  #STOP
+#STOP
+#ENDCUT
+
+1X-(P)-P-(D)-
+#PASTE opener-after-their-balance \S=X
+
+1X-(P)-P-(1N)-
+D = {prio:1} 16+ hcp
+  #STOP
+#PASTE opener-after-their-balance \S=X
+
+1X-(P)-P-(1Y)-
+D = {prio:1} 16+ hcp, 0--1Y
+#PASTE opener-after-their-balance \S=X
+
+1X-(P)-P-(1Y)-D-(P)-
+#PASTE answer-opener-takeout-double \S=X \T=Y
+
+1X-(P)-P-(2Y)-
+D = {prio:1} 16+ hcp, 0--1Y
+#PASTE opener-after-their-balance \S=X
+
+1X-(P)-P-(2Y)-D-(P)-
+#PASTE answer-opener-takeout-double \S=X \T=Y
+
+1Y-(P)-P-(2X)-
+D = {prio:1} 16+ hcp, 0--1X
+#PASTE opener-after-their-balance \S=Y
+
+1Y-(P)-P-(2X)-D-(P)-
+#PASTE answer-opener-takeout-double \S=Y \T=X
+
+** Opener when they bid again after an overcall (P12 batch 2)
+
+The booklet's competitive principle (bid what you have, and do not bid
+twice with the same values) applied to opener's second turn: over their
+advance, when responder has passed or doubled, opener rebids a six-card suit
+at the cheapest level and shows a second five-card suit; after responder's
+negative double he bids a four-card unbid major the double promised
+(at the three or four level only with 14+). Otherwise he passes.
+
+#CUT opener-competes
+c\S = {prio:2} 12--16 hcp, 6+\S
+  #STOP
+cM = {prio:3} 12--16 hcp, 5+\S, 5+M
+  #STOP
+cm = {prio:3} 12--16 hcp, 5+\S, 5+m
+  #STOP
+#STOP
+#ENDCUT
+
+1X-(1Y)-P-(1N)-
+#PASTE opener-competes \S=X
+
+1X-(1N)-P-(P)-
+#PASTE opener-competes \S=X
+
+1X-(1Y)-P-(2Z)-
+#PASTE opener-competes \S=X
+
+1X-(1Z)-P-(2Y)-
+#PASTE opener-competes \S=X
+
+1Y-(1Z)-P-(2X)-
+#PASTE opener-competes \S=Y
+
+1X-(D)-P-(1Y)-
+#PASTE opener-competes \S=X
+
+1X-(D)-P-(2Y)-
+#PASTE opener-competes \S=X
+
+1Y-(D)-P-(2X)-
+#PASTE opener-competes \S=Y
+
+1X-(1Y)-1N-(2Y)-
+#PASTE opener-competes \S=X
+
+After responder's single raise and their raise, opener competes to the three
+level with a sixth trump.
+
+1X-(1Y)-2X-(2Y)-
+3X = {prio:1} 12--15 hcp, 6+X
+  #STOP
+#STOP
+
+1Y-(2X)-2Y-(3X)-
+3Y = {prio:1} 12--15 hcp, 6+Y
+  #STOP
+#STOP
+
+After the negative double and their 1NT or raise:
+
+1X-(1Y)-D-(1N)-
+cM = {prio:3} 12--16 hcp, 4+M
+  #STOP
+cX = {prio:2} 12--16 hcp, 6+X
+  #STOP
+#STOP
+
+1X-(1Y)-D-(3Y)-
+cM = {prio:3} 14+ hcp, 4+M
+  #STOP
+cX = {prio:2} 14+ hcp, 6+X
+  #STOP
+#STOP
