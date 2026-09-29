@@ -292,7 +292,13 @@ fn new_stop_nodes(ex: &mut Expansion, seat: SeatCond, vul: VulCond) -> StopNodes
         node_id
     };
     let any_node = synthesise(ex, Side::Them, 0, "");
-    let pass_node = synthesise(ex, Side::Us, STOP_PASS_PRIORITY, "any hand (system stop)");
+    // The row every stop stands for, as SAYC writes it at its stop sites.
+    let pass_node = synthesise(
+        ex,
+        Side::Us,
+        STOP_PASS_PRIORITY,
+        "{prio:-100} {stop} any hand",
+    );
     StopNodes {
         any_node,
         pass_node,

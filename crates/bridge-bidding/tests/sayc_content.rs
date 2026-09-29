@@ -1206,11 +1206,8 @@ mod phase4_tables {
         assert_eq!(choice.source, ChoiceSource::System);
         let node = table.systems[0].node(choice.node.expect("a system node"));
         assert!(node.is_synthesised() && node.flags.stop, "{node:?}");
-        assert!(
-            choice.explanation.contains("system stop"),
-            "{}",
-            choice.explanation
-        );
+        // Explained like the `P = {prio:-100} {stop} any hand` rows it stands for.
+        assert_eq!(choice.explanation, "any hand");
     }
 
     /// Competitive decisions after the partnership stopped (#P10): at these positions the pass

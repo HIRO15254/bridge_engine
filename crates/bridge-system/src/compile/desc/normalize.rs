@@ -31,6 +31,76 @@ pub struct Normalized {
     pub offsets: Vec<u16>,
 }
 
+/// One annotation of a description.
+enum Annotation {
+    /// `{prio:N}`.
+    Priority(i16),
+    /// `{w:X}`.
+    Weight(f32),
+    /// `{stop}` (spaces inside the braces allowed).
+    Stop,
+}
+
+/// The annotation starting at byte `i` of `text` (a `{`) and its length in bytes, if the braces
+/// hold one; any other braced text is ordinary description text.
+fn annotation_at(text: &str, i: usize) -> Option<(Annotation, usize)> {
+    let rel_end = text[i..].find('}')?;
+    let inner = &text[i + 1..i + rel_end];
+    let annotation = if let Some(rest) = inner.strip_prefix("prio:") {
+        Annotation::Priority(rest.trim().parse::<i16>().ok()?)
+    } else if let Some(rest) = inner.strip_prefix("w:") {
+        Annotation::Weight(rest.trim().parse::<f32>().ok()?)
+    } else if inner.trim() == "stop" {
+        Annotation::Stop
+    } else {
+        return None;
+    };
+    Some((annotation, rel_end + 1))
+}
+
+/// `text` without its `{prio:N}` / `{w:X}` / `{stop}` annotations (what [`normalize`] extracts
+/// into [`Normalized::priority`], [`Normalized::weights`] and [`Normalized::stop`]), for display.
+/// Nothing else changes: suit digraphs, the alert marker and spacing inside the text are kept;
+/// the spaces an annotation leaves at either end are trimmed, and so are the spaces after an
+/// annotation that follows a space. Borrows `text` when it has no annotation.
+pub fn strip_annotations(text: &str) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+    if !text.contains('{') {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0usize;
+    let mut from = 0usize;
+    let mut stripped = false;
+    while let Some(rel) = text[from..].find('{') {
+        let at = from + rel;
+        let Some((_, len)) = annotation_at(text, at) else {
+            from = at + 1;
+            continue;
+        };
+        out.push_str(&text[last..at]);
+        let mut end = at + len;
+        if out.is_empty() || out.ends_with([' ', '\t']) {
+            while text[end..].starts_with([' ', '\t']) {
+                end += 1;
+            }
+        }
+        last = end;
+        from = end;
+        stripped = true;
+    }
+    if !stripped {
+        return Cow::Borrowed(text);
+    }
+    out.push_str(&text[last..]);
+    let trimmed = out.trim();
+    if trimmed.len() == out.len() {
+        Cow::Owned(out)
+    } else {
+        Cow::Owned(trimmed.to_string())
+    }
+}
+
 /// Normalises `text`.
 pub fn normalize(text: &str) -> Normalized {
     let bytes = text.as_bytes();
@@ -49,27 +119,14 @@ pub fn normalize(text: &str) -> Normalized {
 
         // `{prio:N}` / `{w:X}` / `{stop}` annotations, anywhere in the text.
         if b == b'{' {
-            if let Some(rel_end) = text[i..].find('}') {
-                let inner = &text[i + 1..i + rel_end];
-                let mut consumed = false;
-                if let Some(rest) = inner.strip_prefix("prio:") {
-                    if let Ok(n) = rest.trim().parse::<i16>() {
-                        priority = Some(n);
-                        consumed = true;
-                    }
-                } else if let Some(rest) = inner.strip_prefix("w:") {
-                    if let Ok(w) = rest.trim().parse::<f32>() {
-                        weights.push(w);
-                        consumed = true;
-                    }
-                } else if inner.trim() == "stop" {
-                    stop = true;
-                    consumed = true;
+            if let Some((annotation, len)) = annotation_at(text, i) {
+                match annotation {
+                    Annotation::Priority(n) => priority = Some(n),
+                    Annotation::Weight(w) => weights.push(w),
+                    Annotation::Stop => stop = true,
                 }
-                if consumed {
-                    i += rel_end + 1;
-                    continue;
-                }
+                i += len;
+                continue;
             }
         }
 
@@ -172,6 +229,30 @@ pub fn normalize(text: &str) -> Normalized {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_annotations_keeps_the_text() {
+        for (text, want) in [
+            ("{prio:-100} {stop} any hand", "any hand"),
+            ("{prio:-100} any hand", "any hand"),
+            ("any hand {prio:-100}", "any hand"),
+            ("5+!s {w:0.5} or 6+!h {w:0.5}", "5+!s or 6+!h"),
+            ("{ stop } 0+ hcp", "0+ hcp"),
+            ("6--9 hcp{prio:5}, 4+!h", "6--9 hcp, 4+!h"),
+            ("!GF, {x} braces stay", "!GF, {x} braces stay"),
+            (
+                "{prio:abc} is not an annotation",
+                "{prio:abc} is not an annotation",
+            ),
+            ("{prio:3}", ""),
+        ] {
+            assert_eq!(strip_annotations(text), want, "{text:?}");
+        }
+        assert!(matches!(
+            strip_annotations("12+ hcp"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+    }
 
     #[test]
     fn alert_marker_stripped() {

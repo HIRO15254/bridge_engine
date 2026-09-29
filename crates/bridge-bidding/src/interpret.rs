@@ -360,7 +360,7 @@ fn expand_node_branches(
     out: &mut Vec<(HandConstraint, f32, CallExplanation)>,
 ) {
     let node = sys.node(node_id);
-    let text = node.description.clone();
+    let text = node.explanation().into_owned();
     match &node.constraint {
         HandConstraint::Or(branches) if !branches.is_empty() => {
             let weights: Vec<f32> = match &node.branch_weights {
@@ -906,7 +906,7 @@ fn step_a_mirror(table: &Table, auction: &Auction, opts: &InterpretOptions) -> S
                 _ => ResolutionKind::Fallback,
             };
             let text = match piece.node {
-                Some(id) if Some(id) != m.node => sys.node(id).description.clone(),
+                Some(id) if Some(id) != m.node => sys.node(id).explanation().into_owned(),
                 _ if !fallback || m.shadowed => {
                     text_uses -= 1;
                     if text_uses == 0 {
