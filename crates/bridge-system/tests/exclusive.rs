@@ -451,6 +451,65 @@ fn shadowed_and_overlapping_branch_lints() {
     assert_eq!(overlapping[0].0.last(), Some(&bid(2, Strain::Clubs)));
 }
 
+/// Opponents' calls in our tables (table headers such as `1C-(1D)-`) are trie edges, not our
+/// policy's choices: their nodes carry no requirement, so one ranked below another at the same
+/// position is covered in the index, but `ShadowedBranch` reports only our own nodes.
+#[test]
+fn shadowed_branch_skips_the_opponents_calls() {
+    const TABLES: &str = "#+TITLE: opponents' headers
+#+TIEBREAK: row-order
+
+1C = 12--21 hcp
+
+1C-(1D)-
+X = 8+ hcp, 4+!h
+
+1C-(1H)-
+X = 8+ hcp, 4+!s
+
+1C-
+1D = 6+ hcp
+1H = 6+ hcp, 4+!h
+";
+    let opts = CompileOptions {
+        coverage_samples: 0,
+        ..CompileOptions::default()
+    };
+    let (ir, lints) = bridge_system::compile("inline.bml", TABLES, &MemLoader::default(), &opts);
+    // The index does rank the opponents' header calls against each other: at least one of
+    // them is covered by a higher-ranked sibling.
+    let them_covered = ir.exclusive().groups().any(|group| {
+        group.members.iter().any(|&(call, node)| {
+            ir.node(node).side == bridge_system::Side::Them && group.is_shadowed(call)
+        })
+    });
+    assert!(
+        them_covered,
+        "expected a covered opponents' call in the index"
+    );
+    let shadowed: Vec<_> = lints
+        .iter()
+        .filter(|l| l.code == LintCode::ShadowedBranch)
+        .map(|l| ir.node(l.node.expect("node lint")))
+        .collect();
+    assert!(
+        shadowed
+            .iter()
+            .all(|node| node.side == bridge_system::Side::Us),
+        "ShadowedBranch reported an opponents' node: {:?}",
+        shadowed
+            .iter()
+            .map(|n| (n.side, n.calls.clone()))
+            .collect::<Vec<_>>()
+    );
+    // Our own covered call is still reported (1C-1H is covered by 1C-1D, as in SOURCE).
+    assert!(shadowed.iter().any(|node| {
+        node.calls.first() == Some(&bid(1, Strain::Clubs))
+            && node.calls.last() == Some(&bid(1, Strain::Hearts))
+            && node.side == bridge_system::Side::Us
+    }));
+}
+
 /// The number of `ShadowedBranch` / `OverlappingBranches` lints SAYC compiles with (reported).
 #[test]
 fn sayc_exclusive_lint_counts() {

@@ -1265,7 +1265,7 @@ impl LintSummary { pub fn of(lints: &[Lint]) -> LintSummary; }
 | constraint | `DnfTruncated` | Warning (`strict_dnf` なら Error) | `to_dnf` が `max_terms` (256) を超えて `residual` に退避した |
 | coverage | `MissingOpeningCoverage` | Warning | どのオープニングも満たさない (パス以外の) 手の割合 |
 | coverage | `MissingResponseCoverage` | Info | あるノードの子のどれも満たさない手の割合 |
-| exclusive | `ShadowedBranch` | Warning | 上位の兄弟に全域を覆われ、`choose_bid` が決して選ばない枝 (§9.3 の 8) |
+| exclusive | `ShadowedBranch` | Warning | 上位の兄弟に全域を覆われ、`choose_bid` が決して選ばない我々側の枝 (§9.3 の 8) |
 | exclusive | `OverlappingBranches` | Info | 同じノードの枝どうしが重なり、排他索引が後の枝を素化した (§9.3 の 8) |
 
 ### 9.3 コンパイル後の八つの検査
@@ -1280,7 +1280,7 @@ parse / expansion の Lint は各段階が発生時に出す。`lint.rs` は完�
 6. **兄弟の曖昧さ** (同じ親、同じ側、同じ条件): DNF の Atom 上の記号的検査。`A ⊆ B` は A の各 Atom が B のいずれかの Atom に含まれること (`hcp` / `shapes` / `suit_len` は区間・ビット集合の包含、`cards` / `eval` は集合比較)。先の兄弟に含まれる後の兄弟は `SiblingSubset` (Warning。`priority` が異なれば Info)。Atom 対の交差が非空なら `SiblingOverlap` (Info。ナチュラル系では非常に多いので Info のみ)。DNF の項数上限 256 を超える場合は検査を省略し Info を出す。
 7. **カバレッジ** (任意、`CompileOptions.coverage_samples` (既定 10,000、0 で無効)): 手を一様に引き、各 `SeatCond` (`opener_pos` 1..=4) について `hcp ≥ opening_min` なのに `Pass` 以外のどのオープニングノードも満たさない手の割合を `MissingOpeningCoverage` (Warning) に添える。同様に子を持つ各ノードについて、親文脈から (一様に) レスポンダーの手を引き、どの子も満たさない割合を `MissingResponseCoverage` (Info) に添える (L3 の `NoCandidate` 集計のコンパイル時版)。サンプル数はノード数に応じて `min(coverage_samples, 10^6 / nodes)` に落とす。閾値は設けず割合を報告するだけで、判断は `coverage_report.json` (`11-testing.md` §2) と合わせて行う。
 
-8. **排他領域** (フェーズ 4、`check_exclusive_branches`): §5.4 の索引を読む。(a) ある (ノード, 枝) の片がどのグループにも無く、そのノードを含む全グループで「枝 − 上位」がグリッドで空と証明できる (`grid_proves_empty`) とき `ShadowedBranch` (Warning)。枝単独で空のもの (検査 1 の対象) は除く。メッセージは「never chosen: higher-ranked siblings cover it」(複数枝なら「branch j/n never chosen: …」)。(b) 同じノードの枝 j と k の sup グリッドが実行可能なセルで交わるとき `OverlappingBranches` (Info)。行ごとに (j, k) 1 件にまとめる。SAYC では `ShadowedBranch` 249 件、`OverlappingBranches` 90 件 (行ごとにまとめる前は 186 件)、Error 0 件。
+8. **排他領域** (フェーズ 4、`check_exclusive_branches`): §5.4 の索引を読む。(a) ある (ノード, 枝) の片がどのグループにも無く、そのノードを含む全グループで「枝 − 上位」がグリッドで空と証明できる (`grid_proves_empty`) とき `ShadowedBranch` (Warning)。枝単独で空のもの (検査 1 の対象) と、相手側のノード (`Side::Them`) は除く。相手側のコールは我々の方策の選択ではなく木の辺にすぎず、多くは要件の無い表見出し (`1C-(1H)-` など) なので、同じ位置の他のコールより下位ならすべて覆われて見えてしまう。メッセージは「never chosen: higher-ranked siblings cover it」(複数枝なら「branch j/n never chosen: …」)。(b) 同じノードの枝 j と k の sup グリッドが実行可能なセルで交わるとき `OverlappingBranches` (Info)。行ごとに (j, k) 1 件にまとめる。SAYC では `ShadowedBranch` 18 件 (すべて我々側。相手側を数えていた時点ではフェーズ 3 の SAYC で 249 件、うち相手側 231 件)、`OverlappingBranches` 268 件 (フェーズ 3 の SAYC では 90 件、行ごとにまとめる前は 186 件)、Error 0 件 (フェーズ 4 統合時、P1〜P10 の SAYC)。
 
 検査 6 と 7 は `Sampler::prepare` (20〜60 μs) を使うので、コンパイル 1 秒の予算を圧迫する場合は `coverage_samples = 0` で 7 を無効化できる (`load_or_compile` のキャッシュがあれば実質 1 回だけ)。
 

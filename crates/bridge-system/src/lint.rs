@@ -209,11 +209,15 @@ pub fn run_post_compile_checks(ir: &mut SystemIR, opts: &CompileOptions) {
 
 /// The exclusive-index lints (docs/design/06-system.md §9):
 ///
-/// - [`LintCode::ShadowedBranch`] (Warning): branch `b` of node `m` with
+/// - [`LintCode::ShadowedBranch`] (Warning): branch `b` of our own node `m` with
 ///   `b ∧ ¬∪{members ranked above m}` empty in *every* sibling group (every condition class)
 ///   where `m` is a candidate. `choose_bid` then never selects `m` through `b`; when every
 ///   branch is shadowed, the call is never chosen there at all. A branch that is empty on its
-///   own is left to [`LintCode::UnsatisfiableConstraint`].
+///   own is left to [`LintCode::UnsatisfiableConstraint`]. Opponents' nodes
+///   ([`Side::Them`](crate::pattern::Side::Them)) are never reported: they are trie edges
+///   (mostly table headers such as `1C-(1H)-`) that usually carry no requirement, not choices
+///   of our policy, so every such call ranked below another one at the same position would
+///   otherwise read as shadowed.
 /// - [`LintCode::OverlappingBranches`] (Info): a node whose top-level `Or` branches overlap on
 ///   the (shape, HCP) grid (for branches with literals: their superset boxes overlap), reported
 ///   once per row and branch pair. The index disjointifies them.
@@ -225,6 +229,9 @@ fn check_exclusive_branches(ir: &mut SystemIR) {
     let mut seen: HashMap<(NodeId, u16), (u32, u32)> = HashMap::new();
     for group in index.groups() {
         for (i, &(call, node)) in group.members.iter().enumerate() {
+            if ir.node(node).side == crate::pattern::Side::Them {
+                continue;
+            }
             let branches = branches_of(&ir.node(node).constraint);
             let pieces = group.pieces(call).unwrap_or(&[]);
             let mut above: Option<Vec<&HandConstraint>> = None;

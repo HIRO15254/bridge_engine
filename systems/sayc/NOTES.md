@@ -750,8 +750,9 @@ a header such as `1C-(1D)-1H-(1N)-` names their call with no constraint, next to
 defines that call (here `competition.bml`'s advance of the overcall), so the header node is a
 second, lower-ranked member with the same call and is never the first satisfied one. The call
 itself keeps its pieces; the base system has 231 lints of exactly this kind. P10's headers add
-22 more of the same kind (theirs 382, ours still 18). Opponents' calls are trie edges only, so a
-lint change that skips `Side::Them` nodes (lane S) would remove all of them.
+22 more of the same kind (theirs 382, ours still 18). Opponents' calls are trie edges only, so
+the lint now skips `Side::Them` nodes (phase-4 integration): SAYC reports `ShadowedBranch` 18,
+all on our side, and `OverlappingBranches` 268. The "theirs" counts below predate that change.
 
 Cost: the system grew from 1,611 rows / 2,415 nodes to about 36k rows / 46k nodes (the pass
 chains are about 37k of them). Release compile about 0.84 s best of 3 and 1.2--1.7 s cold
