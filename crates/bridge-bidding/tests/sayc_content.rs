@@ -1499,4 +1499,55 @@ mod phase4_tables {
             ("1H P 2H 2S P P", "Q32.Q32.K432.Q32", "P"),
         ]);
     }
+
+    /// Continuations after rows that stopped short (#P12 batch 7): responder after opener's
+    /// rebid over the Jacoby 2NT, responder after the weak two's rebid, opener after responder's
+    /// preference or rebid.
+    #[test]
+    fn continuations_after_jacoby_weak_twos_and_preference() {
+        check_system(&[
+            ("1S P 2NT P 3C P", "KQ32.AK3.AQ32.K2", "6S"),
+            ("1S P 2NT P 3C P", "KQ32.K32.AQ32.32", "4S"),
+            ("1H P 2NT P 4H P", "A32.KQ32.AK32.K2", "6H"),
+            ("1H P 2NT P 4H P", "A32.KQ32.KQ32.32", "P"),
+            ("2S P 3C P 3S P", "Q2.AK3.K32.AQ432", "4S"),
+            ("2S P 3C P 3S P", "2.AK32.K32.AQ432", "3NT"),
+            ("2S P 3C P 3S P", "2.KQ32.K32.AQ432", "P"),
+            ("1D P 1S P 2C P 2D P", "32.A2.AKQ432.K32", "3D"),
+            ("1D P 1S P 2C P 2D P", "32.A2.KQ9432.K32", "P"),
+            ("1D P 1S P 2C P 2S P", "K2.A2.AKQ32.Q432", "3S"),
+            ("1D P 1S P 2C P 2S P", "K2.32.AKJ32.Q432", "P"),
+        ]);
+    }
+
+    /// Competitive continuations (#P12 batch 7): opener after a forcing new major over their
+    /// three-level overcall, after a penalty double of their 1NT, the 1NT opener after
+    /// responder's takeout double, the cue-bid raise, and advancing a weak jump overcall when
+    /// they bid on (their suit above or below the opening's).
+    #[test]
+    fn competitive_continuations_after_rows_that_stopped() {
+        check_system(&[
+            ("1D 3C 3H P", "A2.K32.AKJ32.432", "4H"),
+            ("1D 3C 3H P", "AQ32.32.AKJ32.32", "3S"),
+            ("1D 3C 3H P", "A32.32.AKJ32.K32", "3NT"),
+            ("1D 3C 3H P", "A32.32.AKJ432.32", "4D"),
+            ("1S 1NT X P", "AKJ432.K32.Q32.3", "2S"),
+            ("1S 1NT X P", "AKJ32.K32.Q32.32", "P"),
+            ("1NT 2H X P", "AQ32.K32.KQ2.Q32", "2S"),
+            ("1NT 2H X P", "AQ2.KJ32.KQ2.Q32", "P"),
+            ("1NT 2H X P", "AQ2.K32.KQ32.Q32", "3D"),
+            ("1S 2C 3C P", "AKJ32.KQ2.32.K32", "4S"),
+            ("1S 2C 3C P", "AKJ32.Q32.32.K32", "3S"),
+            ("1S 2C 3C P 3S P", "Q32.AK32.KQ32.32", "4S"),
+            ("1S 2C 3C P 3S P", "Q32.AK32.Q432.32", "P"),
+            ("1D 2S 3C", "Q32.AK32.KQ32.32", "4S"),
+            ("1D 2S 3C", "Q32.K432.Q432.32", "3S"),
+            ("1D 2S 3C", "32.K432.Q432.Q32", "P"),
+            ("1H 2S 3C", "Q32.K432.Q432.32", "3S"),
+            ("1S 3C 3S", "32.AK32.KQ32.Q32", "4C"),
+            ("1S 3C 3S", "432.K432.Q432.32", "P"),
+            ("1H 3C 3D", "32.AK32.KQ32.Q32", "4C"),
+            ("1C 2D 2H", "K32.Q432.Q432.32", "3D"),
+        ]);
+    }
 }
