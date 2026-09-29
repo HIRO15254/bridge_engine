@@ -1694,7 +1694,11 @@ mod d2_review {
                 other => failures.push(format!("  [{calls}] {hand}: {other:?}")),
             }
         }
-        assert!(failures.is_empty(), "passed or no call:\n{}", failures.join("\n"));
+        assert!(
+            failures.is_empty(),
+            "passed or no call:\n{}",
+            failures.join("\n")
+        );
     }
 
     /// Every case must get the expected call from a system row.
@@ -1704,7 +1708,9 @@ mod d2_review {
             let expected: Call = expected.parse().expect("valid call");
             match choose(calls, hand) {
                 BidChoice::Chosen(c) if c.call == expected && c.source == ChoiceSource::System => {}
-                other => failures.push(format!("  [{calls}] {hand}: expected {expected}, got {other:?}")),
+                other => failures.push(format!(
+                    "  [{calls}] {hand}: expected {expected}, got {other:?}"
+                )),
             }
         }
         assert!(failures.is_empty(), "wrong calls:\n{}", failures.join("\n"));
@@ -1753,7 +1759,8 @@ mod d2_review {
         let mut failures = Vec::new();
         for &(calls, hand) in cases {
             match choose(calls, hand) {
-                BidChoice::Chosen(c) if c.call != Call::Pass || c.source != ChoiceSource::System => {}
+                BidChoice::Chosen(c)
+                    if c.call != Call::Pass || c.source != ChoiceSource::System => {}
                 other => failures.push(format!("  [{calls}] {hand}: {other:?}")),
             }
         }

@@ -634,7 +634,11 @@ fn sayc_stops_under_forcing_calls_are_only_the_known_rebid_sinks() {
         .iter()
         .filter(|l| l.code == LintCode::StopUnderForcing)
         .map(|l| {
-            let at = l.message.split(" is a candidate at ").nth(1).unwrap_or(&l.message);
+            let at = l
+                .message
+                .split(" is a candidate at ")
+                .nth(1)
+                .unwrap_or(&l.message);
             at.split(" after ").next().unwrap_or(at).to_owned()
         })
         .collect();
