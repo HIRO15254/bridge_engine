@@ -1481,7 +1481,8 @@ mod phase4_tables {
             ("1S 2C 2H P", "AKJ32.K432.32.32", "3H"),
             ("1S 2C 2H P", "AKJ32.32.KQ2.432", "2S"),
             ("1S 2C 2H P 3H P", "32.AKJ32.K32.Q32", "4H"),
-            ("1S 2C 2H P 3H P", "32.QJ432.K32.J32", "P"),
+            // In range for the forcing 2H (10+, five hearts) but short of game values.
+            ("1S 2C 2H P 3H P", "32.KQ432.K32.K32", "P"),
         ]);
     }
 
