@@ -788,6 +788,7 @@ fn token_tag(t: &Token) -> String {
         Token::Losers(r) => format!("losers({r:?})"),
         Token::Natural => "nat".to_string(),
         Token::NoBound => "nobound".to_string(),
+        Token::LengthOrder(a, cmp, b) => format!("order({a:?},{cmp:?},{b:?})"),
     }
 }
 
