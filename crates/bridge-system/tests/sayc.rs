@@ -28,7 +28,7 @@ use bridge_system::{
 };
 
 /// Compiles one `systems/sayc/<name>` file with `FsLoader` once per test binary (the phase-4
-/// system has about 45k nodes, several seconds per debug compile) and returns the shared result
+/// system has about 7.2k nodes, a few seconds per debug compile) and returns the shared result
 /// with the first compile's elapsed time. Panics (does not skip) on any I/O error: unlike the
 /// vendored-corpus tests, this file is checked into the repo and must always be present.
 fn compile_sayc(name: &str) -> &'static (SystemIR, std::time::Duration) {
@@ -86,7 +86,8 @@ fn sayc_compiles_with_zero_errors_and_no_custom() {
         // (pass chains, later rounds, competitive continuations: NOTES.md #P1-#P7) grew the
         // compiled system from about 2.4k to 45k nodes; a debug compile of that took 15s at
         // loadavg 21 and 46s at loadavg 27-31 (most of it `run_post_compile_checks`'
-        // satisfiability checks), so the net sits at 120s.
+        // satisfiability checks), so the net sits at 120s. The system stops that replaced the
+        // pasted chains (#P1) brought it back to about 7.2k nodes; the net is unchanged.
         assert!(
             elapsed.as_secs_f64() < 120.0,
             "{name}: compiling took {elapsed:?}, expected well under 120s in any profile"

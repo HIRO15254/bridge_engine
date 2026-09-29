@@ -13,12 +13,13 @@
 //!   completions nor gaps. Reports the all-system rate, the gap (`NoCandidate`) top 50, the
 //!   natural-completion tops (every natural call, and the first departure from the system per
 //!   auction), the final-contract level histogram `[passout, 1..=7]`, and how many system calls
-//!   were default passes (a `Pass` row at priority <= -100, `systems/sayc/passes.bml`).
+//!   were default passes (a `Pass` at priority <= -100: a `{stop}` row or the synthesised stop
+//!   pass of a system stop, `systems/sayc/passes.bml`; `system_stop_passes` counts the latter).
 //!   *Strict* accounting (`all_system_strict`, the phase-4 `[G]` criterion): a position whose
 //!   exclusive group holds nothing but default passes (the system passes with any hand there)
 //!   also counts as a departure when the natural choice `m_P(h)` is not `Pass`
 //!   (`default_pass_overrides`, their tops, and `first_strict_departure_*`). Without it, the
-//!   pass chains make every such position look like a system decision.
+//!   system stops make every such position look like a system decision.
 //! - **positions**: `COVERAGE_POSITIONS` (default 200,000) positions drawn exactly like the
 //!   forward-consistency harness (`crates/bridge-bidding/tests/common` +
 //!   `tests/consistency.rs`: seed `0x5a1c0002`, 5% random-call substitution, random depth
@@ -86,8 +87,10 @@ const PHASE3_TOPS: &[(&str, &str)] = &[
     ("1C-(1H)", "responder"),
 ];
 
-/// Priority at or below which a system `Pass` row is a default "the partnership passes from
-/// here on" pass (the `pass-chain` / `after-chain` clipboards of `systems/sayc/passes.bml`).
+/// Priority at or below which a system `Pass` is a default "the partnership passes from here on"
+/// pass: a `P = {prio:-100} {stop} any hand` row, or the stop pass the compiler synthesises after
+/// a system stop (`{prio:-100}`, `Node::is_synthesised`; `systems/sayc/passes.bml`,
+/// `docs/design/06-system.md` §4.5).
 const DEFAULT_PASS_PRIORITY: i16 = -100;
 
 /// The harness's off-system substitution rate.
@@ -513,8 +516,8 @@ fn on_system(system: &SystemIR, auction: &Auction) -> (OnSystem, usize) {
 
 /// Whether the node the next seat's resolve ends at (the exact resolve, or the first full lenient
 /// match, as in [`on_system`]) offers nothing but default passes: every member of its exclusive
-/// group is a `Pass` row at priority <= [`DEFAULT_PASS_PRIORITY`] (a `pass-chain` /
-/// `after-chain` position of `systems/sayc/passes.bml` with no real row next to it). There the
+/// group is a `Pass` at priority <= [`DEFAULT_PASS_PRIORITY`] (a `{stop}` pass row or the
+/// synthesised stop pass of a system stop, with no real row next to it). There the
 /// system passes with any hand, so the position says nothing the author decided about the hand.
 fn default_pass_only(system: &SystemIR, auction: &Auction) -> bool {
     let seat = auction.next_seat();
@@ -763,8 +766,9 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
     let mut natural_passes = 0u64;
     let mut only_passes_after_departure = 0u64;
     let mut default_passes = 0u64;
+    let mut stop_passes = 0u64;
     // Strict accounting: a position whose only rows are default passes counts as a departure
-    // when the natural choice there is not `Pass` (the pass is the chain's, not a decision).
+    // when the natural choice there is not `Pass` (the pass is the stop's, not a decision).
     let mut all_system_strict = 0u64;
     let mut default_pass_only_positions = 0u64;
     let mut overrides = 0u64;
@@ -801,6 +805,8 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
                             .is_some_and(|id| system.node(id).priority <= DEFAULT_PASS_PRIORITY)
                     {
                         default_passes += 1;
+                        stop_passes +=
+                            u64::from(c.node.is_some_and(|id| system.node(id).is_synthesised()));
                     }
                     let outcome = match (state, c.source) {
                         (OnSystem::Off, _) => Outcome::Natural,
@@ -928,6 +934,7 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
         "all_system": all_system,
         "all_system_rate": all_system as f64 / n.max(1) as f64,
         "system_default_passes": default_passes,
+        "system_stop_passes": stop_passes,
         "all_system_strict": all_system_strict,
         "all_system_strict_rate": all_system_strict as f64 / n.max(1) as f64,
         "all_system_with_default_pass_override": all_system_with_override,
