@@ -1461,4 +1461,30 @@ mod phase4_tables {
             ("1C X 1H P", "K32.Q2.K32.AQ432", "1NT"),
         ]);
     }
+
+    /// Responder's second call filled in (#P12 batch 5, `later-rounds-extra.bml`): after
+    /// 1M-1NT-2m a raise with five cards and 8--10 and a 2NT invitation on a maximum; after a
+    /// two-over-one and opener's new suit the 10--12 preference, raise and 2NT.
+    #[test]
+    fn responders_second_call_filled_in() {
+        check_system(&[
+            ("1S P 1NT P 2D P", "32.K32.KJ432.Q32", "3D"),
+            ("1S P 1NT P 2D P", "32.KJ32.Q32.KJ32", "2NT"),
+            ("1S P 2D P 2H P", "32.KJ32.AQ432.32", "3H"),
+            ("1S P 2D P 2H P", "Q2.K32.AQ432.432", "2S"),
+            ("1S P 2D P 2H P", "32.K32.AQJ432.32", "3D"),
+        ]);
+    }
+
+    /// Opener's rebid after responder's forcing new suit over a two-level overcall, and
+    /// responder's game bid over it (#P12 batch 5).
+    #[test]
+    fn opener_rebids_after_a_new_suit_over_a_two_level_overcall() {
+        check_system(&[
+            ("1S 2C 2H P", "AKJ32.K432.32.32", "3H"),
+            ("1S 2C 2H P", "AKJ32.32.KQ2.432", "2S"),
+            ("1S 2C 2H P 3H P", "32.AKJ32.K32.Q32", "4H"),
+            ("1S 2C 2H P 3H P", "32.QJ432.K32.J32", "P"),
+        ]);
+    }
 }
