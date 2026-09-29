@@ -153,7 +153,7 @@ callcore        = "P" | "D" | "R"
                 | level , strainspec
                 | level , ( "step" | "steps" )                      (* case-insensitive *)
                 | callcore , "/" , ( callcore | strainspec ) ;      (* ext: 2S/3H, 4D/H *)
-level           = "1".."7" | "n" ;                                  (* "n" ext: any level *)
+level           = "1".."7" | "n" | "c" | "j" ;                      (* "n" ext: any level; "c"/"j" ext: cheapest / jump (§4.6) *)
 strainspec      = literal | variable | "red" | "black" ;            (* red/black case-insensitive *)
 literal         = "NT" | "N" | ( "C"|"D"|"H"|"S" ) , { "C"|"D"|"H"|"S" } ;   (* 1CD, 2HS, 3CDH *)
 variable        = "M" | "m" | "oM" | "om" | "X" | "Y" | "Z" | "x" | "y" | "z" ;
@@ -285,7 +285,8 @@ impl VulCond { pub const fn matches(self, we: bool, they: bool) -> bool; pub con
 | インデントが開いている祖先のどれとも一致しない (例: 2 と 4 の間の 3) | 最寄りの浅い行の子として付ける | `IndentationMismatch` (Warning) |
 | 末尾記号の無い履歴行の後の列 0 行 (§1.4 の 2) | 履歴の子として付ける | `ColumnZeroContinuation` (Info) |
 | 説明文が空 | 許容。コンパイル時に Info | `EmptyDescription` (Info) |
-| 拡張トークン (`X`, `XX`, `2S/3H`, `4D/H`, `nX`, `x/y/z`, `(any)`) | 受理 | `NonStandardToken` (Info) |
+| 拡張トークン (`X`, `XX`, `2S/3H`, `4D/H`, `nX`, `x/y/z`, `(any)`, `cS`/`jY` (§4.6)) | 受理 | `NonStandardToken` (Info) |
+| 段落の先頭語が相対レベルのトークン (`cS is …`) | 表ではなく段落として扱う (相対レベルは直前のビッドが無いと意味を持たないので表を始めない) | なし |
 | 先頭以外の行に `-`/`;` | 行と部分木をスキップ | `SequenceNotFirst` (Error) |
 | include の欠落 / 循環 | 行を落とす / include を無視 | `IncludeNotFound` (Warning) / `IncludeCycle` (Error) |
 | 不明な `#DIRECTIVE` | 行を除去し段落の残りを処理 | `UnknownDirective` (Warning) |
@@ -315,7 +316,8 @@ impl StrainSet {
     pub const fn with(self, strain: Strain) -> StrainSet;
     pub fn iter(self) -> impl Iterator<Item = Strain>;   // ビッド順 C D H S N
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)] pub enum Level { At(u8), Any /* "n" */ }
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)] pub enum Level { At(u8), Any /* "n" */, Cheapest /* "c" */, Jump /* "j" */ }   // c/j: §4.6
+impl Level { pub const fn is_relative(self) -> bool; }   // Cheapest | Jump
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum CallPattern {
@@ -470,6 +472,42 @@ impl<'a> LookupKey<'a> {
 - 等価性: 鎖を 8 巡書いた系と停止で書いた系を比べる `tests/stop.rs` で、ランダムな 46,570 位置 (うち停止のパスを出すもの 15,208) の照合結果 (深さ、ワイルドカード、各深さのノード、子) が一致する。SAYC 全体では、鎖の 6 巡を超える位置だけが異なる (鎖は 6 巡で尽き、停止は尽きない)。停止の接ぎ木を 6 巡に制限した試験版では、`xtask coverage` の全指標と、生成したリプレイ 24,269 位置での `choose_bid`・`call_distribution`・`interpret` の尤度 (|Δ ln p| の最大 0.0) がフェーズ 4 の鎖版と完全に一致した。
 
 **費用 (SAYC、release)。** 38,737 行 / 49,800 ノード → 6,496 行 / 7,174 ノード (合成ノード 2)。コンパイル 914〜941 ms → 437〜441 ms (best of 3、loadavg 3.2〜3.4)。排他索引の再構築 44.7 ms → 12.8 ms (§5.4)。postcard IR 16,415,084 → 2,524,018 バイト。コンパイル 1 回のピーク RSS 158 MB → 33 MB (`/usr/bin/time -l`)。`IR_FORMAT` は 2、`COMPILE_REVISION` は 3 (§10.2)。
+
+
+### 4.6 相対レベル (`cS`、`jY`、フェーズ 4 拡張)
+
+**目的。** BML のレベルは `1`〜`7` か `n` (全レベル) しか書けないので、「相手のスートより上なら 2 レベル、下なら 3 レベル」のように、直前のビッドによって最小レベルが変わるコールは、相手のスートやレベルごとに表を書き分けるしかなかった (SAYC の P10 の 6 組 18 表、`competition.bml` の「下位スートのオーバーコールはオープニングごとに書き出す」)。相対レベルは、そのコールを 1 行で書く。
+
+**構文。** `level` に 2 つの値を加える (§2.1)。
+
+- `c` (cheapest): そのストレインで十分 (合法) な最低のレベル。
+- `j` (jump): `c` の 1 つ上 (シングルジャンプ)。
+
+ストレインには他のレベルと同じものが書ける: リテラル (`cS`、`cN`、複数ストレインの `cHS`、`cred`)、変数 (`cM`、`coM`、`cm`、`cY`、`jX`)、代替 (`cD/H`、`/` の後の裸のストレインは直前のレベル `c` を引き継ぐ)。相手のコール (`(cX)`) にも書ける。
+
+**意味。** 基準は経路の最後のビッド (どちらの側でもよい。P/D/R は数えない。`step` と同じ基準)。ビッドが無ければ (オープニングの位置) `c` は 1 レベル、`j` は 2 レベル。
+
+| 直前のビッド | `cS` | `jS` | `cH` | `cN` |
+| --- | --- | --- | --- | --- |
+| なし | 1S | 2S | 1H | 1N |
+| 1H | 1S | 2S | 2H | 1N |
+| 2H | 2S | 3S | 3H | 2N |
+| 2S | 3S | 4S | 3H | 2N |
+| 7H | 7S | (候補なし) | (候補なし) | 7N |
+
+- 変数は通常どおり束縛する。未束縛の変数の候補は §4.2 の規則 (未使用のストレイン、`X<Y<Z`) で選び、各候補のレベルをそのストレインの `c`/`j` にする。束縛済みの変数はそのストレインで `c`/`j`。例えば `(1X)-P-(2X)-` の下の `cM` は、`(1H)-P-(2H)` では `2S`、`(1S)-P-(2S)` では `3H` になる。
+- 説明文の変数置換は他のレベルと同じ (`cM = 5+M` は `5+!s` に)。
+- 候補は各ストレインにつき 1 つなので、`n` と違い `WideWildcard` は出ない。候補が `Level::At` と違って不十分になることは無いので、`IllegalCall` も出ない。
+- Exact 行ではない (パターン行として、兄弟の Exact 行の後に処理する。§4.2 の 2)。同じコールを先の兄弟が作っていれば、パターン行の規則どおり黙って (Exact なら `ShadowedByExact` で) 捨てる。
+
+**端の場合と Lint。**
+
+- **ワイルドカードの下** (`(any)`、`(bid)`、`(suit)` の後): 最後の具体的なビッドより後に、ビッドでありうるワイルドカードがあれば、最後のビッドは不明である。そのとき相対レベルを含む行 (代替の一部だけが相対でも行全体) は `LevelWithoutAnchor` (Error) を出して、その位置では行と部分木を捨てる。ワイルドカードの後に我々の具体的なビッドがあれば基準は既知に戻る (`1C-(any)-1H-(P)-` の下の `cS` は `1S`)。
+- **7 を超える**: `j` (または最後のビッドが 7 レベルの `c`) が 7 を超えるストレインは候補にならない。束縛済み変数かリテラルで候補が 1 つも無ければ `NoSufficientLevel` (Info)。未束縛の変数で候補が無ければ従来どおり `VariableNoCandidate` (Info)。
+- **段落の先頭**: 相対レベルのトークンだけで始まる段落は表として扱わない (§3.2)。履歴行 (`-`/`;` を含む先頭行) の中の相対レベルは使える。
+- **可搬性**: `bml.py` の `bid_type()` は `c`/`j` をレベルとして読まない (`nX` と同じく既存ツールでは読めない)。したがって D16 の「既存ツールが無視するか説明文として読む」原則から外れる。`NonStandardToken` (Info) を必ず出し、著者に知らせる (D16 の補遺、`13-decisions.md`)。
+
+**実装。** `pattern.rs::Level::{Cheapest, Jump}`、`Level::is_relative`; `parser/call.rs::level` (`'c'`、`'j'`)、`nonstandard_reasons` ("relative level (c = cheapest, j = jump)"); `parser/mod.rs::is_bidtable_start` / `has_relative_level`; `compile/expand.rs::bids_at_level` (`minimum_sufficient_bid` とその 1 つ上)、`generate_candidates` (`Strains` の相対レベル)、`Frame::last_bid_known`、`pattern_has_relative_level`、`expand_row` (`LevelWithoutAnchor`)、`report_empty_candidates` (`NoSufficientLevel`)。試験: `parser/call.rs` の `relative_levels`、`tests/relative_level.rs`。`COMPILE_REVISION` 4。
 
 ---
 
@@ -873,7 +911,8 @@ callref     = call { ( "-" | "/" ) call } ;   (* call = 1-7 + スート記号 | 
 | `CONST`, `constructive`, `positive`, `sound` | v2 | `StrengthWord` に variant が無い。未認識 (`Unrecognized`) として認識率に計上 |
 | `CTRL` (cue-bid の意味), `no outside A/K`, `0--1 outside A/K`, `9 tricks`, `playing tricks`, `QT` | v2 | 未認識 |
 | `1st/2nd`, `3rd seat`, `by passed hand`, `PH`, `NV`, `VUL` (文中の席/vul 条件) | v2 | 未認識 (行レベルの条件は `#SEAT`/`#VUL` で書く) |
-| スート間の相対比較 (`longer major`, `better minor`, `longest suit`, `5+ in a major`)、オナー位置 (`values in the bid suits`, `K or Q in partner's suit`, `CONC`)、`stoppers in two side suits`、相互参照 (`same structure as over 1NT-2!d`, `see 2M opening`) | v2 | 未認識 (`Unrecognized`) として認識率に計上。`description` にはそのまま残る |
+| `!s>=!h`, `!s > !h`, `!h=!s`, `!d<=!c`, `!c<!d`, `M>oM`, `m>=om` (ext、フェーズ 4) | `LengthOrder(a, cmp, b)` | `shapes ∩= {a の枚数 cmp b の枚数 である全シェイプ}` (560 シェイプから前計算)。演算子は `>=` `>` `=` `<=` `<` の 5 つで、前後に空白 1 つまで置ける。両辺はスート記号 (`!c !d !h !s`) か、展開時にそれへ置換される束縛済み変数 (`M`、`oM`、`m`、`om`、`X/Y/Z`) で、同じスート同士は認識しない。右辺の直後が英数字なら認識しない (`!s>=!hx`)。`suit_len` を固定しないので、`NAT` の既定長を打ち消さない (`Shape` と違い `suit_len_pins` の対象外)。`tokens.rs::match_length_order`、`length_order_shapes`、`context.rs::resolve_one` |
+| 言葉によるスート間の相対比較 (`longer major`, `better minor`, `longest suit`, `5+ in a major`)、オナー位置 (`values in the bid suits`, `K or Q in partner's suit`, `CONC`)、`stoppers in two side suits`、相互参照 (`same structure as over 1NT-2!d`, `see 2M opening`) | v2 | 未認識 (`Unrecognized`) として認識率に計上。`description` にはそのまま残る |
 
 ### 7.5 Pass 2 の解決規則 (`context.rs`)
 
@@ -1310,6 +1349,8 @@ impl LintSummary { pub fn of(lints: &[Lint]) -> LintSummary; }
 | coverage | `MissingResponseCoverage` | Info | あるノードの子のどれも満たさない手の割合 |
 | exclusive | `ShadowedBranch` | Warning | 上位の兄弟に全域を覆われ、`choose_bid` が決して選ばない我々側の枝 (§9.3 の 8) |
 | exclusive | `OverlappingBranches` | Info | 同じノードの枝どうしが重なり、排他索引が後の枝を素化した (§9.3 の 8) |
+| expansion | `LevelWithoutAnchor` | Error | 相対レベル (`cS`、`jY`) の基準となる最後のビッドがワイルドカードのため不明 (その位置で行と部分木を捨てる。§4.6) |
+| expansion | `NoSufficientLevel` | Info | 相対レベルが 7 を超え、候補が無い (§4.6) |
 
 ### 9.3 コンパイル後の八つの検査
 
