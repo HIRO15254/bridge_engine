@@ -497,10 +497,10 @@ cm = {prio:1} 10--15 hcp, 6+m
   #STOP
 #STOP
 
-When the notrump responder doubles that overcall (for penalty, `notrump.bml`),
-the notrump side has nothing more to say.
+When the notrump opener doubles that overcall (a maximum, `notrump.bml`), the
+notrump side has nothing more to say.
 
-1N-(P)-2N-(3X)-D-
+1N-2N-(bid)-D-
 #STOP
 
 ** Over the response to their weak two-bid (P12 batch 3)
