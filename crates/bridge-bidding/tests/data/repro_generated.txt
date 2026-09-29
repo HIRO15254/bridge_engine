@@ -3,7 +3,7 @@
 # the dealer and vulnerability; replayed with PolicyParams::system_players(), the SAYC
 # natural fallback and ImplicitPass::Complement. Passed-out auctions and final contracts
 # above the 5 level are skipped. Regenerate with SAYC_REPRO_WRITE_FIXTURE=1 (see
-# write_generated_fixture); PROVISIONAL until re-frozen at phase-4 integration.
+# write_generated_fixture); re-frozen on the stop-based SAYC (system stops, phase 4).
 # id	dealer	vul	deal	calls
 gen-0	N	None	N:KT.AKT9742.AJ.A4 J9643.3.K7643.65 Q.QJ8.952.JT9872 A8752.65.QT8.KQ3	1H Pass 2H 2S 4H Pass Pass Pass
 gen-1	E	NS	N:52.975.KJT87.T54 T98.84.A532.J973 KJ743.AKQJ2.Q6.Q AQ6.T63.94.AK862	Pass 1S 2C Pass Pass X Pass 2S Pass Pass Pass
@@ -17,7 +17,7 @@ gen-8	N	EW	N:9.QJ7.AK986.KJ73 .AK832.T75.A9654 AQJ732.64.J432.8 KT8654.T95.Q.QT2
 gen-9	E	All	N:Q.AJ9762.953.KQJ KJ74.K53.AJ76.T3 8653.QT.QT842.94 AT92.84.K.A87652	1D Pass 1S 2H 2S Pass Pass Pass
 gen-10	S	None	N:J.KQJ9853.K97.T8 A9542.A7.A54.972 KQ6.2.QJT82.KQJ6 T873.T64.63.A543	1D Pass 1H 1S Pass Pass Pass
 gen-11	W	NS	N:QJT82.J42.9654.K K74.T65.QT.QT976 53.AKQ8.K873.852 A96.973.AJ2.AJ43	1C Pass 2C X Pass Pass Pass
-gen-12	N	All	N:J95.72.QJ92.Q653 AKQ.KJT64.A53.AJ T8643.A3.876.KT9 72.Q985.KT4.8742	Pass 2C Pass 2D Pass 2NT Pass 3C Pass 3H Pass 4H Pass Pass 4S Pass Pass Pass
+gen-12	N	All	N:J95.72.QJ92.Q653 AKQ.KJT64.A53.AJ T8643.A3.876.KT9 72.Q985.KT4.8742	Pass 2C Pass 2D Pass 2NT Pass 3C Pass 3H Pass 4H Pass Pass Pass
 gen-13	E	None	N:QT964.AT5.AK3.Q9 82.973.Q9754.765 AJ5.42.J62.KJ432 K73.KQJ86.T8.AT8	Pass Pass 1H 1NT Pass 3NT Pass Pass Pass
 gen-14	S	NS	N:KQT.J2.A953.KQ86 J532.KQT.87.A932 A9864.87.Q64.754 7.A96543.KJT2.JT	Pass 2H X 3H Pass Pass Pass
 gen-15	W	EW	N:98763.83.KJ8542. JT4.KJ54.QT.K764 AK5.Q96.A63.AJ93 Q2.AT72.97.QT852	Pass Pass Pass 1C 1H Pass 2H Pass Pass Pass

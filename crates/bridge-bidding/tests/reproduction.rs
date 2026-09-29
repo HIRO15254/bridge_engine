@@ -520,7 +520,7 @@ fn format_fixture(cases: &[FixtureCase]) -> String {
          # the dealer and vulnerability; replayed with PolicyParams::system_players(), the SAYC\n\
          # natural fallback and ImplicitPass::Complement. Passed-out auctions and final contracts\n\
          # above the 5 level are skipped. Regenerate with SAYC_REPRO_WRITE_FIXTURE=1 (see\n\
-         # write_generated_fixture); PROVISIONAL until re-frozen at phase-4 integration.\n\
+         # write_generated_fixture); re-frozen on the stop-based SAYC (system stops, phase 4).\n\
          # id\tdealer\tvul\tdeal\tcalls\n",
     );
     for case in cases {
