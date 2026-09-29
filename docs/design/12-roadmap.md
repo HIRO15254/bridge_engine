@@ -261,5 +261,5 @@ P9 (負の double 後のアドバンス) の前は、表見出し `(1X)-1Y-(D)-2
 - 停止は全ての表の後に書いたものとして扱う。表の行とワイルドカード辺はファイル順にかかわらず停止に優先する。これを文書とテストに明記した。
 - `{ stop }` (括弧内の空白) が印だけ立てて停止を接がなかったのを直した。
 - `Node::is_synthesised()` は空の `path` でなく `NodeFlags::synthesised` を読む (手組みの IR は全ノードの `path` が空)。`IR_FORMAT` 3、`COMPILE_REVISION` 5。
-- 説明文 (`BidChoice.explanation`、`interpret`、排他領域) は `Node::explanation()` で `{prio:N}` などの注釈を除く。停止のパスの説明は `{stop}` の行でも合成でも `any hand` に揃った。
+- 説明文 (`BidChoice.explanation`、`interpret`、排他領域) から `{prio:N}` などの注釈を除く (`compile()` がノードの説明文から 1 度だけ除いて格納する。`COMPILE_REVISION` 6)。停止のパスの説明は `{stop}` の行でも合成でも `any hand` に揃った。
 - xtask: strict [C] (上記) と、排他索引の統計の我々 / 相手への分割 (`groups_us` 2,134 / `groups_them` 620、影になったコールは全グループで 7 / 382、影になった枝は 18 / 382。`ShadowedBranch` Lint の 18 件は我々の枝と一致する)。

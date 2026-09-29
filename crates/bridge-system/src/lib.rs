@@ -61,5 +61,6 @@ pub const IR_FORMAT: u32 = 3;
 /// `OverlappingBranches` are stored in `SystemIR::lints`). 3: system stops (`#STOP`, `{stop}`).
 /// 4: stops under different `#SEAT`/`#VUL` conditions that meet at one edge share a loop
 /// carrying every condition's entries. 5: the synthesised stop pass's description is the row it
-/// stands for, `{prio:-100} {stop} any hand`.
-pub const COMPILE_REVISION: u32 = 5;
+/// stands for, `{prio:-100} {stop} any hand`. 6: every node's description is stored without its
+/// `{prio:N}` / `{w:X}` / `{stop}` annotations (`Row::description_raw` keeps them).
+pub const COMPILE_REVISION: u32 = 6;

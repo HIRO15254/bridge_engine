@@ -463,7 +463,7 @@ impl<'a> LookupKey<'a> {
 
 **トライへの接ぎ木 (`compile/expand.rs::graft_stops`)。** 展開は停止の位置 `StopSite { we_opened, edges, seat, vul, span }` を記録するだけで、展開の最後 (不正コールの降格の前) にまとめてトライへ接ぐ。
 
-1. (席条件、バル条件) の組ごとに合成ノードを 1 対だけ作る (`StopNodes`): 相手ノード (`Side::Them`、空の説明、`ANY`) と停止のパス (`Side::Us`、`Pass`、`{prio:-100}`、`ANY`、説明 `{prio:-100} {stop} any hand`、`flags.stop` と `flags.synthesised`)。
+1. (席条件、バル条件) の組ごとに合成ノードを 1 対だけ作る (`StopNodes`): 相手ノード (`Side::Them`、空の説明、`ANY`) と停止のパス (`Side::Us`、`Pass`、`{prio:-100}`、`ANY`、説明は `{prio:-100} {stop} any hand` から注釈を除いた `any hand`、`flags.stop` と `flags.synthesised`)。
 2. 共有の分離トライノードの輪 `StopLoop` は、ある辺に着いた停止の条件の列 (書かれた順) ごとに 1 つ作る: 相手のノード `any_trie` と我々のノード `pass_trie` に、列の各条件について鎖の行が加えたはずのエントリを置き (停止のパスは同じ条件のエントリが無ければ、`(any)` は覆う条件のエントリが無ければ)、`any_trie --Pass--> pass_trie` と `pass_trie --(AnyCall)--> any_trie` で輪にする。これが際限の無さを表す。トライは木でなくなるが、`resolve` / `children` / `resolve_lenient` は辺をたどるだけなので変更は要らない。条件が 1 つだけの系 (SAYC など) では輪は 1 つである。
 3. 各位置 S から、次の手番の側 (`(edges.len() が偶数) == we_opened` なら我々) に応じて `P` の辺と `(any)` の辺を交互にたどる。辺が既にある所 (表が自分で `(any)` や我々の `P` を書いている所) は既存のノードを通り、鎖の行が加えたはずのエントリを加える: `(any)` のエントリは覆う条件のエントリが無ければ加え、停止のパスは同じ条件のエントリが無ければ加える。同じ条件のエントリがあり、その説明が空のプレースホルダ (§4.4) なら停止のパスの内容で埋める (`DuplicatePath` Info)。停止のパスの条件に覆われる空のプレースホルダも同様に埋める。
 4. 最初に辺が無い所で、その停止の条件だけの輪の `pass_trie` (我々の手番) か `any_trie` (相手の手番) へつなぐ。既に輪のノードに着いたら、そこで止める。その輪が停止の条件を含まなければ、辺を「その輪の条件の列 + 停止の条件」の輪へつなぎ替える (元の輪は、そこへつながる他の位置のために残す)。こうして、席やバルの条件が違う停止が同じ位置で出会っても、どの条件でも停止のパスが出る (回帰テスト `tests/stop.rs` の `stops_under_different_seat_conditions_at_one_position_each_keep_the_stop_pass` ほか 2 件。鎖と停止を比べる)。
@@ -476,7 +476,7 @@ impl<'a> LookupKey<'a> {
 - 合成ノードは `flags.synthesised` を持つ (`Node::is_synthesised()`。`path` と `calls` も空だが、手組みの IR も `path` が空なので、判定は印で行う)。停止のパスの内容で埋めたプレースホルダは合成ノードではない。行 (`Row`) も合成で、`span` は file 0・行 0、認識率 1.0。`Lookup.by_depth` には合成ノードが入る。兄弟の曖昧さの Lint (`check_sibling_ambiguity`) は合成ノードを根にしない。
 - 等価性: 鎖を 8 巡書いた系と停止で書いた系を比べる `tests/stop.rs` で、ランダムな 46,570 位置 (うち停止のパスを出すもの 15,208) の照合結果 (深さ、ワイルドカード、各深さのノード、子) が一致する。SAYC 全体では、鎖の 6 巡を超える位置だけが異なる (鎖は 6 巡で尽き、停止は尽きない)。停止の接ぎ木を 6 巡に制限した試験版では、`xtask coverage` の全指標と、生成したリプレイ 24,269 位置での `choose_bid`・`call_distribution`・`interpret` の尤度 (|Δ ln p| の最大 0.0) がフェーズ 4 の鎖版と完全に一致した。
 
-**費用 (SAYC、release)。** 38,737 行 / 49,800 ノード → 6,496 行 / 7,174 ノード (合成ノード 2)。コンパイル 914〜941 ms → 437〜441 ms (best of 3、loadavg 3.2〜3.4)。排他索引の再構築 44.7 ms → 12.8 ms (§5.4)。postcard IR 16,415,084 → 2,524,018 バイト。コンパイル 1 回のピーク RSS 158 MB → 33 MB (`/usr/bin/time -l`)。`IR_FORMAT` は 2、`COMPILE_REVISION` は 3 (§10.2)。レビュー修正 (条件ごとの輪、`NodeFlags::synthesised`、合成ノードの説明) の後は `IR_FORMAT` 3、`COMPILE_REVISION` 5、postcard IR 2,531,202 バイト (SAYC のトライとノードは、合成ノードの印と説明文を除いて同一)。
+**費用 (SAYC、release)。** 38,737 行 / 49,800 ノード → 6,496 行 / 7,174 ノード (合成ノード 2)。コンパイル 914〜941 ms → 437〜441 ms (best of 3、loadavg 3.2〜3.4)。排他索引の再構築 44.7 ms → 12.8 ms (§5.4)。postcard IR 16,415,084 → 2,524,018 バイト。コンパイル 1 回のピーク RSS 158 MB → 33 MB (`/usr/bin/time -l`)。`IR_FORMAT` は 2、`COMPILE_REVISION` は 3 (§10.2)。レビュー修正 (条件ごとの輪、`NodeFlags::synthesised`、合成ノードの説明) の後は `IR_FORMAT` 3、`COMPILE_REVISION` 5、postcard IR 2,531,202 バイト (SAYC のトライとノードは、合成ノードの印と説明文を除いて同一)。説明文の注釈をコンパイル時に 1 度だけ除くようにして `COMPILE_REVISION` 6 (§10.2)。
 
 ---
 
@@ -531,7 +531,7 @@ pub struct Node {
     pub volume_log2: i16,                 // estimated log2 of constraint volume (TieBreak::Narrowest)
     pub alertable: Alertability,
     pub flags: NodeFlags,
-    pub description: String,              // after variable substitution ("4+M" -> "4+!h")
+    pub description: String,              // after variable substitution ("4+M" -> "4+!h"), without the {prio:N}/{w:X}/{stop} annotations
     pub children: Vec<NodeId>,            // row-nodes one actual call deeper (skipping implicit passes)
 }
 
@@ -1381,7 +1381,7 @@ impl SystemCache {
 }
 ```
 
-`compile_revision` は `COMPILE_REVISION` (フェーズ 3 が 1、フェーズ 4 が 2、システム停止 §4.5 が 3、条件の違う停止が共有する輪が 4、合成された停止のパスの説明文が 5) である。`compile()` の出力が形式を変えずに変わるとき (新しい Lint など) に上げる。クレートのバージョンと `IR_FORMAT` が同じでも、古いコンパイラが書いたエントリは別のキーになり、読まれずに再コンパイルされる (フェーズ 4 の排他索引の Lint を持たない IR が、温まったキャッシュから返るのを防ぐ。回帰テスト `an_entry_under_the_pre_revision_key_is_a_miss`)。
+`compile_revision` は `COMPILE_REVISION` (フェーズ 3 が 1、フェーズ 4 が 2、システム停止 §4.5 が 3、条件の違う停止が共有する輪が 4、合成された停止のパスの説明文が 5、ノードの説明文から注釈を除いて格納するのが 6) である。`compile()` の出力が形式を変えずに変わるとき (新しい Lint など) に上げる。クレートのバージョンと `IR_FORMAT` が同じでも、古いコンパイラが書いたエントリは別のキーになり、読まれずに再コンパイルされる (フェーズ 4 の排他索引の Lint を持たない IR が、温まったキャッシュから返るのを防ぐ。回帰テスト `an_entry_under_the_pre_revision_key_is_a_miss`)。
 
 手順: (1) `loader` で `path` を読み、`lexer::load` で include を解決して `resolved source` (全ファイルの連結、`Loaded.files` の順) を得る。(2) `key` を計算し `dir/<hex(key)>.ir` を探す。(3) あれば `postcard` でデコードする。ヘッダの `ir_format` が `IR_FORMAT` と違う、`compiler_version` が違う、デコードに失敗する、のいずれも「不一致」として再コンパイルし上書きする (エラーにはしない)。(4) 無ければ `compile` して書く。書き込みは一時ファイル + rename で原子的に行い、I/O の失敗だけが `Err`。`std` 無し (wasm) では `SystemCache` を提供せず、`compile` だけを使う。
 
