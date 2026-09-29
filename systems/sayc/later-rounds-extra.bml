@@ -362,3 +362,144 @@ of his major, game with 13+. Otherwise he passes.
 4S = {prio:1} 13+ hcp
   #STOP
 #STOP
+
+** Opener when they raise after responder's forcing new suit (P12 batch 6)
+
+Their jump raise takes away opener's rebid, so the new suit is no longer
+forcing: opener raises it with support (four cards for a minor, three for a
+major, at the four level), bids 3NT with a stopper and 15+, rebids a six-card
+suit with extras, or passes.
+
+1C-(1D)-2H-(3D)-
+4H = {prio:3} 12+ hcp, 3+!h
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1C-(1D)-2S-(3D)-
+4S = {prio:3} 12+ hcp, 3+!s
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1C-(1H)-2D-(3H)-
+4D = {prio:3} 12+ hcp, 4+!d
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1C-(1S)-2D-(3S)-
+4D = {prio:3} 12+ hcp, 4+!d
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1C-(1S)-2H-(3S)-
+4H = {prio:3} 12+ hcp, 3+!h
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1D-(1H)-2C-(3H)-
+4C = {prio:3} 12+ hcp, 4+!c
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1D-(1S)-2C-(3S)-
+4C = {prio:3} 12+ hcp, 4+!c
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1D-(1S)-2H-(3S)-
+4H = {prio:3} 12+ hcp, 3+!h
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1H-(1S)-2D-(3S)-
+4D = {prio:3} 12+ hcp, 4+!d
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1H-(1S)-2C-(3S)-
+4C = {prio:3} 12+ hcp, 4+!c
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+** More competitive decisions (P12 batch 6)
+
+The notrump opener reopens with a double when their two-level overcall is
+passed round to him and he is short in their suit (a common agreement: the
+responder may have passed with a penalty double of his own).
+
+1N-(2X)-P-(P)-
+D = {prio:1} 0--2X, 15--17 hcp
+  #STOP
+#STOP
+
+Opener after responder's preemptive raise over an overcall (5--9): game in the
+major with 16+, 3NT with a stopper and 17+ after a minor.
+
+1H-(1S)-3H-(P)-
+4H = {prio:1} 16+ hcp
+  #STOP
+#STOP
+
+1m-(1Y)-3m-(P)-
+3N = {prio:1} 17+ hcp, stopper
+  #STOP
+#STOP
+
+After our single raise and their competing bid, passed back to responder, a
+responder with a fourth trump competes to the three level.
+
+1M-(P)-2M-(2X)-P-(P)-
+3M = {prio:1} 6--9 hcp, 4+M
+  #STOP
+#STOP
+
+1M-(P)-2M-(3m)-P-(P)-
+3M = {prio:1} 6--9 hcp, 4+M
+  #STOP
+#STOP
+
+When their overcall of our one-level response is passed back, responder
+reopens with notrump (8--10 and a stopper) or rebids a six-card suit.
+
+1X-(P)-1Y-(1Z)-P-(P)-
+1N = {prio:1} 8--10 hcp, stopper
+  #STOP
+2Y = {prio:2} 6--10 hcp, 6+Y
+  #STOP
+#STOP
+
+After our sandwich-seat overcall is passed out at their raise, the overcaller
+competes with a double (12+, short in their suit) or rebids a six-card suit.
+
+(1X)-P-(1Y)-1Z-(2X)-P-(P)-
+D = {prio:1} 12+ hcp, 0--2X
+  #STOP
+2Z = {prio:2} 11--16 hcp, 6+Z
+  #STOP
+#STOP
+
+(1X)-P-(1Y)-1Z-(2Y)-P-(P)-
+D = {prio:1} 12+ hcp, 0--2Y
+  #STOP
+2Z = {prio:2} 11--16 hcp, 6+Z
+  #STOP
+#STOP

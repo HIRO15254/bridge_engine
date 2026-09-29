@@ -1487,4 +1487,19 @@ mod phase4_tables {
             ("1S 2C 2H P 3H P", "32.QJ432.K32.J32", "P"),
         ]);
     }
+
+    /// Competitive decisions after they raise or reopen (#P12 batch 6): opener raises
+    /// responder's forcing suit over their jump raise, the 1NT opener reopens with a double when
+    /// short in their suit, and responder competes to three with a fourth trump.
+    #[test]
+    fn competitive_decisions_after_they_raise() {
+        check_system(&[
+            ("1D 1S 2C 3S", "32.K32.AQ32.K432", "4C"),
+            ("1D 1S 2C 3S", "32.KQ32.AQ432.32", "P"),
+            ("1NT 2H P P", "AQ32.3.KQ32.A432", "X"),
+            ("1NT 2H P P", "AQ3.Q32.KQ32.A32", "P"),
+            ("1H P 2H 2S P P", "32.Q432.K432.Q32", "3H"),
+            ("1H P 2H 2S P P", "Q32.Q32.K432.Q32", "P"),
+        ]);
+    }
 }
