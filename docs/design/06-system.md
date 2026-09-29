@@ -1382,10 +1382,11 @@ impl LintSummary { pub fn of(lints: &[Lint]) -> LintSummary; }
 | expansion | `LevelWithoutAnchor` | Error | 相対レベル (`cS`、`jY`) の基準となる最後のビッドがワイルドカードのため不明 (その位置で行と部分木を捨てる。§4.6) |
 | expansion | `NoSufficientLevel` | Info | 相対レベルが 7 を超え、候補が無い (§4.6) |
 | parse | `AnyOrderWithoutVariables` | Info | `#ANYORDER` の表が `X`/`Y`/`Z` のうち 2 つ以上を使っていない (順序が無いので効果が無い。§4.7) |
+| stop | `StopUnderForcing` | Warning | パートナーのフォーシングのコールに相手がパスした後、またはゲームフォース中でゲーム未満の位置で、停止のパス (`{prio:-100} {stop} any hand`、書いたものか合成) が候補になる (§4.5、§9.3 の 9) |
 
-### 9.3 コンパイル後の八つの検査
+### 9.3 コンパイル後の九つの検査
 
-parse / expansion の Lint は各段階が発生時に出す。`lint.rs` は完成した IR に対して次の 8 検査を順に走らせる (`bridge-constraint` の DNF / 交差が要る)。
+parse / expansion の Lint は各段階が発生時に出す。`lint.rs` は完成した IR に対して次の 9 検査を順に走らせる (`bridge-constraint` の DNF / 交差が要る)。
 
 1. **充足可能性**: 全ノードで `constraint.is_satisfiable()` (DNF に非空の `Atom` が無い)。偽なら `UnsatisfiableConstraint` (Error)。ノードは残してフラグを付け、L3 は `Diagnostic::UnsatisfiableNode` として飛ばす。
 2. **自分の履歴との整合**: ノードの `side` と同じ側の祖先ノード (`path` 上) の制約を `And` して `is_satisfiable()`。偽なら `ContradictsOwnHistory` (Warning。例: `1N 15-17` の後のリビッドが `18+` を示す)。
@@ -1396,6 +1397,8 @@ parse / expansion の Lint は各段階が発生時に出す。`lint.rs` は完�
 7. **カバレッジ** (任意、`CompileOptions.coverage_samples` (既定 10,000、0 で無効)): 手を一様に引き、各 `SeatCond` (`opener_pos` 1..=4) について `hcp ≥ opening_min` なのに `Pass` 以外のどのオープニングノードも満たさない手の割合を `MissingOpeningCoverage` (Warning) に添える。同様に子を持つ各ノードについて、親文脈から (一様に) レスポンダーの手を引き、どの子も満たさない割合を `MissingResponseCoverage` (Info) に添える (L3 の `NoCandidate` 集計のコンパイル時版)。サンプル数はノード数に応じて `min(coverage_samples, 10^6 / nodes)` に落とす。閾値は設けず割合を報告するだけで、判断は `coverage_report.json` (`11-testing.md` §2) と合わせて行う。
 
 8. **排他領域** (フェーズ 4、`check_exclusive_branches`): §5.4 の索引を読む。(a) ある (ノード, 枝) の片がどのグループにも無く、そのノードを含む全グループで「枝 − 上位」がグリッドで空と証明できる (`grid_proves_empty`) とき `ShadowedBranch` (Warning)。枝単独で空のもの (検査 1 の対象) と、相手側のノード (`Side::Them`) は除く。相手側のコールは我々の方策の選択ではなく木の辺にすぎず、多くは要件の無い表見出し (`1C-(1H)-` など) なので、同じ位置の他のコールより下位ならすべて覆われて見えてしまう。メッセージは「never chosen: higher-ranked siblings cover it」(複数枝なら「branch j/n never chosen: …」)。(b) 同じノードの枝 j と k の sup グリッドが実行可能なセルで交わるとき `OverlappingBranches` (Info)。行ごとに (j, k) 1 件にまとめる。SAYC では `ShadowedBranch` 18 件 (すべて我々側。相手側を数えていた時点ではフェーズ 3 の SAYC で 249 件、うち相手側 231 件)、`OverlappingBranches` 268 件 (フェーズ 3 の SAYC では 90 件、行ごとにまとめる前は 186 件)、Error 0 件 (フェーズ 4 統合時、P1〜P10 の SAYC)。
+
+9. **フォーシングの下の停止** (レーン D2 のレビュー、`check_stop_under_forcing`): 両方の根からトライをたどり、(a) 我々の側の最後のコールがフォーシング (`Forcing::OneRound`/`ToGame`) で相手がその後パスした、(b) 我々の側がゲームフォース (`ToGame`) のコールをし、その後にゲーム以上のビッド (3NT、4H/4S、5C/5D 以上) が無い、のどちらかが成り立つ我々の手番で、停止のパス (`Pass`、`flags.stop`、優先度 -100 以下) が候補にあれば `StopUnderForcing` (Warning) を位置ごとに 1 件出す。どの行にも当たらない手はフォーシングのコールをパスすることになるからである。メッセージは位置 (BML の記法、相手のコールは括弧、ワイルドカードは `(any)`) とフォーシングのコールを示し、行はフォーシングのコールの行を指す。相手のビッドは 1 巡のフォーシングを解く。相手の手番では、パスが通る辺 (完全一致の `Pass`、無ければパスを含む最初のワイルドカード) をパスとして続け、他のワイルドカードは水準の分からないコールとして両方を解く。停止のパスの先 (停止の輪) へは進まない。試験 `tests/stop.rs` の `a_stop_under_partners_forcing_call_is_reported`、`a_stop_below_game_after_a_game_force_is_reported`。SAYC ではレーン D2 のレビュー修正の後 0 件 (`bridge-bidding` の `tests/sayc_content.rs::sayc_has_no_stop_under_a_forcing_call`)。
 
 検査 6 と 7 は `Sampler::prepare` (20〜60 μs) を使うので、コンパイル 1 秒の予算を圧迫する場合は `coverage_samples = 0` で 7 を無効化できる (`load_or_compile` のキャッシュがあれば実質 1 回だけ)。
 

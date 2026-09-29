@@ -428,6 +428,21 @@ impl AuctionTrie {
             .map(|pos| self.nodes[at.0 as usize].exact[pos].1)
     }
 
+    /// The exact (concrete-call) edges out of `at`, in call-index order.
+    pub(crate) fn exact_edges(&self, at: TrieId) -> impl Iterator<Item = (Call, TrieId)> + '_ {
+        self.nodes[at.0 as usize].exact.iter().map(|&(idx, child)| {
+            (
+                Call::from_index(idx).expect("stored call index is valid"),
+                child,
+            )
+        })
+    }
+
+    /// The wildcard (opponents' class) edges out of `at`, in insertion (match) order.
+    pub(crate) fn class_edges(&self, at: TrieId) -> impl Iterator<Item = (OppClass, TrieId)> + '_ {
+        self.nodes[at.0 as usize].classes.iter().copied()
+    }
+
     /// The existing wildcard child of `at` for `class`, without creating it.
     pub(crate) fn find_child_class(&self, at: TrieId, class: OppClass) -> Option<TrieId> {
         self.nodes[at.0 as usize]
@@ -600,7 +615,7 @@ impl AuctionTrie {
         })
     }
 
-    fn root_id(we_opened: bool) -> TrieId {
+    pub(crate) fn root_id(we_opened: bool) -> TrieId {
         TrieId(if we_opened { 0 } else { 1 })
     }
 

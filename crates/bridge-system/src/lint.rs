@@ -75,6 +75,12 @@ pub enum LintCode {
     /// `#ANYORDER` in a table with fewer than two of the variables `X`, `Y`, `Z`: there is no
     /// strain order to lift, so the directive has no effect (Info; `06-system.md` §4.7).
     AnyOrderWithoutVariables,
+    // stop audit (lane D2 review, appended for the same reason)
+    /// A system stop's pass (`{prio:-100} {stop} any hand`, written or synthesised) is a
+    /// candidate for a player whose partner's last call was forcing (one round or to game) and
+    /// whose right-hand opponent passed, or while the partnership is in a game force below game:
+    /// every hand no other row takes passes a forcing call (Warning; `06-system.md` §4.5).
+    StopUnderForcing,
 }
 
 /// One diagnostic.
@@ -216,7 +222,200 @@ pub fn run_post_compile_checks(ir: &mut SystemIR, opts: &CompileOptions) {
     check_recognition(ir);
     check_sibling_ambiguity(ir);
     check_exclusive_branches(ir);
+    check_stop_under_forcing(ir);
     check_coverage(ir, opts);
+}
+
+/// [`LintCode::StopUnderForcing`]: walks the trie from both roots, tracking whether our side's
+/// last call was forcing with the opponents passing since (`one_round`), and whether our side
+/// has made a game-forcing call and no bid at game level or higher followed (`gf`). At our turn
+/// with either pending, a stop pass among the candidates is reported once per trie position,
+/// anchored at the forcing call's row. An opponents' bid releases a one-round force; the
+/// wildcard edge a pass would take (no exact `Pass` edge, the first class admitting a pass) is
+/// followed as that pass (the stop is reached through it), any other is a call of unknown
+/// level and releases both. The walk does not go past a
+/// stop pass (the partnership has stopped; the stop's shared loop is not re-reported).
+fn check_stop_under_forcing(ir: &mut SystemIR) {
+    use bridge_core::{Call, Strain};
+
+    use crate::{Forcing, trie::AuctionTrie, trie::TrieId};
+
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    struct State {
+        at: TrieId,
+        ours: bool,
+        one_round: bool,
+        gf: bool,
+    }
+    #[derive(Clone, Copy)]
+    struct Anchors {
+        one_round: Option<NodeId>,
+        gf: Option<NodeId>,
+    }
+
+    fn is_game(call: Call) -> bool {
+        match call {
+            Call::Bid(b) => match b.strain() {
+                Strain::NoTrump => b.level() >= 3,
+                Strain::Hearts | Strain::Spades => b.level() >= 4,
+                _ => b.level() >= 5,
+            },
+            _ => false,
+        }
+    }
+
+    let trie = &ir.index;
+    let is_stop_pass = |id: NodeId| {
+        let n = ir.node(id);
+        n.call == Call::Pass && n.flags.stop && n.priority <= -100
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut reported = std::collections::HashSet::new();
+    let mut new_lints = Vec::new();
+    let mut stack = vec![
+        (
+            State {
+                at: AuctionTrie::root_id(true),
+                ours: true,
+                one_round: false,
+                gf: false,
+            },
+            Anchors {
+                one_round: None,
+                gf: None,
+            },
+            Vec::new(),
+        ),
+        (
+            State {
+                at: AuctionTrie::root_id(false),
+                ours: false,
+                one_round: false,
+                gf: false,
+            },
+            Anchors {
+                one_round: None,
+                gf: None,
+            },
+            Vec::new(),
+        ),
+    ];
+    // The path is only for the message, in BML's notation: the opponents' calls in
+    // parentheses, `(any)` for a wildcard step.
+    while let Some((st, anchors, path)) = stack.pop() {
+        if !seen.insert(st) {
+            continue;
+        }
+        if st.ours && (st.one_round || st.gf) && !reported.contains(&st.at) {
+            let stop = trie
+                .find_child_call(st.at, Call::Pass)
+                .is_some_and(|child| trie.entries_at(child).any(|(_, _, n)| is_stop_pass(n)));
+            let anchor = if st.one_round {
+                anchors.one_round
+            } else {
+                anchors.gf
+            };
+            if let (true, Some(anchor)) = (stop, anchor) {
+                reported.insert(st.at);
+                let node = ir.node(anchor);
+                let forcing_call = &path[..node.calls.len().min(path.len())];
+                let why = if st.one_round {
+                    "partner's forcing call, the opponents passing"
+                } else {
+                    "partner's game force, below game"
+                };
+                new_lints.push(
+                    Lint::warning(
+                        LintCode::StopUnderForcing,
+                        format!(
+                            "a system stop's pass (any hand) is a candidate at {} after {} \
+                             ({why}): hands no row takes pass a forcing call",
+                            path.join("-"),
+                            forcing_call.join("-")
+                        ),
+                    )
+                    .with_row(node.row)
+                    .with_node(anchor)
+                    .with_span(ir.row(node.row).span.clone()),
+                );
+            }
+        }
+        for (call, child) in trie.exact_edges(st.at) {
+            let nodes: Vec<NodeId> = trie
+                .entries_at(child)
+                .map(|(_, _, n)| n)
+                .filter(|&n| !ir.node(n).is_synthesised())
+                .collect();
+            if st.ours
+                && call == Call::Pass
+                && trie.entries_at(child).any(|(_, _, n)| is_stop_pass(n))
+            {
+                continue;
+            }
+            let mut next = State {
+                at: child,
+                ours: !st.ours,
+                one_round: st.one_round,
+                gf: st.gf && !is_game(call),
+            };
+            let mut next_anchors = anchors;
+            if st.ours {
+                let forcing = |f: Forcing| {
+                    nodes
+                        .iter()
+                        .copied()
+                        .find(|&n| ir.node(n).flags.forcing == f)
+                };
+                let game = forcing(Forcing::ToGame);
+                let one = game.or_else(|| forcing(Forcing::OneRound));
+                next.one_round = one.is_some();
+                next_anchors.one_round = one;
+                if let Some(g) = game {
+                    if !is_game(call) {
+                        next.gf = true;
+                        next_anchors.gf = Some(g);
+                    }
+                }
+            } else if call != Call::Pass {
+                next.one_round = false;
+            }
+            let mut next_path = path.clone();
+            next_path.push(if st.ours {
+                format!("{call}")
+            } else {
+                format!("({call})")
+            });
+            stack.push((next, next_anchors, next_path));
+        }
+        if !st.ours {
+            // A pass takes the exact `Pass` edge when there is one, else the first wildcard
+            // that admits it (`AuctionTrie::resolve`); every other wildcard edge is reached
+            // only by a call other than a pass.
+            let mut pass_taken = trie.find_child_call(st.at, Call::Pass).is_some();
+            for (class, child) in trie.class_edges(st.at) {
+                let as_pass = !pass_taken && class.matches(Call::Pass);
+                pass_taken |= as_pass;
+                let next = if as_pass {
+                    State {
+                        at: child,
+                        ours: true,
+                        ..st
+                    }
+                } else {
+                    State {
+                        at: child,
+                        ours: true,
+                        one_round: false,
+                        gf: false,
+                    }
+                };
+                let mut next_path = path.clone();
+                next_path.push("(any)".to_owned());
+                stack.push((next, anchors, next_path));
+            }
+        }
+    }
+    ir.lints.extend(new_lints);
 }
 
 /// The exclusive-index lints (docs/design/06-system.md §9):
