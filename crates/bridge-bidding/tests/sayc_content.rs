@@ -1550,4 +1550,58 @@ mod phase4_tables {
             ("1C 2D 2H", "K32.Q432.Q432.32", "3D"),
         ]);
     }
+
+    /// Uncontested continuations (#P12 batch 8): opener after responder's 1NT over his
+    /// one-level new suit, responder after 1m-1NT-2m, the reverse, the jump shift over a minor
+    /// and opener's rebid after it, and the notrump opener's answer to a forcing 2!s.
+    #[test]
+    fn uncontested_continuations_batch_8() {
+        check_system(&[
+            ("1C P 1D P 1H P 1NT P", "A2.AK32.32.AKJ32", "3NT"),
+            ("1C P 1D P 1H P 1NT P", "A2.AK32.32.KQJ32", "2NT"),
+            ("1C P 1D P 1H P 1NT P", "2.KQ32.32.AKJ432", "2C"),
+            ("1C P 1D P 1H P 1NT P", "32.KQ32.K2.AJ432", "P"),
+            ("1C P 1NT P 2C P", "Q32.K32.J432.Q32", "3C"),
+            ("1C P 1NT P 2C P", "Q32.J32.J432.Q32", "P"),
+            ("1C P 1NT P 2C P 3C P", "A2.K32.32.AQJ432", "3NT"),
+            ("1C P 1NT P 2C P 3C P", "A2.Q32.32.KQJ432", "P"),
+            ("1C P 1H P 2D P", "32.AQJ32.K32.Q32", "2H"),
+            ("1C P 1H P 2D P", "32.KJ32.Q432.432", "3D"),
+            ("1C P", "AQ2.AKJ32.K2.Q32", "2H"),
+            ("1C P", "32.AKJ32.K32.432", "1H"),
+            ("1C P 2H P", "A2.K32.Q32.KJ432", "3H"),
+            ("1C P 2H P", "AQ32.32.KJ2.K432", "2S"),
+            ("1C P 2H P", "KQ2.32.QJ2.KJ432", "2NT"),
+            ("1C P 1D P 1NT P 2S P", "K32.Q32.A2.KJ432", "3S"),
+            ("1C P 1D P 1NT P 2S P", "K2.Q32.A32.KJ432", "2NT"),
+            ("1NT P 2D P 2H P 2NT P 3H P", "32.KQ432.K32.432", "P"),
+            ("2C P 2D P 2H P 2NT P 3H P", "32.Q2.5432.65432", "4H"),
+            ("2C P 2D P 2H P 2NT P 3H P", "432.2.5432.65432", "3NT"),
+        ]);
+    }
+
+    /// Competitive continuations (#P12 batch 8): the weak two and the 1NT overcaller sit for
+    /// partner's penalty double, the overcaller accepts advancer's 2NT, opener after the raise
+    /// over their Michaels cue bid, after a preemptive raise, the notrump opener after a forcing
+    /// new suit over their overcall, advancing a balancing three-level suit, and opener after
+    /// responder's double of a three-level preempt.
+    #[test]
+    fn competitive_continuations_batch_8() {
+        check_system(&[
+            ("2H 2S X P", "32.KQJ432.432.32", "P"),
+            ("1C 1NT 2H X P", "AQ2.KJ2.KQ32.J32", "P"),
+            ("1S 1NT P 2NT P", "AQ2.KJ2.KQ32.K32", "3NT"),
+            ("1S 1NT P 2NT P", "AQ2.KJ2.Q432.K32", "P"),
+            ("1S 2S 3S P", "AKJ32.K2.AQ2.432", "4S"),
+            ("1S 2S 3S P", "AKJ32.Q2.Q32.432", "P"),
+            ("1D 2C 3D P", "A2.AK2.KQ432.K32", "3NT"),
+            ("1D 2C 3D P", "A2.K32.KQ432.432", "P"),
+            ("1NT 2H 3C P", "AK32.32.KQ2.QJ32", "4C"),
+            ("1NT 2H 3C P", "AK32.32.AKJ32.32", "3S"),
+            ("2S P P 3H P", "32.K2.AKQ32.Q432", "4H"),
+            ("2S P P 3H P", "AQ2.2.KQ32.K5432", "3NT"),
+            ("1C 3D X P", "A2.KQ32.32.AK432", "3H"),
+            ("1C 3D X P", "A2.K32.2.AKQ5432", "4C"),
+        ]);
+    }
 }

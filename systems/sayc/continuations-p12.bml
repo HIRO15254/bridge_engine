@@ -191,3 +191,355 @@ P = {prio:0} 0--2m or 0--12 hcp
   #STOP
 P = {prio:0} 0--2m or 0--12 hcp
   #STOP
+
+** Opener after responder's 1NT over his one-level new suit (batch 8)
+
+After 1X-1Y-1Z, responder's 1NT is 6--10 without four cards in opener's second
+suit (`later-rounds.bml`, `after-new-suit-1`). Opener, who has shown an
+unbalanced hand (a balanced 18--19 jumps to 2NT at his first rebid), passes a
+minimum, rebids a six-card first suit, invites game with 2NT on 16--17 and bids
+3NT with 18+ (the booklet's point count: 25 for game).
+
+1X-(P)-1Y-(P)-1Z-(P)-1N-(P)-
+3N = {prio:3} 18+ hcp
+  #STOP
+2N = {prio:2} 16--17 hcp
+  #STOP
+2X = {prio:1} 12--15 hcp, 6+X
+  #STOP
+P = {prio:0} 12--15 hcp
+  #STOP
+
+** Responder after opener's minimum rebid of his minor over 1NT (batch 8)
+
+The 1NT response to a minor is 6--9 without support; opener's rebid of the
+minor at the two level is a minimum (12--15) with six cards. Responder passes, except that with a
+maximum and three-card support he raises to invite 3NT; opener then bids 3NT
+with 14--15.
+
+1m-(P)-1N-(P)-2m-(P)-
+3m = {prio:1} 8--9 hcp, 3+m
+  (P)
+    3N = {prio:1} 14--15 hcp
+      #STOP
+    P = {prio:0} 12--13 hcp
+      #STOP
+P = {prio:0} 6--9 hcp
+  #STOP
+
+** Responder after opener's reverse (batch 8)
+
+The reverse (1m-1M-2 of a higher new suit) is forcing and shows 17+ with longer
+first suit (`later-rounds.bml`: 2NT is the weak reply, 0--9, and 3NT is 10+).
+The booklet's other replies: responder rebids a five-card major at the two level
+(forcing, 10+), and raises the reverse suit with four cards.
+
+1C-(P)-1H-(P)-2D-(P)-
+2H = {prio:2} 10+ hcp, 5+!h
+  #STOP
+3D = {prio:2} 6+ hcp, 4+!d
+  #STOP
+
+1C-(P)-1S-(P)-2D-(P)-
+2S = {prio:2} 10+ hcp, 5+!s
+  #STOP
+3D = {prio:2} 6+ hcp, 4+!d
+  #STOP
+
+1C-(P)-1S-(P)-2H-(P)-
+2S = {prio:2} 10+ hcp, 5+!s
+  #STOP
+3H = {prio:2} 6+ hcp, 4+!h
+  #STOP
+
+1D-(P)-1S-(P)-2H-(P)-
+2S = {prio:2} 10+ hcp, 5+!s
+  #STOP
+3H = {prio:2} 6+ hcp, 4+!h
+  #STOP
+
+1C-(P)-1D-(P)-2H-(P)-
+3H = {prio:2} 6+ hcp, 4+!h
+  #STOP
+
+** Jump shifts over a minor, and opener's rebid after any jump shift (batch 8)
+
+`responses-major.bml` has the booklet's jump shifts over a major (17+, forcing
+to game); `responses-minor.bml` left them out over a minor. They are the same
+call: 17+ with a good five-card suit and no fit for opener's minor. Opener then
+describes his hand naturally at the cheapest level: he raises with three-card
+support, bids a four-card new suit, rebids a six-card suit, and with a
+balanced hand bids notrump. (Responder's further bidding toward game or slam is
+the partnership's judgment; the system stops there.) `#ANYORDER`: the jump shift
+may be into a lower suit (1!h-3!c).
+
+1C-(P)-
+2D = {prio:4} F, 17+ hcp, 5+!d, not 5+!c
+  #STOP
+2H = {prio:4} F, 17+ hcp, 5+!h, not 5+!c
+  #STOP
+2S = {prio:4} F, 17+ hcp, 5+!s, not 5+!c
+  #STOP
+
+1D-(P)-
+2H = {prio:4} F, 17+ hcp, 5+!h, not 4+!d
+  #STOP
+2S = {prio:4} F, 17+ hcp, 5+!s, not 4+!d
+  #STOP
+3C = {prio:4} F, 17+ hcp, 5+!c, not 4+!d
+  #STOP
+
+#ANYORDER
+1X-(P)-jY-(P)-
+cY = {prio:3} 3+Y
+  #STOP
+cZ = {prio:2} 4+Z, 0--2Y
+  #STOP
+cX = {prio:2} 6+X, 0--2Y
+  #STOP
+cN = {prio:1} bal, 0--2Y
+  #STOP
+
+** After partner's penalty double (batch 8)
+
+The booklet plays negative doubles after our one-level openings; over our
+preemptive openings and our notrump overcall the double of their bid is for
+penalty. The doubler's partner, whose hand is already limited, leaves it in:
+the weak two (5--11) and the 1NT overcaller (15--18) sit.
+
+2D-(2HS)-D-(P)-
+P = {prio:0} 5--11 hcp
+  #STOP
+
+2D-(3C)-D-(P)-
+P = {prio:0} 5--11 hcp
+  #STOP
+
+2H-(2S)-D-(P)-
+P = {prio:0} 5--11 hcp
+  #STOP
+
+2H-(3CD)-D-(P)-
+P = {prio:0} 5--11 hcp
+  #STOP
+
+2S-(3CDH)-D-(P)-
+P = {prio:0} 5--11 hcp
+  #STOP
+
+2D-(bid)-D-(P)-
+P = {prio:0} 5--11 hcp
+  #STOP
+
+2H-(bid)-D-(P)-
+P = {prio:0} 5--11 hcp
+  #STOP
+
+2S-(bid)-D-(P)-
+P = {prio:0} 5--11 hcp
+  #STOP
+
+(1X)-1N-(2Y)-D-(P)-
+P = {prio:0} 15--18 hcp
+  #STOP
+
+(1X)-1N-(2X)-D-(P)-
+P = {prio:0} 15--18 hcp
+  #STOP
+
+** Opener after the double of a three-level preempt (batch 8)
+
+`competitive-extra.bml` answers responder's double of a three-level preempt
+as a takeout double (10+) for most openings: opener bids a four-card unbid
+major, rebids a six-card suit, bids 3NT with a stopper, and otherwise passes
+(converting it to penalty). The same rows for the openings it leaves out:
+
+1C-(3D)-D-(P)-
+3H = {prio:3} 4+!h
+  #STOP
+3S = {prio:3} 4+!s
+  #STOP
+4C = {prio:2} 6+!c
+  #STOP
+3N = {prio:1} 12--17 hcp, stopper
+  #STOP
+
+1C-(3H)-D-(P)-
+3S = {prio:3} 4+!s
+  #STOP
+4C = {prio:2} 6+!c
+  #STOP
+3N = {prio:1} 12--17 hcp, stopper
+  #STOP
+
+1C-(3S)-D-(P)-
+4H = {prio:3} 4+!h
+  #STOP
+4C = {prio:2} 6+!c
+  #STOP
+3N = {prio:1} 12--17 hcp, stopper
+  #STOP
+
+1H-(3D)-D-(P)-
+3S = {prio:3} 4+!s
+  #STOP
+3H = {prio:2} 6+!h
+  #STOP
+3N = {prio:1} 12--17 hcp, stopper
+  #STOP
+
+1H-(3S)-D-(P)-
+4H = {prio:2} 6+!h
+  #STOP
+3N = {prio:1} 12--17 hcp, stopper
+  #STOP
+
+** The 1NT overcaller after advancer's invitation (batch 8)
+
+Advancer's 2NT over our 1NT overcall (15--18) is invitational (8--9); the
+overcaller accepts with 17--18.
+
+(1X)-1N-(P)-2N-(P)-
+3N = {prio:1} 17--18 hcp
+  #STOP
+P = {prio:0} 15--16 hcp
+  #STOP
+
+** Declined invitations after a transfer (batch 8)
+
+After 1NT-2!d-2!h-2NT (8--9, five hearts), opener's 3!h is the booklet's
+"declines, three-card support" (15): responder passes. The same after a
+transfer to spades.
+
+1N-(P)-2D-(P)-2H-(P)-2N-(P)-3H-(P)-
+P = {prio:0} 8--9 hcp
+  #STOP
+
+1N-(P)-2H-(P)-2S-(P)-2N-(P)-3S-(P)-
+P = {prio:0} 8--9 hcp
+  #STOP
+
+** Opener after the competitive raise over their Michaels cue bid (batch 8)
+
+Over their cue bid of our major, responder's raise to three is 6--10 with
+three-card support; opener bids game with 17+ and otherwise passes.
+
+1M-(2M)-3M-(P)-
+4M = {prio:1} 17+ hcp
+  #STOP
+P = {prio:0} 12--16 hcp
+  #STOP
+
+** Opener after responder's preemptive raise over an overcall (batch 8)
+
+1!d-(2!c)-3!d is preemptive (5--9, five diamonds). Opener passes unless he has
+game values opposite it, when he bids 3NT with a club stopper.
+
+1D-(2C)-3D-(P)-
+3N = {prio:1} 18+ hcp, stopper
+  #STOP
+P = {prio:0} 12--17 hcp
+  #STOP
+
+** The 1NT opener after responder's forcing new suit over their overcall (batch 8)
+
+`notrump.bml`: over their two-level overcall a new suit at the three level is
+forcing (10+, five cards). Opener bids 3NT with a stopper in their suit (those
+rows are in `competitive-extra.bml` where it has the auction), raises with
+three-card support, and bids a four-card major of his own at the cheapest
+level; otherwise he passes and the partnership stops.
+
+1N-(2D)-3C-(P)-
+4C = {prio:2} 3+!c
+  #STOP
+3H = {prio:1} 4+!h
+  #STOP
+3S = {prio:1} 4+!s
+  #STOP
+
+1N-(2H)-3C-(P)-
+3N = {prio:3} stopper
+  #STOP
+4C = {prio:2} 3+!c
+  #STOP
+3S = {prio:1} 4+!s
+  #STOP
+
+1N-(2H)-3D-(P)-
+4D = {prio:2} 3+!d
+  #STOP
+3S = {prio:1} 4+!s
+  #STOP
+
+1N-(2S)-3C-(P)-
+3N = {prio:3} stopper
+  #STOP
+4C = {prio:2} 3+!c
+  #STOP
+
+1N-(2S)-3D-(P)-
+4D = {prio:2} 3+!d
+  #STOP
+
+1N-(2S)-3H-(P)-
+4H = {prio:2} 3+!h
+  #STOP
+
+** Advancing a balancing three-level suit (batch 8)
+
+`defense.bml`: over their weak two passed round to us, a three-level suit is
+10--16 with six cards. Advancer bids game in a major with two-card support and
+12+, 3NT with a stopper in their suit and 12+, and otherwise passes.
+
+(2S)-P-(P)-3H-(P)-
+4H = {prio:2} 12+ hcp, 2+!h
+  #STOP
+3N = {prio:1} 12+ hcp, stopper
+  #STOP
+
+(2D)-P-(P)-3C-(P)-
+3N = {prio:1} 12+ hcp, stopper
+  #STOP
+
+(2H)-P-(P)-3m-(P)-
+3N = {prio:1} 12+ hcp, stopper
+  #STOP
+
+(2S)-P-(P)-3m-(P)-
+3N = {prio:1} 12+ hcp, stopper
+  #STOP
+
+** Opener after responder's forcing new major over the 1NT rebid (batch 8)
+
+After 1m-1X-1NT (12--14 balanced, no four-card major that could have been bid
+at the one level), responder's 2!s is forcing (13+, four spades). Opener raises
+with three spades, and otherwise bids 2NT.
+
+1C-(P)-1D/H-(P)-1N-(P)-2S-(P)-
+3S = {prio:1} 3=!s
+  #STOP
+2N = {prio:0} 0--2!s
+  #STOP
+
+1D-(P)-1H-(P)-1N-(P)-2S-(P)-
+3S = {prio:1} 3=!s
+  #STOP
+2N = {prio:0} 0--2!s
+  #STOP
+
+** Responder after 2!c-2!d-2M-2NT-3M (batch 8)
+
+Opener's rebid of his major over the 2NT waiting bid shows six cards; responder
+raises to game with two-card support and otherwise bids 3NT.
+
+2C-(P)-2D-(P)-2H-(P)-2N-(P)-3H-(P)-
+4H = {prio:1} 2+!h
+  #STOP
+3N = {prio:0} 0--1!h
+  #STOP
+
+2C-(P)-2D-(P)-2S-(P)-2N-(P)-3S-(P)-
+4S = {prio:1} 2+!s
+  #STOP
+3N = {prio:0} 0--1!s
+  #STOP

@@ -807,9 +807,6 @@ P = {prio:-100} {stop} any hand
 2D-(P)-2S-(P)-3S-
 P = {prio:-100} {stop} any hand
 
-2D-(2H)-D-
-P = {prio:-100} {stop} any hand
-
 2H-(P)-3C-(P)-4C-
 P = {prio:-100} {stop} any hand
 
@@ -817,9 +814,6 @@ P = {prio:-100} {stop} any hand
 P = {prio:-100} {stop} any hand
 
 2H-(P)-2S-(P)-3S-
-P = {prio:-100} {stop} any hand
-
-2H-(2S)-D-
 P = {prio:-100} {stop} any hand
 
 2S-(P)-3C-(P)-4C-
