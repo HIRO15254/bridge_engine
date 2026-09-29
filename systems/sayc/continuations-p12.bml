@@ -757,3 +757,60 @@ he has game values in his own hand.
 1M-(D)-2M-(P)-
 P = {prio:0} 12--16 hcp
   #STOP
+
+** Opener passes partner's game sign-off (batch 10)
+
+A game bid that partner chooses from a limited range is to play. Opener
+passes it without slam values: his rebid already showed at most a medium
+hand, and 12--15 opposite partner's game range leaves no slam.
+
+After responder's 3NT over opener's one-level rebid (13--15 balanced):
+
+1X-(P)-1Y-(P)-1Z-(P)-3N-(P)-
+P = {prio:0} 12--15 hcp
+  #STOP
+
+After responder's 3NT over opener's new, lower suit at the two level (not a
+reverse, so 12--18 with most hands minimum). (1!h-1!s-2!c has no 3NT row: over
+it responder uses the fourth suit.)
+
+1D-(P)-1H-(P)-2C-(P)-3N-(P)-
+P = {prio:0} 12--15 hcp
+  #STOP
+
+1D-(P)-1S-(P)-2C-(P)-3N-(P)-
+P = {prio:0} 12--15 hcp
+  #STOP
+
+1H-(P)-1S-(P)-2D-(P)-3N-(P)-
+P = {prio:0} 12--15 hcp
+  #STOP
+
+After responder's competitive raise to game over their preempt:
+
+1M-(3X)-4M-(P)-
+P = {prio:0} 12--17 hcp
+  #STOP
+
+After responder's 3NT over their overcall:
+
+1X-(1Y)-3N-(P)-
+P = {prio:0} 12--15 hcp
+  #STOP
+
+1X-(3Y)-3N-(P)-
+P = {prio:0} 12--15 hcp
+  #STOP
+
+After the two-over-one response, opener's rebid of his major and
+responder's jump to game:
+
+1M-(P)-2X-(P)-2M-(P)-4M-(P)-
+P = {prio:0} 12--15 hcp
+  #STOP
+
+After Jacoby 2NT, opener's shortness and responder's sign-off in game:
+
+1M-(P)-2N-(P)-3X-(P)-4M-(P)-
+P = {prio:0} 12--15 hcp
+  #STOP

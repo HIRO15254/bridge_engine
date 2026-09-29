@@ -1647,4 +1647,19 @@ mod phase4_tables {
             ("1H P 2C 2S P", "K32.432.KJ32.432", "3S"),
         ]);
     }
+
+    /// P12 batch 10: opener passes partner's game sign-off with a minimum (a hand with
+    /// slam values has no row there and is left to the natural engine).
+    #[test]
+    fn game_sign_off_passes_batch_10() {
+        check_system(&[
+            ("1D P 1H P 1S P 3NT P", "AK76.65.KQ532.82", "P"),
+            ("1D P 1S P 2C P 3NT P", "A2.32.KQ432.KJ32", "P"),
+            ("1S 3D 4S P", "AKJ32.K32.Q32.32", "P"),
+            ("1C 1H 3NT P", "A32.32.KQ3.K5432", "P"),
+            ("1C 3H 3NT P", "A32.32.KQ3.K5432", "P"),
+            ("1H P 2C P 2H P 4H P", "A2.KQJ432.32.Q32", "P"),
+            ("1S P 2NT P 3C P 4S P", "AKJ32.K32.Q432.2", "P"),
+        ]);
+    }
 }
