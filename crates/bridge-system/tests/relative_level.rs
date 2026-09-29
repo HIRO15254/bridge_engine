@@ -217,3 +217,23 @@ fn a_table_led_by_a_relative_level_row_is_flagged() {
     assert_eq!(flagged[0].severity, Severity::Warning);
     assert!(flagged[0].message.contains("read as prose"));
 }
+
+#[test]
+fn a_table_led_by_a_relative_level_row_without_equals_is_flagged() {
+    // `=` is optional in a row, so `cH 6--10 hcp` followed by an ordinary row is a table
+    // that vanished into prose: warn.
+    let ir = compile("1H = 12+ hcp\n\ncH 6--10 hcp\n1S = 5+!s\n");
+    assert_eq!(ir.rows.len(), 1, "{:?}", ir.rows);
+    let flagged = ir
+        .lints
+        .iter()
+        .filter(|l| l.code == LintCode::UnknownCallToken && l.severity == Severity::Warning)
+        .count();
+    assert_eq!(flagged, 1, "{:?}", ir.lints);
+    // A one-line prose paragraph led by the same word stays silent, and so does prose whose
+    // later lines are not rows.
+    let ir = compile("cH is the cheapest heart bid.\n\n1C = 12+ hcp\n");
+    assert!(!has(&ir, LintCode::UnknownCallToken), "{:?}", ir.lints);
+    let ir = compile("cH is the cheapest heart bid,\nany hand may bid it.\n\n1C = 12+ hcp\n");
+    assert!(!has(&ir, LintCode::UnknownCallToken), "{:?}", ir.lints);
+}

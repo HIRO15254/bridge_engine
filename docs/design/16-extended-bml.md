@@ -24,7 +24,7 @@
 
 | 情報文字列 | 意味 |
 | --- | --- |
-| `bml` | 単独のファイル (`root.bml`) としてコンパイルし、Error の Lint が 0 件であること |
+| `bml` | 単独のファイル (`root.bml`) としてコンパイルし、Error と Warning の Lint が 0 件であること (Info は出てよい) |
 | `bml,should-lint` | 1 行目に `// expect-lint: <Code>` (列 0 の注釈なのでコンパイラは読み飛ばす) を書く。その Lint が出ること、それ以外の Error が出ないこと |
 | `bml,file=<path>` | 内容を `<path>` という名前のファイルとして登録し (他のブロックの `#INCLUDE <path>` がこれを読む)、それ自身も `bml` と同じく検査する |
 
@@ -127,7 +127,7 @@ for lint in &lints {
 
 逆に、表のつもりの段落が最初の行で読めないと、段落全体が地の文になり中の行は全て失われる。
 
-- 相対レベルの行 (`cS = ...`) で始まる段落は表にならない (§4.3)。`UnknownCallToken` (Warning) は、最初の語の直後が `=` のときだけ出る。`cH 6--10 hcp` のように `=` を省くと、地の文と区別できないので Lint は出ない。
+- 相対レベルの行 (`cS = ...`) で始まる段落は表にならない (§4.3)。`UnknownCallToken` (Warning) は、最初の語の直後が `=` のとき、または段落の 2 行目以降に `1S = …` のような行 (コールトークンか履歴の直後が `=`) があるときに出る。`cH is the cheapest heart bid.` のように、どちらにも当たらない段落は地の文と区別できないので Lint は出ない。
 - 最初の語が「レベルの数字とストレインの文字」(先頭の `(` は飛ばす) で始まり、`!` を含まず、`-` か `;` を含むか直後が `=` なのに読めない段落 (`1N--2C- = …`、`1N-2Q-`、`1Nx = …`) は、打ち間違えた表とみなして `UnknownCallToken` (Warning) を出す。`1!d-(2!c)-3!d is preemptive` のようにスート記号で書いた地の文や、`2-suited hands …` には出ない。
 
 ### 2.3 注釈 (コメント)
@@ -356,7 +356,7 @@ seq         = calltok , { ( "-" | ";" ) , calltok } , { "-" | ";" } ;
 2H = 4+!h
 2S = 4+!s, 0--3!h
 
-1N-2C
+1N-2C-2D
   3N = 10--15 hcp, to play
 ```
 
@@ -412,7 +412,7 @@ XX = 10+ hcp
 | 2 行目以降の履歴形 (`-`/`;` を含む) | その行と部分木を捨てる | `SequenceNotFirst` (Error) |
 | 単位と違う字下げ | 最も近い浅い行の子にする | `IndentationMismatch` (Warning) |
 | 未知の指示子 | 無視する | `UnknownDirective` (Warning) |
-| 相対レベルで始まる段落 | 地の文として読む (中の行は全て失われる) | 最初の語の直後が `=` のとき `UnknownCallToken` (Warning) |
+| 相対レベルで始まる段落 | 地の文として読む (中の行は全て失われる) | 最初の語の直後が `=` か、2 行目以降に `=` のある行があるとき `UnknownCallToken` (Warning) (§2.2) |
 
 ---
 
@@ -570,6 +570,8 @@ cN = 10--12 hcp, stopper in !s
 | `(any)` | `AnyCall` | 全てのコール (パス、ダブル、リダブル、ビッド) |
 | `(bid)` | `AnyBid` | 全てのビッド (NT を含む) |
 | `(suit)` | `AnySuitBid` | NT 以外のビッド |
+
+`OppClass` には他に `AnyBidAtLevel(n)` (レベル n の全てのビッド)、`Double`、`Pass` もあるが、BML にはそれらを書くトークンが無い (API と内部の表現だけのもの。`(D)`、`(P)` は具体的なコールとして読む)。
 
 - トライには 1 本の **ワイルドカードの辺** として入り、実際のオークションでは相手のコールがその類に当てはまれば辿る (§7.1)。同じ位置に相手の具体的なコールの辺 (`(2H)` など) もあれば、具体的な辺を先に試す。
 - 類の下の行 (`1S-(any)-` の表の行) は、相手の実際のコールが分からないまま展開する。そのため:
@@ -1303,7 +1305,7 @@ S の次の手番が我々なら `P` から始まる。つまり S からは相�
 P = {prio:-100} {stop} 0--7 hcp
 
 1N-2C-
-2D = no 4 card major
+2D = no 4+ major
 2H = 4+!h
 2S = 4+!s
 ```
@@ -1330,7 +1332,7 @@ P = {prio:-100} {stop} 0--7 hcp
 | `IncludeCycle` | Error | `#INCLUDE` の循環、または 16 段を超える入れ子 | 循環を切る |
 | `UnknownDirective` | Warning | 未知の `#…` 指示子、`#SEAT`/`#VUL` の値の誤り、`#+KEY:` の値の誤り、`:` の無いメタ行、閉じていない `#CUT`/`#COPY`、16 段を超える `#PASTE`、`#PASTE` の読めない引数 (`=` が無い、置換の対象が空)、表の外の `#STOP`/`#ANYORDER`/`#HIDE`/`#BIDTABLE`、履歴の無い表の最上位の `#STOP` | 綴りと置き場所を直す (§2、§6) |
 | `PasteUnknownName` | Warning | `#PASTE` の名前のクリップボードが無い | 名前を直すか、`#CUT`/`#COPY` を先に書く |
-| `UnknownCallToken` | Warning | コールトークンとして読めない行 (その行と部分木を捨てる)。読めない履歴行 (表全体を捨てる)。`cS = …` の形の相対レベルで始まる段落。打ち間違えた表の形の最初の行で始まる段落 (§2.2) | §4.1 の形に直す |
+| `UnknownCallToken` | Warning | コールトークンとして読めない行 (その行と部分木を捨てる)。読めない履歴行 (表全体を捨てる)。相対レベルで始まり、`cS = …` の形か 2 行目以降に `=` のある行を持つ段落。打ち間違えた表の形の最初の行で始まる段落 (§2.2) | §4.1 の形に直す |
 | `SequenceNotFirst` | Error | 表の 2 行目以降の `-`/`;` を含むトークン (その行と部分木を捨てる) | 別の表 (段落) に分ける |
 | `IndentationMismatch` | Warning | 親子の字下げの差が表の単位と違う | 字下げを揃える |
 | `NonStandardToken` | Info | 上流で読めない拡張のトークン: 裸の `X`/`XX`、`/`、`n`、`c`/`j`、小文字の `x`/`y`/`z`、相手の類 | 上流との互換が要らなければ無視してよい |
@@ -1459,7 +1461,7 @@ X = t/o, 12+ hcp
 1N = 15--17 hcp, bal
 
 1N-2C
-2D = no 4 card major
+2D = no 4+ major
 ```
 
 ```bml,should-lint
@@ -1629,8 +1631,8 @@ paragraph   = line , { NL , line } ;               (* no blank line inside *)
 
 (* preprocessing, per physical line, before paragraphs are formed *)
 comment     = "//" , { CHAR } ;                     (* only at column 0; the line is dropped *)
-include     = WS0 , "#" , WS0 , "INCLUDE" , WS0 , PATH , [ WS , { CHAR } ] ;
-PATH        = CHAR - SP , { CHAR - SP } ;           (* relative to the including file *)
+include     = WS0 , "#" , WS0 , "INCLUDE" , WS0 , PATH , [ WS , { CHAR } ] ;   (* prefix match: "#INCLUDED x" includes "D" *)
+PATH        = CHAR - SP , { CHAR - SP } ;           (* relative to the including file; "/" and "\" both separate *)
 
 (* a paragraph's kind is decided by its first line, in this order *)
 paragraph   = heading | list | vulpara | seatpara | enumeration
@@ -1664,8 +1666,8 @@ seq         = calltok , { ( "-" | ";" ) , calltok } , { "-" | ";" } ;   (* conta
 
 directive   = WS0 , ( "#HIDE" | "#BIDTABLE" | "#STOP" | "#ANYORDER"
                     | "#COPY" , WS , NAME | "#ENDCOPY"
-                    | "#CUT" , WS , NAME | "#ENDCUT"
-                    | "#PASTE" , WS , NAME , { WS , SUBST } ) , WS0 ;
+                    | "#CUT" , WS , NAME | "#ENDCUT"           (* no nesting: the first #ENDCUT closes *)
+                    | "#PASTE" , WS , NAME , { WS , SUBST } ) , WS0 ;   (* any other argument: UnknownDirective, ignored *)
 NAME        = CHAR - SP , { CHAR - SP } ;
 SUBST       = TARGET , "=" , REPLACEMENT ;      (* plain text replacement, applied in order *)
 TARGET      = CHAR - ( SP | "=" ) , { CHAR - ( SP | "=" ) } ;
@@ -1699,11 +1701,11 @@ suit        = "C" | "D" | "H" | "S" ;
 
 ```ebnf
 description = dline , { NL , dline } ;
-dline       = { annotation | alert } , ( enumitem | clauses ) ;   (* annotations may appear anywhere *)
+dline       = { annotation } , [ alert ] , ( enumitem | clauses ) ;   (* annotations may appear anywhere *)
 annotation  = "{" , "prio:" , WS0 , INT , WS0 , "}"
             | "{" , "w:" , WS0 , REAL , WS0 , "}"
             | "{" , WS0 , "stop" , WS0 , "}" ;
-alert       = "!" ;                                (* first character only, not followed by c/d/h/s *)
+alert       = "!" ;       (* first line only, after leading annotations and spaces; not followed by c/d/h/s *)
 enumitem    = marker , WS , clauses ;
 marker      = LETTER , ")" | DIGITS , ")" | DIGITS , "." | "(" , LOWER , ")" | "(" , DIGITS , ")" ;
 clauses     = orgroup , { ( "," | ";" | "." ) , [ "or" | "/" ] , orgroup } ;
@@ -1716,6 +1718,8 @@ hedge       = "normally" | "typically" | "usually" | "likely" | "mostly"
             | "rarely" | "might" | "may" | "(?)" ;
 filler      = "be" | "have" | "hold" | "contain" | "include" ;
 callref     = refword , WS , callchain | callchain ;     (* the latter only for an ascending "-" chain *)
+callchain   = callshape , { "-" , callshape } ;
+callshape   = DIGIT , ( SUITSYM | "NT" | "N" ) ;      (* letter suits ("2H") are not call shapes *)
 refword     = "to" | "over" | "after" | "for" | "than" | "via" | "opposite" | "like" | "see"
             | "from" | "into" | "then" | "by" | "bid" | "rebid" | "opening" | "open" | "bids"
             | "else" | "otherwise" | "instead" ;
@@ -1750,7 +1754,8 @@ group       = [ SP ] , ( "MM" | "mm" | "red suits" | "black suits" | "majors" | 
 fullshape   = slot , slot , slot , slot ;          (* exactly 4 positions, S H D C *)
 slot        = DIGIT | "x" | "X" | "(" , ( DIGIT | "x" | "X" ) , { DIGIT | "x" | "X" } , ")" ;
 baretwo     = NUM , "-" , NUM ;                    (* a >= 4, a >= b, a + b <= 13 *)
-lengthorder = SUITSYM , WS0 , ( ">=" | "<=" | ">" | "<" | "=" ) , WS0 , SUITSYM ;
+lengthorder = SUITSYM , [ SP ] , ( ">=" | "<=" | ">" | "<" | "=" ) , [ SP ] , SUITSYM ;
+              (* not followed by a letter, digit, "+" or "-": "!h>=!s+1" is not a comparison *)
 
 balance     = "semi-balanced" | "semi balanced" | "semi-bal" | "semibal"
             | "unbalanced" | "unbal" | "balanced" | "bal" ;
@@ -1846,7 +1851,7 @@ P = {prio:-100} {stop} 0--7 hcp
 #PASTE nt-responses
 
 1N-2C-
-2D = no 4 card major
+2D = no 4+ major
 2H = 4+!h
 2S = 4+!s, 0--3!h
 
@@ -2075,10 +2080,12 @@ P = {prio:-100} {stop} any hand
 
 | 症状 | 原因 | 対処 |
 | --- | --- | --- |
-| 段落がビディング表になり、`UnknownCallToken` が出る | 地の文が `P`、`D`、`R`、`X`、`1C` のようなコールの形、あるいは `any`、`bid`、`suit` で始まる (§2.2) | 地の文の先頭の語を変える |
-| 相対レベルの行が全部消える | 段落の最初の行が `cS` などの相対レベル (§4.3) | 履歴行の後か、表の 2 行目以降に置く |
+| 地の文の段落から、黙ってノードができる (たとえば何でもよい手のパスのオープニング) | 地の文が `P`、`D`、`R`、`X`、`1C` のようなコールの形、あるいは `any`、`bid`、`suit` で始まり、最初の行が本物の行としてコンパイルされる (§2.2)。`UnknownCallToken` は 2 行目以降の読めない行にしか出ない | 地の文の先頭の語を変える |
+| 相対レベルの行が全部消える | 段落の最初の行が `cS` などの相対レベル (§4.3)。`cS = …` か、2 行目以降に `=` のある行があれば `UnknownCallToken` が出る。1 行だけで `=` も無いと Lint は出ない | 履歴行の後か、表の 2 行目以降に置く |
+| 表が丸ごと消える (`UnknownCallToken` が 1 つだけか、Lint なし) | 表の最初の行 (履歴行) の打ち間違い (`1N--2C-`、`1N-2Q-`) で段落が地の文になった、または指示子の後の履歴行が読めずに表全体が捨てられた (§2.2、§3.7) | 最初の行を §3.4、§4.1 の形に直す |
 | 子の行が親の説明の続きになる | 子の字下げが親の説明文の桁と同じ (§3.3) | 子の字下げを浅くする |
-| タブで字下げした行が列 0 として読まれる | 字下げはスペースだけを数える (§2.1) | スペースで字下げする |
+| タブで字下げした行が `UnknownCallToken` で捨てられる | 字下げはスペースだけを数え、タブはコールトークンの一部になる (§2.1) | スペースで字下げする |
+| 表の中の字下げした `//` の行が `UnknownCallToken` になる | 注釈は列 0 の `//` だけ (§2.3) | 表の中の注釈は列 0 に書く |
 | `4 card major` が読めない | `card` が「自分のスート」として先に当たる (§5.4.2) | `4+ major`、`4+ M` と書く |
 | 行頭の `(5431)` が読めない | 列挙の印として読まれる (§5.2) | 行の途中に置くか、括弧を外す |
 | `stop` を「止まる」の意味で書いた | 説明文の `stop` はストッパー (§5.4.12) | `{stop}` か `#STOP` を使う |
@@ -2089,6 +2096,11 @@ P = {prio:-100} {stop} any hand
 | パターン行の一部のコールが出ない | 先の Exact 行の兄弟と同じコールは捨てられる (`ShadowedByExact`) | 意図どおりか確かめる |
 | 表が丸ごと無視される (Lint も出ない) | `#SEAT`/`#VUL`/見出し/箇条書きの行の直後に空行なしで表を書いた (§2.6) | 表の前に空行を置く |
 | 同じ経路の 2 つ目の定義が効かない | 先の定義が勝つ (`DuplicatePath`) | 1 つにまとめる。席・バルで分けるなら `#SEAT`/`#VUL` |
+| 同じ親の下に 2 度書いた行の、2 つ目の子が消える | 同じ兄弟の並びの繰り返しは部分木ごと捨てる (§4.8、`DuplicatePath` (Warning)) | 子は最初の行の下にまとめて書く (別の表なら統合される) |
+| `A or B` の説明が制約にならない (どんな手でも選ばれる) | OR の枝の 1 つが未認識・慣習の語・可能性のヘッジ・解決できない文脈で、リテラルを出さない (§5.4.15) | 各枝を制約になる語で書く (`5+!c or 5+5+ MM`) |
+| `(1x)- = 5+x` の `5+x` が読めない | 説明文で置き換わる変数は大文字だけ (§5.2) | 説明文では `5+X` と書く |
+| `!h>=!s+1` が読めない | スート長の比較に差は書けない (§5.4.5) | スート長の範囲で書き分ける |
+| 2 つの `#CUT` の片方が見つからない (`PasteUnknownName`) | 同じ名前で再定義した、または `#ENDCUT` を書き忘れた (§2.9) | 名前と `#ENDCUT` を確かめる |
 | `!cue`、`!strong`、`!dbl` のアラートが効かず、説明が `♣ue` などになる | 小文字の `!c`/`!d`/`!h`/`!s` はスート記号 (§3.6、§5.1) | `!Cue`、`!CUE` のように 2 文字目を大文字にする |
 | 履歴行の説明が思った相手に付かない | 履歴行の説明は履歴の **最後のコール** のもの (§3.4)。`(1X)-1Y-(P)- = …` は相手の `(P)` の説明 | 途中のコールの説明は、そのコールで終わる別の表に書く |
 | ファイル上で先に書いたパターン行が、後の Exact 行に負ける | 兄弟は Exact 行を先に展開し、`row-order` はその順 (§4.8、§7.4) | パターン行の制約を狭めるか、`{prio:N}` で上げる |
@@ -2114,7 +2126,7 @@ P = {prio:-100} {stop} any hand
 | --- | --- |
 | §7.4: `TRF`/`transfer` は移動先のスートの長さを、`STAY`/`stayman` はメジャーの 4 枚を、`UNT` は 2 スーターを制約にする | 慣習の語は制約を作らず `artificial` を立てるだけ (§5.4.10)。`NodeFlags.transfer_to` は常に `None`。制約は数値やシェイプで明示する |
 | §7.4/§7.5: `PRE` はスートの長さも加える | HCP の範囲だけ (§5.4.7)。長さは明示する |
-| §7.4: `solid` などのスートの質は長さを含む | カードの要件だけで、長さは加えない (§5.4.11) |
+| §7.4: `solid` などのスートの質は長さを含む | 語の形はカードの要件だけで、長さは加えない。オナーの並び (`AKQxx`) だけは長さも加える (§5.4.11) |
 | §5.3: `{w:X}` を OR でない行に書くと Warning | Lint は出ない (§6.2) |
 | §9.3: 網羅性の検査 (`MissingOpeningCoverage`、`MissingResponseCoverage`) | 検査は未実装で、この 2 つは出ない。`CompileOptions::coverage_samples` は使われない (キャッシュの鍵にだけ入る) |
 | `CompileOptions::strict_dnf` | 使われない (キャッシュの鍵にだけ入る) |

@@ -1,6 +1,7 @@
 //! Executable checks for `docs/design/16-extended-bml.md`, the extended-BML reference.
 //!
-//! * Every fenced block tagged `bml` compiles with zero `Error` lints.
+//! * Every fenced block tagged `bml` compiles with zero `Error` and zero `Warning` lints
+//!   (a plain example must be clean; `Info` lints are allowed).
 //! * A block tagged `bml,should-lint` names the lint it demonstrates on its first line
 //!   (`// expect-lint: <Code>`, a column-0 comment the compiler drops); that lint must be
 //!   produced, and no `Error` of another code may appear.
@@ -134,6 +135,21 @@ fn every_bml_block_compiles_without_errors() {
                 block.line,
                 errors.join("\n    ")
             ));
+        }
+        if expected.is_none() {
+            let warnings: Vec<String> = lints
+                .iter()
+                .filter(|l| l.severity == Severity::Warning)
+                .map(ToString::to_string)
+                .collect();
+            if !warnings.is_empty() {
+                failures.push(format!(
+                    "line {}: a plain bml block must not produce warnings (tag it \
+                     `bml,should-lint` if it demonstrates one):\n    {}",
+                    block.line,
+                    warnings.join("\n    ")
+                ));
+            }
         }
         if let Some(code) = expected {
             if !lints.iter().any(|l| format!("{:?}", l.code) == code) {

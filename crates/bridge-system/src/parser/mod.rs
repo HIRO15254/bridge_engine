@@ -162,9 +162,10 @@ fn relative_row_as_prose(paragraph: &[RawLine], lints: &mut Vec<Lint>) {
     let (Some(word), Some(next)) = (words.next(), words.next()) else {
         return;
     };
-    // Only `cS = …` is flagged: without the `=`, `cS is how this file writes …` is ordinary
-    // prose that happens to start with a relative-level word.
-    if next != "=" {
+    // `cS = …` is flagged. Without the `=`, `cS is how this file writes …` may be ordinary
+    // prose that happens to start with a relative-level word, so it is flagged only when a
+    // later line of the paragraph is itself a row (`1S = …`): that paragraph was a table.
+    if next != "=" && !paragraph[1..].iter().any(|line| is_row_line(&line.text)) {
         return;
     }
     let mut s = word;
@@ -183,6 +184,13 @@ fn relative_row_as_prose(paragraph: &[RawLine], lints: &mut Vec<Lint>) {
             .with_span(first.span.clone()),
         );
     }
+}
+
+/// Whether a line has the shape of an explicit bidding-table row: a call token (or
+/// history) followed by `=`.
+fn is_row_line(text: &str) -> bool {
+    let mut words = text.split_whitespace();
+    matches!((words.next(), words.next()), (Some(word), Some("=")) if is_bidtable_start(word))
 }
 
 /// A prose paragraph whose first line looks like a bidding-table row with a typo in its call
