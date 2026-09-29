@@ -59,4 +59,6 @@ pub const IR_FORMAT: u32 = 2;
 ///
 /// 1: phase 3. 2: phase 4 (the exclusive-index lints `ShadowedBranch` and
 /// `OverlappingBranches` are stored in `SystemIR::lints`). 3: system stops (`#STOP`, `{stop}`).
-pub const COMPILE_REVISION: u32 = 3;
+/// 4: stops under different `#SEAT`/`#VUL` conditions that meet at one edge share a loop
+/// carrying every condition's entries.
+pub const COMPILE_REVISION: u32 = 4;
