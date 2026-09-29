@@ -524,6 +524,21 @@ in between.
 3Y = {prio:1} 13+ hcp
 2Y = 0--12 hcp
 
+After opener's partner makes a negative double, advancer bids as if it had been a pass
+(the double does not change what the raises, the cuebid and notrump show), so the cuebid
+needs a fit and game interest here too; without one of these calls advancer passes
+(NOTES.md P9).
+
+(1X)-1Y-(D)-
+2X = {prio:3} F, 11+ hcp, 3+Y
+3Y = {prio:2} PRE, 4+Y
+2Y = {prio:2} 7--10 hcp, 3+Y
+1Z = {prio:1} NF, 8+ hcp, 5+#
+1N = 8--11 hcp, stopper
+2N = 12--14 hcp, stopper
+3N = 15+ hcp, stopper
+#PASTE pass-chain
+
 (1X)-1Y-(D)-2X-(P)-
 2N = {prio:2} 13+ hcp, stopper
 3Y = {prio:1} 13+ hcp

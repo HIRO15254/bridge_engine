@@ -40,7 +40,8 @@
 //! `BRIDGE_SYSTEMS_DIR` override the data locations. `COVERAGE_OUT` overrides the output path.
 //! `COVERAGE_TOP_N` (default 0) additionally lists that many first departures
 //! (`generated.first_departure_top_n`), and `COVERAGE_PRINT_LINTS=<code substring>` prints the
-//! matching lints to stderr; both are authoring aids.
+//! matching lints to stderr; both are authoring aids. `COVERAGE_PRINT_LENIENT` prints each
+//! corpus call resolved through `resolve_lenient` and each seat with empty default-mode support.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -271,10 +272,28 @@ fn lint_report(ir: &SystemIR, lints: &[bridge_system::Lint]) -> Value {
                 .is_some_and(|n| ir.node(n).side == bridge_system::Side::Us)
         })
         .count();
+    // Our own calls (other than a pass) with no requirement at all: a table header such as
+    // `(1X)-1Y-(D)-2X-(P)-` names a call of ours that no row defines, so the call is a trie edge
+    // with an empty description and `choose_bid` makes it with any hand.
+    let mut unconstrained: BTreeMap<String, u64> = BTreeMap::new();
+    for node in &ir.nodes {
+        if node.side == bridge_system::Side::Us
+            && node.call != Call::Pass
+            && node.description.trim().is_empty()
+        {
+            let span = &ir.row(node.row).span;
+            *unconstrained
+                .entry(format!("file {:?} line {}", span.file, span.line))
+                .or_default() += 1;
+        }
+    }
+    let unconstrained_nodes: u64 = unconstrained.values().sum();
     json!({
         "error": error,
         "warning": warning,
         "info": info,
+        "unconstrained_own_calls": unconstrained_nodes,
+        "unconstrained_own_call_rows": unconstrained,
         "shadowed_branch": shadowed,
         "shadowed_branch_us": shadowed_us,
         "shadowed_branch_them": shadowed - shadowed_us as u64,
@@ -1318,6 +1337,9 @@ fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path) -> Value {
             }
             if interp.seats[s].iter().all(|(c, _, _)| !c.is_satisfiable()) {
                 st.empty_default_seats += 1;
+                if print_lenient {
+                    eprintln!("empty default support: auction {i} {auction} seat {seat:?}");
+                }
             }
         }
         let is_tune = i % 2 == 0;
