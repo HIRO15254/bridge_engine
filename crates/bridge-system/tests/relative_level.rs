@@ -164,3 +164,56 @@ fn a_paragraph_starting_with_a_relative_level_is_not_a_table() {
             .any(|l| l.code == LintCode::NonStandardToken && l.message.contains("relative level"))
     );
 }
+
+#[test]
+fn an_alternation_of_relative_levels_past_seven_is_reported() {
+    // `jS/jN` over 7H: both alternatives would pass the seven level.
+    let ir = compile("7H-\njS/jN = 37+ hcp\n");
+    assert!(has(&ir, LintCode::NoSufficientLevel), "{:?}", ir.lints);
+    // A literal alternative keeps the row alive, so there is nothing to report.
+    let ir = compile("7H-\njS/7N = 37+ hcp\n");
+    assert!(!has(&ir, LintCode::NoSufficientLevel), "{:?}", ir.lints);
+}
+
+#[test]
+fn a_relative_level_after_a_slash_is_named_as_non_standard() {
+    let ir = compile("1H-(2D)-\n2S/cH = 10+ hcp\n");
+    let reasons: Vec<_> = ir
+        .lints
+        .iter()
+        .filter(|l| l.code == LintCode::NonStandardToken)
+        .map(|l| l.message.clone())
+        .collect();
+    assert!(
+        reasons.iter().any(|m| m.contains("relative level")),
+        "{reasons:?}"
+    );
+}
+
+#[test]
+fn a_missing_anchor_is_reported_once_per_source_line() {
+    // Four bindings of X, one row: one error, not four.
+    let ir = compile("1X-(any)-\ncS = 6+ hcp\n");
+    let unknown = ir
+        .lints
+        .iter()
+        .filter(|l| l.code == LintCode::LevelWithoutAnchor)
+        .count();
+    assert_eq!(unknown, 1, "{:?}", ir.lints);
+}
+
+#[test]
+fn a_table_led_by_a_relative_level_row_is_flagged() {
+    // The first line has the row shape, so the ordinary rows below it would vanish into prose
+    // without a word: warn.
+    let ir = compile("cS = 5+!s\n1H = 5+!h\n1S = 5+!s\n");
+    assert!(ir.rows.is_empty());
+    let flagged: Vec<_> = ir
+        .lints
+        .iter()
+        .filter(|l| l.code == LintCode::UnknownCallToken)
+        .collect();
+    assert_eq!(flagged.len(), 1, "{:?}", ir.lints);
+    assert_eq!(flagged[0].severity, Severity::Warning);
+    assert!(flagged[0].message.contains("read as prose"));
+}

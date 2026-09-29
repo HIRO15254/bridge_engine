@@ -140,7 +140,13 @@ fn match_length_order(s: &str) -> Option<(Token, usize)> {
         return None;
     }
     i += second.len_utf8();
-    if s[i..].chars().next().is_some_and(|c| c.is_alphanumeric()) {
+    // `!s>=!hx` is not a comparison, and neither is `!h>=!s+1`: an offset is not supported, and
+    // reading it as `!h>=!s` would silently admit the equal lengths the author excluded.
+    if s[i..]
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_alphanumeric() || matches!(c, '+' | '-'))
+    {
         return None;
     }
     Some((Token::LengthOrder(a, *cmp, b), i))
@@ -1523,6 +1529,8 @@ mod tests {
         );
         assert!(recognize("♠>=♠").is_none_or(|(t, _)| !matches!(t, Token::LengthOrder(..))));
         assert!(recognize("♠>=♥x").is_none_or(|(t, _)| !matches!(t, Token::LengthOrder(..))));
+        assert!(recognize("♥>=♠+1").is_none_or(|(t, _)| !matches!(t, Token::LengthOrder(..))));
+        assert!(recognize("♥>=♠-1").is_none_or(|(t, _)| !matches!(t, Token::LengthOrder(..))));
         let set = length_order_shapes(Suit::Spades, LengthCmp::Gt, Suit::Hearts);
         assert!(set.contains(bridge_core::Shape::new(3, 3, 2, 5)));
         assert!(!set.contains(bridge_core::Shape::new(3, 2, 4, 4)));

@@ -252,10 +252,12 @@ pub(crate) fn nonstandard_reasons(raw: &str) -> Vec<&'static str> {
     if inner.contains('/') {
         reasons.push("alternative calls (a/b)");
     }
-    if inner.starts_with('n') && inner.len() > 1 {
+    // Each `/`-separated alternative carries its own level (`2S/cH`, `2S/nH`).
+    let parts = || inner.split('/').filter(|p| p.len() > 1);
+    if parts().any(|p| p.starts_with('n')) {
         reasons.push("any-level wildcard (n)");
     }
-    if (inner.starts_with('c') || inner.starts_with('j')) && inner.len() > 1 {
+    if parts().any(|p| p.starts_with('c') || p.starts_with('j')) {
         reasons.push("relative level (c = cheapest, j = jump)");
     }
     if inner.chars().any(|c| matches!(c, 'x' | 'y' | 'z')) {

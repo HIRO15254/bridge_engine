@@ -63,5 +63,9 @@ pub const IR_FORMAT: u32 = 3;
 /// carrying every condition's entries. 5: the synthesised stop pass's description is the row it
 /// stands for, `{prio:-100} {stop} any hand`. 6: relative levels (`cS`, `jY`) and the lints
 /// `LevelWithoutAnchor` / `NoSufficientLevel`; suit-length comparisons in descriptions. 7: the
-/// `#ANYORDER` table directive and the lint `AnyOrderWithoutVariables`.
-pub const COMPILE_REVISION: u32 = 7;
+/// `#ANYORDER` table directive and the lint `AnyOrderWithoutVariables`. 8: lane D2's review
+/// fixes: a directive-only paragraph (`#ANYORDER`/`#STOP`) and a table led by a relative-level
+/// row are reported, `NoSufficientLevel` covers relative alternations, `LevelWithoutAnchor` is
+/// reported once per row, `!h>=!s+1` is not read as a comparison, and the lint
+/// `StopUnderForcing`.
+pub const COMPILE_REVISION: u32 = 8;

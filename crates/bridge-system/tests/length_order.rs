@@ -105,3 +105,26 @@ fn every_operator_compiles() {
             .satisfies(hand("K74.Q5.K643.A932"))
     );
 }
+
+#[test]
+fn an_offset_after_the_second_suit_is_not_a_comparison() {
+    // `!h>=!s+1` would mean "strictly longer"; reading it as `!h>=!s` would admit 4-4.
+    let ir = compile(
+        "1C-
+1H = 6+ hcp, !h>=!s+1
+",
+    );
+    let n = node(&ir, "1C Pass", "1H");
+    // Not read as `!h>=!s`: five spades and three hearts still pass.
+    assert!(n.constraint.satisfies(hand("KQ742.Q54.K86.92")));
+    let row = &ir.rows[n.row.0 as usize];
+    let text = &row.description_raw;
+    assert!(
+        row.recognition
+            .unrecognized
+            .iter()
+            .any(|&(a, b)| text[a as usize..b as usize].contains(">=")),
+        "{:?}",
+        row.recognition
+    );
+}

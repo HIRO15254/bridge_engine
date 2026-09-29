@@ -190,3 +190,51 @@ D = 13+ hcp, 0--1Y
     assert!(ordered.is_subset(&free));
     assert!(free.len() > ordered.len());
 }
+
+#[test]
+fn a_directive_in_its_own_paragraph_is_reported_not_silently_dropped() {
+    // Written like `#SEAT`/`#VUL`, as its own paragraph: it names no table, so it has no effect
+    // (the table below stays ordered) and says so.
+    let ir = compile(
+        "#ANYORDER
+
+1X-(2Y)-
+D = 10+ hcp, 0--2Y
+",
+    );
+    assert!(has_position(&ir, "1H 2S X"));
+    assert!(!has_position(&ir, "1H 2C X"));
+    let orphan: Vec<_> = ir
+        .lints
+        .iter()
+        .filter(|l| l.code == LintCode::UnknownDirective)
+        .collect();
+    assert_eq!(orphan.len(), 1, "{:?}", ir.lints);
+    assert_eq!(orphan[0].severity, Severity::Warning);
+    assert!(
+        orphan[0].message.contains("#ANYORDER"),
+        "{}",
+        orphan[0].message
+    );
+
+    // The same for a directive-only `#ANYORDER` + `#STOP` paragraph: one lint naming both.
+    let ir = compile(
+        "#ANYORDER
+#STOP
+
+1X-(2Y)-
+D = 10+ hcp, 0--2Y
+",
+    );
+    let orphan: Vec<_> = ir
+        .lints
+        .iter()
+        .filter(|l| l.code == LintCode::UnknownDirective)
+        .collect();
+    assert_eq!(orphan.len(), 1, "{:?}", ir.lints);
+    assert!(
+        orphan[0].message.contains("#ANYORDER and #STOP"),
+        "{}",
+        orphan[0].message
+    );
+}

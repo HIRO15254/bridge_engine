@@ -1331,6 +1331,15 @@ fn expand_row(
 
     let last_bid = frame.last_bid();
     if pattern_has_relative_level(&tok.pattern) && !frame.last_bid_known() {
+        // One authoring mistake, one lint: a row under a variable history expands once per
+        // binding, and every expansion lands here with the same source span.
+        let reported = ex
+            .lints
+            .iter()
+            .any(|l| l.code == LintCode::LevelWithoutAnchor && l.span.as_ref() == Some(&tok.span));
+        if reported {
+            return Vec::new();
+        }
         ex.lints.push(
             Lint::error(
                 LintCode::LevelWithoutAnchor,
@@ -1565,6 +1574,26 @@ fn report_empty_candidates(
             );
         }
         CallPattern::Var { level, var } if level.is_relative() && frame.env.get(*var).is_some() => {
+            ex.lints.push(
+                Lint::info(
+                    LintCode::NoSufficientLevel,
+                    format!("{}: the level would pass 7", tok.raw),
+                )
+                .with_span(tok.span.clone()),
+            );
+        }
+        CallPattern::AnyOf(alts)
+            if pattern_has_relative_level(pattern)
+                && alts.iter().all(|alt| match alt {
+                    CallPattern::Strains { level, .. } => level.is_relative(),
+                    CallPattern::Var { level, var } => {
+                        level.is_relative() && frame.env.get(*var).is_some()
+                    }
+                    _ => false,
+                }) =>
+        {
+            // `jS/jN` over 7H: every alternative is a relative level with a known strain, and
+            // none has a level left.
             ex.lints.push(
                 Lint::info(
                     LintCode::NoSufficientLevel,

@@ -54,7 +54,10 @@ pub fn parse(loaded: Loaded) -> BmlFile {
                     blocks.push(block);
                 }
             }
-            ParagraphKind::Paragraph => blocks.push(parse_paragraph(&paragraph)),
+            ParagraphKind::Paragraph => {
+                relative_row_as_prose(&paragraph, &mut lints);
+                blocks.push(parse_paragraph(&paragraph));
+            }
         }
     }
 
@@ -143,6 +146,39 @@ fn is_bidtable_start(word: &str) -> bool {
         // starts a table: a prose paragraph that happens to begin with such a word stays prose.
         Ok((_, pattern)) => s.is_empty() && !has_relative_level(&pattern),
         Err(_) => false,
+    }
+}
+
+/// A prose paragraph whose first line has the shape of a bidding-table row led by a relative
+/// level (`cS = 5+!s`): a relative level never starts a table (`is_bidtable_start`), so the
+/// paragraph, and every ordinary row under it, is read as prose. Say so rather than drop the
+/// rows without a trace (Warning `UnknownCallToken`; `docs/design/06-system.md` §3.2).
+fn relative_row_as_prose(paragraph: &[RawLine], lints: &mut Vec<Lint>) {
+    let Some(first) = paragraph.first() else {
+        return;
+    };
+    let mut words = first.text.split_whitespace();
+    let (Some(word), Some(next)) = (words.next(), words.next()) else {
+        return;
+    };
+    if next != "=" {
+        return;
+    }
+    let mut s = word;
+    let relative =
+        matches!(call::calltok(&mut s), Ok((_, ref p)) if s.is_empty() && has_relative_level(p));
+    if relative {
+        lints.push(
+            Lint::warning(
+                LintCode::UnknownCallToken,
+                format!(
+                    "{word}: a relative level cannot open a bidding table (no bid before it); \
+                     the paragraph ({} line(s)) is read as prose",
+                    paragraph.len()
+                ),
+            )
+            .with_span(first.span.clone()),
+        );
     }
 }
 
@@ -732,6 +768,29 @@ fn parse_table_paragraph(
     }
 
     if history.is_empty() && roots.is_empty() {
+        // A paragraph of table directives alone (`#ANYORDER` or `#STOP` followed by a blank
+        // line, the way `#SEAT`/`#VUL` are written) names no table: the directives would
+        // otherwise vanish without a trace while the table below stays ordered / unstopped.
+        let mut orphans = Vec::new();
+        if any_order {
+            orphans.push("#ANYORDER");
+        }
+        if table_stop {
+            orphans.push("#STOP");
+        }
+        if !orphans.is_empty() {
+            lints.push(
+                Lint::warning(
+                    LintCode::UnknownDirective,
+                    format!(
+                        "{} outside a bidding table has no effect (write it inside the table's \
+                         paragraph, with no blank line before the table)",
+                        orphans.join(" and ")
+                    ),
+                )
+                .with_span(table_span),
+            );
+        }
         return None;
     }
     if any_order && xyz_variables(&history, &roots) < 2 {
