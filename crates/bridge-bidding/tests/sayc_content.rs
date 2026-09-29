@@ -35,12 +35,12 @@ fn ctx(table: &bridge_bidding::Table) -> BidContext<'_> {
 #[test]
 fn michaels_outranks_plain_overcall() {
     let table = sayc();
-    let ctx = ctx(&table);
+    let ctx = ctx(table);
     // 5 spades, 5 clubs, 10 hcp: qualifies for both Michaels (2H, over a 1H opening) and the
     // plain `1S` overcall (4+ spades, 8-16 hcp).
     let a = common::auction(Seat::North, Vulnerability::None, &[bid(1, Strain::Hearts)]);
     let h = common::hand("AJ432", "3", "32", "AJ432");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Hearts)),
@@ -53,12 +53,12 @@ fn michaels_outranks_plain_overcall() {
 #[test]
 fn unusual_notrump_outranks_plain_overcall() {
     let table = sayc();
-    let ctx = ctx(&table);
+    let ctx = ctx(table);
     // Over 1C, the unusual 2NT shows 5+ diamonds and 5+ hearts. 10 hcp also fits the plain `1D`/
     // `1H` overcall (4+, 8-16 hcp).
     let a = common::auction(Seat::North, Vulnerability::None, &[bid(1, Strain::Clubs)]);
     let h = common::hand("3", "AJ432", "AJ432", "32");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::NoTrump)),
@@ -72,12 +72,12 @@ fn unusual_notrump_outranks_plain_overcall() {
 #[test]
 fn weak_jump_overcall_outranks_plain_overcall() {
     let table = sayc();
-    let ctx = ctx(&table);
+    let ctx = ctx(table);
     // Over 1H, 6 spades and 9 hcp fits both the plain `1S` (4+, 8-16 hcp) and the weak jump `2S`
     // (6=, 5-11 hcp).
     let a = common::auction(Seat::North, Vulnerability::None, &[bid(1, Strain::Hearts)]);
     let h = common::hand("32", "32", "432", "AJ9432");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Spades)),
@@ -90,7 +90,7 @@ fn weak_jump_overcall_outranks_plain_overcall() {
 #[test]
 fn takeout_double_advance_follows_shape_not_cheapest_suit() {
     let table = sayc();
-    let ctx = ctx(&table);
+    let ctx = ctx(table);
     // West opens 1C, North doubles for takeout, East passes; South (the advancer) has 4 hearts
     // and no diamonds at all, so `1D` (the cheapest unbid suit) must not be picked.
     let a = common::auction(
@@ -99,7 +99,7 @@ fn takeout_double_advance_follows_shape_not_cheapest_suit() {
         &[bid(1, Strain::Clubs), DBL, PASS],
     );
     let h = common::hand("5432", "", "AJ32", "Q9432");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(1, Strain::Hearts)),
@@ -113,7 +113,7 @@ fn takeout_double_advance_follows_shape_not_cheapest_suit() {
 #[test]
 fn takeout_double_advance_invitational_jump_outranks_other_minimum_suits() {
     let table = sayc();
-    let ctx = ctx(&table);
+    let ctx = ctx(table);
     let a = common::auction(
         Seat::West,
         Vulnerability::None,
@@ -122,7 +122,7 @@ fn takeout_double_advance_invitational_jump_outranks_other_minimum_suits() {
     // 5 spades, invitational values (11 hcp), and an incidental 4-card heart holding that also
     // fits the plain minimum `1H`.
     let h = common::hand("32", "32", "K432", "AKJ32");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Spades)),
@@ -136,14 +136,14 @@ fn takeout_double_advance_invitational_jump_outranks_other_minimum_suits() {
 #[test]
 fn takeout_double_advance_of_1s_double_is_covered() {
     let table = sayc();
-    let ctx = ctx(&table);
+    let ctx = ctx(table);
     let a = common::auction(
         Seat::West,
         Vulnerability::None,
         &[bid(1, Strain::Spades), DBL, PASS],
     );
     let h = common::hand("432", "AJ32", "Q432", "32");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Hearts)),
@@ -159,7 +159,7 @@ fn takeout_double_advance_of_1s_double_is_covered() {
 #[test]
 fn natural_response_after_1nt_is_overcalled_is_on_system() {
     let table = sayc();
-    let ctx = ctx(&table);
+    let ctx = ctx(table);
 
     // 1NT-(2D)-?: spades (above diamonds) is directly reachable at 2S.
     let a = common::auction(
@@ -168,7 +168,7 @@ fn natural_response_after_1nt_is_overcalled_is_on_system() {
         &[bid(1, Strain::NoTrump), bid(2, Strain::Diamonds)],
     );
     let h = common::hand("32", "32", "432", "AKQ432");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Spades)),
@@ -184,7 +184,7 @@ fn natural_response_after_1nt_is_overcalled_is_on_system() {
     );
     // 12 hcp: a three-level new suit is forcing (10+) since the phase-3 recheck (NOTES.md #C8).
     let h2 = common::hand("AKQ432", "32", "K32", "32");
-    let choice2 = choose_bid(&table, h2, &a2, &ctx);
+    let choice2 = choose_bid(table, h2, &a2, &ctx);
     assert_eq!(
         choice2.call(),
         Some(bid(3, Strain::Clubs)),
@@ -198,7 +198,7 @@ fn natural_response_after_1nt_is_overcalled_is_on_system() {
 #[test]
 fn stayman_after_double_of_1nt_requires_a_major() {
     let table = sayc();
-    let ctx = ctx(&table);
+    let ctx = ctx(table);
     let a = common::auction(
         Seat::North,
         Vulnerability::None,
@@ -206,7 +206,7 @@ fn stayman_after_double_of_1nt_requires_a_major() {
     );
     // 8 hcp, balanced, no four-card major: must not ask Stayman.
     let h = common::hand("QJ32", "KQ32", "32", "432");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_ne!(
         choice.call(),
         Some(bid(2, Strain::Clubs)),
@@ -219,7 +219,7 @@ fn stayman_after_double_of_1nt_requires_a_major() {
 #[test]
 fn stayman_opposite_1nt_overcall_requires_a_major() {
     let table = sayc();
-    let ctx = ctx(&table);
+    let ctx = ctx(table);
     let a = common::auction(
         Seat::West,
         Vulnerability::None,
@@ -227,7 +227,7 @@ fn stayman_opposite_1nt_overcall_requires_a_major() {
     );
     // 8 hcp, balanced, no four-card major: must not ask Stayman opposite partner's 1NT overcall.
     let h = common::hand("QJ32", "KQ32", "32", "432");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_ne!(
         choice.call(),
         Some(bid(2, Strain::Clubs)),
@@ -240,7 +240,7 @@ fn stayman_opposite_1nt_overcall_requires_a_major() {
 #[test]
 fn balancing_suit_overcall_outranks_double() {
     let table = sayc();
-    let ctx = ctx(&table);
+    let ctx = ctx(table);
     // West opens 1C, North/East/South all pass; West's partner (East) already passed, so this is
     // the classic balancing seat for West's partner... rather, North reopens after 1C-P-P.
     let a = common::auction(
@@ -251,7 +251,7 @@ fn balancing_suit_overcall_outranks_double() {
     // 9 hcp, 4 hearts (only): a real balancing overcall, not merely a takeout double's own 8+
     // hcp.
     let h = common::hand("432", "432", "AJ32", "KJ2");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(1, Strain::Hearts)),
@@ -264,7 +264,7 @@ fn balancing_suit_overcall_outranks_double() {
 #[test]
 fn balancing_jump_overcall_is_preemptive_not_full_strength() {
     let table = sayc();
-    let ctx = ctx(&table);
+    let ctx = ctx(table);
     let a = common::auction(
         Seat::West,
         Vulnerability::None,
@@ -273,7 +273,7 @@ fn balancing_jump_overcall_is_preemptive_not_full_strength() {
     // 14 hcp, 5 hearts: too strong for the preemptive jump; must overcall calmly at the one
     // level.
     let h = common::hand("32", "32", "AKQ32", "AJ32");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(1, Strain::Hearts)),
@@ -287,14 +287,14 @@ fn balancing_jump_overcall_is_preemptive_not_full_strength() {
 #[test]
 fn weak_two_response_new_suit_above_opening_is_at_two_level() {
     let table = sayc();
-    let ctx = ctx(&table);
+    let ctx = ctx(table);
     let a = common::auction(
         Seat::North,
         Vulnerability::None,
         &[bid(2, Strain::Diamonds), PASS],
     );
     let h = common::hand("32", "32", "AKQ32", "K432");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(2, Strain::Hearts)),
@@ -307,7 +307,7 @@ fn weak_two_response_new_suit_above_opening_is_at_two_level() {
 #[test]
 fn negative_double_leaves_a_call_for_a_plain_four_card_major() {
     let table = sayc();
-    let ctx = ctx(&table);
+    let ctx = ctx(table);
     let a = common::auction(
         Seat::West,
         Vulnerability::None,
@@ -315,7 +315,7 @@ fn negative_double_leaves_a_call_for_a_plain_four_card_major() {
     );
     // 8 hcp, exactly 4 hearts, 3 spades: no fit for the negative double (needs both majors).
     let h = common::hand("432", "432", "AJ32", "K32");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(1, Strain::Hearts)),
@@ -329,7 +329,7 @@ fn negative_double_leaves_a_call_for_a_plain_four_card_major() {
 #[test]
 fn notrump_overcall_outranks_plain_overcall() {
     let table = sayc();
-    let ctx = ctx(&table);
+    let ctx = ctx(table);
     // Over 1D, a balanced 15-count with a solid diamond stopper and an incidental 4-card major
     // also fits the plain `1H` overcall (4+ hearts, 8-16 hcp).
     let a = common::auction(
@@ -338,7 +338,7 @@ fn notrump_overcall_outranks_plain_overcall() {
         &[bid(1, Strain::Diamonds)],
     );
     let h = common::hand("K32", "AQJ", "KQ32", "432");
-    let choice = choose_bid(&table, h, &a, &ctx);
+    let choice = choose_bid(table, h, &a, &ctx);
     assert_eq!(
         choice.call(),
         Some(bid(1, Strain::NoTrump)),
@@ -704,7 +704,7 @@ mod sayc_comp {
     /// Asserts every `(auction, hand, expected call)` case against the compiled SAYC system.
     fn check(cases: &[(&str, &str, &str)]) {
         let table = sayc();
-        let ctx = ctx(&table);
+        let ctx = ctx(table);
         let mut failures = Vec::new();
         for &(calls, hand, expected) in cases {
             let mut a = Auction::new(Seat::North, Vulnerability::None);
@@ -714,7 +714,7 @@ mod sayc_comp {
             }
             let h: Hand = hand.parse().expect("valid hand");
             let expected: Call = expected.parse().expect("valid call");
-            let choice = choose_bid(&table, h, &a, &ctx);
+            let choice = choose_bid(table, h, &a, &ctx);
             if choice.call() != Some(expected) {
                 failures.push(format!(
                     "  [{calls}] {hand}: expected {expected}, got {:?}",
@@ -1105,7 +1105,7 @@ mod sayc_comp {
         // matching reads an uncovered response as a pass): after their 1NT-2D transfer or
         // 1NT-2C Stayman our seat bids naturally, not from `(1N)-P-(P)-`.
         let table = sayc();
-        let ctx = ctx(&table);
+        let ctx = ctx(table);
         for (calls, hand) in [
             ("P 1NT P 2D", "974.652.753.AKQ2"),
             ("P 1NT P 2C 2H 2S", "98432.8.632.K865"),
@@ -1118,7 +1118,7 @@ mod sayc_comp {
             }
             let h: Hand = hand.parse().expect("valid hand");
             assert!(
-                choose_bid(&table, h, &a, &ctx).call().is_some(),
+                choose_bid(table, h, &a, &ctx).call().is_some(),
                 "[{calls}] {hand}: no call"
             );
         }
