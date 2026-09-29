@@ -210,7 +210,9 @@ D = {prio:1} 11--16 hcp and 0--2!d or 17+ hcp
 
 Advancing the double: game in a major with four cards and 10+, 3NT with 10+
 and a stopper, otherwise the cheapest four-card suit (a major first), and a
-pass with five good trumps.
+pass with five good trumps. With 10+ and none of these (no stopper, no major)
+advancer cue-bids their suit, forcing; the doubler then picks the contract
+(natural inference).
 
 (2D)-P-(3D)-D-(P)-
 P = {prio:6} 8+ hcp, 5+!d
@@ -229,6 +231,7 @@ cM = {prio:3} 0--9 hcp, 4+M
     #STOP
   cD = {prio:1} 18+ hcp
   #STOP
+cD = {prio:1} 10+ hcp
 #STOP
 
 (2D)-P-(3D)-P-(P)-D-(P)-
@@ -248,6 +251,7 @@ cM = {prio:3} 0--9 hcp, 4+M
     #STOP
   cD = {prio:1} 17+ hcp
   #STOP
+cD = {prio:1} 10+ hcp
 #STOP
 
 #CUT adv-raised-weak-two-dbl
@@ -262,6 +266,7 @@ cm = {prio:2} 0--9 hcp, 4+m
     #STOP
   c\T = {prio:1} \k+ hcp
   #STOP
+c\T = {prio:1} 10+ hcp
 #STOP
 #ENDCUT
 
@@ -358,6 +363,7 @@ cm = {prio:2} 0--9 hcp, 4+m
     #STOP
   cH = {prio:1} 18+ hcp
   #STOP
+cH = {prio:1} 10+ hcp
 #STOP
 
 (3S)-P-(P)-D-(P)-
@@ -372,6 +378,7 @@ cm = {prio:2} 0--9 hcp, 4+m
     #STOP
   cS = {prio:1} 18+ hcp
   #STOP
+cS = {prio:1} 10+ hcp
 #STOP
 
 Over a four-level preempt passed round, a double shows 15+ (the direct seat
@@ -748,9 +755,11 @@ and four cards. Over a redouble advancer bids his cheapest four-card suit even
 with nothing (the double must be rescued), or passes for penalty with five
 cards in their suit. With 12+ advancer bids 3NT with a stopper (13+) or
 cue-bids the opener's suit, forcing. With less advancer passes. The doubler
-passes the free bid (or advancer's pass) with the double's minimum, 12--16,
-and cue-bids the opener's suit with more; after a cue bid the auction goes on
-naturally.
+passes the free bid (or advancer's pass) with the double's minimum, 12--16.
+With more he cue-bids the opener's suit over the free bid, and doubles again
+over advancer's pass (still for takeout: the double stays legal when they bid
+on instead of passing, where the cue bid may not be); after either the auction
+goes on naturally.
 
 #CUT free-advance
 4M = {prio:6} 12+ hcp, 4+M
@@ -776,7 +785,7 @@ cN = {prio:1} 8--11 hcp, stopper
 P = {prio:0} 0--11 hcp
   P = {prio:0} 0--16 hcp
     #STOP
-  c\O = {prio:1} 17+ hcp
+  D = {prio:1} 17+ hcp
 #ENDCUT
 
 (1X)-D-(1Y)-

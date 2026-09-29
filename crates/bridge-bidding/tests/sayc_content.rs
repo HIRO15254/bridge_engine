@@ -1737,7 +1737,14 @@ mod d2_review {
             // Over their new suit: a penalty double needs four of it; 13+ with support cue-bids.
             ("1D 2C 2H", "AQ2.KJ32.Q432.32", "X"),
             ("1D 2C 2H", "AK2.32.K432.KQ2", "3D"),
+            // A game-going advance with no stopper and no major: the cue bid.
+            ("2S P 3S P P X P", "T32.K63.T42.AQJ3", "4S"),
+            ("3S P P X P", "83.K98.KQT75.A63", "4S"),
+            ("2H P 3H X P", "A54.T54.A986.Q86", "4H"),
+            // The strong doubler doubles again after advancer's pass, also when they bid on.
+            ("1C X 1H P P", "A62.65.AKJ83.AK9", "X"),
         ]);
+        check_not_pass(&[("1C X 1H P 2H", "A62.65.AKJ83.AK9")]);
     }
 
     /// Every case must be decided by something other than a system stop's pass: a system row
