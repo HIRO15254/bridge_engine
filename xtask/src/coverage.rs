@@ -20,6 +20,15 @@
 //!   also counts as a departure when the natural choice `m_P(h)` is not `Pass`
 //!   (`default_pass_overrides`, their tops, and `first_strict_departure_*`). Without it, the
 //!   system stops make every such position look like a system decision.
+//!   *Stop-audited* accounting (`all_system_stop_audited`, lane D2's review): strict accounting
+//!   checks the natural choice only where the stop pass is the position's sole member; once a
+//!   table writes one row and ends in a stop, the stop pass takes every other hand unchecked.
+//!   The audit applies the same test to every default pass the system chooses: a chosen default
+//!   pass whose natural choice is not `Pass` is a *swallowed* hand (`stop_swallows`, their top
+//!   50 by position with the hands' HCP bands as `by_kind`, `stop_swallow_by_natural_call`), and
+//!   an all-system auction with neither an override nor a swallow is stop-audited. It is a
+//!   sensitivity bound, not a verdict: many swallowed hands are correct passes that the natural
+//!   engine overbids.
 //! - **positions**: `COVERAGE_POSITIONS` (default 200,000) positions drawn exactly like the
 //!   forward-consistency harness (`crates/bridge-bidding/tests/common` +
 //!   `tests/consistency.rs`: seed `0x5a1c0002`, 5% random-call substitution, random depth
@@ -184,8 +193,11 @@ pub fn run(args: &[&str]) -> Result<std::process::ExitCode> {
     let generated = generated_report(&table, &ctx);
     let generated_s = t.elapsed().as_secs_f64();
     eprintln!(
-        "coverage: generated in {generated_s:.1} s: all_system_rate {}",
-        generated["all_system_rate"]
+        "coverage: generated in {generated_s:.1} s: all_system_rate {}, strict {}, \
+         stop-audited {}",
+        generated["all_system_rate"],
+        generated["all_system_strict_rate"],
+        generated["all_system_stop_audited_rate"]
     );
 
     let t = Instant::now();
@@ -819,6 +831,13 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
     let mut override_tops: HashMap<PosKey, Agg> = HashMap::new();
     let mut strict_departures: HashMap<PosKey, Agg> = HashMap::new();
     let mut strict_departure_by_category: BTreeMap<&'static str, u64> = BTreeMap::new();
+    // Stop audit: a chosen default pass at a position that also has real rows, where the
+    // natural choice is not `Pass`.
+    let mut all_system_stop_audited = 0u64;
+    let mut swallows = 0u64;
+    let mut with_swallow = 0u64;
+    let mut swallow_tops: HashMap<PosKey, Agg> = HashMap::new();
+    let mut swallow_by_call: BTreeMap<&'static str, u64> = BTreeMap::new();
 
     for _ in 0..n {
         let deal = random_deal(&mut rng);
@@ -831,6 +850,7 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
         let mut non_pass_after_departure = false;
         let mut has_override = false;
         let mut strict_departed = false;
+        let mut has_swallow = false;
         while !auction.is_complete() && auction.len() < 320 {
             let seat = auction.next_seat();
             let hand = deal.hand(seat);
@@ -839,6 +859,7 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
             if state == OnSystem::Lenient {
                 lenient_positions += 1;
             }
+            let mut chose_default_pass = false;
             let (call, outcome) = match choose_bid(table, hand, &auction, ctx) {
                 BidChoice::Chosen(c) => {
                     if state != OnSystem::Off
@@ -846,6 +867,7 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
                         && c.node
                             .is_some_and(|id| system.node(id).priority <= DEFAULT_PASS_PRIORITY)
                     {
+                        chose_default_pass = true;
                         default_passes += 1;
                         stop_passes +=
                             u64::from(c.node.is_some_and(|id| system.node(id).is_synthesised()));
@@ -861,7 +883,24 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
                 }
                 BidChoice::NoCandidate(_) => (Call::Pass, Outcome::Gap),
             };
-            if state != OnSystem::Off && default_pass_only(system, &auction) {
+            let only_default_passes = state != OnSystem::Off && default_pass_only(system, &auction);
+            if chose_default_pass && !only_default_passes {
+                if let Some(m) = natural_choice(table, ctx, hand, &auction) {
+                    if m != Call::Pass {
+                        swallows += 1;
+                        has_swallow = true;
+                        *swallow_by_call.entry(call_label(m)).or_default() += 1;
+                        record(
+                            &mut swallow_tops,
+                            pos_key(&auction, matched),
+                            hcp_band(hand),
+                            &auction,
+                            hand,
+                        );
+                    }
+                }
+            }
+            if only_default_passes {
                 default_pass_only_positions += 1;
                 if let Some(m) = natural_choice(table, ctx, hand, &auction) {
                     if m != Call::Pass {
@@ -956,12 +995,18 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
         if has_override {
             with_override += 1;
         }
+        if has_swallow {
+            with_swallow += 1;
+        }
         if !has_natural && !has_gap {
             all_system += 1;
             if has_override {
                 all_system_with_override += 1;
             } else {
                 all_system_strict += 1;
+                if !has_swallow {
+                    all_system_stop_audited += 1;
+                }
             }
         } else if !non_pass_after_departure {
             only_passes_after_departure += 1;
@@ -986,6 +1031,12 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
         "default_pass_override_top50": top(&override_tops, 50, 1.0),
         "first_strict_departure_by_category": strict_departure_by_category,
         "first_strict_departure_top50": top(&strict_departures, 50, 1.0),
+        "all_system_stop_audited": all_system_stop_audited,
+        "all_system_stop_audited_rate": all_system_stop_audited as f64 / n.max(1) as f64,
+        "stop_swallows": swallows,
+        "auctions_with_stop_swallow": with_swallow,
+        "stop_swallow_by_natural_call": swallow_by_call,
+        "stop_swallow_top50": top(&swallow_tops, 50, 1.0),
         "auctions_with_natural": with_natural,
         "auctions_with_gap": with_gap,
         "calls": total_calls,
@@ -1003,6 +1054,17 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
         // Authoring aid: `COVERAGE_TOP_N=<n>` also lists the first `n` departures.
         "first_departure_top_n": top(&departures, env_usize("COVERAGE_TOP_N", 0), 1.0),
     })
+}
+
+/// The HCP band of a hand, as a `by_kind` label of the stop-swallow tops.
+fn hcp_band(hand: Hand) -> &'static str {
+    match bridge_eval::hcp(hand) {
+        0..=7 => "hcp_0_7",
+        8..=11 => "hcp_8_11",
+        12..=15 => "hcp_12_15",
+        16..=19 => "hcp_16_19",
+        _ => "hcp_20_plus",
+    }
 }
 
 /// A short, static label for a natural call's kind (for `by_kind` of the natural tops).
