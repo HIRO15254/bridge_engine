@@ -470,8 +470,9 @@ mod tests {
         let loaded = load(abs_root.to_str().unwrap(), root_text, &FsLoader);
         assert!(loaded.lints.is_empty(), "{:?}", loaded.lints);
         assert!(loaded.lines.iter().any(|l| l.text == "1C  clubs"));
+        // `/tmp/...` on Unix, `C:/Users/...` on Windows.
         assert!(
-            loaded.files[2].0.starts_with('/'),
+            std::path::Path::new(&*loaded.files[2].0).is_absolute(),
             "{:?}",
             loaded.files[2].0
         );
