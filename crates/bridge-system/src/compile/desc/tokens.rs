@@ -69,7 +69,8 @@ pub enum Token {
     Support(u8),
     /// `controls`, `2 controls`. The full range `0..=12` marks the bare, unconstrained form.
     Controls(RangeInclusive<u8>),
-    /// `7 losers`, `LTC`. The full range `0..=24` marks the bare, unconstrained form.
+    /// `7 losers`, `LTC`, in whole losers (`context.rs` doubles it into the half-loser units of
+    /// `Metric::Losers`). The full range `0..=12` marks the bare, unconstrained form.
     Losers(RangeInclusive<u8>),
     /// `NAT`, `natural`.
     Natural,
@@ -437,7 +438,7 @@ fn match_length_or_metric(s: &str) -> Option<(Token, usize)> {
         if let Some((n, l2)) = parse_number(rest2) {
             return Some((Token::Losers(n..=n), l + ws + l2));
         }
-        return Some((Token::Losers(0..=24), l));
+        return Some((Token::Losers(0..=12), l));
     }
 
     let (s1, prefix_len) = strip_approx_prefix(s);
@@ -503,7 +504,7 @@ fn match_length_or_metric(s: &str) -> Option<(Token, usize)> {
             MetricKind::Points => 40,
             MetricKind::Hcp => 37,
             MetricKind::Controls => 12,
-            MetricKind::Losers => 24,
+            MetricKind::Losers => 12,
         };
         return Some((build_token(tag_of(&kind), n1..=hi), consumed + l3));
     }
@@ -542,7 +543,7 @@ fn widen_bound(token: Token, at_least: bool) -> Option<Token> {
         Token::Hcp(r) => Token::Hcp(widen(r, 37)),
         Token::Points(r) => Token::Points(widen(r, 40)),
         Token::Controls(r) => Token::Controls(widen(r, 12)),
-        Token::Losers(r) => Token::Losers(widen(r, 24)),
+        Token::Losers(r) => Token::Losers(widen(r, 12)),
         Token::Support(n) if at_least => Token::Support(n),
         _ => return None,
     })
@@ -1504,7 +1505,7 @@ mod tests {
         assert_eq!(rec("7 losers"), Token::Losers(7..=7));
         assert_eq!(rec("6-7 losers"), Token::Losers(6..=7));
         assert_eq!(rec("LTC 7"), Token::Losers(7..=7));
-        assert_eq!(rec("LTC"), Token::Losers(0..=24));
+        assert_eq!(rec("LTC"), Token::Losers(0..=12));
     }
 
     #[test]

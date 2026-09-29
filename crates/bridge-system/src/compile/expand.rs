@@ -1190,7 +1190,24 @@ fn expand_children(
                 .last()
                 .expect("expand_row pushed this row's edge");
             if !bids_processed.insert(edge) {
-                continue; // this sibling list already produced `call`; skip the subtree.
+                // This sibling list already produced `call`: like `bss.py`'s `bids_processed`,
+                // the repeat's subtree is skipped (subtrees merge only across tables or sibling
+                // lists). Say so when there is a subtree to lose.
+                if !row.children.is_empty() {
+                    ex.lints.push(
+                        Lint::warning(
+                            LintCode::DuplicatePath,
+                            format!(
+                                "{}: repeated in the same sibling list; the repeat's subtree \
+                                 ({} row(s)) is dropped (write it under the first row)",
+                                row.calls[0].raw,
+                                row.children.len()
+                            ),
+                        )
+                        .with_span(row.span.clone()),
+                    );
+                }
+                continue;
             }
             if let Some(p) = parent {
                 if !ex.nodes[p.0 as usize].children.contains(&node_id) {
@@ -1231,7 +1248,24 @@ fn expand_children(
                 .last()
                 .expect("expand_row pushed this row's edge");
             if !bids_processed.insert(edge) {
-                continue; // this sibling list already produced `call`; skip the subtree.
+                // This sibling list already produced `call`: like `bss.py`'s `bids_processed`,
+                // the repeat's subtree is skipped (subtrees merge only across tables or sibling
+                // lists). Say so when there is a subtree to lose.
+                if !row.children.is_empty() {
+                    ex.lints.push(
+                        Lint::warning(
+                            LintCode::DuplicatePath,
+                            format!(
+                                "{}: repeated in the same sibling list; the repeat's subtree \
+                                 ({} row(s)) is dropped (write it under the first row)",
+                                row.calls[0].raw,
+                                row.children.len()
+                            ),
+                        )
+                        .with_span(row.span.clone()),
+                    );
+                }
+                continue;
             }
             if let Some(p) = parent {
                 if !ex.nodes[p.0 as usize].children.contains(&node_id) {
@@ -1555,16 +1589,20 @@ fn report_empty_candidates(
                 .with_span(tok.span.clone()),
             );
         }
-        CallPattern::Step(_) if last_bid.is_none() || frame.under_wildcard => {
+        CallPattern::Step(_) => {
+            // No anchor (no bid yet, or an opponents' wildcard before it), or a step that would
+            // pass 7NT: either way the row and its subtree are dropped, so say so.
+            let why = if last_bid.is_none() || frame.under_wildcard {
+                "no prior bid to step from"
+            } else {
+                "the step would pass 7NT"
+            };
             ex.lints.push(
-                Lint::error(
-                    LintCode::StepWithoutAnchor,
-                    format!("{}: no prior bid to step from", tok.raw),
-                )
-                .with_span(tok.span.clone()),
+                Lint::error(LintCode::StepWithoutAnchor, format!("{}: {why}", tok.raw))
+                    .with_span(tok.span.clone()),
             );
         }
-        CallPattern::Strains { level, .. } if level.is_relative() => {
+        CallPattern::Strains { level, .. } if level_can_run_out(*level) => {
             ex.lints.push(
                 Lint::info(
                     LintCode::NoSufficientLevel,
@@ -1573,7 +1611,9 @@ fn report_empty_candidates(
                 .with_span(tok.span.clone()),
             );
         }
-        CallPattern::Var { level, var } if level.is_relative() && frame.env.get(*var).is_some() => {
+        CallPattern::Var { level, var }
+            if level_can_run_out(*level) && frame.env.get(*var).is_some() =>
+        {
             ex.lints.push(
                 Lint::info(
                     LintCode::NoSufficientLevel,
@@ -1583,14 +1623,13 @@ fn report_empty_candidates(
             );
         }
         CallPattern::AnyOf(alts)
-            if pattern_has_relative_level(pattern)
-                && alts.iter().all(|alt| match alt {
-                    CallPattern::Strains { level, .. } => level.is_relative(),
-                    CallPattern::Var { level, var } => {
-                        level.is_relative() && frame.env.get(*var).is_some()
-                    }
-                    _ => false,
-                }) =>
+            if alts.iter().all(|alt| match alt {
+                CallPattern::Strains { level, .. } => level_can_run_out(*level),
+                CallPattern::Var { level, var } => {
+                    level_can_run_out(*level) && frame.env.get(*var).is_some()
+                }
+                _ => false,
+            }) =>
         {
             // `jS/jN` over 7H: every alternative is a relative level with a known strain, and
             // none has a level left.
@@ -1613,6 +1652,13 @@ fn report_empty_candidates(
         }
         _ => {}
     }
+}
+
+/// Whether a row at `level` can be left with no candidate because no sufficient level is left
+/// below 8: the relative levels `c`/`j`, and `n` ("whatever level is needed") after 7NT or a
+/// bid too high for the strain.
+fn level_can_run_out(level: Level) -> bool {
+    level.is_relative() || matches!(level, Level::Any)
 }
 
 /// The last bid made by a seat of the partnership other than `seat_now`'s, scanning `auction`
@@ -1774,7 +1820,13 @@ fn build_or_reuse_node(
         } else {
             Alertability::Unspecified
         },
-        flags: compiled.flags,
+        // The alert marker makes the call artificial (`docs/design/16-extended-bml.md` §3.6), the
+        // same as a convention word does. The parser has already stripped the `!` from the text,
+        // so the description compiler cannot see it and the flag is set here.
+        flags: crate::NodeFlags {
+            artificial: compiled.flags.artificial || row.description.alert,
+            ..compiled.flags
+        },
         description: substituted,
         children: Vec::new(),
     };

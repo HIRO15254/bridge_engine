@@ -58,6 +58,24 @@ fn annotation_at(text: &str, i: usize) -> Option<(Annotation, usize)> {
     Some((annotation, rel_end + 1))
 }
 
+/// Byte length of the annotations (`{prio:N}`, `{w:X}`, `{stop}`) and horizontal whitespace in
+/// front of `text`'s first other character: where [`normalize`] still accepts the leading alert
+/// marker. The parser uses it so that `{prio:5} !Foo` is an alert exactly like `!Foo`.
+pub(crate) fn leading_annotations_len(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut i = 0usize;
+    loop {
+        match bytes.get(i) {
+            Some(b' ' | b'\t' | b'\r') => i += 1,
+            Some(b'{') => match annotation_at(text, i) {
+                Some((_, len)) => i += len,
+                None => return i,
+            },
+            _ => return i,
+        }
+    }
+}
+
 /// `text` without its `{prio:N}` / `{w:X}` / `{stop}` annotations (what [`normalize`] extracts
 /// into [`Normalized::priority`], [`Normalized::weights`] and [`Normalized::stop`]), for display
 /// (`compile()` stores every node's description this way).

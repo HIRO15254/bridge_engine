@@ -56,6 +56,7 @@ pub fn parse(loaded: Loaded) -> BmlFile {
             }
             ParagraphKind::Paragraph => {
                 relative_row_as_prose(&paragraph, &mut lints);
+                broken_row_as_prose(&paragraph, &mut lints);
                 blocks.push(parse_paragraph(&paragraph));
             }
         }
@@ -161,6 +162,8 @@ fn relative_row_as_prose(paragraph: &[RawLine], lints: &mut Vec<Lint>) {
     let (Some(word), Some(next)) = (words.next(), words.next()) else {
         return;
     };
+    // Only `cS = …` is flagged: without the `=`, `cS is how this file writes …` is ordinary
+    // prose that happens to start with a relative-level word.
     if next != "=" {
         return;
     }
@@ -180,6 +183,44 @@ fn relative_row_as_prose(paragraph: &[RawLine], lints: &mut Vec<Lint>) {
             .with_span(first.span.clone()),
         );
     }
+}
+
+/// A prose paragraph whose first line looks like a bidding-table row with a typo in its call
+/// token (`1N--2C- = …`, `1N-2Q-`, `1Nx = …`): the first word starts with a level and a strain
+/// letter (after an optional `(`), has no `!`, and is a sequence or is followed by `=`, but does
+/// not parse, so the paragraph
+/// and every row under it is read as prose. Say so rather than drop the whole table without a
+/// trace (Warning `UnknownCallToken`).
+fn broken_row_as_prose(paragraph: &[RawLine], lints: &mut Vec<Lint>) {
+    let Some(first) = paragraph.first() else {
+        return;
+    };
+    let mut words = first.text.split_whitespace();
+    let Some(word) = words.next() else {
+        return;
+    };
+    // A level and a strain letter: `1N…`, `(2S)…`; not `2-suited`.
+    let starts_with_level = matches!(
+        word.strip_prefix('(').unwrap_or(word).as_bytes(),
+        [b'1'..=b'7', b'C' | b'D' | b'H' | b'S' | b'N', ..]
+    );
+    let row_shaped = word.contains('-') || word.contains(';') || words.next() == Some("=");
+    // Prose written with suit symbols (`1!d-(2!c)-3!d is preemptive …`) is prose on purpose:
+    // `!` never appears in a call token.
+    if !starts_with_level || !row_shaped || word.contains('!') || is_bidtable_start(word) {
+        return;
+    }
+    lints.push(
+        Lint::warning(
+            LintCode::UnknownCallToken,
+            format!(
+                "{word}: the paragraph looks like a bidding table, but its first row cannot be \
+                 parsed; the paragraph ({} line(s)) is read as prose",
+                paragraph.len()
+            ),
+        )
+        .with_span(first.span.clone()),
+    );
 }
 
 /// How many distinct variables among `X`, `Y`, `Z` a table's history and rows use (the ones
@@ -405,14 +446,18 @@ fn split_row(text: &str) -> Option<RowHead<'_>> {
 
 /// A leading `!` not followed by a lowercase suit letter is the alert marker (stripped from the
 /// stored text); `!c`/`!d`/`!h`/`!s` at the very start is the suit-symbol notation instead.
+/// Leading annotations (`{prio:5} !Foo`) are skipped first, the same way the description
+/// normaliser skips them, and are kept in the stored text.
 fn extract_alert(first_line: &str) -> (bool, String) {
-    if let Some(rest) = first_line.strip_prefix('!') {
-        let is_suit_letter = rest
+    let lead = crate::compile::desc::normalize::leading_annotations_len(first_line);
+    let (prefix, rest) = first_line.split_at(lead);
+    if let Some(after) = rest.strip_prefix('!') {
+        let is_suit_letter = after
             .chars()
             .next()
             .is_some_and(|c| matches!(c, 'c' | 'd' | 'h' | 's'));
         if !is_suit_letter {
-            return (true, rest.to_string());
+            return (true, format!("{prefix}{after}"));
         }
     }
     (false, first_line.to_string())
@@ -466,6 +511,11 @@ fn try_whole_cut_block(paragraph: &[RawLine], clipboard: &mut Clipboard) -> Opti
     }
     let indent = leading_ws(&first.text);
     let body = &paragraph[1..paragraph.len() - 1];
+    // Several `#CUT … #ENDCUT` blocks in one paragraph: the first `#ENDCUT` ends the first
+    // block, so this is not one whole block. `clipboard::expand` registers each of them.
+    if body.iter().any(|l| l.text.trim() == "#ENDCUT") {
+        return None;
+    }
     let dedented: Vec<RawLine> = body
         .iter()
         .map(|l| RawLine {
@@ -520,6 +570,7 @@ fn parse_table_paragraph(
     let mut history_no_trailing = false;
     let mut table_stop = false;
     let mut any_order = false;
+    let mut bidtable = false;
 
     for line in &expanded {
         let indent = leading_ws(&line.text) as u16;
@@ -542,6 +593,7 @@ fn parse_table_paragraph(
             continue;
         }
         if trimmed.trim_end() == "#BIDTABLE" {
+            bidtable = true;
             continue;
         }
         if trimmed.trim_end() == "#ANYORDER" {
@@ -646,18 +698,18 @@ fn parse_table_paragraph(
                     active_col = head.has_separator.then_some(head.desc_col);
                 }
                 _ => {
+                    // Every row of the table hangs off the history, usually at the same column,
+                    // so the whole table goes: its rows must not be re-rooted as openings.
                     lints.push(
                         Lint::warning(
                             LintCode::UnknownCallToken,
                             format!(
-                                "cannot parse history row {token_text:?}; skipping row and its subtree"
+                                "cannot parse history row {token_text:?}; skipping the whole table"
                             ),
                         )
                         .with_span(line.span.clone()),
                     );
-                    skip_indent = Some(head.indent);
-                    active = ActiveDesc::None;
-                    active_col = None;
+                    return None;
                 }
             }
             continue;
@@ -768,7 +820,8 @@ fn parse_table_paragraph(
     }
 
     if history.is_empty() && roots.is_empty() {
-        // A paragraph of table directives alone (`#ANYORDER` or `#STOP` followed by a blank
+        // A paragraph of table directives alone (`#ANYORDER`, `#STOP`, `#HIDE` or `#BIDTABLE`
+        // followed by a blank
         // line, the way `#SEAT`/`#VUL` are written) names no table: the directives would
         // otherwise vanish without a trace while the table below stays ordered / unstopped.
         let mut orphans = Vec::new();
@@ -777,6 +830,12 @@ fn parse_table_paragraph(
         }
         if table_stop {
             orphans.push("#STOP");
+        }
+        if hidden {
+            orphans.push("#HIDE");
+        }
+        if bidtable {
+            orphans.push("#BIDTABLE");
         }
         if !orphans.is_empty() {
             lints.push(

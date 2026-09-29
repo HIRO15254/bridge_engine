@@ -797,10 +797,13 @@ fn resolve_one(token: &Token, ctx: &RowContext<'_>, meta: &SystemMeta) -> (Atom,
             }),
             explicit(),
         ),
+        // The description counts whole losers (`LTC 7`, `6-7 losers`); `Metric::Losers` is
+        // evaluated in half-losers (`losers_with(..).halves()`, `0..=24`), so both ends are doubled.
         Token::Losers(range) => (
             Atom::ANY.with_eval(EvalRequirement {
                 metric: Metric::Losers(LtcMethod::Classic),
-                range: range.clone(),
+                range: range.start().saturating_mul(2).min(24)
+                    ..=range.end().saturating_mul(2).min(24),
             }),
             explicit(),
         ),

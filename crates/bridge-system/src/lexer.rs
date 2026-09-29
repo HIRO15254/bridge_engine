@@ -23,7 +23,9 @@ impl SourceLoader for FsLoader {
         let base = std::path::Path::new(from)
             .parent()
             .unwrap_or_else(|| std::path::Path::new(""));
-        let full = base.join(path);
+        // `\` is a separator on every platform, as in `join_path` (the file table and the cycle
+        // guard), so `#INCLUDE sub\a.bml` loads `sub/a.bml` on Unix too.
+        let full = base.join(path.replace('\\', "/"));
         std::fs::read_to_string(&full).map_err(|e| format!("{}: {e}", full.display()))
     }
 }
