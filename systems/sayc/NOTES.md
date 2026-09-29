@@ -698,6 +698,17 @@ P8. **Advances after they raise over Michaels, and of the sandwich overcall over
     generator after P1-P7 (for example `(1S)-P-(1NT)-2H` advancer 73 and `(1S)-2S-(3S)`
     advancer 67 per 10^6). Also the advancer after our balancing two-level overcall of their
     raise and opener's pass (`(1X)-P-(2X)-2Y-`, a raise with 8--11 and three-card support).
+P9. **Advancing our one-level overcall after a negative double** (`competition.bml`, the
+    overcaller's continuations at the end of `competitive-later.bml`). The phase-3 header
+    `(1X)-1Y-(D)-2X-(P)-` named advancer's cuebid with no row behind it, so at `(1X)-1Y-(D)`
+    the cuebid was an unconstrained trie edge: `choose_bid` cuebid with any hand and never
+    passed, and the implicit pass had an empty complement (the corpus's one default-mode
+    `EmptySupport` seat, `P P 1C 1S X P ...`). The advance is now the table over opener's
+    partner's pass (the double changes nothing in SAYC), with the two-level new suit and the
+    pass chain, and the overcaller's continuations after it are copies of the `(P)` ones
+    (raise, jump raise, new suit, notrump; 70 tables, generated from the `(P)` headers and
+    checked to name only calls the advance table defines). `cargo xtask coverage` now counts
+    our own non-pass calls without a requirement (`lints.unconstrained_own_calls`); it is 0.
 
 Lints: the phase-4 rows add no `ShadowedBranch` warning on our side (18 before and after,
 all phase-3 rows). They add 129 on the opponents' side, every one on a table-header node:
@@ -799,3 +810,31 @@ P2'. **After P1-P8** (this branch; release; `COVERAGE_POSITIONS=1000000`, 17.0 s
       -10858.0 / -8134.4 / -7541.6 / -7359.0 / -7378.7 / -7548.9. The placeholder `human()`
       (0.01, 0.3) gives -10866.0, `system_players()` -15412.7. Eval split at the MLE:
       -6718.9 over 4034 calls.
+
+P3'. **After P9** (this branch; release; `COVERAGE_POSITIONS=1000000`, 17.3 s at loadavg 5.6):
+    - Compile 909 ms (37,535 rows, 47,611 nodes); lints Error 0, ShadowedBranch 378 (ours 18,
+      theirs 360, unchanged by P9), unconstrained own calls 0 (6 before P9, all from the
+      `(1X)-1Y-(D)-2X-(P)-` header); exclusive index 22,999 groups, fresh build 44.6 ms best of
+      3; postcard IR 15,768,137 bytes.
+    - Generated (seed `0xC0FE4001`): all-system **894/1000 (0.894)** (0.869 with only the P9
+      advance table, before its continuations); 104 with a natural completion, 2 with a gap;
+      calls system 7443 (4112 default chain passes), system implicit pass 938, natural 214,
+      gap 2. Final contract level `[passout, 1..7]`: `[14, 92, 307, 449, 134, 3, 1, 0]`.
+    - Positions (10^6): `NoCandidate` 2,995 (on-system 143); phase-3 tops 0 / 0 / 0.
+    - Forward consistency (release, seed `0x5a1c0002`): 10^5 0 non-gap / 36 gap-induced
+      (3.3 s, loadavg 4.6); 10^6 0 non-gap / 424 gap-induced (20.6 s, loadavg 4.6 -> 4.1).
+    - Corpus: all-Exact 211/724 (0.291), eval 107/362 (0.296), subset 116/384 (0.302).
+      System resolution all 0.639, eval 0.659, subset **0.661** (target 0.80), subset eval
+      0.688. `resolve_lenient` 1 of 8169 calls. Seats with empty strict support 15 (27
+      before P9); sampler `EmptySupport` **0** (1 before). Subset first natural calls:
+      `call_not_a_row` 226, the system exhausted 18, their pass 19, their call 5 (our pass 0,
+      9 before).
+    - True-deal agreement: system positions 3906/5794 (0.674), natural 1397/2375 (0.588); eval
+      0.690 / 0.597.
+    - MLE on the tune split (4135 calls): **ε = 0.3357, δ = 0.341**, ln L = -7330.8 (-1.773
+      per call); δ within 1.92 of the maximum for 0.30--0.38, ε between the grid points 0.316
+      and 0.355. ln L at δ = 0 / 0.1 / 0.2 / 0.3 / 0.4 / 0.5 (ε at the MLE): -7686.5 / -7416.8 /
+      -7353.8 / -7332.5 / -7334.1 / -7353.7; at ε = 0.001 / 0.01 / 0.1 / 0.224 / 0.316 /
+      0.355 / 0.501 (δ at the MLE): -13772.7 / -10834.5 / -8115.5 / -7456.2 / -7334.3 /
+      -7333.6 / -7537.1. The placeholder `human()` (0.01, 0.3) gives -10840.5,
+      `system_players()` -15326.0. Eval split at the MLE: -6706.5 over 4034 calls.
