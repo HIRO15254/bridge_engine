@@ -14,7 +14,7 @@
 //!   natural-completion tops (every natural call, and the first departure from the system per
 //!   auction), the final-contract level histogram `[passout, 1..=7]`, and how many system calls
 //!   were default passes (a `Pass` row at priority <= -100, `systems/sayc/passes.bml`).
-//!   *Strict* accounting (`all_system_strict`, the phase-4 [G] criterion): a position whose
+//!   *Strict* accounting (`all_system_strict`, the phase-4 `[G]` criterion): a position whose
 //!   exclusive group holds nothing but default passes (the system passes with any hand there)
 //!   also counts as a departure when the natural choice `m_P(h)` is not `Pass`
 //!   (`default_pass_overrides`, their tops, and `first_strict_departure_*`). Without it, the
