@@ -194,6 +194,15 @@ impl Binding {
     /// must have checked that with [`Binding::get`] first and dropped the row otherwise, per
     /// `Lint::UnboundOther`), so they yield an empty list here.
     pub fn candidates(&self, var: Var, used: StrainSet) -> Vec<Strain> {
+        self.candidates_in_order(var, used, true)
+    }
+
+    /// [`Binding::candidates`], with the `X < Y < Z` order applied only when `ordered` is set.
+    /// An `#ANYORDER` table (`docs/design/06-system.md` §4.7) passes `false`: a fresh `X`, `Y`
+    /// or `Z` may then take any unused strain of its domain, above or below the ones already
+    /// bound (distinctness still holds, because a bound variable's strain has been bid and is in
+    /// `used`).
+    pub fn candidates_in_order(&self, var: Var, used: StrainSet, ordered: bool) -> Vec<Strain> {
         let domain = match var {
             Var::Major => StrainSet::MAJORS,
             Var::Minor => StrainSet::MINORS,
@@ -206,6 +215,7 @@ impl Binding {
         // must be below it, and the upper bound is the lowest already-bound variable that must
         // be above it.
         let (lower_bound, upper_bound) = match var {
+            _ if !ordered => (None, None),
             Var::X => (None, min_strain(self.y, self.z)),
             Var::Y => (self.x, self.z),
             Var::Z => (max_strain(self.x, self.y), None),

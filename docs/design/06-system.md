@@ -134,13 +134,14 @@ enum            = { WS0 , DIGIT , { DIGIT } , "." , WS , { CHAR } , NL } ;
 paragraph       = { non-blank-line } ;
 
 bidtable        = { tdirective } , ( history-row | row ) , { row | tdirective } ;
-tdirective      = hide | bidtable-kw | copy | cut | paste | stop ;
+tdirective      = hide | bidtable-kw | copy | cut | paste | stop | anyorder ;
 hide            = WS0 , "#HIDE" , NL ;
 bidtable-kw     = WS0 , "#BIDTABLE" , NL ;
 copy            = WS0 , "#COPY" , WS , NAME , NL , { rawline } , WS0 , "#ENDCOPY" , NL ;
 cut             = WS0 , "#CUT"  , WS , NAME , NL , { rawline } , WS0 , "#ENDCUT"  , NL ;
 paste           = WS0 , "#PASTE" , WS , NAME , { WS , TARGET , "=" , REPL } , NL ;
 stop            = WS0 , "#STOP" , NL ;          (* ext: a system stop after the enclosing row, or at the table's history (§4.5) *)
+anyorder        = WS0 , "#ANYORDER" , NL ;      (* ext: the table's fresh X/Y/Z ignore the X<Y<Z order (§4.7) *)
 
 history-row     = WS0 , seq , [ WS , [ "=" , WS0 ] , description ] , NL , { contline } ;
 seq             = calltok , { "-" , calltok } , { "-" | ";" } ;    (* at least one "-" or ";" present *)
@@ -517,6 +518,26 @@ impl<'a> LookupKey<'a> {
 **実装。** `pattern.rs::Level::{Cheapest, Jump}`、`Level::is_relative`; `parser/call.rs::level` (`'c'`、`'j'`)、`nonstandard_reasons` ("relative level (c = cheapest, j = jump)"); `parser/mod.rs::is_bidtable_start` / `has_relative_level`; `compile/expand.rs::bids_at_level` (`minimum_sufficient_bid` とその 1 つ上)、`generate_candidates` (`Strains` の相対レベル)、`Frame::last_bid_known`、`pattern_has_relative_level`、`expand_row` (`LevelWithoutAnchor`)、`report_empty_candidates` (`NoSufficientLevel`)。試験: `parser/call.rs` の `relative_levels`、`tests/relative_level.rs`。`COMPILE_REVISION` 4。
 
 ---
+
+### 4.7 変数の順序を外す表 (`#ANYORDER`、フェーズ 4 拡張)
+
+**目的。** BML の変数 `X`、`Y`、`Z` は、新しく束縛するとき *未使用* のストレインを取るだけでなく、束縛済みのものと `X < Y < Z` (C < D < H < S) の順序を保つ (§4.2 の (c)、`bss.py` の規則)。そのため「相手のスートが我々のスートより上か下か」を問わない合意 (相手のスートを束縛変数として使う競り合いの表) は、上下で表を書き分けるか、スートごとのリテラル表を並べるしかなかった (SAYC の P12 バッチ 6 の `1C-(1D)-2H-(3D)-` など 10 表)。`M`/`m` には順序が無いが、定義域が 2 つのスートに限られる。
+
+**構文。** 表の段落の中の 1 行 `#ANYORDER` (前後の空白は無視)。表の履歴行の前でも、行の間でも、行の下に字下げして書いてもよく、どこに書いても *その表全体* に効く (字下げは範囲を狭めない)。クリップボード (`#CUT`) の中に書けば、`#PASTE` した先の表に効く。
+
+**意味。** その表の展開では、新しい `X`/`Y`/`Z` の候補を「定義域 (C, D, H, S) のうち、どちらの側もまだビッドしていないストレイン」とし、束縛済みの `X`/`Y`/`Z` との大小を問わない。それ以外は通常どおり:
+
+- 束縛済みの変数は束縛のまま。束縛したストレインはビッドされているので `used` にあり、異なる変数が同じストレインを取ることはない (区別は保たれる)。
+- 新しい変数の候補は十分な (合法な) ビッドだけ (§4.2 の 3。`(1Y)` の下位スートは 1 レベルでは不十分なので候補にならない。`(2Y)` なら候補になる)。
+- 説明文の置換、`M`/`m`/`oM`/`om`、相対レベル (§4.6)、ワイルドカードの下の規則は変わらない。
+- 順序つきの展開の集合は、同じ表の `#ANYORDER` 版の展開の部分集合である (試験 `ordered_expansions_are_a_subset_of_any_order_ones`)。
+- 表の間では独立: 同じファイルの他の表は順序を保つ。
+
+**Lint。** `#ANYORDER` の表の履歴と行 (子孫を含む) が `X`/`Y`/`Z` のうち 2 つ以上を使っていなければ、外す順序が無いので `AnyOrderWithoutVariables` (Info) を出す (表は普通にコンパイルする)。
+
+**可搬性 (D16 の補遺)。** `bml.py` はこの指示子を知らない。`#STOP` と同じく表の中の未知の行であり、`bml.py` では順序つきで展開される (こちらの展開の部分集合になる) か、未知の指示子として扱われる。本実装の旧版 (`COMPILE_REVISION` 6 以前) では `UnknownDirective` (Warning) を出して無視していた。
+
+**実装。** `ast.rs::BidTable::any_order`; `parser/mod.rs::parse_table_paragraph` (`#ANYORDER`)、`xyz_variables` (Lint の判定); `pattern.rs::Binding::candidates_in_order` (`ordered == false` で順序の下限・上限を外す。`candidates` は `ordered = true` の版); `compile/expand.rs::Frame::any_order` (`expand_table` が表の値で根を作る)、`generate_candidates_in_order` (`expand_row` が `!frame.any_order` を渡す); `lint.rs::LintCode::AnyOrderWithoutVariables`。試験: `parser/mod.rs` の `any_order_is_a_table_directive`、`any_order_without_two_variables_is_reported`、`tests/any_order.rs` (8 件)。`COMPILE_REVISION` 7。
 
 ## 5. IR (`ir.rs`)
 
@@ -1359,6 +1380,7 @@ impl LintSummary { pub fn of(lints: &[Lint]) -> LintSummary; }
 | exclusive | `OverlappingBranches` | Info | 同じノードの枝どうしが重なり、排他索引が後の枝を素化した (§9.3 の 8) |
 | expansion | `LevelWithoutAnchor` | Error | 相対レベル (`cS`、`jY`) の基準となる最後のビッドがワイルドカードのため不明 (その位置で行と部分木を捨てる。§4.6) |
 | expansion | `NoSufficientLevel` | Info | 相対レベルが 7 を超え、候補が無い (§4.6) |
+| parse | `AnyOrderWithoutVariables` | Info | `#ANYORDER` の表が `X`/`Y`/`Z` のうち 2 つ以上を使っていない (順序が無いので効果が無い。§4.7) |
 
 ### 9.3 コンパイル後の八つの検査
 

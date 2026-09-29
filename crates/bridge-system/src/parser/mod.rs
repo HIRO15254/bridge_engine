@@ -9,7 +9,7 @@ pub mod call;
 pub mod clipboard;
 
 use crate::{
-    CallPattern, Lint, LintCode,
+    CallPattern, Lint, LintCode, Var,
     ast::{
         BidTable, Block, BmlFile, BmlNode, CallToken, Description, RawLine, SeatCond, Span, Tri,
         VulCond,
@@ -144,6 +144,31 @@ fn is_bidtable_start(word: &str) -> bool {
         Ok((_, pattern)) => s.is_empty() && !has_relative_level(&pattern),
         Err(_) => false,
     }
+}
+
+/// How many distinct variables among `X`, `Y`, `Z` a table's history and rows use (the ones
+/// whose strain order `#ANYORDER` lifts).
+fn xyz_variables(history: &[CallToken], rows: &[BmlNode]) -> usize {
+    fn pattern(p: &CallPattern, seen: &mut [bool; 3]) {
+        match p {
+            CallPattern::Var { var, .. } => match var {
+                Var::X => seen[0] = true,
+                Var::Y => seen[1] = true,
+                Var::Z => seen[2] = true,
+                _ => {}
+            },
+            CallPattern::AnyOf(alts) => alts.iter().for_each(|a| pattern(a, seen)),
+            _ => {}
+        }
+    }
+    fn node(n: &BmlNode, seen: &mut [bool; 3]) {
+        n.calls.iter().for_each(|t| pattern(&t.pattern, seen));
+        n.children.iter().for_each(|c| node(c, seen));
+    }
+    let mut seen = [false; 3];
+    history.iter().for_each(|t| pattern(&t.pattern, &mut seen));
+    rows.iter().for_each(|n| node(n, &mut seen));
+    seen.iter().filter(|&&b| b).count()
 }
 
 /// Whether `pattern` (or one of its alternatives) uses a relative level (`c`, `j`).
@@ -458,6 +483,7 @@ fn parse_table_paragraph(
     let mut skip_indent: Option<u16> = None;
     let mut history_no_trailing = false;
     let mut table_stop = false;
+    let mut any_order = false;
 
     for line in &expanded {
         let indent = leading_ws(&line.text) as u16;
@@ -480,6 +506,11 @@ fn parse_table_paragraph(
             continue;
         }
         if trimmed.trim_end() == "#BIDTABLE" {
+            continue;
+        }
+        if trimmed.trim_end() == "#ANYORDER" {
+            // Table-scoped wherever it is written (a sub-row's indentation does not narrow it).
+            any_order = true;
             continue;
         }
         if trimmed.trim_end() == "#STOP" {
@@ -703,6 +734,15 @@ fn parse_table_paragraph(
     if history.is_empty() && roots.is_empty() {
         return None;
     }
+    if any_order && xyz_variables(&history, &roots) < 2 {
+        lints.push(
+            Lint::info(
+                LintCode::AnyOrderWithoutVariables,
+                "#ANYORDER in a table with fewer than two of the variables X, Y, Z has no effect",
+            )
+            .with_span(table_span.clone()),
+        );
+    }
 
     Some(Block::BidTable(BidTable {
         hidden,
@@ -712,6 +752,7 @@ fn parse_table_paragraph(
         history_desc,
         rows: roots,
         stop: table_stop,
+        any_order,
         span: table_span,
     }))
 }
@@ -837,5 +878,33 @@ mod tests {
             .find(|l| l.message.contains("unterminated"))
             .expect("unterminated lint");
         assert_eq!(lint.span.as_ref().map(|s| s.line), Some(2));
+    }
+
+    #[test]
+    fn any_order_is_a_table_directive() {
+        let file = parse_str("#ANYORDER \n1X-(2Y)-\nD  10+ hcp\n\n1X-(3Y)-\nD  12+ hcp\n");
+        assert!(file.lints.is_empty(), "{:?}", file.lints);
+        let flags: Vec<bool> = file
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::BidTable(t) => Some(t.any_order),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(flags, [true, false]);
+        // Written under a row it still marks the table, and the row tree is unchanged.
+        let file = parse_str("1X-(2Y)-\nD  10+ hcp\n  #ANYORDER\n  P  any\n");
+        assert!(matches!(&file.blocks[0], Block::BidTable(b) if b.any_order));
+        assert_eq!(tables(&file)[0].1, ["D 10+ hcp", "  P any"]);
+    }
+
+    #[test]
+    fn any_order_without_two_variables_is_reported() {
+        let file = parse_str("#ANYORDER\n1X-\n2X  raise\n");
+        let codes: Vec<LintCode> = file.lints.iter().map(|l| l.code).collect();
+        assert_eq!(codes, [LintCode::AnyOrderWithoutVariables]);
+        let file = parse_str("#ANYORDER\n1X-\n2Y  new suit\n");
+        assert!(file.lints.is_empty(), "{:?}", file.lints);
     }
 }

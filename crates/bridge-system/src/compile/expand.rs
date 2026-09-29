@@ -486,6 +486,9 @@ struct Frame {
     /// variable are forbidden below one (`docs/design/06-system.md` §4.2 point 3), since neither
     /// has a real anchor once the opponents' actual call is unknown.
     under_wildcard: bool,
+    /// The table has `#ANYORDER` (`docs/design/06-system.md` §4.7): fresh `X`/`Y`/`Z` bindings
+    /// ignore the `X < Y < Z` order.
+    any_order: bool,
 }
 
 impl Frame {
@@ -500,6 +503,7 @@ impl Frame {
             last_by_seat: [None; 4],
             hcp_by_seat: [None, None, None, None],
             under_wildcard: false,
+            any_order: false,
         }
     }
 
@@ -678,6 +682,18 @@ struct Candidate {
     binding: Binding,
 }
 
+/// [`generate_candidates_in_order`] with the `X < Y < Z` order applied (tests).
+#[cfg(test)]
+fn generate_candidates(
+    pattern: &CallPattern,
+    env: &Binding,
+    used: StrainSet,
+    last_bid: Option<Bid>,
+    under_wildcard: bool,
+) -> Vec<Candidate> {
+    generate_candidates_in_order(pattern, env, used, last_bid, under_wildcard, true)
+}
+
 /// Generates the candidate edges for `pattern` (`docs/design/06-system.md` §4.2 point 3), pure
 /// and independent of any particular auction position beyond `last_bid` (used by
 /// [`CallPattern::Step`]).
@@ -687,12 +703,16 @@ struct Candidate {
 /// caller can report `IllegalCall`. A `Level::Any` wildcard, by contrast, is explicitly "whatever
 /// level is needed" (`docs/design/06-system.md` §1.3), so only the minimum sufficient level per
 /// strain is generated; this cannot itself be illegal.
-fn generate_candidates(
+///
+/// The `X < Y < Z` order of fresh variables applies only when `ordered` is set (`false` in an
+/// `#ANYORDER` table, `docs/design/06-system.md` §4.7).
+fn generate_candidates_in_order(
     pattern: &CallPattern,
     env: &Binding,
     used: StrainSet,
     last_bid: Option<Bid>,
     under_wildcard: bool,
+    ordered: bool,
 ) -> Vec<Candidate> {
     match pattern {
         CallPattern::Exact(call) => vec![Candidate {
@@ -743,7 +763,7 @@ fn generate_candidates(
                 // A fresh variable only offers *sufficient* bids as candidates (bss.py's
                 // `check_vars` silently drops `bid <= last_bid`); an insufficient one is simply
                 // not a real choice here, not an authored call to flag as `IllegalCall`.
-                env.candidates(*var, used)
+                env.candidates_in_order(*var, used, ordered)
                     .into_iter()
                     .flat_map(|strain| {
                         bids_at_level(*level, strain, last_bid)
@@ -771,7 +791,9 @@ fn generate_candidates(
         }
         CallPattern::AnyOf(alts) => alts
             .iter()
-            .flat_map(|p| generate_candidates(p, env, used, last_bid, under_wildcard))
+            .flat_map(|p| {
+                generate_candidates_in_order(p, env, used, last_bid, under_wildcard, ordered)
+            })
             .collect(),
         CallPattern::Class(k) => vec![Candidate {
             edge: Edge::Class(*k),
@@ -997,7 +1019,10 @@ fn expand_table(table: &BidTable, meta: &SystemMeta, opts: &CompileOptions, ex: 
         return; // an empty table (parse recovery already dropped everything): nothing to expand.
     };
     let we_opened = first_side == Side::Us;
-    let root = Frame::root();
+    let root = Frame {
+        any_order: table.any_order,
+        ..Frame::root()
+    };
 
     expand_history(
         &table.history,
@@ -1320,12 +1345,13 @@ fn expand_row(
         );
         return Vec::new();
     }
-    let candidates = generate_candidates(
+    let candidates = generate_candidates_in_order(
         &tok.pattern,
         &frame.env,
         frame.used,
         last_bid,
         frame.under_wildcard,
+        !frame.any_order,
     );
 
     if candidates.is_empty() {
@@ -2313,6 +2339,7 @@ mod tests {
             history_desc: None,
             rows,
             stop: false,
+            any_order: false,
             span: test_span(),
         }
     }

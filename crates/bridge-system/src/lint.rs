@@ -71,6 +71,10 @@ pub enum LintCode {
     /// A relative level with no candidate: the jump (or the cheapest level) would pass the
     /// seven level (Info).
     NoSufficientLevel,
+    // `#ANYORDER` (phase-4 extension, appended for the same reason)
+    /// `#ANYORDER` in a table with fewer than two of the variables `X`, `Y`, `Z`: there is no
+    /// strain order to lift, so the directive has no effect (Info; `06-system.md` §4.7).
+    AnyOrderWithoutVariables,
 }
 
 /// One diagnostic.

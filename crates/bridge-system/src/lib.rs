@@ -62,5 +62,6 @@ pub const IR_FORMAT: u32 = 3;
 /// 4: stops under different `#SEAT`/`#VUL` conditions that meet at one edge share a loop
 /// carrying every condition's entries. 5: the synthesised stop pass's description is the row it
 /// stands for, `{prio:-100} {stop} any hand`. 6: relative levels (`cS`, `jY`) and the lints
-/// `LevelWithoutAnchor` / `NoSufficientLevel`; suit-length comparisons in descriptions.
-pub const COMPILE_REVISION: u32 = 6;
+/// `LevelWithoutAnchor` / `NoSufficientLevel`; suit-length comparisons in descriptions. 7: the
+/// `#ANYORDER` table directive and the lint `AnyOrderWithoutVariables`.
+pub const COMPILE_REVISION: u32 = 7;
