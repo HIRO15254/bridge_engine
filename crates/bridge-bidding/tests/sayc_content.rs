@@ -1663,3 +1663,121 @@ mod phase4_tables {
         ]);
     }
 }
+
+/// Lane D2's review (`systems/sayc/NOTES.md` #P12, review fixes): stops that made a player pass
+/// partner's forcing call, a game force below game, or a strong or unlimited hand. Dealer North,
+/// none vulnerable, hands `S.H.D.C`.
+mod d2_review {
+    use super::*;
+    use bridge_bidding::{BidChoice, ChoiceSource};
+    use bridge_core::{Auction, Call, Hand};
+
+    fn choose(calls: &str, hand: &str) -> BidChoice {
+        let table = sayc();
+        let mut a = Auction::new(Seat::North, Vulnerability::None);
+        for c in calls.split_whitespace() {
+            a = a
+                .with(c.parse::<Call>().expect("valid call"))
+                .expect("legal call");
+        }
+        let h: Hand = hand.parse().expect("valid hand");
+        choose_bid(table, h, &a, &ctx(table))
+    }
+
+    /// Every case must get a call (no `NoCandidate`) and must not pass.
+    fn check_not_pass(cases: &[(&str, &str)]) {
+        let mut failures = Vec::new();
+        for &(calls, hand) in cases {
+            match choose(calls, hand) {
+                BidChoice::Chosen(c) if c.call != Call::Pass => {}
+                other => failures.push(format!("  [{calls}] {hand}: {other:?}")),
+            }
+        }
+        assert!(failures.is_empty(), "passed or no call:\n{}", failures.join("\n"));
+    }
+
+    /// Every case must get the expected call from a system row.
+    fn check_system(cases: &[(&str, &str, &str)]) {
+        let mut failures = Vec::new();
+        for &(calls, hand, expected) in cases {
+            let expected: Call = expected.parse().expect("valid call");
+            match choose(calls, hand) {
+                BidChoice::Chosen(c) if c.call == expected && c.source == ChoiceSource::System => {}
+                other => failures.push(format!("  [{calls}] {hand}: expected {expected}, got {other:?}")),
+            }
+        }
+        assert!(failures.is_empty(), "wrong calls:\n{}", failures.join("\n"));
+    }
+
+    /// Opener never passes responder's forcing new suit after their takeout double; a strong
+    /// doubler and a 12+ advancer are not swallowed by a stop; the forced advances have a call.
+    #[test]
+    fn competing_stops_leave_strong_hands_and_forcing_calls_alone() {
+        check_not_pass(&[
+            // 1C-(X)-1H-(P): 19 unbalanced and 13 with four spades.
+            ("1C X 1H P", "AKQ2.2.AK3.QJ432"),
+            ("1C X 1H P", "AQ32.2.K32.KJ432"),
+            // The 22-count balancing doubler after advancer's 2S.
+            ("1H P 2H P P X P 2S P", "AKQ2.2.AKJ2.KQ32"),
+            // The 21-count doubler after advancer's pass over their redouble-less 1H.
+            ("1C X 1H P P", "AKJ2.AK32.AQ32.2"),
+        ]);
+        check_system(&[
+            // Minimum rebids stay on the system.
+            ("1C X 1H P", "K32.KQ32.K32.Q32", "2H"),
+            // A 12+ advancer: 3NT with a stopper, game with four spades.
+            ("1C X 1H", "KQ2.AJ2.K432.432", "3NT"),
+            ("1H P 2H P P X P", "AQ32.32.KJ2.Q432", "4S"),
+            ("1H P 3H X P", "AQ32.32.KJ2.Q432", "4S"),
+            // A weak 3=3=3=4 advancer of a balancing double of 3C: three diamonds.
+            ("3C P P X P", "432.432.432.5432", "3D"),
+            // The doubler of 1H-2H passes advancer's 2S with his minimum.
+            ("1H P 2H P P X P 2S P", "AQ32.2.KJ32.Q432", "P"),
+            // Over their new suit: a penalty double needs four of it; 13+ with support cue-bids.
+            ("1D 2C 2H", "AQ2.KJ32.Q432.32", "X"),
+            ("1D 2C 2H", "AK2.32.K432.KQ2", "3D"),
+        ]);
+    }
+
+    /// Every case must be decided by something other than a system stop's pass: a system row
+    /// or, off-system, the natural engine.
+    fn check_not_stopped(cases: &[(&str, &str)]) {
+        let mut failures = Vec::new();
+        for &(calls, hand) in cases {
+            match choose(calls, hand) {
+                BidChoice::Chosen(c) if c.call != Call::Pass || c.source != ChoiceSource::System => {}
+                other => failures.push(format!("  [{calls}] {hand}: {other:?}")),
+            }
+        }
+        assert!(failures.is_empty(), "stopped:\n{}", failures.join("\n"));
+    }
+
+    /// No system stop ends the auction below game after a game force (the jump shift,
+    /// 1m-1X-1NT-2S) or after responder's forcing new suit over their overcall of 1NT; opener's
+    /// answers to that forcing new suit are system calls, the cue bid included, and never a
+    /// pass. (Responder's own continuation after the game force is off-system; the natural
+    /// engine does not yet carry the game force forward, `systems/sayc/NOTES.md` #P12.)
+    #[test]
+    fn game_forces_and_forcing_calls_are_not_stopped() {
+        check_not_stopped(&[
+            // Responder's jump shift (17+, game force) after opener's raise or new suit.
+            ("1C P 2H P 3H P", "A2.AKQJ32.K32.32"),
+            ("1C P 2H P 2S P", "A2.AKQJ32.K32.32"),
+            // Responder's 2S game force after 1C-1H-1NT: opener's 2NT is not the end.
+            ("1C P 1H P 1NT P 2S P 2NT P", "AK32.KQJ32.32.32"),
+            // 1NT-(2H)-3D (forcing) raised to 4D.
+            ("1NT 2H 3D P 4D P", "32.KQ2.AQJ432.K2"),
+        ]);
+        check_not_pass(&[
+            ("1NT 2H 3D P", "A32.432.K2.AKQ32"),
+            ("1NT 2S 3C P", "432.AK2.KQ2.A432"),
+        ]);
+        check_system(&[
+            // Opener shows his four-card major over 1NT-(2S)-3D.
+            ("1NT 2S 3D P", "432.AKQ2.K2.AQ32", "3H"),
+            // No stopper, no fit, no major: the cue bid.
+            ("1NT 2S 3D P", "432.AKQ.Q2.AQ432", "3S"),
+            ("1NT 2H 3D P", "A32.432.K2.AKQ32", "3H"),
+        ]);
+    }
+}

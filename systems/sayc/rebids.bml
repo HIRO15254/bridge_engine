@@ -163,8 +163,8 @@ too little to act, responder passes (NOTES.md #C1).
 2H = {prio:1} NF, 0--10 hcp, 3+!h
 2C = NF, 0--10 hcp, 5+!c
 2D = NF, 0--10 hcp, 5+!d
-3C = F, 13+ hcp, 5+!c
-3D = F, 13+ hcp, 5+!d
+3C = GF, 13+ hcp, 5+!c
+3D = GF, 13+ hcp, 5+!d
 3N = 13+ hcp
   #STOP
 
@@ -175,8 +175,8 @@ too little to act, responder passes (NOTES.md #C1).
 2D = {prio:1} NF, 0--10 hcp, 6+!d
 2C = {prio:1} NF, 0--10 hcp, 4+!c
 3C = INV, 11--12 hcp, 5+!c
-2H = F, 13+ hcp, 4+!h
-2S = F, 13+ hcp, 4+!s
+2H = GF, 13+ hcp, 4+!h
+2S = GF, 13+ hcp, 4+!s
 3N = 13+ hcp
   #STOP
 
@@ -189,8 +189,8 @@ too little to act, responder passes (NOTES.md #C1).
 2C = {prio:1} NF, 0--10 hcp, 4+!c
 3C = INV, 11--12 hcp, 5+!c
 2D = NF, 0--10 hcp, 5+!d
-2S = F, 13+ hcp, 4+!s
-3D = F, 13+ hcp, 5+!d
+2S = GF, 13+ hcp, 4+!s
+3D = GF, 13+ hcp, 5+!d
 3N = 13+ hcp
   #STOP
 
@@ -204,7 +204,7 @@ too little to act, responder passes (NOTES.md #C1).
 3C = INV, 11--12 hcp, 5+!c
 2D = NF, 0--10 hcp, 5+!d
 2H = NF, 0--10 hcp, 4+!h, 5+!s
-3D = F, 13+ hcp, 5+!d
+3D = GF, 13+ hcp, 5+!d
 3N = 13+ hcp
   #STOP
 
@@ -217,8 +217,8 @@ too little to act, responder passes (NOTES.md #C1).
 2D = {prio:1} NF, 0--10 hcp, 4+!d
 3D = INV, 11--12 hcp, 5+!d
 2C = NF, 0--10 hcp, 5+!c
-2S = F, 13+ hcp, 4+!s
-3C = F, 13+ hcp, 5+!c
+2S = GF, 13+ hcp, 4+!s
+3C = GF, 13+ hcp, 5+!c
 3N = 13+ hcp
   #STOP
 
@@ -232,7 +232,7 @@ too little to act, responder passes (NOTES.md #C1).
 3D = INV, 11--12 hcp, 5+!d
 2C = NF, 0--10 hcp, 5+!c
 2H = NF, 0--10 hcp, 4+!h, 5+!s
-3C = F, 13+ hcp, 5+!c
+3C = GF, 13+ hcp, 5+!c
 3N = 13+ hcp
   #STOP
 
@@ -306,12 +306,12 @@ suit is the minimum with nothing else to show (NOTES.md #C1).
 2D = 12--15 hcp
 
 1S-2C-2H-
-3S = {prio:2} F, 13+ hcp, 3+!s
+3S = {prio:2} GF, 13+ hcp, 3+!s
 3H = {prio:2} 10--12 hcp, 4+!h
 2S = {prio:1} 10--12 hcp, 2+!s
 3C = {prio:1} 10--12 hcp, 6+!c
 2N = 10--12 hcp, not 4+!h
-3D = {prio:-1} F, 13+ hcp
+3D = {prio:-1} GF, 13+ hcp
 
 Both of responder's game-forcing calls here leave opener with a call to make
 (NOTES.md #C6). After the fourth suit (3!d), opener shows a second five-card

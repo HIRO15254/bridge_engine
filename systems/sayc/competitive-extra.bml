@@ -319,9 +319,6 @@ P = {prio:-100} {stop} any hand
 1D-(1S)-2H-(P)-3H-
 P = {prio:-100} {stop} any hand
 
-1H-(1S)-2C-(any)-
-P = {prio:-100} {stop} any hand
-
 1C-(2D)-3C-
 P = {prio:-100} {stop} any hand
 
@@ -857,7 +854,6 @@ P = {prio:-100} {stop} any hand
 1N-(2D)-3C-
 3N = {prio:1} stopper
   #STOP
-P = {prio:-100} {stop} any hand
 
 1N-(D)-2D-(P)-2H-
 P = {prio:-100} {stop} any hand
@@ -865,7 +861,6 @@ P = {prio:-100} {stop} any hand
 1N-(2H)-3D-
 3N = {prio:1} stopper
   #STOP
-P = {prio:-100} {stop} any hand
 
 1N-(D)-2H-(P)-2S-
 P = {prio:-100} {stop} any hand
@@ -873,12 +868,10 @@ P = {prio:-100} {stop} any hand
 1N-(2S)-3D-
 3N = {prio:1} stopper
   #STOP
-P = {prio:-100} {stop} any hand
 
 1N-(2S)-3H-
 3N = {prio:1} stopper
   #STOP
-P = {prio:-100} {stop} any hand
 
 3C-(D)-
 P = {prio:-100} {stop} any hand

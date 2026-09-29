@@ -269,36 +269,27 @@ to game); `responses-minor.bml` left them out over a minor. They are the same
 call: 17+ with a good five-card suit and no fit for opener's minor. Opener then
 describes his hand naturally at the cheapest level: he raises with three-card
 support, bids a four-card new suit, rebids a six-card suit, and with a
-balanced hand bids notrump. (Responder's further bidding toward game or slam is
-the partnership's judgment; the system stops there.) `#ANYORDER`: the jump shift
-may be into a lower suit (1!h-3!c).
+balanced hand bids notrump. The jump shift forces to game, so nothing stops
+below it: responder's further bidding toward game or slam is the partnership's
+judgment (natural inference), and so is the auction after their interference.
+`#ANYORDER`: the jump shift may be into a lower suit (1!h-3!c).
 
 1C-(P)-
-2D = {prio:4} F, 17+ hcp, 5+!d, not 5+!c
-  #STOP
-2H = {prio:4} F, 17+ hcp, 5+!h, not 5+!c
-  #STOP
-2S = {prio:4} F, 17+ hcp, 5+!s, not 5+!c
-  #STOP
+2D = {prio:4} GF, 17+ hcp, 5+!d, not 5+!c
+2H = {prio:4} GF, 17+ hcp, 5+!h, not 5+!c
+2S = {prio:4} GF, 17+ hcp, 5+!s, not 5+!c
 
 1D-(P)-
-2H = {prio:4} F, 17+ hcp, 5+!h, not 4+!d
-  #STOP
-2S = {prio:4} F, 17+ hcp, 5+!s, not 4+!d
-  #STOP
-3C = {prio:4} F, 17+ hcp, 5+!c, not 4+!d
-  #STOP
+2H = {prio:4} GF, 17+ hcp, 5+!h, not 4+!d
+2S = {prio:4} GF, 17+ hcp, 5+!s, not 4+!d
+3C = {prio:4} GF, 17+ hcp, 5+!c, not 4+!d
 
 #ANYORDER
 1X-(P)-jY-(P)-
 cY = {prio:3} 3+Y
-  #STOP
 cZ = {prio:2} 4+Z, 0--2Y
-  #STOP
 cX = {prio:2} 6+X, 0--2Y
-  #STOP
 cN = {prio:1} bal, 0--2Y
-  #STOP
 
 ** After partner's penalty double (batch 8)
 
@@ -444,46 +435,48 @@ P = {prio:0} 12--17 hcp
 ** The 1NT opener after responder's forcing new suit over their overcall (batch 8)
 
 `notrump.bml`: over their two-level overcall a new suit at the three level is
-forcing (10+, five cards). Opener bids 3NT with a stopper in their suit (those
-rows are in `competitive-extra.bml` where it has the auction), raises with
-three-card support, and bids a four-card major of his own at the cheapest
-level; otherwise he passes and the partnership stops.
+forcing (10+, five cards), so opener never passes it. He bids 3NT with a
+stopper in their suit (those rows are in `competitive-extra.bml` where it has
+the auction), raises with three-card support, bids a four-card major of his
+own at the cheapest level, and otherwise cue-bids their suit (no stopper, no
+fit). Only the game raise and 3NT end the auction; after a minor-suit raise, a
+major or the cue bid responder (10+, so game values opposite 15--17) places the
+contract (natural inference).
 
 1N-(2D)-3C-(P)-
 4C = {prio:2} 3+!c
-  #STOP
 3H = {prio:1} 4+!h
-  #STOP
 3S = {prio:1} 4+!s
-  #STOP
+3D = {prio:0} 0--2!c
 
 1N-(2H)-3C-(P)-
 3N = {prio:3} stopper
   #STOP
 4C = {prio:2} 3+!c
-  #STOP
 3S = {prio:1} 4+!s
-  #STOP
+3H = {prio:0} 0--2!c
 
 1N-(2H)-3D-(P)-
 4D = {prio:2} 3+!d
-  #STOP
 3S = {prio:1} 4+!s
-  #STOP
+3H = {prio:0} 0--2!d
 
 1N-(2S)-3C-(P)-
 3N = {prio:3} stopper
   #STOP
 4C = {prio:2} 3+!c
-  #STOP
+3H = {prio:1} 4+!h
+3S = {prio:0} 0--2!c
 
 1N-(2S)-3D-(P)-
 4D = {prio:2} 3+!d
-  #STOP
+3H = {prio:1} 4+!h
+3S = {prio:0} 0--2!d
 
 1N-(2S)-3H-(P)-
 4H = {prio:2} 3+!h
   #STOP
+3S = {prio:0} 0--2!h
 
 ** Advancing a balancing three-level suit (batch 8)
 
@@ -512,20 +505,17 @@ level; otherwise he passes and the partnership stops.
 ** Opener after responder's forcing new major over the 1NT rebid (batch 8)
 
 After 1m-1X-1NT (12--14 balanced, no four-card major that could have been bid
-at the one level), responder's 2!s is forcing (13+, four spades). Opener raises
-with three spades, and otherwise bids 2NT.
+at the one level), responder's 2!s is a game force (13+, four spades). Opener
+raises with three spades, and otherwise bids 2NT. Both are below game, so the
+partnership does not stop there: responder places the game (natural inference).
 
 1C-(P)-1D/H-(P)-1N-(P)-2S-(P)-
 3S = {prio:1} 3=!s
-  #STOP
 2N = {prio:0} 0--2!s
-  #STOP
 
 1D-(P)-1H-(P)-1N-(P)-2S-(P)-
 3S = {prio:1} 3=!s
-  #STOP
 2N = {prio:0} 0--2!s
-  #STOP
 
 ** Responder after 2!c-2!d-2M-2NT-3M (batch 8)
 

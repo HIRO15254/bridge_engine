@@ -24,9 +24,9 @@ letting a 6--9 hcp hand with trump support raise instead of bidding notrump.
 
 1H-
 2N = {prio:5} F, 13+ hcp, 4+!h
-2S = {prio:4} F, 17+ hcp, 5+!s, not 3+!h
-3C = {prio:4} F, 17+ hcp, 5+!c, not 3+!h
-3D = {prio:4} F, 17+ hcp, 5+!d, not 3+!h
+2S = {prio:4} GF, 17+ hcp, 5+!s, not 3+!h
+3C = {prio:4} GF, 17+ hcp, 5+!c, not 3+!h
+3D = {prio:4} GF, 17+ hcp, 5+!d, not 3+!h
 3H = {prio:3} 10--12 hcp, 3+!h
 2C = {prio:2} F, 10+ hcp, 4+!c
 2D = {prio:2} F, 10+ hcp, 4+!d
@@ -41,9 +41,9 @@ letting a 6--9 hcp hand with trump support raise instead of bidding notrump.
 
 1S-
 2N = {prio:5} F, 13+ hcp, 4+!s
-3C = {prio:4} F, 17+ hcp, 5+!c, not 3+!s
-3D = {prio:4} F, 17+ hcp, 5+!d, not 3+!s
-3H = {prio:4} F, 17+ hcp, 5+!h, not 3+!s
+3C = {prio:4} GF, 17+ hcp, 5+!c, not 3+!s
+3D = {prio:4} GF, 17+ hcp, 5+!d, not 3+!s
+3H = {prio:4} GF, 17+ hcp, 5+!h, not 3+!s
 3S = {prio:3} 10--12 hcp, 3+!s
 2C = {prio:2} F, 4+!c and 10+ hcp or 3=!c and 13+ hcp
 2D = {prio:2} F, 10+ hcp, 4+!d
