@@ -231,7 +231,11 @@ fn rule_resp_nt_denies_a_minor_raise() {
     // A later 1NT by responder (1C P 1D P 1S P 1NT) keeps the plain HCP range.
     let (_, rebid) = infer("1C P 1D P 1S P 1NT", 6, Seat::South);
     assert_eq!(rebid.rule, "resp_nt");
-    assert!(rebid.constraint.satisfies(hand("K3", "Q5432", "J32", "Q32")));
+    assert!(
+        rebid
+            .constraint
+            .satisfies(hand("K3", "Q5432", "J32", "Q32"))
+    );
 }
 
 #[test]
