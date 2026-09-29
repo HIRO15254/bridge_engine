@@ -74,9 +74,11 @@ struct StopSite {
     span: Span,
 }
 
-/// Whether a row's description carries the `{stop}` annotation.
+/// Whether a row's description carries the `{stop}` annotation, in any spelling the description
+/// normaliser accepts (`{stop}`, `{ stop }`): the one that sets [`crate::NodeFlags::stop`].
 fn has_stop_annotation(text: &str) -> bool {
-    text.contains("{stop") && crate::compile::desc::normalize::normalize(text).stop
+    // A cheap pre-filter; `normalize` decides.
+    text.contains("stop") && crate::compile::desc::normalize::normalize(text).stop
 }
 
 /// Records a stop at `frame`'s position.

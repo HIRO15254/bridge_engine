@@ -458,3 +458,22 @@ fn a_stop_inside_another_stops_continuation_under_another_condition() {
     );
     assert!(stopped > 100, "{stopped}");
 }
+
+#[test]
+fn a_spaced_stop_annotation_is_a_stop() {
+    for annotation in ["{stop}", "{ stop }", "{stop }"] {
+        let ir = compile(&format!(
+            "#+TITLE: t\n\n1C = 12+ hcp\n\n1C-1H-\nP = {{prio:-100}} {annotation} any hand\n"
+        ));
+        assert_eq!(
+            ir.nodes.iter().filter(|n| n.is_synthesised()).count(),
+            2,
+            "{annotation}"
+        );
+        assert_eq!(
+            children_after(&ir, Vulnerability::None, "1C P 1H P P 2S", Seat::South),
+            vec![Call::Pass],
+            "{annotation}"
+        );
+    }
+}
