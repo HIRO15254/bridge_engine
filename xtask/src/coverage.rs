@@ -14,6 +14,11 @@
 //!   natural-completion tops (every natural call, and the first departure from the system per
 //!   auction), the final-contract level histogram `[passout, 1..=7]`, and how many system calls
 //!   were default passes (a `Pass` row at priority <= -100, `systems/sayc/passes.bml`).
+//!   *Strict* accounting (`all_system_strict`, the phase-4 [G] criterion): a position whose
+//!   exclusive group holds nothing but default passes (the system passes with any hand there)
+//!   also counts as a departure when the natural choice `m_P(h)` is not `Pass`
+//!   (`default_pass_overrides`, their tops, and `first_strict_departure_*`). Without it, the
+//!   pass chains make every such position look like a system decision.
 //! - **positions**: `COVERAGE_POSITIONS` (default 200,000) positions drawn exactly like the
 //!   forward-consistency harness (`crates/bridge-bidding/tests/common` +
 //!   `tests/consistency.rs`: seed `0x5a1c0002`, 5% random-call substitution, random depth
@@ -30,7 +35,8 @@
 //!   split with its log-likelihood curves. For the subset it also lists where its calls leave
 //!   the system (every natural call and the first one per auction, by trie position, with the
 //!   reason: `call_not_a_row` when the position is on the system but the recorded call is not
-//!   one of its rows, otherwise why the position itself is off the system).
+//!   one of its rows, `call_not_a_row_default_pass_only` when the position's only rows are
+//!   default passes, otherwise why the position itself is off the system).
 //! - **lints / exclusive**: lint counts by severity and code, our own non-pass calls with no
 //!   requirement at all (`unconstrained_own_calls`: a table header naming a call no row
 //!   defines), and the members/branches the
@@ -487,6 +493,56 @@ fn on_system(system: &SystemIR, auction: &Auction) -> (OnSystem, usize) {
     }
 }
 
+/// Whether the node the next seat's resolve ends at (the exact resolve, or the first full lenient
+/// match, as in [`on_system`]) offers nothing but default passes: every member of its exclusive
+/// group is a `Pass` row at priority <= [`DEFAULT_PASS_PRIORITY`] (a `pass-chain` /
+/// `after-chain` position of `systems/sayc/passes.bml` with no real row next to it). There the
+/// system passes with any hand, so the position says nothing the author decided about the hand.
+fn default_pass_only(system: &SystemIR, auction: &Auction) -> bool {
+    let seat = auction.next_seat();
+    let key = key_for(auction, seat);
+    let lookup = system.index.resolve(&key);
+    let end = if lookup.matched_depth == key.calls.len() {
+        lookup.end
+    } else {
+        match system
+            .index
+            .resolve_lenient(&key, LENIENT_MAX_SUBST)
+            .into_iter()
+            .find(|(lk, _)| lk.matched_depth == key.calls.len())
+        {
+            Some((lk, _)) => lk.end,
+            None => return false,
+        }
+    };
+    let Some(group) = system.exclusive().group_for(end, key.opener_pos, key.vul) else {
+        return false;
+    };
+    !group.members.is_empty()
+        && group.members.iter().all(|&(call, node)| {
+            call == Call::Pass && system.node(node).priority <= DEFAULT_PASS_PRIORITY
+        })
+}
+
+/// The natural engine's deterministic choice `m_P(h)` (`call_distribution` at `ε = 0, δ = 1`),
+/// or `None` when it is uniform (`⊥`).
+fn natural_choice(
+    table: &Table,
+    ctx: &BidContext<'_>,
+    hand: Hand,
+    auction: &Auction,
+) -> Option<Call> {
+    let natural = BidContext {
+        policy: PolicyParams {
+            epsilon: 0.0,
+            deviation: 1.0,
+            legacy_temperature: None,
+        },
+        ..*ctx
+    };
+    deterministic_choice(&call_distribution(table, hand, auction, &natural))
+}
+
 /// One call as a path token: leading passes as `P`, our side's calls plain, the opponents' in
 /// parentheses (from `seat`'s point of view).
 fn token(auction: &Auction, index: usize, seat: Seat) -> String {
@@ -689,6 +745,16 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
     let mut natural_passes = 0u64;
     let mut only_passes_after_departure = 0u64;
     let mut default_passes = 0u64;
+    // Strict accounting: a position whose only rows are default passes counts as a departure
+    // when the natural choice there is not `Pass` (the pass is the chain's, not a decision).
+    let mut all_system_strict = 0u64;
+    let mut default_pass_only_positions = 0u64;
+    let mut overrides = 0u64;
+    let mut with_override = 0u64;
+    let mut all_system_with_override = 0u64;
+    let mut override_tops: HashMap<PosKey, Agg> = HashMap::new();
+    let mut strict_departures: HashMap<PosKey, Agg> = HashMap::new();
+    let mut strict_departure_by_category: BTreeMap<&'static str, u64> = BTreeMap::new();
 
     for _ in 0..n {
         let deal = random_deal(&mut rng);
@@ -699,6 +765,8 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
         let mut has_gap = false;
         let mut departed = false;
         let mut non_pass_after_departure = false;
+        let mut has_override = false;
+        let mut strict_departed = false;
         while !auction.is_complete() && auction.len() < 320 {
             let seat = auction.next_seat();
             let hand = deal.hand(seat);
@@ -727,6 +795,36 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
                 }
                 BidChoice::NoCandidate(_) => (Call::Pass, Outcome::Gap),
             };
+            if state != OnSystem::Off && default_pass_only(system, &auction) {
+                default_pass_only_positions += 1;
+                if let Some(m) = natural_choice(table, ctx, hand, &auction) {
+                    if m != Call::Pass {
+                        overrides += 1;
+                        has_override = true;
+                        let key = pos_key(&auction, matched);
+                        record(
+                            &mut override_tops,
+                            key.clone(),
+                            call_label(m),
+                            &auction,
+                            hand,
+                        );
+                        if !strict_departed {
+                            strict_departed = true;
+                            *strict_departure_by_category
+                                .entry("default_pass_override")
+                                .or_default() += 1;
+                            record(
+                                &mut strict_departures,
+                                key,
+                                "default_pass_override",
+                                &auction,
+                                hand,
+                            );
+                        }
+                    }
+                }
+            }
             total_calls += 1;
             let label = match outcome {
                 Outcome::System => "system",
@@ -765,6 +863,17 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
                     };
                     record(&mut gaps, key.clone(), kind, &auction, hand);
                 }
+                if !strict_departed {
+                    strict_departed = true;
+                    *strict_departure_by_category.entry(category).or_default() += 1;
+                    record(
+                        &mut strict_departures,
+                        key.clone(),
+                        category,
+                        &auction,
+                        hand,
+                    );
+                }
                 if !departed {
                     departed = true;
                     record(&mut departures, key, category, &auction, hand);
@@ -778,8 +887,16 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
         if has_gap {
             with_gap += 1;
         }
+        if has_override {
+            with_override += 1;
+        }
         if !has_natural && !has_gap {
             all_system += 1;
+            if has_override {
+                all_system_with_override += 1;
+            } else {
+                all_system_strict += 1;
+            }
         } else if !non_pass_after_departure {
             only_passes_after_departure += 1;
         }
@@ -793,6 +910,15 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
         "all_system": all_system,
         "all_system_rate": all_system as f64 / n.max(1) as f64,
         "system_default_passes": default_passes,
+        "all_system_strict": all_system_strict,
+        "all_system_strict_rate": all_system_strict as f64 / n.max(1) as f64,
+        "all_system_with_default_pass_override": all_system_with_override,
+        "default_pass_only_positions": default_pass_only_positions,
+        "default_pass_overrides": overrides,
+        "auctions_with_default_pass_override": with_override,
+        "default_pass_override_top50": top(&override_tops, 50, 1.0),
+        "first_strict_departure_by_category": strict_departure_by_category,
+        "first_strict_departure_top50": top(&strict_departures, 50, 1.0),
         "auctions_with_natural": with_natural,
         "auctions_with_gap": with_gap,
         "calls": total_calls,
@@ -1381,6 +1507,8 @@ fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path) -> Value {
                     // itself is off the system.
                     let kind = if state == OnSystem::Off {
                         departure_category(&prefix, depth)
+                    } else if default_pass_only(system, &prefix) {
+                        "call_not_a_row_default_pass_only"
                     } else {
                         "call_not_a_row"
                     };
