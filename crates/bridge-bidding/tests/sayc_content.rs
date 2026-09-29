@@ -1435,4 +1435,30 @@ mod phase4_tables {
             ("1D P 1H 2C P P", "Q32.KJ32.432.Q32", "P"),
         ]);
     }
+
+    /// Advancing a takeout double after the opener's partner bids (#P12 batch 4): a free bid
+    /// in a four-card major with 6--11, game with 12+, a pass with a weak hand; over a redouble
+    /// the cheapest four-card suit even with nothing.
+    #[test]
+    fn advancing_a_takeout_double_after_their_bid() {
+        check_system(&[
+            ("1C X 1H", "KJ32.32.Q432.K32", "1S"),
+            ("1C X 1H", "32.Q32.J5432.432", "P"),
+            ("1S X 2S", "32.KQ32.AK32.J32", "4H"),
+            ("1S X 2S", "32.KJ32.Q432.Q32", "3H"),
+            ("1C X XX", "5432.432.432.432", "1S"),
+        ]);
+    }
+
+    /// Advancing a two-level overcall after their new suit, and opener's rebid after a double
+    /// of our opening and responder's one-level suit (#P12 batch 4).
+    #[test]
+    fn advancing_an_overcall_and_rebidding_after_a_double() {
+        check_system(&[
+            ("1S 2D 2H", "32.432.KJ32.Q432", "3D"),
+            ("1S 2D 2H", "432.432.32.QJ432", "P"),
+            ("1C X 1H P", "K32.KJ32.32.AQ32", "2H"),
+            ("1C X 1H P", "K32.Q2.K32.AQ432", "1NT"),
+        ]);
+    }
 }
