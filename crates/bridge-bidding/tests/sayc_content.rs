@@ -1742,7 +1742,7 @@ mod d2_review {
             ("1H P 2H P P X P 2S P", "AQ32.2.KJ32.Q432", "P"),
             // Over their new suit: a penalty double needs four of it; 13+ with support cue-bids.
             ("1D 2C 2H", "AQ2.KJ32.Q432.32", "X"),
-            ("1D 2C 2H", "AK2.32.K432.KQ2", "3D"),
+            ("1D 2C 2H", "AK2.32.K432.KQ32", "3D"),
             // A game-going advance with no stopper and no major: the cue bid.
             ("2S P 3S P P X P", "T32.K63.T42.AQJ3", "4S"),
             ("3S P P X P", "83.K98.KQT75.A63", "4S"),
