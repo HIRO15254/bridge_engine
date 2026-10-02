@@ -1113,7 +1113,7 @@ P12. **Lane D2: thickening SAYC and extending BML** (wip/p4-D2; default sizing, 
 P13. **Final phase-4 integration** (wip/p4int after merging lane D2 as 3c57c37;
     `COMPILE_REVISION` 9, `IR_FORMAT` 3; default sizing, release, 2.9 s at loadavg 6.1 ->
     5.8). These were the current numbers at 3c57c37; P0-P12 record the earlier stages and
-    P14-P17 the later ones.
+    P14-P18 the later ones.
     - The SAYC data is lane D2's after its review fixes, so the coverage numbers equal
       P12's review-fix numbers: strict [G] 0.745 (745/1000), raw [G] 0.957, stop-audited
       [G] 0.521, 370 swallows in 307 auctions (suit 278, notrump 68, double 24; tops: the
@@ -1457,3 +1457,23 @@ P17. **Lane N: the natural engine's later-round limits revisited** (wip/p4-fixN 
         sign-off); the side-effect fix restores 1131 and -6675.1.
       - Held-out seeds (strict [G]) unchanged: `0x1234` 0.807 (overrides 148), `0xBEEF0001`
         0.785 (146), `0xD00D` 0.772 (177).
+
+P18. **Phase 4 closed** (wip/p4int 5aa82e6, then 026ad30 and 67c48d2, which change a test and
+    docs only; docs/design/12-roadmap.md 「フェーズ 4 の完了」 has the full table).
+    - The final numbers are P17's round-3 numbers (unchanged by N3): strict / raw /
+      stop-audited [G] 0.847 / 0.953 / 0.613, held-out 0.807 / 0.785 / 0.772, strict [C]
+      0.487 / 0.469 / 0.475 (subset-eval 0.500), raw [C] 0.709 / 0.681 / 0.699, all-call Exact
+      0.320 / 0.323 / 0.341, `resolve_lenient` 1 / 8,169, `NoCandidate` 59, corpus natural
+      agreement 1131 / 2033.
+    - `PolicyParams::human()` stays (0.3404, 0.3959): the head's MLE (0.3420, 0.3943) is only
+      0.02 higher in tune ln L (-7307.07 vs -7307.09), and `human()` is higher on the eval
+      split (-6675.07 vs -6675.70).
+    - `natural_tuning` had failed under the STANDARD floor since at least 3c57c37: it predicted
+      `choose_bid` with the legacy partner context. It now uses the function `choose_bid` uses
+      (`bridge_bidding::natural_partner_context`, doc-hidden) and passes; nothing in the SAYC or
+      the engines changed. A fresh coordinate descent would move six natural priorities for an
+      objective of 0.4763 -> 0.4824; not adopted in phase 4 (it would move the `human()` fit
+      and the fixtures).
+    - Not met: strict [C] on the SAYC-compatible opening subset (0.487 < 0.80). Its first
+      natural calls are 137 calls with no row, 87 at default-pass-only positions, 16 after
+      their pass with no edge, 11 at exhausted tables and 2 after their call with no edge.
