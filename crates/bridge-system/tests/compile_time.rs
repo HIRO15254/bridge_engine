@@ -6,9 +6,18 @@
 //! The budget is only meaningful under optimizations, so the `< 1s` assertion only fires in a
 //! `--release` build (`cfg!(debug_assertions)` is false there); a debug build still compiles both
 //! files and reports the timings to stderr, so `cargo test` (no `--release`) exercises the same
-//! code path without flaking on a slow debug build. `#[ignore]`d because the largest-real-file
-//! half needs the vendored systems data; run with
-//! `cargo test -p bridge-system --release -- --ignored compile_time` for the enforced budget.
+//! code path without flaking on a slow debug build. The largest-real-file half is `#[ignore]`d
+//! because it needs the vendored systems data; the SAYC half (`compiling_sayc_is_fast`) and the
+//! exclusive-index bound (`sayc_exclusive_index_build_is_bounded`) are not. Every enforced budget
+//! runs with
+//! `cargo test -p bridge-system --release --test compile_time -- --include-ignored`
+//! (`--ignored` alone would skip the two non-ignored checks).
+//!
+//! CI does not enforce the two non-ignored release-only checks: the per-PR jobs run the tests in
+//! debug, where they assert nothing, and the nightly release job runs `-- --ignored`, which skips
+//! them. They are local release checks, run by hand at the phase gates (`12-roadmap.md`); the
+//! 20 ms bound of `sayc_exclusive_index_build_is_bounded` is calibrated on the development
+//! machine only, not on a CI runner.
 //!
 //! **Partially blocked**: see `bss_oracle.rs`'s module doc for `compile_guarded`'s "blocked"
 //! convention. If every vendored candidate is blocked, the real-file half is skipped (not
@@ -63,7 +72,7 @@ fn check_compile_time(path: &Path, opts: &CompileOptions) -> Option<Duration> {
 }
 
 #[test]
-#[ignore = "needs the vendored systems data; cargo test --release -- --ignored compile_time"]
+#[ignore = "needs the vendored systems data; cargo test -p bridge-system --release --test compile_time -- --include-ignored"]
 fn compiling_the_largest_real_system_is_fast() {
     let dir = common::systems_dir();
     let opts = CompileOptions::default();
@@ -117,7 +126,7 @@ fn compiling_sayc_is_fast() {
 /// under 20 ms, about twice the current time: tight enough to flag a return towards the
 /// pre-lane 18-20 ms, loose enough not to flake on a loaded machine. A debug build builds the
 /// index once and asserts nothing. Holds the SAYC timing lock so that its own compile never overlaps
-/// `compiling_sayc_is_fast`.
+/// `compiling_sayc_is_fast`. A local release check that CI does not run (see the module doc).
 #[test]
 fn sayc_exclusive_index_build_is_bounded() {
     let _serial = sayc_timing_lock();
