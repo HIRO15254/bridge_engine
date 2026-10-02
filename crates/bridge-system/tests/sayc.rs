@@ -656,11 +656,11 @@ fn sayc_stops_under_forcing_calls_are_only_the_known_rebid_sinks() {
 
 /// `systems/sayc/NOTES.md` #C4 and #P7, and phase 4's `resolve_lenient` investigation
 /// (`docs/design/12-roadmap.md`): a table of ours that follows an opponents' pass needs a trie
-/// edge for every other call they can make at that point -- an `(any)` history line
-/// (`interference-guards.bml`), a table of its own, or the `(any)` step a system stop grafts --
-/// or `resolve_lenient` reads their bid or double "as if they had passed" and applies the table
-/// to an auction it was not written for (lane D2's tables took the corpus lenient count from 1
-/// to 61 this way). No file may leave such a position unguarded, except the files that predate
+/// edge for every other call they can make at that point -- the empty `(any)` an `#EXACTPASS`
+/// guard grafts (`#EXACTPASS FILE` in lane D2's files, NOTES.md #P15), an `(any)` history line,
+/// a table of its own, or the `(any)` step a system stop grafts -- or `resolve_lenient` reads
+/// their bid or double "as if they had passed" and applies the table to an auction it was not
+/// written for (lane D2's tables took the corpus lenient count from 1 to 61 this way). No file may leave such a position unguarded, except the files that predate
 /// phase 4's lane D2: their positions are reached rarely (one corpus call, `1NT-(P)-3C-(X)`),
 /// and each keeps at most the number it has now.
 #[test]
@@ -700,7 +700,8 @@ fn sayc_tables_after_their_pass_have_an_edge_for_their_other_calls() {
     assert!(
         failures.is_empty(),
         "tables of ours after an opponents' pass with no edge for some other call of theirs \
-         (add an `(any)` line for the position, NOTES.md #C4):\n{}",
+         (write `#EXACTPASS` in the table or `#EXACTPASS FILE` before the file's tables, or \
+         an `(any)` line for the position; NOTES.md #C4, #P15):\n{}",
         failures.join("\n")
     );
 }

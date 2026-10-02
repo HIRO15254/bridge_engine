@@ -393,7 +393,7 @@ JSON には `resolve_lenient_top50` と 2 つの数を足した (d7fb70d)。
   - 生成局面の `NoCandidate` 75 のうち 41 が lenient な位置だった。
 - (b) 正当なもの: 以前からの 1 コール (`1NT-(P)-3C-(X)`) と、停止の導入で入口 1 つにつき続きのコールも数えるようになったこと。後者は指標の数え方の問題である。
 
-**修正 (dfe4993)。** コードは変えていない。新しいファイル `systems/sayc/interference-guards.bml` を `sayc.bml` の最後で読み込む。中身は `(any)` の履歴行 121 本で、内訳は `competing.bml` 14、`continuations-p12.bml` 53、`later-rounds-extra.bml` 54 である。
+**修正 (dfe4993)。** コードは変えていない。新しいファイル `systems/sayc/interference-guards.bml` を `sayc.bml` の最後で読み込む (このファイルは後にレーン guard が `#EXACTPASS FILE` に置き換えた。この節の最後)。中身は `(any)` の履歴行 121 本で、内訳は `competing.bml` 14、`continuations-p12.bml` 53、`later-rounds-extra.bml` 54 である。
 
 - 行は 3 ファイルの表の見出しと入れ子の行から機械的に作った (224 本)。そこから、下の構造検査の数が増えない行を除いた。停止がすでに `(any)` の段を接いでいる位置などである。
 - レーン D3 と衝突しないよう、D2 の表そのものは変えていない。
@@ -450,3 +450,9 @@ lint のうち `ShadowedBranch` 18、`DuplicatePath` 23、`StopUnderForcing` 27�
 
 - ダブルだけを置き換える案: 入口のダブルだけで 10 あり、ベースラインの 4 を超える。
 - システム単位で lenient を止めるメタの案: BML の拡張と IR の変更が要る。フェーズ 5 の候補として残す。
+
+**指示子への置き換え (レーン guard、wip/p4-guard、起点 f37ccad)。** 守りのファイル `interference-guards.bml` (上の 121 行) は、BML の指示子 `#EXACTPASS` に置き換えて削除した (`06-system.md` §4.8、`16-extended-bml.md` §4.8、`COMPILE_REVISION` 10)。表の中の `#EXACTPASS`、またはファイルの表の前の独立の段落 `#EXACTPASS FILE` は、表の我々の行の直前の相手のパスを厳密にする。全ての表と停止の後で、相手のほかのコールに辺の無い位置にだけ、行の無い `(any)` を他の辺の後に加える。上の 3 ファイルは先頭に `#EXACTPASS FILE` を持つ。
+
+- `xtask coverage` の全ての指標は f37ccad と同一である (strict / 素 / 停止を監査した [G]、[C]、全コール Exact、`resolve_lenient` 1 / 1、Partial、`NoCandidate`、MLE、位置、排他索引のグループとノード)。上の 2 本の回帰試験も変えずに通る。
+- 違いは構造だけである。守りのファイルの 6 つの展開は、停止の `(any)` が既に受ける位置にあった (旧版では停止がその `(any)` を通っていた)。新版はそこに守りを作らない。ノード −6、排他索引のキー −96、行 7,518 → 7,400、postcard IR −16,258 バイト (3,537,665)。Lint は守りのファイルの行の `NonStandardToken` 122、`VariableNoCandidate` 31、`IllegalCall` (Info) 1 と、6 つの展開の `EmptyDescription`・`SiblingSubset` 各 6 が減る。詳細は `systems/sayc/NOTES.md` #P15。
+- 上の「システム単位で lenient を止めるメタの案」は、表とファイルの単位で、IR を変えずに実現したことになる。

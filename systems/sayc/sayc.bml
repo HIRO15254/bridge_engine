@@ -54,5 +54,3 @@ and the choices this file makes there.
 #INCLUDE later-rounds-extra.bml
 
 #INCLUDE continuations-p12.bml
-
-#INCLUDE interference-guards.bml

@@ -1797,13 +1797,13 @@ mod d2_review {
     }
 }
 
-/// Phase 4's `resolve_lenient` investigation (`docs/design/12-roadmap.md`,
-/// `systems/sayc/interference-guards.bml`): lane D2's tables describe our call after an
-/// opponents' pass, and had no edge for their other calls there, so `resolve_lenient` read an
-/// opponent's bid or double "as if they had passed" and the next call of ours came out `Partial`
-/// against a table written for the uncontested auction (61 corpus calls). Each auction below is
-/// one of those corpus calls, one per table; with the `(any)` lines the call is off-system,
-/// read by natural inference.
+/// Phase 4's `resolve_lenient` investigation (`docs/design/12-roadmap.md`; the guards are now
+/// `#EXACTPASS FILE` in lane D2's files, `systems/sayc/NOTES.md` #P15): lane D2's tables
+/// describe our call after an opponents' pass, and had no edge for their other calls there, so
+/// `resolve_lenient` read an opponent's bid or double "as if they had passed" and the next call
+/// of ours came out `Partial` against a table written for the uncontested auction (61 corpus
+/// calls). Each auction below is one of those corpus calls, one per table; with the guards'
+/// empty `(any)` the call is off-system, read by natural inference.
 mod lenient_guards {
     use super::*;
     use bridge_bidding::{InterpretOptions, ResolutionKind, interpret_per_call};

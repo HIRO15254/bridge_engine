@@ -29,6 +29,13 @@ The tables use the phase-4 relative levels (`cM` = a major at the cheapest
 level, `jM` one level higher; docs/design/06-system.md §4.6), so one table
 serves every suit the opponents can have raised.
 
+The opponents' passes in this file's tables are exact (`#EXACTPASS FILE`,
+NOTES.md #P15): where a row of ours follows their pass, any other call of theirs
+that no table names leaves the system (natural bidding, #C4) instead of being read
+as a pass.
+
+#EXACTPASS FILE
+
 ** Their raise of a one-level opening
 
 *** Balancing after 1X-2X (the opponents stop at the two level with a fit)

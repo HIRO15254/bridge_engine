@@ -6,6 +6,13 @@ The tables give the partnership's next call as the SAYC booklet, or standard
 practice where the booklet is silent, has it. Every table partitions the hands
 that can reach it: a pass states what it denies.
 
+The opponents' passes in this file's tables are exact (`#EXACTPASS FILE`,
+NOTES.md #P15): where a row of ours follows their pass, any other call of theirs
+that no table names leaves the system (natural bidding, #C4) instead of being read
+as a pass.
+
+#EXACTPASS FILE
+
 ** Responder after opener's rebid over the Jacoby 2NT (batch 7)
 
 SAYC's Jacoby 2NT is a game-forcing raise with four trumps (13+). Opener's

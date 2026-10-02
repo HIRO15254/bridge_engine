@@ -1213,3 +1213,37 @@ P14. **Lane D3: strict [G] through the natural engine's later-round limits** (wi
       which still need an ace-count vocabulary. Strict [C] does not move for P12's reason:
       604 of the subset's 989 default-pass calls are our passes after our own pass in their
       auctions, which only a sink row would count.
+
+P15. **Lane guard: `#EXACTPASS FILE` replaces `interference-guards.bml`** (wip/p4-guard from
+    wip/p4int f37ccad; `COMPILE_REVISION` 10, `IR_FORMAT` 3). The 121 machine-selected
+    `...-(any)-` history lines that kept lane D2's tables from being applied to a contested
+    auction (the device of C4 and P7, applied to lane D2; 12-roadmap.md, "フェーズ 4 の resolve_lenient 調査") are now a
+    BML directive (06-system.md §4.8, 16-extended-bml.md §4.8): `#EXACTPASS` in a table, or
+    `#EXACTPASS FILE` as a paragraph of its own before a file's tables, makes the opponents'
+    pass right before each row of ours exact. After every table and every stop, each such
+    position where some other call of theirs has no edge (concrete, a written class, or a
+    stop's `(any)`) gets an empty `(any)` sibling, tried after every other edge there, so the
+    call leaves the system instead of being read as a pass. `competing.bml`,
+    `continuations-p12.bml` and `later-rounds-extra.bml` open with `#EXACTPASS FILE`; the
+    guard file and its `#INCLUDE` are gone.
+    - Equivalence (`xtask coverage`, f37ccad against this lane): every metric is identical
+      (strict / raw / stop-audited [G] 0.857 / 0.953 / 0.621, corpus all-Exact 0.320,
+      `resolve_lenient` 1 call and 1 entry, Partial 1, generated positions, NoCandidate,
+      MLE, exclusive groups and nodes). The structural test
+      (`sayc_tables_after_their_pass_have_an_edge_for_their_other_calls`) still passes on
+      the compiled trie.
+    - Structure only: six expansions of the guard file's variable lines
+      `1Y-(P)-1Z-(P)-2X-(P)-2Y-(any)-` / `...-2Z-(any)-` (after 1D-1H-2C-2D/2H,
+      1D-1S-2C-2D/2S, 1H-1S-2D-2H/2S) sat where a stop on our 2Y/2Z already covers every call
+      of theirs; the old lines were expanded before the stops, which then walked through
+      them, while the directive leaves those positions to the stop's own `(any)`. All 2,960
+      probes below them (8 seat/vulnerability combinations each) resolve identically. Hence
+      nodes 10,494 -> 10,488, trie 11,122 -> 11,116, exclusive keys 65,216 -> 65,120, rows
+      7,518 -> 7,400 (121 guard lines become three directive lines), postcard IR 3,553,923 ->
+      3,537,665 bytes.
+    - Lints: the guard file's own lints go (`NonStandardToken` 122: 121 `(any)` and one
+      `1D/H`; `VariableNoCandidate` 31 for bindings with no candidate; `IllegalCall` Info 1),
+      and the six expansions above take one `EmptyDescription` and one `SiblingSubset`
+      warning each with them (2,767 -> 2,761, 3,588 -> 3,582). The guards that remain still
+      report `SiblingSubset` against an undescribed `(P)` of theirs, at the directive's line,
+      exactly as the `(any)` lines did.
