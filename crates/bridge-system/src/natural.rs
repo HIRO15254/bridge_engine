@@ -1666,6 +1666,9 @@ fn rule_jump_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<
     // four-level entry's values; higher jumps are not described (MAX_JUMP_OVERCALL_LEVEL).
     // The four-level jump ranks like the overcall (0.35): its hands are a subset of the
     // cheaper overcall's, which the natural policy prefers (the call index breaks the tie).
+    // The default Mirror interpretation therefore reads the jump itself as ANY; this range
+    // reaches explanation text, the Legacy interpretation, direct `infer` callers and the
+    // jumper's partner's context (docs/design/06-system.md §8.6, lane N2's N-C).
     let ((min_len, hcp), confidence) = if ctx.level <= MAX_JUMP_OVERCALL_LEVEL {
         (p.overcall[2].clone(), 0.5)
     } else if ctx.level == MAX_JUMP_OVERCALL_LEVEL + 1 {

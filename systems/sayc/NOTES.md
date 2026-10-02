@@ -1291,14 +1291,18 @@ P17. **Lane N: the natural engine's later-round limits revisited** (wip/p4-fixN 
       jumps to the four level (`(2S)-4H`, `(3C)-4H`, `(3D)-4S`) are described like the
       four-level entry below game: 6+ cards, 12-16 hcp, 9-16 in the balancing seat below
       their game. The jump ranks with the overcall (0.35), so the cheaper overcall wins for
-      the same hand. Five-level entries and jumps stay undescribed.
+      the same hand. Five-level entries and jumps stay undescribed. (Round 2 corrects what the
+      jump's range is for, and leaves the pass-out seat's entry over their game undescribed.)
     - Responder's later double after its own call is `competitive_x` (negative double's
       minimum + 3: 9+ over a one-level bid, 11+ over a two-level bid); after a first pass it
-      stays undescribed, as does the reopening 1NT (old range 12-14).
+      stays undescribed, as does the reopening 1NT (old range 12-14). (Round 2: only after an
+      unlimited first call.)
     - The advancer's second takeout double keeps the ordinary 12+ (the +3 is for the
-      overcaller and the balancer: 15+, 12+ in the balancing seat). Corpus check of the +3:
-      8 such doubles, 3 satisfy +3 and 6 would satisfy +0, but +0 is worse on the whole corpus
-      (agreement 1136 -> 1135, ln L -7299.4 -> -7300.7) and on strict [G] (0.848 -> 0.839).
+      overcaller and the balancer: 15+, 12+ in the balancing seat; round 2 exempts by the
+      owner's history instead, since an advancer in the pass-out seat is a balancer). Corpus
+      check of the +3: 8 such doubles, 3 satisfy +3 and 6 would satisfy +0, but +0 is worse
+      on the whole corpus (agreement 1136 -> 1135, ln L -7299.4 -> -7300.7) and on strict [G]
+      (0.848 -> 0.839).
     - Tests pin every new threshold (`tests/natural_later_rounds.rs`); the natural shadow
       test allows `[2S] jump_overcall` (every four-level jump there ranks behind the cheaper
       overcall).
@@ -1328,3 +1332,50 @@ P17. **Lane N: the natural engine's later-round limits revisited** (wip/p4-fixN 
       ln L -78.6, agreement -31). So about half the gain comes from removed candidates, all
       of them either wrong as bridge (a "weak jump" to the five or six level) or without a
       range that can be fixed; most of the corpus gain comes from the re-described ranges.
+    - Round 2 (lane N2, wip/p4-fixN from wip/p4int 3f53aa4; default sizing, release; review
+      findings N-A to N-I; 06-system.md §8.6, "後の巡の制限の見直し (2)"):
+      - N-A: a weak two or a preempt pulling partner's 3NT to its own suit (`2S-P-3NT-P-4S`,
+        `2H-P-3NT-P-4H`, `3H-P-3NT-P-4H`) is no longer a correction and keeps the slam floor
+        (`opened_preemptively_in`).
+      - N-B: a one-level opener that has rebid its suit and pulls 3NT to it
+        (`1S-P-2C-P-2S-P-3NT-P-4S`, `1H-P-1S-P-2H-P-3NT-P-4H`) corrects under the ordinary
+        floor: seven cards (`REBID_SUIT_PULL_LEN`; the rebid showed six), 12-15 after a
+        non-jump rebid, 16-18 after a jump rebid. Six cards with a singleton or void cost two
+        corpus agreements and 3.8 of ln L (two tables passed 3NT with six hearts and a void);
+        seven cards changes no number. The test pinning 21 is replaced.
+      - N-C (docs only, ranking unchanged): the four-level jump's range is used by
+        explanation text, the Legacy interpretation, direct `infer` callers and the jumper's
+        partner's context; the default Mirror interpretation reads the shadowed jump itself as
+        ANY, so natural-3 stays open there as a known limit.
+      - N-D: `competitive_x` applies only after a new suit or a negative double. After a raise
+        or 1NT the double stays undescribed; describing it as the top of the response's range
+        was measured and dropped (strict [G] 0.847 -> 0.841, agreement 1131 -> 1130, ln L
+        -7307.1 -> -7312.5).
+      - N-E: responder's raise correcting opener's 3NT (`1H-P-1S-P-3NT-P-4H`,
+        `1S-P-2C-P-3NT-P-4S`) shows the range of responder's first call
+        (`responders_first_call_hcp`), not the 13+ game raise.
+      - N-F: responder's own six-card suit over opener's 3NT (`1C-P-1S-P-3NT-P-4S`) is now
+        described (6+ cards, the first call's range). Lane N had replaced this ruled test with
+        `1C-P-1S-P-1NT-P-3NT-P-4S`; the original auction is now tested.
+      - N-G: the pass-out seat's four-level entry over their game is `fallback` again (that
+        seat passed an overcall in the same suit at an earlier turn).
+      - N-H: the second takeout double's +3 is waived by history
+        (`owner_answered_partners_double`), so `1H-X-P-1S-2H-P-P-X` needs 9+.
+      - N-I: the five-level test now has a real single jump (`1H-P-3H-5C`, jump 1); the old
+        `1H-P-2NT-P-4H-5C` case is labelled as the cheapest club (jump 0).
+      - Numbers (3f53aa4 -> lane head; before at loadavg 9-10, after at 5-6): strict / raw /
+        stop-audited [G] 0.848 / 0.953 / 0.614 -> 0.847 / 0.953 / 0.613 (overrides 124 ->
+        125); strict [C] 0.487 / 0.469 / 0.475 and raw [C] 0.709 / 0.681 / 0.699 unchanged;
+        corpus natural agreement 1136 (0.5588) -> 1131 (0.5563); MLE epsilon 0.3420 and delta
+        0.3943 unchanged; ln L at `human()` -7299.4 -> -7307.1 (tune), -6663.7 -> -6675.1
+        (eval); `NoCandidate` 59 unchanged. Forward consistency (10^5, seed `0x5a1c0002`): 0
+        non-gap violations, 4 gap-induced (4 before), 1.9 s.
+      - Per stage (default seed): N-A, N-B, N-D, N-G, N-H and N-I change no number. Measured
+        after N-B and before N-D: N-E alone keeps [G] 0.848, agreement 1132, ln L -7306.9
+        (four corpus positions where the players passed 3NT with a fit); N-F alone gives [G]
+        0.847 (one override: `P 1C P 1H P 2C P 3C P 3NT P` with Q5.AKQT63.84.J72 bids 4H),
+        agreement 1135, ln L -7299.6; both give 0.847, 1131, -7307.1.
+      - Held-out seeds (strict [G]): `0x1234` 0.810 -> 0.807 (overrides 145 -> 148),
+        `0xBEEF0001` 0.786 -> 0.785 (145 -> 146), `0xD00D` 0.775 -> 0.772 (174 -> 177). N-F
+        accounts for 3, 1 and 1 of the new overrides; N-B for 2 on `0xD00D`
+        (`P 1S P 2C P 2S P 3NT P` with KQJT963.A.Q3.975 bids 4S at a SAYC default pass).
