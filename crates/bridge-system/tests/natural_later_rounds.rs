@@ -119,6 +119,27 @@ fn a_bid_past_partners_game_needs_slam_values() {
     assert_eq!(min_hcp(&inf), 14, "{}", inf.rule);
 }
 
+// --- opener's notrump rebid (is_openers_rebid) -------------------------------------------------
+
+#[test]
+fn notrump_range_rebid_is_openers_rebid_only() {
+    for calls in [
+        "1D P 1S P 1NT P 2S P 2NT", // the range is already shown
+        "1C P 1D 1S P 2S P P 2NT",  // opener passed at the rebid
+        "1C 1D P 1S 1NT",           // partner has not responded
+        "1C 1NT 2H P 2NT",          // over their notrump
+        "1C 1NT 2D X 2NT",
+    ] {
+        assert_ne!(last(calls).1.rule, "rebid_nt", "{calls}");
+    }
+    // The rebid itself, also over an overcall and partner's negative double.
+    for calls in ["1C P 1H P 1NT", "1C 1S X P 1NT", "1D P 1S 2C 2NT"] {
+        assert_eq!(last(calls).1.rule, "rebid_nt", "{calls}");
+    }
+    let (_, inf) = last("1C 1S X P 1NT");
+    assert_eq!(inf.constraint.hcp_range(), 12..=14);
+}
+
 // --- responder's negative double (responders_first_turn_over_overcall) ------------------------
 
 #[test]

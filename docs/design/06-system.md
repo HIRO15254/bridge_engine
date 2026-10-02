@@ -1095,6 +1095,7 @@ pub struct CallContext {
     pub partner_first_jump: u8,                 // levels skipped by that call when it is a bid (0 otherwise)
     pub their_bids: u8,                         // bids (not P/X/XX) the opponents have made so far
     pub rho_last: Option<Call>,                 // the right-hand opponent's call just before this one
+    pub owner_last: Option<Call>,               // owner's own last call so far (a pass included)
 }
 
 /// System-independent classification of auction[index] as made by `owner`; unit-testable.
@@ -1150,7 +1151,7 @@ impl Default for NaturalInference { /* NaturalParams::default() */ }
 | `resp_nt` | `Responder`, `nt`, レベル `L` | `hcp = response.nt[L]` (2N/3N は `BALANCED` 寄り: 4 メジャー否定は v2)。最初の応答の 1N はシンプル・レイズを否定する: パートナーのスート `s` について ¬(`suit_len[s] ≥ 支持` ∧ `hcp ∈ response.raise.1`)。支持はメジャーで `response.raise.0` (3)、マイナーで 5 (SAYC の `1H-1N` は「3 枚以上のハートなし」、`1C-1N` は「5 枚以上のクラブなし」)。10 HCP の支持付きは 1N でよい | 0.5 |
 | `rebid_own` | `Opener`, `rebid_own` | `suit_len[s] ≥ 6` ∧ `hcp = opening_hcp` (`jump == 1` なら `rebid.jump_rebid`)。1 スートのオープン後に合意済みスート (自分が先にビッドしパートナーがサポートしたスート) を再び上げる場合は別枝: 長さはオープンの最小長 (2 番目のスートなら 4)、`hcp` は競り合いなしのジャンプなしが `rebid.jump_rebid` (ゲームトライ)、競り合いでは `opening_hcp`、ジャンプは `rebid.jump_rebid.start..=opening_hcp.end` | ジャンプ (`jump ≥ 1`、`rebid.jump_rebid`) は 0.55、それ以外は 0.5 (旧はどちらも 0.5。ジャンプの 16〜18 は非ジャンプの 12〜21 に含まれ、同点ではコール順で安い非ジャンプが勝つので、ジャンプ・リビッドが一度も選ばれなかった) |
 | `reverse` | `Opener`, `reverse` (最初のスートの 2 レベルより上の新スート) | `hcp ≥ rebid.reverse` ∧ 最初のスート `≥ 5` ∧ 2 番目 `≥ 4` | 0.55 (旧 0.4) |
-| `rebid_nt` | `Opener` (1 スートのオープン後), `nt`, 2 レベル以下、合意スートなし | `BALANCED` ∧ `hcp = rebid.nt_1` (`jump == 0`) / `rebid.nt_2` (`jump == 1`)。それより大きいジャンプは `fallback` | 0.45 (旧 0.5) |
+| `rebid_nt` | `Opener` (1 スートのオープン後), `nt`, 2 レベル以下、合意スートなし、オープナーのリビッドそのもの (`owner_last` がオープニング、パートナーが非パスで応答済み、相手が NT 未ビッド。§8.6「後の巡の制限」(4)) | `BALANCED` ∧ `hcp = rebid.nt_1` (`jump == 0`) / `rebid.nt_2` (`jump == 1`)。それより大きいジャンプは `fallback` | 0.45 (旧 0.5) |
 | `rebid_new_suit` | `Opener` (1 スートのオープン後), `new_suit` (リバースでない。`reverse` が先に当たる) | `suit_len[s] ≥ 4` ∧ `hcp = opening_hcp.start..=rebid.jump_raise.end` (`jump ≥ 1` のジャンプシフトは `hcp ≥ rebid.jump_rebid.end + 1`) | 0.35 (旧 0.4) |
 | `advance_new_suit` | `Advancer` の最初のアクション, パートナーの最初のアクションがビッド (テイクアウトダブルへの応答は除く), `new_suit`, `jump == 0` | `suit_len[s] ≥ advance.new_suit.0` ∧ `hcp ≥ advance.new_suit.1` | 0.5 |
 | `cue` | 相手のスートのビッド | シェイプなし; `Opener`/`Responder` で `partner_constraint` があれば `hcp ≥ gf_total − partner_min` (`gf_total = 25`)、それ以外 (`Advancer`/`Overcaller`/`Balancer`、または `partner_constraint` なし) は `advance.cue`; `flags.artificial` | 0.3 |
@@ -1335,6 +1336,11 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
 - (3) `negative_x` はレスポンダーの最初のターンだけ。条件は、パートナーのオープンがパートナーの唯一の非パスで、かつ最後のコールであり、RHO の最後のコールがビッドであること。
   - §8.2 の順では、レスポンダーの後のダブル (`1C (1H) X (2D) P (P) X`、`1H (1S) P (2S) P (P) X`、`2D (P) P (2H) P (P) X`) も `Negative` に分類される。
   - しかしレスポンダーは既に手を示しているので、このダブルは最初のコールで示せなかった余分の強さかトランプを示す。`negative_x` の範囲 (6+、未ビッドのメジャー) はその意味を持たないので、当たらない。
+- (4) `rebid_nt` はオープナーのリビッドそのものだけ。条件は、`CallContext::owner_last` がオープニングのままで、パートナーが非パスで応答済みで、相手が NT をビッドしていないこと。次の局面では当たらない。
+  - 範囲を示した後の NT (`1D-P-1S-P-1NT-P-2S-P-2NT`)。
+  - リビッドの機会にパスした後 (`1C-P-1D-(1S)-P-(2S)-P-(P)-2NT`)。
+  - パートナーが応答していないとき (`1C-(1D)-P-(1S)-1NT`)。SAYC はミニマムの手でリオープンしない。
+  - 相手の NT の上 (`1C-(1NT)-2H-(P)-2NT`)。
 
 ---
 

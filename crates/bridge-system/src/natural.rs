@@ -327,6 +327,8 @@ pub struct CallContext {
     pub their_bids: u8,
     /// The right-hand opponent's call just before this one, if any.
     pub rho_last: Option<Call>,
+    /// `owner`'s own last call so far (a pass included), if any.
+    pub owner_last: Option<Call>,
 }
 
 /// Classifies call `index` of `auction` from the point of view of its caller.
@@ -366,6 +368,7 @@ struct HistoryContext {
     partner_first_jump: u8,
     their_bids: u8,
     rho_last: Option<Call>,
+    owner_last: Option<Call>,
 }
 
 impl HistoryContext {
@@ -400,6 +403,12 @@ impl HistoryContext {
             .enumerate()
             .rev()
             .find(|(i, _)| auction.seat_at(*i) == owner.partner())
+            .map(|(_, c)| *c);
+        let owner_last = history
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(i, _)| auction.seat_at(*i) == owner)
             .map(|(_, c)| *c);
         let agreed_suit = Suit::ALL.into_iter().find(|&s| {
             let strain = Strain::from_suit(s);
@@ -457,6 +466,7 @@ impl HistoryContext {
             partner_first_jump,
             their_bids,
             rho_last: history.last().copied(),
+            owner_last,
         }
     }
 
@@ -518,6 +528,7 @@ impl HistoryContext {
             partner_first_jump: self.partner_first_jump,
             their_bids: self.their_bids,
             rho_last: self.rho_last,
+            owner_last: self.owner_last,
         }
     }
 }
@@ -1969,14 +1980,33 @@ fn rule_reverse(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infere
     })
 }
 
+/// `true` when this is opener's rebid proper: opener's last call is still the opening (opener
+/// has not called since, not even a pass), partner has answered it with a non-pass call (a
+/// response or a negative double), and the opponents have not bid notrump.
+///
+/// The notrump ranges of `rule_rebid_nt` describe that one call. Opener's notrump at a later
+/// turn (`1D-P-1S-P-1NT-P-2S-P-2NT`, after the balanced range is already shown), after an
+/// earlier pass (`1C-P-1D-(1S)-P-(2S)-P-(P)-2NT`), when partner has not responded
+/// (`1C-(1D)-P-(1S)-1NT`, a reopening that SAYC does not make with a minimum), or over the
+/// opponents' own notrump (`1C-(1NT)-2H-(P)-2NT`) is not a range rebid, and no rule fires
+/// there (docs/design/06-system.md §8.3).
+fn is_openers_rebid(ctx: &CallContext) -> bool {
+    ctx.opener_first_bid.is_some()
+        && ctx.owner_last == ctx.opener_first_bid.map(Call::Bid)
+        && ctx.partner_actions >= 1
+        && !ctx.their_suits.contains(Strain::NoTrump)
+}
+
 /// Opener's notrump rebid after a 1-of-a-suit opening: the cheapest notrump shows
 /// `rebid.nt_1`, a jump `rebid.nt_2`, both balanced. Higher notrump rebids, and notrump once a
-/// suit is agreed (`1H-P-2H-P-2NT` is a game try, not a range rebid), are left to `fallback`.
+/// suit is agreed (`1H-P-2H-P-2NT` is a game try, not a range rebid), are left to `fallback`;
+/// so is notrump at any turn but the rebid itself ([`is_openers_rebid`]).
 fn rule_rebid_nt(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.role != Role::Opener
         || !opened_one_of_a_suit(ctx)
         || ctx.level > 2
         || ctx.agreed_suit.is_some()
+        || !is_openers_rebid(ctx)
     {
         return None;
     }
