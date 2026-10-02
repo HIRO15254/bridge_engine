@@ -129,9 +129,23 @@ fn four_level_entry_after_their_exchange_needs_six_cards_and_opening_values() {
     // The balancing seat below their game: a king less.
     assert_four_level_entry("1S P 3S P P 4H", "overcall", true);
     assert_four_level_entry("1H P 3H P P 4D", "overcall", true);
-    // The pass-out seat over their game is not a balance: opening values.
-    assert_four_level_entry("1H P 4H P P 4S", "overcall", false);
-    assert_four_level_entry("1NT P 2NT P 3NT P P 4H", "overcall", false);
+}
+
+#[test]
+fn pass_out_seat_entry_over_their_game_is_not_described() {
+    // The pass-out seat over their game passed earlier, after their opening, where an overcall
+    // of the same suit was available (1S over 1H, 3H over 2NT): six cards and opening values
+    // are what that pass denied. No rule describes the entry.
+    for calls in [
+        "1H P 4H P P 4S",
+        "1NT P 2NT P 3NT P P 4H",
+        "1H P 3NT P P 4S",
+    ] {
+        let (ctx, inf) = last(calls);
+        assert_eq!(ctx.role, Role::Balancer, "{calls}");
+        assert!(ctx.passed_hand, "{calls}");
+        assert_eq!(inf.rule, "fallback", "{calls}");
+    }
 }
 
 #[test]

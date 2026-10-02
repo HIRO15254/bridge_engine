@@ -1511,7 +1511,9 @@ fn is_first_overcall(ctx: &CallContext) -> bool {
 ///   competitive tables ask for there (`systems/sayc/competing.bml`): a six-card suit and
 ///   opening values (`four_level_entry`: 6+ cards and 12-16 HCP with the default
 ///   parameters), a king less (9-16) in the balancing seat below their game. Over their game
-///   the pass-out seat is not a balance, so it keeps 12-16;
+///   the pass-out seat is not described: that player passed at an earlier turn where an
+///   overcall of the same suit was available, so a six-card suit with opening values is
+///   what the pass denied;
 /// - a first entry at the five level or higher (over their `4C`/`4D`, or over their game:
 ///   five hearts and 7-16 HCP over their `1S-3S-4S` do not bid `5H`) is a sacrifice or a
 ///   lead-directing gamble, not a natural overcall. No overcall rule fires, so the natural
@@ -1602,8 +1604,15 @@ fn rule_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infer
         p.overcall[1].clone()
     };
     // Over their game the pass-out seat is not a balance (there is no partscore to contest
-    // and partner's values are not trapped): opening values in every seat.
-    let hcp = if four_level && ctx.last_bid.is_some_and(is_game_or_higher) {
+    // and partner's values are not trapped), and it is not a first chance either: that player
+    // passed at an earlier turn, after their opening, where an overcall in the same suit was
+    // available, so the six cards and opening values a direct entry shows are what the pass
+    // denied. No rule describes it (MAX_ENTRY_LEVEL_AFTER_EXCHANGE).
+    let over_their_game = four_level && ctx.last_bid.is_some_and(is_game_or_higher);
+    if over_their_game && ctx.role == Role::Balancer {
+        return None;
+    }
+    let hcp = if over_their_game {
         hcp
     } else {
         opener_or_balancer_hcp(p, ctx.role, hcp)
