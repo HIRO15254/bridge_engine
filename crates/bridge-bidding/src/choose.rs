@@ -382,6 +382,20 @@ pub(crate) fn natural_ranked(
     })
 }
 
+/// The partner context `choose_bid`'s natural branch ranks the natural candidates under, for
+/// the seat about to call after `auction` (`natural` and `implicit_pass` as in the
+/// [`BidContext`]). For harnesses that re-rank the natural candidates outside `choose_bid`
+/// (`natural_metrics`' tuning); not part of the stable API.
+#[doc(hidden)]
+pub fn natural_partner_context(
+    table: &Table,
+    natural: &NaturalInference,
+    auction: &Auction,
+    implicit_pass: ImplicitPass,
+) -> bridge_system::PartnerContext {
+    partner_context(table, natural, auction, implicit_pass)
+}
+
 /// The natural policy's choice `m_P(h)` (docs/design/15-phase4-plan.md D18): the first ranked
 /// candidate `hand` satisfies; else the natural implicit `Pass` under
 /// `ImplicitPass::Complement` (a hand that fits no natural candidate passes); else `None`.
