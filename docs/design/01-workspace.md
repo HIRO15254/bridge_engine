@@ -28,7 +28,7 @@ bridge_engine/
 └── docs/design/               # 本設計
 ```
 
-フェーズ 0 の骨格 (`12-roadmap.md` §1) で上記の全てが揃う。`crates/*/src/` は公開型と関数シグネチャを英語 rustdoc 付きで宣言し、本体は `todo!("phase N")`。`xtask/src/main.rs` はサブコマンドの枠だけ (全て「未実装」で終了コード 1)、`systems/` は `README.md` のみ、`corpus/manifest.toml` は sha256 が空、`crates/bridge-dds/` は `build.rs`、`VENDOR.md`、`src/layout_probe.cpp` を含む。
+フェーズ 0 の骨格 (`12-roadmap.md` §1) で上記の全てが揃う (`bridge-lead/` だけはフェーズ 6 で追加した)。`crates/*/src/` は公開型と関数シグネチャを英語 rustdoc 付きで宣言し、本体は `todo!("phase N")`。`xtask/src/main.rs` はサブコマンドの枠だけ (全て「未実装」で終了コード 1)、`systems/` は `README.md` のみ、`corpus/manifest.toml` は sha256 が空、`crates/bridge-dds/` は `build.rs`、`VENDOR.md`、`src/layout_probe.cpp` を含む。
 
 ## 2. クレート一覧と責務
 
@@ -77,8 +77,8 @@ flowchart TD
 
 | クレート | feature | 既定 | 内容 |
 | --- | --- | --- | --- |
-| 全クレート | `std` | on | `default = ["std"]`。`no_std` は非目標だが、将来のために feature 名を予約する |
-| 全クレート | `serde` | off | `serde = ["dep:serde"]`。上位クレートは下位の `serde` を伝播させる (`bridge-constraint/serde` は `bridge-core/serde`, `bridge-eval/serde` を有効化) |
+| 全クレート (`bridge-dds`・`bridge-lead` を除く) | `std` | on | `default = ["std"]`。`no_std` は非目標だが、将来のために feature 名を予約する |
+| 全クレート (`bridge-dds`・`bridge-lead` を除く) | `serde` | off | `serde = ["dep:serde"]`。上位クレートは下位の `serde` を伝播させる (`bridge-constraint/serde` は `bridge-core/serde`, `bridge-eval/serde` を有効化) |
 | `bridge-sample` | `parallel` | off | `parallel = ["dep:rayon"]`。WASM では無効 |
 | `bridge-system` | `cache` | off | `cache = ["std", "serde", "dep:postcard", "dep:blake3"]`。`cache.rs` (`SystemCache`) を有効化 |
 | `bridge-dds` | `openmp` | off | `DDS_THREADS_OPENMP` でビルド。既定は `DDS_THREADS_STL` |
@@ -90,6 +90,8 @@ flowchart TD
 | `bridge-lead` | `parallel` | off | `parallel = ["bridge-sample/parallel", "dep:rayon"]`。配牌ごとの DD 解析を rayon で並列化 (順序は保つ) |
 
 ファサードの既定は `default = ["std", "format"]`。`bridge-dds` は `default = []` で `std` feature を持たず、`bridge-core` を `features = ["std"]` で参照する。
+
+`bridge-lead` (アプリ層) も `default = []` で `std` / `serde` feature を持たない (feature は `dds` と `parallel` だけ)。`bridge-core`・`bridge-constraint`・`bridge-bidding`・`bridge-sample` (と optional の `bridge-format`) は `features = ["std"]` で参照し、ファサード `bridge` は既定の feature なしで参照する (`dds` で `bridge/dds`)。
 
 ファサード `bridge` のモジュール構成 (`crates/bridge/src/lib.rs`): ルートに `bridge_core::*`、`eval` (`bridge-eval`)、`constraint`、`system`、`bidding`、`play`、`sample`、`format` (feature `format`)、`dd` (`DdTable`、`DoubleDummy` トレイト、`DdError`、`dds()`。`10-dds.md` §9)。
 

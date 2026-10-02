@@ -181,7 +181,7 @@
 
 **影響するクレート**: `bridge-bidding`、`bridge-sample` (Fallback 枝の重み)。
 
-**改訂 (フェーズ 4、D19)**: ε は方策の一様床 ε/n に一本化する。`eps_exact` / `eps_partial` / `eps_natural` と `lenient_decay` は既定の経路から退役させ、`InterpretOptions::legacy()` (`InterpretMode::Legacy`) として 1 フェーズだけ残す (ESS の前後比較用)。「信頼度が低いほど防御枝を重くする」役割は、δ (システム外への逸脱) と、方策上選ばれないコール (shadowed) の Fallback 片に移る。支持集合が空にならない性質は `ANY` 片 (重み ε/n) が保つ。`strict` の意味 (Fallback 片をすべて落とす) は変わらない。
+**改訂 (フェーズ 4、D19)**: ε は方策の一様床 ε/n に一本化する。`eps_exact` / `eps_partial` / `eps_natural` と `lenient_decay` は既定の経路から退役させ、`InterpretOptions::legacy()` (`InterpretMode::Legacy`) として残す (当初は ESS の前後比較用に 1 フェーズだけの予定だったが、再現 (iii) などが読むので (iii) を退役させるまで残す。D18 の「残したもの」、07-bidding.md §9 の 8)。「信頼度が低いほど防御枝を重くする」役割は、δ (システム外への逸脱) と、方策上選ばれないコール (shadowed) の Fallback 片に移る。支持集合が空にならない性質は `ANY` 片 (重み ε/n) が保つ。`strict` の意味 (Fallback 片をすべて落とす) は変わらない。
 
 ## D16. BML 拡張
 
