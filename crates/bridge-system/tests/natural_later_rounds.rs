@@ -504,4 +504,17 @@ fn defenders_second_takeout_double_shows_extra_values() {
         assert_eq!(inf.rule, "takeout_x", "{calls}");
         assert_eq!(min_hcp(&inf), 12, "{calls}");
     }
+    // The same advancer in the pass-out seat is classified `Balancer`: by its history (the
+    // forced answer) it keeps the ordinary balancing minimum, 9+.
+    for calls in ["1H X P 1S 2H P P X", "1C X P 1H 2C P P X"] {
+        let (ctx, inf) = last(calls);
+        assert_eq!(ctx.role, Role::Balancer, "{calls}");
+        assert!(ctx.owner_answered_partners_double, "{calls}");
+        assert_eq!(ctx.kind, CallKind::Double(DoubleKind::Takeout), "{calls}");
+        assert_eq!(inf.rule, "takeout_x", "{calls}");
+        assert_eq!(min_hcp(&inf), 9, "{calls}");
+    }
+    // A balancer whose earlier call was its own (a balancing double) still adds the +3.
+    let (ctx, _) = last("1S P P X 2S P P X");
+    assert!(!ctx.owner_answered_partners_double);
 }

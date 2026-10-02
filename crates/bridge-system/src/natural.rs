@@ -327,6 +327,9 @@ pub struct CallContext {
     /// Levels skipped by `owner_first_action` when it is a bid (0 otherwise), like
     /// `partner_first_jump`.
     pub owner_first_jump: u8,
+    /// `owner`'s only non-pass call so far is a bid made right after partner's double (partner's
+    /// last call before it): the answer to partner's takeout double, `1H-X-P-1S`.
+    pub owner_answered_partners_double: bool,
     /// How many bids (not passes, doubles or redoubles) the opponents have made so far. Two or
     /// more on a first entry means the opponents have exchanged bids (opener and responder).
     pub their_bids: u8,
@@ -383,6 +386,7 @@ struct HistoryContext {
     partner_first_jump: u8,
     owner_first: Option<(usize, Call)>,
     owner_first_jump: u8,
+    owner_answered_partners_double: bool,
     their_bids: u8,
     rho_last: Option<Call>,
     owner_last: Option<Call>,
@@ -497,6 +501,13 @@ impl HistoryContext {
         };
         let partner_first_jump = first_jump(partner_first);
         let owner_first_jump = first_jump(owner_first);
+        let owner_actions = history
+            .iter()
+            .enumerate()
+            .filter(|&(i, c)| auction.seat_at(i) == owner && *c != Call::Pass)
+            .count();
+        let owner_answered_partners_double = owner_actions == 1
+            && matches!(owner_first, Some((i, Call::Bid(_))) if i >= 2 && history[i - 2] == Call::Double);
 
         HistoryContext {
             index,
@@ -521,6 +532,7 @@ impl HistoryContext {
             partner_first_jump,
             owner_first,
             owner_first_jump,
+            owner_answered_partners_double,
             their_bids,
             rho_last: history.last().copied(),
             owner_last,
@@ -588,6 +600,7 @@ impl HistoryContext {
             partner_first_jump: self.partner_first_jump,
             owner_first_action: self.owner_first.map(|(_, c)| c),
             owner_first_jump: self.owner_first_jump,
+            owner_answered_partners_double: self.owner_answered_partners_double,
             their_bids: self.their_bids,
             rho_last: self.rho_last,
             owner_last: self.owner_last,
@@ -1733,12 +1746,18 @@ pub const SECOND_TAKEOUT_DOUBLE_EXTRA: u8 = 3;
 ///
 /// Not covered, so their takeout doubles keep the ordinary minimum:
 ///
-/// - the advancer: its earlier call is usually a forced answer to partner's takeout double
-///   (`(1H)-X-(P)-1S-(P)-P-(2H)-X`), which showed nothing, not a minimum;
+/// - a player whose only earlier non-pass call answered partner's takeout double
+///   ([`CallContext::owner_answered_partners_double`]), in any role: the forced answer showed
+///   nothing, not a minimum. In the direct seat that player is the `Advancer`
+///   (`(1H)-X-(P)-1S-(P)-P-(2H)-X`: 12+), in the pass-out seat the `Balancer`
+///   (`(1H)-X-(P)-1S-(2H)-P-(P)-X`: 9+);
+/// - the advancer, whatever its earlier call;
 /// - opener: a reopening double with a minimum opening (`1D-(1S)-P-(P)-X`) is standard
 ///   (docs/design/06-system.md §8.3).
 fn is_defenders_second_action(ctx: &CallContext) -> bool {
-    matches!(ctx.role, Role::Overcaller | Role::Balancer) && ctx.owner_acted
+    matches!(ctx.role, Role::Overcaller | Role::Balancer)
+        && ctx.owner_acted
+        && !ctx.owner_answered_partners_double
 }
 
 fn rule_takeout_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
