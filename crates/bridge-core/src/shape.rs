@@ -1011,7 +1011,7 @@ mod tests {
             let (min, max) = set.hcp_bounds();
             for lo in 0..=40u8 {
                 for hi in lo..=40u8 {
-                    let want = !set.is_empty() && !(lo > max || hi < min);
+                    let want = !set.is_empty() && lo <= max && hi >= min;
                     assert_eq!(set.hcp_range_reachable(lo, hi), want, "{lo}..={hi}");
                 }
             }
