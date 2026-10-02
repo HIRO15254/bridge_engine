@@ -729,16 +729,26 @@ fn a_pasted_table_belongs_to_the_file_it_is_pasted_in() {
 
 #[test]
 fn a_file_included_twice_has_two_scopes() {
-    // Each inclusion is a file of its own: the 1D table before the directive is outside the
-    // scope in both copies (the first copy's scope ends with that copy), and the 1C table
-    // after it is inside in both.
+    // Each inclusion is a file of its own. The two copies sit under different `#SEAT`
+    // conditions, and the guard of a position has one entry per condition (the node's `seat`),
+    // so `guard_seats` tells the copies apart: the first/second seat entry comes from copy 1's
+    // directive, the third/fourth seat entry from copy 2's. A compile where only the first
+    // `#EXACTPASS FILE` of the run opens a scope has no third-seat entry.
+    //
+    // The reads of 1C (1S) do not tell them apart: the guard's edge is the trie's, whatever
+    // the seat, so 1S reaches it either way. The 1D tables sit before the directive in each
+    // copy: they stay unguarded in both seat classes, so copy 1's scope does not reach copy 2.
     let ir = compile_files(&[
         (
             "root.bml",
             "1C = 12--21 hcp, 3+!c
 1D = 12--21 hcp, 4+!d
 
+#SEAT 12
+
 #INCLUDE part.bml
+
+#SEAT 34
 
 #INCLUDE part.bml
 ",
@@ -756,8 +766,16 @@ fn a_file_included_twice_has_two_scopes() {
         ),
     ]);
     assert_eq!(count(&ir, LintCode::ExactPassWithoutPass), 0);
+    assert_eq!(
+        guard_seats(&ir),
+        [Some(SeatCond::FirstOrSecond), Some(SeatCond::ThirdOrFourth)]
+    );
     assert_eq!(read(&ir, "1C 1S"), off_system());
     assert_eq!(read(&ir, "1D 1S"), (1, true, calls_of("1H")));
+    assert_eq!(
+        read_seat(&ir, "P P 1D 1S", Seat::South),
+        (1, true, calls_of("1H"))
+    );
 }
 
 #[test]
