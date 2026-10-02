@@ -122,7 +122,7 @@
 ```ebnf
 file            = { block } ;
 block           = blank | comment | include | meta | seat | vul | heading
-                | list | enum | bidtable | paragraph ;
+                | list | enum | exactpass-file | bidtable | paragraph ;
 
 blank           = { " " } , NL ;
 comment         = "//" , { CHAR } , NL ;                         (* column 0 only *)
@@ -136,7 +136,7 @@ enum            = { WS0 , DIGIT , { DIGIT } , "." , WS , { CHAR } , NL } ;
 paragraph       = { non-blank-line } ;
 
 bidtable        = { tdirective } , ( history-row | row ) , { row | tdirective } ;
-tdirective      = hide | bidtable-kw | copy | cut | paste | stop | anyorder ;
+tdirective      = hide | bidtable-kw | copy | cut | paste | stop | anyorder | exactpass ;
 hide            = WS0 , "#HIDE" , NL ;
 bidtable-kw     = WS0 , "#BIDTABLE" , NL ;
 copy            = WS0 , "#COPY" , WS , NAME , NL , { rawline } , WS0 , "#ENDCOPY" , NL ;
@@ -144,6 +144,8 @@ cut             = WS0 , "#CUT"  , WS , NAME , NL , { rawline } , WS0 , "#ENDCUT"
 paste           = WS0 , "#PASTE" , WS , NAME , { WS , TARGET , "=" , REPL } , NL ;
 stop            = WS0 , "#STOP" , NL ;          (* ext: a system stop after the enclosing row, or at the table's history (§4.5) *)
 anyorder        = WS0 , "#ANYORDER" , NL ;      (* ext: the table's fresh X/Y/Z ignore the X<Y<Z order (§4.7) *)
+exactpass       = WS0 , "#EXACTPASS" , NL ;     (* ext: the opponents' pass before the table's rows of ours is exact (§4.8) *)
+exactpass-file  = WS0 , "#EXACTPASS" , WS , "FILE" , NL ;   (* ext: a paragraph of its own (a block); every later table of the same file has exactpass (§4.8) *)
 
 history-row     = WS0 , seq , [ WS , [ "=" , WS0 ] , description ] , NL , { contline } ;
 seq             = calltok , { "-" , calltok } , { "-" | ";" } ;    (* at least one "-" or ";" present *)
@@ -293,7 +295,9 @@ impl VulCond { pub const fn matches(self, we: bool, they: bool) -> bool; pub con
 | 先頭以外の行に `-`/`;` | 行と部分木をスキップ | `SequenceNotFirst` (Error) |
 | include の欠落 / 循環 | 行を落とす / include を無視 | `IncludeNotFound` (Warning) / `IncludeCycle` (Error) |
 | 不明な `#DIRECTIVE` | 行を除去し段落の残りを処理 | `UnknownDirective` (Warning) |
-| 表の指示子 (`#ANYORDER`、`#STOP`) だけの段落 (空行の後に表) | 表を名指さないので効果なし | `UnknownDirective` (Warning) |
+| 表の指示子 (`#ANYORDER`、`#EXACTPASS`、`#STOP`) だけの段落 (空行の後に表) | 表を名指さないので効果なし | `UnknownDirective` (Warning) |
+| 表の段落の中の `#EXACTPASS FILE` (§4.8) | 無視 (ファイルの形は独立した段落に書く) | `UnknownDirective` (Warning) |
+| `#EXACTPASS` (表の形) / `#EXACTPASS FILE` が、相手のパスの直後の我々の行の無い表 (ファイルの形では、範囲のどの表にもその行が無い) にかかる | 効果なし (守る位置が無い) | `ExactPassWithoutPass` (Info) |
 | `#PASTE` の未定義名 | 行を除去 | `PasteUnknownName` (Warning) |
 
 公開 API は `lexer::load` → `parser::parse` の 2 段で、単独の `parse_str` は無い。通常は `compile` (§9.4) を使い、AST だけが要るツール (`insta` スナップショット) は `parser::parse(lexer::load(path, text, &loader))` と書く。
@@ -541,6 +545,44 @@ impl<'a> LookupKey<'a> {
 **可搬性 (D16 の補遺)。** `bml.py` はこの指示子を知らない。`#STOP` と同じく表の中の未知の行であり、`bml.py` では順序つきで展開される (こちらの展開の部分集合になる) か、未知の指示子として扱われる。本実装の旧版 (`COMPILE_REVISION` 6 以前) では `UnknownDirective` (Warning) を出して無視していた。
 
 **実装。** `ast.rs::BidTable::any_order`; `parser/mod.rs::parse_table_paragraph` (`#ANYORDER`)、`xyz_variables` (Lint の判定); `pattern.rs::Binding::candidates_in_order` (`ordered == false` で順序の下限・上限を外す。`candidates` は `ordered = true` の版); `compile/expand.rs::Frame::any_order` (`expand_table` が表の値で根を作る)、`generate_candidates_in_order` (`expand_row` が `!frame.any_order` を渡す); `lint.rs::LintCode::AnyOrderWithoutVariables`。試験: `parser/mod.rs` の `any_order_is_a_table_directive`、`any_order_without_two_variables_is_reported`、`tests/any_order.rs` (9 件)。`COMPILE_REVISION` 7。
+
+### 4.8 相手のパスを厳密にする (`#EXACTPASS`、`#EXACTPASS FILE`、フェーズ 4 拡張)
+
+**目的。** 照合は、表の無い相手の割り込みを `resolve_lenient` で最大 2 つまでパスに読み替える (§6.2、`16-extended-bml.md` §7.1)。割り込みを知らない表でもシステムを続けるための既定だが、相手のパスを前提に書いた続き (ステイマンへの応答、オープナーのリビッドの後) では、相手が実際にはビッドやダブルをした局面に、パスの後の表を当てはめてしまう (一部は不正なコール、一部は意味の違うコール)。フェーズ 4 の SAYC は、これを機械的に選んだ 121 行の履歴行 `…-(any)-` (行の無い空の `(any)` を相手のパスの兄弟に置く) を並べた `interference-guards.bml` で防いでいた (`12-roadmap.md` の「フェーズ 4 の resolve_lenient 調査」)。`#EXACTPASS` は同じことを指示子で書く: 「この表 (このファイルの表) の相手のパスは厳密である。その位置での相手のそれ以外のコールは、どの表も辺を与えていなければシステム外である」。
+
+**構文。**
+
+- 表の形: 表の段落の中の 1 行 `#EXACTPASS` (前後の空白は無視)。`#ANYORDER` と同じく、表のどこに書いても (行の下に字下げしても) 表全体に効き、`#CUT` の中に書けば貼った先の表に効く。
+- ファイルの形: 独立した段落 (前後が空行) の `#EXACTPASS FILE` (2 語の間は任意の空白)。**同じファイルの、それより後の全ての表** に、表の形を書いたのと同じく効く。ファイルは include の 1 回分 (`FileId`。同じファイルを 2 度 include すれば 2 つ) で、範囲はそのファイルの終わりまで。前の表、そのファイルが include するファイル、そのファイルを include した側のファイル (include の後の表も) には及ばない。同じファイルの 2 つ目以降の `#EXACTPASS FILE` は何も変えない。範囲の中の表に表の形も書いてあれば、ファイルの形を使う (守りの行の位置が変わるだけで、意味は同じ)。
+
+**意味。** 対象は **相手のパスの直後に表が書いた我々の行** である。
+
+- (a) 我々のコールの後の我々の行 (間に相手の暗黙パス、§4.3)。例えば `1C-` の表の行や、行の子の我々の行 (オープナーのリビッド)。
+- (b) 書いた相手のパス `(P)` の後の我々の行: 履歴の最後のトークン (`1N-(P)-2C-(P)-`)、相手の行 `(P)`、代替 `(P/1S)` のパスの候補。
+- 対象外: 相手のパス以外のコール (`(1S)`、`(any)`、`(bid)`) の後の我々の行。履歴の途中のパス (`1N-(P)-2C-(P)-` の最初の `(P)`。そこに我々の行を書く表が守る)。
+- 判定は展開ごと (変数の束縛、`#ANYORDER`、相対レベル、`nX`、代替の候補ごと) である。その位置で我々の行が 1 つでも展開されれば (候補の無い行や、`LevelWithoutAnchor` で捨てた行は数えない)、パスの前の位置 P (相手の手番) を守る。
+
+P の守りは、**全ての表の展開と停止の接ぎ木 (§4.5) の後に**、行の無い履歴行 `<P までの経路>-(any)-` を、守る表の `#SEAT`/`#VUL` で書いたのと同じである。ただし:
+
+- P で、パス以外のありうる (緩い合法性で) 相手のコールの全てに既に辺があれば、何も加えない。辺は具体的な辺、表が書いた類の辺 (`(any)`/`(bid)`/`(suit)`)、停止の `(any)` のどれでもよい。停止の位置では停止の `(any)` が全てを受けるので、重複した辺は作らない (停止のパスは従来どおり出る)。
+- そうでなければ、`(any)` の辺を P の他の類の辺の **後に** 加える。照合は具体的な辺、類の辺 (入れた順) の順に試して後戻りしないので、守りはどの辺も受けないコールだけを受ける。ファイル上で後の表が書いた `(bid)` なども守りより先に試され、`(bid)` があってもダブルは守りへ行く。`(nX)` は具体的な辺に展開されるので、その候補以外のビッドとダブルが守りへ行く。
+- 辺の先のノードは行の無い相手のノードで、説明は空 (どんな手でも。`EmptyDescription` Info)、行 (`Row`) の位置は指示子の行 (ファイルの形では `#EXACTPASS FILE` の行)。P の直前のコールのノードの子に加わる。合成ノードではない。兄弟の Lint はこの `(any)` を手で書いたときと同じで、説明の無い相手の兄弟 (説明の無い `(P)` など) があると `SiblingSubset` (Warning) が指示子の行に出る。
+- 同じ P を複数の表 (展開) が守っても辺は 1 本で、ノードは最初に守った表の条件を持つ。
+
+**解決の結果。** P で相手が辺の無いコールをすると、照合はそれを守りの `(any)` でたどって完全一致し、その先には我々の行が無い。候補が無いのでシステム外 (自然推論、`16-extended-bml.md` §7.8) になり、`resolve_lenient` はパスへの読み替えをしない (最初の試行が完全一致する)。相手のパスは従来どおり表の行へ進む。
+
+**席とバル。** 守りのノードのエントリは守る表の `#SEAT`/`#VUL` を持つが、トライの辺には条件が無い (全ての辺と同じ)。他の席の条件で同じ P に行を書いた表があっても、その席でも辺の無いコールは守りへ行く (エントリの無い相手のノードは照合を止めない。§6.2)。手で `(any)` を書いたときと同じである。
+
+**Lint。**
+
+- `ExactPassWithoutPass` (Info): 表の形で、表の履歴と行に (a)/(b) の我々の行が構文の上で無い (オープニングだけの表、`1C-(1S)-` の行だけの表、`(any)` の後の行だけの表)。ファイルの形で、範囲のどの表にもその行が無い。位置は指示子の行。
+- `UnknownDirective` (Warning): 表の形だけの独立した段落 (表を名指さない。メッセージはファイルの形を示す)、表の段落の中の `#EXACTPASS FILE` (無視する)、`#EXACTPASS` の後の他の語 (`#EXACTPASS ALL`)。
+
+**可搬性 (D16 の補遺)。** `bml.py` はこの指示子を知らない。表の形は `#STOP`・`#ANYORDER` と同じく表の中の未知の行、ファイルの形は未知の指示子の段落である。どちらもトライの辺を加えるだけなので、無視するツールでは「割り込みをパスと読む」既定の動作になる。
+
+**SAYC (フェーズ 4 のレーン guard)。** `interference-guards.bml` を消し、それが守っていたレーン D2 の 3 ファイル (`competing.bml`、`continuations-p12.bml`、`later-rounds-extra.bml`) の表の前に `#EXACTPASS FILE` を置いた (`systems/sayc/NOTES.md` #P16)。`xtask coverage` (f37ccad との比較) の全ての指標 (`[G]`/`[C]` の strict・raw・停止の監査、all-Exact、`resolve_lenient` の呼び出しとエントリ、Partial、NoCandidate、MLE、位置、排他索引のグループとノード) は同一である。違いは構造だけである。守りのファイルの 6 つの展開 (`1Y-(P)-1Z-(P)-2X-(P)-2Y-(any)-` と `…-2Z-(any)-` の、停止のある我々の 2Y/2Z の後の位置: `1D-1H-2C-2D`/`2H`、`1D-1S-2C-2D`/`2S`、`1H-1S-2D-2H`/`2S`) は、旧版では停止より先に作られ、停止がその `(any)` を通っていた。新版では停止の `(any)` が受けるので守りを作らない (8 通りの席・バルで、その先の 2,960 位置の照合結果は同一)。そのためノード 10,494 → 10,488、トライ 11,122 → 11,116、排他索引のキー 65,216 → 65,120、行 7,518 → 7,400 (守りのファイルの 121 行が、3 ファイルの指示子の行 3 つになる)、postcard IR 3,553,923 → 3,537,665 バイト。Lint は、守りのファイルの行が出していたもの (`NonStandardToken` 122 (`(any)` 121 と `1D/H` 1)、束縛の候補が無い `VariableNoCandidate` 31、`IllegalCall` (Info) 1) が消え、上の 6 つの展開の `EmptyDescription` と `SiblingSubset` (Warning) が 6 ずつ減る。
+
+**実装。** `ast.rs::BidTable::exact_pass` (効いている指示子の位置); `parser/mod.rs::parse_table_paragraph` (`#EXACTPASS`、`is_exact_pass_file`)、`ExactPassFiles` (ファイルの形の範囲と Lint)、`has_row_after_their_pass` (Lint の判定); `compile/expand.rs::Frame::exact_pass`、`expand_children` (我々の行を展開した位置で、直前が我々のコールか書いた `(P)` なら `record_guard`)、`graft_exact_pass_guards` (`graft_stops` の後。辺の無いコールがあれば、行の無い `(any)` を `expand_row` で展開して親の子に加える); `lint.rs::LintCode::ExactPassWithoutPass`。試験: `parser/mod.rs` の `exact_pass_*` と `a_row_of_ours_after_their_pass_is_found`、`tests/exact_pass.rs` (18 件)、`tests/sayc.rs` の構造の試験 (D2 の表が守られていること)。`COMPILE_REVISION` 10。`IR_FORMAT` は 3 のまま (IR の形は変わらない)。
 
 ## 5. IR (`ir.rs`)
 
@@ -1419,6 +1461,7 @@ impl LintSummary { pub fn of(lints: &[Lint]) -> LintSummary; }
 | expansion | `LevelWithoutAnchor` | Error | 相対レベル (`cS`、`jY`) の基準となる最後のビッドがワイルドカードのため不明 (その位置で行と部分木を捨てる。§4.6) |
 | expansion | `NoSufficientLevel` | Info | 相対レベルが 7 を超え、候補が無い (§4.6) |
 | parse | `AnyOrderWithoutVariables` | Info | `#ANYORDER` の表が `X`/`Y`/`Z` のうち 2 つ以上を使っていない (順序が無いので効果が無い。§4.7) |
+| parse | `ExactPassWithoutPass` | Info | `#EXACTPASS` の表に、相手のパス (書いた `(P)` か暗黙) の直後の我々の行が無い。`#EXACTPASS FILE` の範囲のどの表にもその行が無い (守る位置が無いので効果が無い。§4.8) |
 | stop | `StopUnderForcing` | Warning | パートナーのフォーシングのコールに相手がパスした後、またはゲームフォース中でゲーム未満の位置で、停止のパス (`{prio:-100} {stop} any hand`、書いたものか合成) が候補になる (§4.5、§9.3 の 9) |
 
 ### 9.3 コンパイル後の九つの検査
@@ -1485,7 +1528,7 @@ impl SystemCache {
 }
 ```
 
-`compile_revision` は `COMPILE_REVISION` (フェーズ 3 が 1、フェーズ 4 が 2、システム停止 §4.5 が 3、条件の違う停止が共有する輪が 4、合成された停止のパスの説明文が 5、相対レベル §4.6 とスート長の比較 §7.4 が 6、`#ANYORDER` §4.7 が 7、レーン D2 のレビュー修正 (指示子だけの段落・相対レベルで始まる行・代替の相対レベルの Lint、`LevelWithoutAnchor` の重複除去、`!h>=!s+1` を比較と読まない、`StopUnderForcing`) が 8、ノードの説明文から注釈を除いて格納するのが 9 (統合線ではレーン D2 のマージ前に 6 だった)) である。`compile()` の出力が形式を変えずに変わるとき (新しい Lint など) に上げる。クレートのバージョンと `IR_FORMAT` が同じでも、古いコンパイラが書いたエントリは別のキーになり、読まれずに再コンパイルされる (フェーズ 4 の排他索引の Lint を持たない IR が、温まったキャッシュから返るのを防ぐ。回帰テスト `an_entry_under_the_pre_revision_key_is_a_miss`)。
+`compile_revision` は `COMPILE_REVISION` (フェーズ 3 が 1、フェーズ 4 が 2、システム停止 §4.5 が 3、条件の違う停止が共有する輪が 4、合成された停止のパスの説明文が 5、相対レベル §4.6 とスート長の比較 §7.4 が 6、`#ANYORDER` §4.7 が 7、レーン D2 のレビュー修正 (指示子だけの段落・相対レベルで始まる行・代替の相対レベルの Lint、`LevelWithoutAnchor` の重複除去、`!h>=!s+1` を比較と読まない、`StopUnderForcing`) が 8、ノードの説明文から注釈を除いて格納するのが 9 (統合線ではレーン D2 のマージ前に 6 だった)、`#EXACTPASS` (表と `FILE` の形) §4.8 と Lint `ExactPassWithoutPass` が 10) である。`compile()` の出力が形式を変えずに変わるとき (新しい Lint など) に上げる。クレートのバージョンと `IR_FORMAT` が同じでも、古いコンパイラが書いたエントリは別のキーになり、読まれずに再コンパイルされる (フェーズ 4 の排他索引の Lint を持たない IR が、温まったキャッシュから返るのを防ぐ。回帰テスト `an_entry_under_the_pre_revision_key_is_a_miss`)。
 
 手順: (1) `loader` で `path` を読み、`lexer::load` で include を解決して `resolved source` (全ファイルの連結、`Loaded.files` の順) を得る。(2) `key` を計算し `dir/<hex(key)>.ir` を探す。(3) あれば `postcard` でデコードする。ヘッダの `ir_format` が `IR_FORMAT` と違う、`compiler_version` が違う、デコードに失敗する、のいずれも「不一致」として再コンパイルし上書きする (エラーにはしない)。(4) 無ければ `compile` して書く。書き込みは一時ファイル + rename で原子的に行い、I/O の失敗だけが `Err`。`std` 無し (wasm) では `SystemCache` を提供せず、`compile` だけを使う。
 

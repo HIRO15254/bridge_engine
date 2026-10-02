@@ -81,6 +81,11 @@ pub enum LintCode {
     /// whose right-hand opponent passed, or while the partnership is in a game force below game:
     /// every hand no other row takes passes a forcing call (Warning; `06-system.md` §4.5).
     StopUnderForcing,
+    // `#EXACTPASS` (appended for the same reason)
+    /// `#EXACTPASS` in a table, or `#EXACTPASS FILE` before the tables of a file, where no row
+    /// of ours follows an opponents' pass (written `(P)` or implicit): there is no position to
+    /// guard, so the directive has no effect (Info; `06-system.md` §4.8).
+    ExactPassWithoutPass,
 }
 
 /// One diagnostic.

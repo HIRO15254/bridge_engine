@@ -21,7 +21,9 @@
 //! side alternate seats, e.g. opener/responder) without tracking player identity by hand.
 //!
 //! System stops (`#STOP`, `{stop}`, `docs/design/06-system.md` §4.5) are recorded while the
-//! tables are expanded and grafted onto the finished trie by [`graft_stops`].
+//! tables are expanded and grafted onto the finished trie by [`graft_stops`]; so are the
+//! positions `#EXACTPASS` guards (§4.8), whose `(any)` siblings [`graft_exact_pass_guards`] adds
+//! after the stops.
 
 use std::ops::RangeInclusive;
 use std::sync::Arc;
@@ -60,6 +62,24 @@ pub(crate) struct Expansion {
     row_by_span: std::collections::HashMap<Span, RowId>,
     /// The system stops met so far, grafted by [`graft_stops`] once every table is expanded.
     stops: Vec<StopSite>,
+    /// The positions `#EXACTPASS` guards, met so far (first one per position), grafted by
+    /// [`graft_exact_pass_guards`] once every table is expanded and every stop grafted.
+    guards: Vec<GuardSite>,
+    /// `(we_opened, trie path)` of every position in `guards`.
+    guarded: std::collections::HashSet<(bool, Vec<Edge>)>,
+}
+
+/// One opponents' pass that `#EXACTPASS` makes exact (`docs/design/06-system.md` §4.8): a row
+/// of ours in its scope follows it.
+struct GuardSite {
+    /// The trie position the pass leaves (the opponents are to call there).
+    at: Vec<Edge>,
+    /// The frame of the call the pass follows (the last call written before it): the guard's
+    /// `(any)` step is expanded from it exactly as a row written after that call would be (an
+    /// implicit pass of ours included, when that call is theirs too).
+    from: Frame,
+    seat: SeatCond,
+    vul: VulCond,
 }
 
 /// One system stop: the trie position after which the partnership passes with any hand
@@ -106,6 +126,8 @@ pub(crate) fn expand_file(
         too_many_nodes_reported: false,
         row_by_span: std::collections::HashMap::new(),
         stops: Vec::new(),
+        guards: Vec::new(),
+        guarded: std::collections::HashSet::new(),
     };
     for table in tables {
         if ex.nodes.len() >= opts.max_nodes {
@@ -118,8 +140,99 @@ pub(crate) fn expand_file(
         expand_table(table, meta, opts, &mut ex);
     }
     graft_stops(&mut ex);
+    graft_exact_pass_guards(&mut ex, meta, opts);
     demote_illegal_call_for_bindings_that_succeeded(&mut ex);
     ex
+}
+
+/// Records the guard of the opponents' pass at `at` (see [`GuardSite`]), once per position.
+fn record_guard(at: Vec<Edge>, from: &Frame, seat: SeatCond, vul: VulCond, ex: &mut Expansion) {
+    let we_opened = we_opened_of(from);
+    if at.is_empty() || ex.guarded.contains(&(we_opened, at.clone())) {
+        return;
+    }
+    ex.guarded.insert((we_opened, at.clone()));
+    ex.guards.push(GuardSite {
+        at,
+        from: from.clone(),
+        seat,
+        vul,
+    });
+}
+
+/// Gives every position an `#EXACTPASS` table guards an empty `(any)` sibling of the
+/// opponents' pass (`docs/design/06-system.md` §4.8), as if the history row `<path>-(any)-` with
+/// no rows had been written after every table, under the guarding table's `#SEAT`/`#VUL`.
+///
+/// It runs after [`graft_stops`], so it sees every edge the tables and the stops gave the
+/// position; a position where every call the opponents can make (other than the pass) already
+/// has an edge -- a concrete one, a class the table or another table wrote, or the `(any)` step
+/// of a stop -- is left alone. Otherwise the `(any)` edge is appended after the position's
+/// other wildcard edges, so it only takes the calls nothing else takes, and leads to a node with
+/// no rows: an off-system position, where the next call is chosen by natural inference instead
+/// of `resolve_lenient` reading the call as a pass. The node is built like the history row's
+/// `(any)` (an empty description: any hand, `EmptyDescription`), its row is the directive's
+/// line, and it joins the children of the node it follows.
+fn graft_exact_pass_guards(ex: &mut Expansion, meta: &SystemMeta, opts: &CompileOptions) {
+    let sites = std::mem::take(&mut ex.guards);
+    ex.guarded.clear();
+    for site in &sites {
+        let we_opened = we_opened_of(&site.from);
+        let Some(at) = ex.trie.find_path(we_opened, &site.at) else {
+            continue;
+        };
+        let without_edge = (0..=37u8).filter_map(Call::from_index).any(|call| {
+            call != Call::Pass
+                && relaxed_is_legal(&site.at, call)
+                && ex.trie.find_child_call(at, call).is_none()
+                && !ex
+                    .trie
+                    .class_edges(at)
+                    .any(|(class, _)| class.matches(call))
+        });
+        if !without_edge {
+            continue;
+        }
+        let Some(span) = site.from.exact_pass.clone() else {
+            continue;
+        };
+        let row = BmlNode {
+            calls: vec![CallToken {
+                side: Side::Them,
+                pattern: CallPattern::Class(OppClass::AnyCall),
+                raw: "(any)".to_string(),
+                span: span.clone(),
+            }],
+            description: Description::default(),
+            children: Vec::new(),
+            stop: false,
+            indent: 0,
+            span,
+        };
+        let parent = ex
+            .trie
+            .covering_entry(we_opened, &site.from.edges, site.seat, site.vul);
+        let mut claimed = Claimed::default();
+        let outcomes = expand_row(
+            &row,
+            true,
+            &mut claimed,
+            we_opened,
+            site.seat,
+            site.vul,
+            meta,
+            opts,
+            &site.from,
+            ex,
+        );
+        for (node_id, _) in outcomes {
+            if let Some(p) = parent {
+                if !ex.nodes[p.0 as usize].children.contains(&node_id) {
+                    ex.nodes[p.0 as usize].children.push(node_id);
+                }
+            }
+        }
+    }
 }
 
 /// An exact row nested under a variable-bound ancestor (a history token, or a `Var`/`Strains`
@@ -489,6 +602,9 @@ struct Frame {
     /// The table has `#ANYORDER` (`docs/design/06-system.md` §4.7): fresh `X`/`Y`/`Z` bindings
     /// ignore the `X < Y < Z` order.
     any_order: bool,
+    /// The `#EXACTPASS` directive in force for the table (`docs/design/06-system.md` §4.8):
+    /// the opponents' passes right before its rows of ours are guarded ([`GuardSite`]).
+    exact_pass: Option<Span>,
 }
 
 impl Frame {
@@ -504,6 +620,7 @@ impl Frame {
             hcp_by_seat: [None, None, None, None],
             under_wildcard: false,
             any_order: false,
+            exact_pass: None,
         }
     }
 
@@ -1021,6 +1138,7 @@ fn expand_table(table: &BidTable, meta: &SystemMeta, opts: &CompileOptions, ex: 
     let we_opened = first_side == Side::Us;
     let root = Frame {
         any_order: table.any_order,
+        exact_pass: table.exact_pass.clone(),
         ..Frame::root()
     };
 
@@ -1034,8 +1152,9 @@ fn expand_table(table: &BidTable, meta: &SystemMeta, opts: &CompileOptions, ex: 
         opts,
         &root,
         None,
+        None,
         ex,
-        &mut |frame, parent, ex| {
+        &mut |frame, prev, parent, ex| {
             expand_children(
                 &table.rows,
                 we_opened,
@@ -1044,6 +1163,7 @@ fn expand_table(table: &BidTable, meta: &SystemMeta, opts: &CompileOptions, ex: 
                 meta,
                 opts,
                 frame,
+                prev,
                 parent,
                 ex,
             );
@@ -1069,11 +1189,16 @@ fn expand_table(table: &BidTable, meta: &SystemMeta, opts: &CompileOptions, ex: 
     );
 }
 
+/// The callback [`expand_history`] runs at the end of each history branch: the frame after the
+/// last history token, the frame before it, and that token's node.
+type HistoryDone<'a> = dyn FnMut(&Frame, Option<&Frame>, Option<NodeId>, &mut Expansion) + 'a;
+
 /// Expands the history row left to right; `on_done` runs once per resulting branch (normally one,
 /// but a bound variable in the history can itself have several candidates, e.g. `1M-` covering
 /// both majors, in which case the rest of the table is expanded once per branch), with `parent`
 /// set to the node for the last history token on that branch (`None` for an empty history), so
-/// the table's own rows can be linked in as its children.
+/// the table's own rows can be linked in as its children, and with the frame before that token
+/// (`prev`, `None` for an empty history).
 #[allow(clippy::too_many_arguments)]
 fn expand_history(
     tokens: &[CallToken],
@@ -1084,12 +1209,13 @@ fn expand_history(
     meta: &SystemMeta,
     opts: &CompileOptions,
     frame: &Frame,
+    prev: Option<&Frame>,
     parent: Option<NodeId>,
     ex: &mut Expansion,
-    on_done: &mut dyn FnMut(&Frame, Option<NodeId>, &mut Expansion),
+    on_done: &mut HistoryDone<'_>,
 ) {
     let Some((tok, rest)) = tokens.split_first() else {
-        on_done(frame, parent, ex);
+        on_done(frame, prev, parent, ex);
         return;
     };
     let is_last = rest.is_empty();
@@ -1133,6 +1259,7 @@ fn expand_history(
             meta,
             opts,
             &next,
+            Some(frame),
             Some(node_id),
             ex,
             on_done,
@@ -1157,6 +1284,11 @@ fn expand_history(
 /// produced ([`Claimed`]): an exact row shadows it with [`LintCode::ShadowedByExact`], and an
 /// earlier pattern row (the `1M …` then catch-all `1X …` idiom) silently, as bss.py's
 /// `bid not in bids_processed` does.
+///
+/// `frame` is the frame of the call the rows follow (the parent row or the history's last
+/// token) and `prev` the frame before that call. In an `#EXACTPASS` table, when a row of ours
+/// follows the opponents' pass -- the implicit one after a call of ours, or a written `(P)` --
+/// the position the pass leaves is recorded for [`graft_exact_pass_guards`].
 #[allow(clippy::too_many_arguments)]
 fn expand_children(
     rows: &[BmlNode],
@@ -1166,11 +1298,14 @@ fn expand_children(
     meta: &SystemMeta,
     opts: &CompileOptions,
     frame: &Frame,
+    prev: Option<&Frame>,
     parent: Option<NodeId>,
     ex: &mut Expansion,
 ) {
     let mut claimed = Claimed::default();
     let mut bids_processed: std::collections::HashSet<Edge> = std::collections::HashSet::new();
+    // Whether a row of ours was expanded here (each of its candidates follows the same pass).
+    let mut ours_expanded = false;
 
     for row in rows.iter().filter(|r| is_exact_row(r)) {
         for (node_id, next) in expand_row(
@@ -1185,6 +1320,7 @@ fn expand_children(
             frame,
             ex,
         ) {
+            ours_expanded |= row.calls[0].side == Side::Us;
             let edge = *next
                 .edges
                 .last()
@@ -1225,6 +1361,7 @@ fn expand_children(
                 meta,
                 opts,
                 &next,
+                Some(frame),
                 Some(node_id),
                 ex,
             );
@@ -1243,6 +1380,7 @@ fn expand_children(
             frame,
             ex,
         ) {
+            ours_expanded |= row.calls[0].side == Side::Us;
             let edge = *next
                 .edges
                 .last()
@@ -1283,9 +1421,24 @@ fn expand_children(
                 meta,
                 opts,
                 &next,
+                Some(frame),
                 Some(node_id),
                 ex,
             );
+        }
+    }
+    if ours_expanded && frame.exact_pass.is_some() {
+        match frame.path.last().map(|p| p.side) {
+            // The implicit pass of theirs between our call and our rows.
+            Some(Side::Us) => record_guard(frame.edges.clone(), frame, seat, vul, ex),
+            // A written `(P)` (one candidate of `(P/1S)` too): guarded from the call before it.
+            Some(Side::Them) if frame.edges.last() == Some(&Edge::Call(Call::Pass)) => {
+                if let Some(prev) = prev {
+                    let at = frame.edges[..frame.edges.len() - 1].to_vec();
+                    record_guard(at, prev, seat, vul, ex);
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -2421,6 +2574,7 @@ mod tests {
             rows,
             stop: false,
             any_order: false,
+            exact_pass: None,
             span: test_span(),
         }
     }

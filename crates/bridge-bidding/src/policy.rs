@@ -62,9 +62,10 @@ impl PolicyParams {
     /// merged; coverage `system_hash` of the SAYC sources `fnv1a64:bac068b4d7749231`,
     /// `COMPILE_REVISION` 9), where ln L = −7295.9 on the tune split (−1.764 per call) and
     /// −6663.2 on the eval split at the MLE. The phase-4 placeholder (`ε = 0.01`, `δ = 0.3`)
-    /// gives −10973.3 on the same tune split. Refit when the SAYC data or the natural engine
-    /// changes; the fits are recorded in docs/design/12-roadmap.md (the phase-4 integration
-    /// after lanes D3, len and perf).
+    /// gives −10973.3 on the same tune split. Lane guard's `#EXACTPASS` rewrite of the same
+    /// SAYC (`COMPILE_REVISION` 10) left every coverage metric, this fit included, unchanged.
+    /// Refit when the SAYC data or the natural engine changes; the fits are recorded in
+    /// docs/design/12-roadmap.md (the phase-4 integration after lanes D3, len and perf).
     pub const fn human() -> PolicyParams {
         PolicyParams {
             epsilon: 0.3404,

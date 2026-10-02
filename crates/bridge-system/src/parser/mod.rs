@@ -9,10 +9,10 @@ pub mod call;
 pub mod clipboard;
 
 use crate::{
-    CallPattern, Lint, LintCode, Var,
+    CallPattern, Lint, LintCode, Side, Var,
     ast::{
-        BidTable, Block, BmlFile, BmlNode, CallToken, Description, RawLine, SeatCond, Span, Tri,
-        VulCond,
+        BidTable, Block, BmlFile, BmlNode, CallToken, Description, FileId, RawLine, SeatCond, Span,
+        Tri, VulCond,
     },
     lexer::Loaded,
 };
@@ -26,6 +26,7 @@ pub fn parse(loaded: Loaded) -> BmlFile {
     let mut clipboard = Clipboard::default();
     let mut seat = SeatCond::default();
     let mut vul = VulCond::default();
+    let mut exact_pass_files = ExactPassFiles::default();
 
     for paragraph in paragraphs {
         match classify(&paragraph) {
@@ -48,9 +49,14 @@ pub fn parse(loaded: Loaded) -> BmlFile {
             }
             ParagraphKind::Meta => parse_meta(&paragraph, &mut lints, &mut blocks),
             ParagraphKind::BidTable | ParagraphKind::Directive => {
-                if let Some(block) =
-                    parse_table_paragraph(paragraph, &mut clipboard, seat, vul, &mut lints)
-                {
+                if let Some(block) = parse_table_paragraph(
+                    paragraph,
+                    &mut clipboard,
+                    seat,
+                    vul,
+                    &mut exact_pass_files,
+                    &mut lints,
+                ) {
                     blocks.push(block);
                 }
             }
@@ -62,11 +68,56 @@ pub fn parse(loaded: Loaded) -> BmlFile {
         }
     }
 
+    exact_pass_files.report_unused(&mut lints);
+
     BmlFile {
         root: crate::lexer::ROOT,
         files: loaded.files,
         blocks,
         lints,
+    }
+}
+
+/// The `#EXACTPASS FILE` directives met so far: each puts every later table of its own file in
+/// scope (`docs/design/06-system.md` §4.8). A file is a [`FileId`], one per inclusion, so the
+/// scope ends with the file and never reaches a file it includes or the file that includes it.
+#[derive(Default)]
+struct ExactPassFiles {
+    /// `(file, the directive's location, whether a table in its scope has a row of ours right
+    /// after an opponents' pass)`; the first directive of a file is the one in force.
+    files: Vec<(FileId, Span, bool)>,
+}
+
+impl ExactPassFiles {
+    /// Opens the scope of the directive at `span` for the rest of its file.
+    fn open(&mut self, span: Span) {
+        if !self.files.iter().any(|(f, _, _)| *f == span.file) {
+            self.files.push((span.file, span, false));
+        }
+    }
+
+    /// The directive whose scope covers a table of `file`, if any, noting whether the table has
+    /// a row for it to act on.
+    fn scope_of(&mut self, file: FileId, acts: bool) -> Option<Span> {
+        let (_, span, used) = self.files.iter_mut().find(|(f, _, _)| *f == file)?;
+        *used |= acts;
+        Some(span.clone())
+    }
+
+    /// `ExactPassWithoutPass` for each directive none of whose tables it could act on.
+    fn report_unused(&self, lints: &mut Vec<Lint>) {
+        for (_, span, used) in &self.files {
+            if !used {
+                lints.push(
+                    Lint::info(
+                        LintCode::ExactPassWithoutPass,
+                        "#EXACTPASS FILE: no table after it in this file has a row of ours right \
+                         after an opponents' pass, so it has no effect",
+                    )
+                    .with_span(span.clone()),
+                );
+            }
+        }
     }
 }
 
@@ -254,6 +305,39 @@ fn xyz_variables(history: &[CallToken], rows: &[BmlNode]) -> usize {
     history.iter().for_each(|t| pattern(&t.pattern, &mut seen));
     rows.iter().for_each(|n| node(n, &mut seen));
     seen.iter().filter(|&&b| b).count()
+}
+
+/// Whether a table has a row of ours right after an opponents' pass: after a `(P)` (in the
+/// history, as a row, or as an alternative such as `(P/1S)`), or after a call of ours, with the
+/// opponents' implicit pass between the two (the positions `#EXACTPASS` acts on).
+fn has_row_after_their_pass(history: &[CallToken], rows: &[BmlNode]) -> bool {
+    fn is_pass(p: &CallPattern) -> bool {
+        match p {
+            CallPattern::Exact(call) => *call == bridge_core::Call::Pass,
+            CallPattern::AnyOf(alts) => alts.iter().any(is_pass),
+            _ => false,
+        }
+    }
+    /// `before`: the side and pattern of the call the rows follow (`None` for openings).
+    fn walk(before: Option<(Side, &CallPattern)>, rows: &[BmlNode]) -> bool {
+        let after_their_pass = match before {
+            Some((Side::Us, _)) => true,
+            Some((Side::Them, p)) => is_pass(p),
+            None => false,
+        };
+        rows.iter().any(|r| {
+            let tok = &r.calls[0];
+            (tok.side == Side::Us && after_their_pass)
+                || walk(Some((tok.side, &tok.pattern)), &r.children)
+        })
+    }
+    walk(history.last().map(|t| (t.side, &t.pattern)), rows)
+}
+
+/// `#EXACTPASS FILE` (the words separated by any whitespace).
+fn is_exact_pass_file(trimmed: &str) -> bool {
+    let mut words = trimmed.split_whitespace();
+    words.next() == Some("#EXACTPASS") && words.next() == Some("FILE") && words.next().is_none()
 }
 
 /// Whether `pattern` (or one of its alternatives) uses a relative level (`c`, `j`).
@@ -552,6 +636,7 @@ fn parse_table_paragraph(
     clipboard: &mut Clipboard,
     seat: SeatCond,
     vul: VulCond,
+    exact_pass_files: &mut ExactPassFiles,
     lints: &mut Vec<Lint>,
 ) -> Option<Block> {
     if let Some(block) = try_whole_cut_block(&paragraph, clipboard) {
@@ -578,6 +663,8 @@ fn parse_table_paragraph(
     let mut history_no_trailing = false;
     let mut table_stop = false;
     let mut any_order = false;
+    let mut exact_pass: Option<Span> = None;
+    let mut exact_pass_file: Option<Span> = None;
     let mut bidtable = false;
 
     for line in &expanded {
@@ -607,6 +694,16 @@ fn parse_table_paragraph(
         if trimmed.trim_end() == "#ANYORDER" {
             // Table-scoped wherever it is written (a sub-row's indentation does not narrow it).
             any_order = true;
+            continue;
+        }
+        if trimmed.trim_end() == "#EXACTPASS" {
+            // Table-scoped wherever it is written, like `#ANYORDER`.
+            exact_pass.get_or_insert_with(|| line.span.clone());
+            continue;
+        }
+        if is_exact_pass_file(trimmed) {
+            // Valid only as a paragraph of its own (checked once the paragraph is read).
+            exact_pass_file.get_or_insert_with(|| line.span.clone());
             continue;
         }
         if trimmed.trim_end() == "#STOP" {
@@ -828,13 +925,20 @@ fn parse_table_paragraph(
     }
 
     if history.is_empty() && roots.is_empty() {
-        // A paragraph of table directives alone (`#ANYORDER`, `#STOP`, `#HIDE` or `#BIDTABLE`
-        // followed by a blank
-        // line, the way `#SEAT`/`#VUL` are written) names no table: the directives would
-        // otherwise vanish without a trace while the table below stays ordered / unstopped.
+        // `#EXACTPASS FILE` is written this way: a paragraph of its own, opening its scope.
+        if let Some(span) = exact_pass_file {
+            exact_pass_files.open(span);
+        }
+        // A paragraph of table directives alone (`#ANYORDER`, `#EXACTPASS`, `#STOP`, `#HIDE` or
+        // `#BIDTABLE` followed by a blank line, the way `#SEAT`/`#VUL` are written) names no
+        // table: the directives would otherwise vanish without a trace while the table below
+        // stays ordered / unguarded / unstopped.
         let mut orphans = Vec::new();
         if any_order {
             orphans.push("#ANYORDER");
+        }
+        if exact_pass.is_some() {
+            orphans.push("#EXACTPASS");
         }
         if table_stop {
             orphans.push("#STOP");
@@ -851,8 +955,13 @@ fn parse_table_paragraph(
                     LintCode::UnknownDirective,
                     format!(
                         "{} outside a bidding table has no effect (write it inside the table's \
-                         paragraph, with no blank line before the table)",
-                        orphans.join(" and ")
+                         paragraph, with no blank line before the table{})",
+                        orphans.join(" and "),
+                        if exact_pass.is_some() {
+                            "; `#EXACTPASS FILE` covers every later table of the file"
+                        } else {
+                            ""
+                        }
                     ),
                 )
                 .with_span(table_span),
@@ -860,6 +969,30 @@ fn parse_table_paragraph(
         }
         return None;
     }
+    if let Some(span) = &exact_pass_file {
+        lints.push(
+            Lint::warning(
+                LintCode::UnknownDirective,
+                "#EXACTPASS FILE inside a bidding table: write it as a paragraph of its own \
+                 before the tables it covers (for this table alone, write #EXACTPASS); ignored",
+            )
+            .with_span(span.clone()),
+        );
+    }
+    let after_their_pass = has_row_after_their_pass(&history, &roots);
+    if let (Some(span), false) = (&exact_pass, after_their_pass) {
+        lints.push(
+            Lint::info(
+                LintCode::ExactPassWithoutPass,
+                "#EXACTPASS in a table with no row of ours right after an opponents' pass has no \
+                 effect",
+            )
+            .with_span(span.clone()),
+        );
+    }
+    let exact_pass = exact_pass_files
+        .scope_of(table_span.file, after_their_pass)
+        .or(exact_pass);
     if any_order && xyz_variables(&history, &roots) < 2 {
         lints.push(
             Lint::info(
@@ -879,6 +1012,7 @@ fn parse_table_paragraph(
         rows: roots,
         stop: table_stop,
         any_order,
+        exact_pass,
         span: table_span,
     }))
 }
@@ -1023,6 +1157,101 @@ mod tests {
         let file = parse_str("1X-(2Y)-\nD  10+ hcp\n  #ANYORDER\n  P  any\n");
         assert!(matches!(&file.blocks[0], Block::BidTable(b) if b.any_order));
         assert_eq!(tables(&file)[0].1, ["D 10+ hcp", "  P any"]);
+    }
+
+    /// The line of each table's `#EXACTPASS` in force (0 for none).
+    fn exact_pass_lines(file: &BmlFile) -> Vec<u32> {
+        file.blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::BidTable(t) => Some(t.exact_pass.as_ref().map_or(0, |s| s.line)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn exact_pass_is_a_table_directive() {
+        let file = parse_str("#EXACTPASS \n1C-\n1H  6+ hcp\n\n1D-\n1H  6+ hcp\n");
+        assert!(file.lints.is_empty(), "{:?}", file.lints);
+        assert_eq!(exact_pass_lines(&file), [1, 0]);
+        // Written under a row it still marks the table, and the row tree is unchanged.
+        let file = parse_str("1C-\n1H  6+ hcp\n  #EXACTPASS\n  1S  4+!s\n");
+        assert!(file.lints.is_empty(), "{:?}", file.lints);
+        assert_eq!(exact_pass_lines(&file), [3]);
+        assert_eq!(tables(&file)[0].1, ["1H 6+ hcp", "  1S 4+!s"]);
+    }
+
+    #[test]
+    fn exact_pass_file_covers_the_later_tables_of_its_file() {
+        let file = parse_str(
+            "1C-\n1H  6+ hcp\n\n#EXACTPASS   FILE\n\n1D-\n1H  6+ hcp\n\n\
+             #EXACTPASS\n1H-\n1S  6+ hcp\n\n#EXACTPASS FILE\n\n1S-\n2S  raise\n",
+        );
+        assert!(file.lints.is_empty(), "{:?}", file.lints);
+        // Not the table before it; the file scope wins over a table's own directive; a
+        // second file directive changes nothing.
+        assert_eq!(exact_pass_lines(&file), [0, 4, 4, 4]);
+    }
+
+    #[test]
+    fn a_row_of_ours_after_their_pass_is_found() {
+        let has = |text: &str| {
+            let file = parse_str(text);
+            let Some(Block::BidTable(t)) = file.blocks.first() else {
+                panic!("{text}");
+            };
+            has_row_after_their_pass(&t.history, &t.rows)
+        };
+        assert!(has("1C-\n1H  x\n"));
+        assert!(has("1C-(P)-\n1H  x\n"));
+        assert!(has("1C-(1S)-\nX  x\n  2C  x\n"));
+        assert!(has("1C-1H-\n(P/1S)\n  1N  x\n"));
+        assert!(!has("1C  x\n"));
+        assert!(!has("1C-(1S)-\nX  x\n"));
+        assert!(!has("1C-(any)-\nX  x\n"));
+        assert!(!has("1C-\n(1S)\n  X  x\n"));
+    }
+
+    #[test]
+    fn exact_pass_misuse_is_reported() {
+        let codes = |text: &str| -> Vec<LintCode> {
+            parse_str(text).lints.iter().map(|l| l.code).collect()
+        };
+        // No row of ours after a pass of theirs.
+        assert_eq!(
+            codes("#EXACTPASS\n1C-(1S)-\nD  x\n"),
+            [LintCode::ExactPassWithoutPass]
+        );
+        assert_eq!(
+            codes("#EXACTPASS\n1C  x\n"),
+            [LintCode::ExactPassWithoutPass]
+        );
+        assert_eq!(
+            codes("#EXACTPASS FILE\n\n1C  x\n\n1C-(1S)-\nD  x\n"),
+            [LintCode::ExactPassWithoutPass]
+        );
+        assert_eq!(codes("#EXACTPASS FILE\n"), [LintCode::ExactPassWithoutPass]);
+        // The table form alone in its paragraph names no table, and the file is not covered.
+        let file = parse_str("#EXACTPASS\n\n1C-\n1H  x\n");
+        assert_eq!(
+            file.lints.iter().map(|l| l.code).collect::<Vec<_>>(),
+            [LintCode::UnknownDirective]
+        );
+        assert!(file.lints[0].message.contains("#EXACTPASS FILE"));
+        assert_eq!(exact_pass_lines(&file), [0]);
+        // The file form inside a table is ignored.
+        let file = parse_str("1C-\n#EXACTPASS FILE\n1H  x\n");
+        assert_eq!(
+            file.lints.iter().map(|l| l.code).collect::<Vec<_>>(),
+            [LintCode::UnknownDirective]
+        );
+        assert_eq!(exact_pass_lines(&file), [0]);
+        // Other words are not the directive.
+        assert_eq!(
+            codes("1C-\n#EXACTPASS ALL\n1H  x\n"),
+            [LintCode::UnknownDirective]
+        );
     }
 
     #[test]

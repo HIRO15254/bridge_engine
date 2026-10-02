@@ -131,6 +131,13 @@ pub struct BidTable {
     /// An `#ANYORDER` directive anywhere in the table: its fresh `X`/`Y`/`Z` bindings ignore the
     /// `X < Y < Z` strain order (they stay distinct and unused; `docs/design/06-system.md` §4.7).
     pub any_order: bool,
+    /// The `#EXACTPASS` directive in force for the table, by its location: `#EXACTPASS` anywhere
+    /// in the table, or `#EXACTPASS FILE` in a paragraph of its own earlier in the same file
+    /// (the file scope wins when both apply). The opponents' pass right before each row of ours
+    /// is then exact: every other call of theirs at that position that has no trie edge of its
+    /// own reaches an empty `(any)` sibling, so it is off-system instead of being read as a pass
+    /// (`docs/design/06-system.md` §4.8).
+    pub exact_pass: Option<Span>,
     /// Location.
     pub span: Span,
 }

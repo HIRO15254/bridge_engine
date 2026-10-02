@@ -4,6 +4,13 @@ Phase 4 (lane D2). `later-rounds.bml` writes responder's second call with few
 rows; the positions below get the rest of the booklet's methods, so that a
 responder who invites, prefers or shows a long suit stays on the system.
 
+The opponents' passes in this file's tables are exact (`#EXACTPASS FILE`,
+NOTES.md #P16): where a row of ours follows their pass, any other call of theirs
+that no table names leaves the system (natural bidding, #C4) instead of being read
+as a pass.
+
+#EXACTPASS FILE
+
 ** After 1M-1NT and opener's new suit
 
 The 1NT response is 6--10. Responder passes with a fit for the new suit, gives
