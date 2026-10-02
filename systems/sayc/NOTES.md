@@ -1213,3 +1213,20 @@ P14. **Lane D3: strict [G] through the natural engine's later-round limits** (wi
       which still need an ace-count vocabulary. Strict [C] does not move for P12's reason:
       604 of the subset's 989 default-pass calls are our passes after our own pass in their
       auctions, which only a sink row would count.
+
+P15. **Phase-4 integration after lanes D3, len and perf** (wip/p4int 8669ffd; default
+    sizing, release). The merged head passes the six-step gate (debug tests: 818 passed,
+    0 failed, 26 ignored) with no fix between the lanes and no pinned value changed by
+    their combination; the generated reproduction fixture still matches the generator (0
+    of 100 differ), so it was not re-frozen.
+    - Strict / raw / stop-audited [G] 0.857 / 0.953 / 0.621 (D3 alone 0.861; len's
+      guards move post-interference calls from the lenient system reading to the natural
+      engine, -0.004 as in len alone). Strict [C] 0.487 / 0.469 / 0.475 (subset / all /
+      eval), raw 0.709 / 0.681 / 0.699, all-Exact 0.320 / 0.323 / 0.341: len alone's
+      values. `resolve_lenient` 1 call, 1 entry; Partial 1; generated `NoCandidate` 58;
+      lints Error 0, `SiblingSubset` warnings 3,588, `StopUnderForcing` 27,
+      `DuplicatePath` 23, `ShadowedBranch` 18; postcard IR 3,553,923 bytes.
+    - MLE on the tune split: epsilon 0.3404, delta 0.3959, ln L -7295.9 (eval -6663.2).
+      `PolicyParams::human()` is now set to these values (93506bb), closing P13's open
+      item; the placeholder (0.01, 0.3) gives -10973.3. Full table: 12-roadmap.md,
+      "フェーズ 4 の統合 (D3・len・perf のマージ後)".

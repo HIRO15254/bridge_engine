@@ -143,7 +143,7 @@ pub struct PolicyParams {
 }
 impl PolicyParams {
     pub fn system_players() -> Self; // = Default。システムどおりに競る前提（生成オークション）
-    pub fn human() -> Self;          // コーパス調整用分割で最尤推定した (ε, δ)。値は 12-roadmap の実績に記録
+    pub fn human() -> Self;          // コーパス調整用分割で最尤推定した (ε, δ)。フェーズ 4 の統合で (0.3404, 0.3959) に設定。値は 12-roadmap の実績に記録
 }
 ```
 
@@ -271,7 +271,7 @@ L3 は、各コールに**兄弟の上位候補を除いた排他領域**を使�
 ---------------------------------------------
 | テスト | 場所 | 基準 |
 | --- | --- | --- |
-| `policy_mirror` | `tests/mirror.rs` | 既定スイートでは 150 位置 × 40 手、`#[ignore]` 版では 2000 × 100。生成位置とコーパス位置の両方で、δ ∈ {0, 0.3}。under-cover 0、厳密一致 ≥ 99%（リテラルによる over-cover ≤ 1%） |
+| `policy_mirror` | `tests/mirror.rs` | 既定スイートでは 150 位置 × 40 手、`#[ignore]` 版では 2000 × 100。生成位置とコーパス位置の両方で、δ ∈ {0, 0.3} (統合で最尤推定値の `human()` のセルも足した)。under-cover 0、厳密一致 ≥ 99%（リテラルによる over-cover ≤ 1%） |
 | `tightness`（プロトタイプ A 由来） | 同上 | δ = 0 の Exact 片について、「内側なのに選ばれない」0、「外側なのに選ばれる」0 |
 | `fast_likelihood_matches_reference` | `tests/policy.rs` | 50 オークション × 1000 配牌で \|Δ ln L\| ≤ 1e-5 |
 | `forward_consistency` | 既存 | 1e5：gap 起因でない違反 0、gap 起因は ≤ 30（プロトタイプ C では 0）。1e6 は報告する |
@@ -407,7 +407,7 @@ Commit 0, within the first half day, is an API-first commit that lanes B and P b
 - depends_on: Lane S commit 0 (API). It can start immediately against the runtime-recompute path; switch to the index when S step (1) lands.
 
 (1) choose.rs: B's enumerate_candidates refactor, so choose_bid, call_distribution and interpret share one hand-independent candidate list. Sort with exclusive::rank_cmp. Add the natural-branch implicit Pass (from C). Add a shared partner_context(prefix) that returns the summary of partner's last call's non-Fallback pieces.
-(2) policy.rs: the new PolicyParams {epsilon, deviation, legacy_temperature}, the system_players()/human() presets (the human values come from lane D's fit at integration; use a placeholder until then), and the new call_distribution formula.
+(2) policy.rs: the new PolicyParams {epsilon, deviation, legacy_temperature}, the system_players()/human() presets (the human values come from lane D's fit at integration; use a placeholder until then)（フェーズ 4 の統合で ε 0.3404、δ 0.3959 に設定済み。12-roadmap）, and the new call_distribution formula.
 (3) interpret.rs + exclusion.rs: Step A emits the calibrated pieces X/N_sys/Y/N_nat/ANY with log_scale and the shadowed flag. X comes from the index via lookup.parent, with a run-time recompute when a higher-ranked sibling is illegal. For lenient positions use only the first full lenient match. Natural exclusion uses grid + infer_batch in two forms: flat for the proposal, tree for membership. Add InterpretOptions::for_context and legacy().
 (4) Step B: precomputed summaries, mass-ordered truncation, and an always-kept catch-all combo.
 (5) auction_policy.rs: AuctionPolicy with a fast log_likelihood; keep sequence_log_likelihood as the reference.

@@ -471,7 +471,7 @@ impl Interpretation {
 | `interpret/natural-heavy-auction`（コーパス、下記、メモ済み） | 11.48 | 8.29 | 8.24 |
 | `interpret-cold/natural-heavy-auction`（反復ごとに新しいナチュラル推定器 = 全位置コールド） | 60.6 | 54.2 | 58.0 |
 | `interpret-cold/sayc-12-call-auction`（同上） | 57.3 | 47.5 | 46.6 |
-| `interpret-human/sayc-12-call-auction`（δ = 0.3） | 13.4 | 13.8 | 13.4 |
+| `interpret-human/sayc-12-call-auction`（当時の仮置き ε = 0.01、δ = 0.3。最尤推定値の `human()` では 13.1〜13.2、12-roadmap） | 13.4 | 13.8 | 13.4 |
 | `auction-policy/log-likelihood/sayc-12/system-players` | 0.126 | 0.112 | 0.159 |
 | `auction-policy/log-likelihood/sayc-12/human` | 0.139 | 0.137 | 0.152 |
 | `auction-policy/new/sayc-12/system-players` | 9.33 | 8.14 | 10.2 |
@@ -546,7 +546,7 @@ pub struct PolicyParams {
 }
 impl PolicyParams {
     pub const fn system_players() -> Self; // = Default（ε = 1e-3、δ = 0）。システムどおりに競る前提（生成オークション）
-    pub const fn human() -> Self;          // コーパス調整用分割で最尤推定した (ε, δ)。値は 12-roadmap に記録（統合前の仮置き ε = 0.01、δ = 0.3）
+    pub const fn human() -> Self;          // コーパス調整用分割で最尤推定した (ε, δ) = (0.3404, 0.3959)。フェーズ 4 の統合（wip/p4int 8669ffd の SAYC、調整用 ln L −7295.9）で設定。経緯は 12-roadmap
     pub const fn legacy(temperature: f32) -> Self; // 旧方策（ε = 1e-3、legacy_temperature = Some(τ)）
 }
 pub struct BidContext<'a> {
@@ -710,7 +710,7 @@ impl InterpretCache {
 | `forward_consistency`（仕様 §10） | `tests/consistency.rs`、`#[ignore]`、release | 10^6 のランダム (hand, auction 接頭辞)、`InterpretOptions { strict: true, .. }`。`Chosen` なら `interpret(auction.with(call)).satisfied_by(seat, hand)` | 1e5 で gap 起因でない違反 0、gap 起因 ≤ 30。1e6 は報告する。`NoCandidate` と `ImplicitPass` はノード別に集計し `target/coverage_report.json`（上位 50 の穴） |
 | `reproduction_rate` | 同ファイル | コーパスの 500 オークション × `sample_deals(1000)` → `replay == auction` の率 | ノード別に報告。フェーズ 4 で中央値 ≥ 0.6 |
 | `policy_argmax_matches_choose_bid` | `tests/policy.rs` | 10^5 局面、`system_players()` と `human()` の両プリセット | 100% |
-| `policy_mirror`（フェーズ 4） | `tests/mirror.rs` | 生成位置とコーパス位置の両方、δ ∈ {0, 0.3}。既定スイートは 150 位置 × 40 手、`#[ignore]` 版（`policy_mirror_large`）は 2000 × 100（コーパスは 1 オークションから複数の異なるコールを取り、2000 位置に届かせる）。各 (コール, 手) で `exp(log_scale)·Σ w·1[h ∈ C]` を `call_distribution` と比べる | under-cover 0、厳密一致 ≥ 99%（リテラルによる over-cover ≤ 1%） |
+| `policy_mirror`（フェーズ 4） | `tests/mirror.rs` | 生成位置とコーパス位置の両方、固定の試験点 δ ∈ {0, 0.3}（ε = 1e-3）と最尤推定値の `human()`（フェーズ 4 の統合で追加）。既定スイートは 150 位置 × 40 手、`#[ignore]` 版（`policy_mirror_large`）は 2000 × 100（コーパスは 1 オークションから複数の異なるコールを取り、2000 位置に届かせる）。各 (コール, 手) で `exp(log_scale)·Σ w·1[h ∈ C]` を `call_distribution` と比べる | under-cover 0、厳密一致 ≥ 99%（リテラルによる over-cover ≤ 1%） |
 | `policy_mirror_variants`（フェーズ 4） | 同上 | `ImplicitPass::Never`（δ ∈ {0, 0.3}）、`natural: None`（δ = 0.3）、接頭辞のコールを 0.3 の率で乱択の合法コールに置き換えた位置（寛容照合と X_c の実行時再計算）。既定は各 60 位置 × 20 手、`policy_mirror_large` では各 500 × 50 | under-cover 0。厳密一致は既定で ≥ 97%（小さい集合で 1 位置の over-cover が 1.7% に当たるため）、large で ≥ 99% |
 | `recomputed_region_when_a_higher_sibling_is_illegal`（フェーズ 4） | unit | 手組みシステム。寛容照合の位置で、上位の兄弟（`1D`）が接頭辞 `1C-(1D)` の後で非合法 | `1H` は shadowed にならず（索引では `1D` に覆われる）、全ての手で鏡像 = `call_distribution` |
 | `tightness`（フェーズ 4、プロトタイプ A 由来） | 同上 | δ = 0。`choose_bid` が到達する位置で、非 Fallback 片の内側 / 外側と「選ばれたか」を集計 | Exact：「内側なのに選ばれない」0、「外側なのに選ばれる」0 |
@@ -772,7 +772,7 @@ impl InterpretCache {
 | 7 | δ を相手と味方で分けるか、位置の種類（競り合い・オープニング）で分けるか | 分けない（単一の δ） |
 | 8 | `legacy_temperature` と `InterpretMode::Legacy` を削除する時期 | フェーズ 6 のリード評価で hard 方策と比較した後 |
 | 9 | 方策上選ばれない枝（`ShadowedBranch` lint）を SAYC の側で消すか残すか | 残す（解釈は shadowed として Fallback だけで読む） |
-| 10 | `human()` の (ε, δ) | 統合時にレーン D の最尤推定値で置き換える（現状の仮置き ε = 0.01、δ = 0.3） |
+| 10 | `human()` の (ε, δ) | フェーズ 4 の統合で解消。D3・len・perf のマージ後のヘッド（8669ffd）で当てはめた ε 0.3404、δ 0.3959（調整用 ln L −7295.9、評価用 −6663.2）に設定した。SAYC かナチュラル推定を変えたら `cargo xtask coverage` の `corpus.mle` で当てはめ直す（12-roadmap「フェーズ 4 の統合 (D3・len・perf のマージ後)」） |
 | 11 | `interpret/sayc-12-call-auction` < 10 μs（中央値） | 3 回の最良値 9.90 μs、中央値 9.90〜10.75 μs で境界線上。2026-09-29 の再計測（コード変更なし、loadavg 3.4〜11）でも 3 回ずつ 2 組で 10.17〜13.6 μs、最良 10.17 μs だった。統合時に静かな機械で測り直す。10 μs 以上のままなら、Step B の実体化（`CallExplanation.text` と片の共有化。公開 API の変更）を後続で行う |
 | 12 | `1C-1H-1S-2NT` の後の 3NT（ベンチ `sayc-12-call-auction` の最後の実質コール） | システム外の位置で、ナチュラル規則にも 3NT 候補が無いため shadowed。上位のナチュラル候補に覆われているのではない。レーン S（`rule_rebid_nt` がこの位置で発火しない。レベル下限が 6C などの充足不能な候補 `And([hcp 16..=18, hcp 20..=37])` を残す）とレーン D（SAYC に 1m-1M-1S-2NT の続きを足す）に回す |
 
