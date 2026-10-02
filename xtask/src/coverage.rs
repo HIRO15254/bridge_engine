@@ -68,7 +68,7 @@
 //! `resolve_lenient` and each seat with empty default-mode support. `COVERAGE_DUMP=<file>`
 //! writes one tab-separated line per generated first strict departure and stop swallow
 //! (category, role, matched trie path, auction, hand, HCP, the natural choice and the natural
-//! rule behind it), the raw material for surveying the strict [G] departures by class.
+//! rule behind it), the raw material for surveying the strict `[G]` departures by class.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};

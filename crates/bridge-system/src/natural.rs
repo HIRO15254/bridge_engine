@@ -1493,8 +1493,9 @@ fn rule_nt_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<In
     })
 }
 
-/// Extra HCP over `takeout_double`'s minimum that a defender's second takeout double shows
-/// ([`is_defenders_second_action`]): a king more, the booklet's "extra values".
+/// Extra HCP over `takeout_double`'s minimum that a defender's second takeout double shows (a
+/// takeout double by an overcaller, advancer or balancer who has already made a non-pass call):
+/// a king more, the booklet's "extra values".
 pub const SECOND_TAKEOUT_DOUBLE_EXTRA: u8 = 3;
 
 /// `true` when a defender (overcaller, advancer or balancer) makes a takeout double after an
