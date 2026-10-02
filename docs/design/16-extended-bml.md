@@ -1,6 +1,6 @@
 # 16. 拡張 BML リファレンス (`bridge-system` が受理する方言)
 
-本書は、`crates/bridge-system` のコンパイラ (`COMPILE_REVISION` 10、`IR_FORMAT` 3) が受理する BML (Bridge Bidding Markup Language) の方言の、唯一の正本である。上流の BML (gpaulissen/bml の `bml.py` / `bss.py`) に、フェーズ 3〜4 で加えた拡張 (`#+KEY:` メタ、`{prio:N}` / `{w:X}` / `{stop}` 注釈、`X`/`XX`、`2S/3H`・`4D/H`、`n`・`c`・`j` のレベル、`(any)`/`(bid)`/`(suit)`、`#STOP`、`#ANYORDER`、`#EXACTPASS`、スート長の比較、…) を含めて、新しいシステムファイルをソースを読まずに書けるように、コードから書き起こした。
+本書は、`crates/bridge-system` のコンパイラ (`COMPILE_REVISION` 11、`IR_FORMAT` 3) が受理する BML (Bridge Bidding Markup Language) の方言の、唯一の正本である。上流の BML (gpaulissen/bml の `bml.py` / `bss.py`) に、フェーズ 3〜4 で加えた拡張 (`#+KEY:` メタ、`{prio:N}` / `{w:X}` / `{stop}` 注釈、`X`/`XX`、`2S/3H`・`4D/H`、`n`・`c`・`j` のレベル、`(any)`/`(bid)`/`(suit)`、`#STOP`、`#ANYORDER`、`#EXACTPASS`、スート長の比較、…) を含めて、新しいシステムファイルをソースを読まずに書けるように、コードから書き起こした。
 
 - 設計の経緯と内部構造は `06-system.md` にある。本書と `06-system.md` が食い違うときは、コードと本書が正である (既知の食い違いは付録 B)。
 - SAYC の実例は `systems/sayc/*.bml` (ルートは `sayc.bml`) にある。
@@ -277,7 +277,7 @@ vul = "#VUL" , WS , TRI , TRI ;       TRI = "Y" | "N" | "0" ;
 | その他の `#…` | `UnknownDirective` (Warning) を出して、その行を無視する | |
 
 - `#STOP`、`#ANYORDER`、`#EXACTPASS`、`#HIDE`、`#BIDTABLE` は、表と同じ段落に書く。空行で区切った独立の段落 (`#SEAT` のような書き方) に書くと表を名指さないので効かず、`UnknownDirective` (Warning) が出る。
-- 例外は `#EXACTPASS FILE` で、これは逆に **独立の段落** に書き、同じファイルの後の全ての表に `#EXACTPASS` を書いたのと同じになる (§4.8)。表の段落の中に書くと `UnknownDirective` (Warning) を出して無視する。
+- 例外は `#EXACTPASS FILE` で、これは逆に **独立の段落** に書き、同じファイルの後の全ての表に `#EXACTPASS` を書いたのと同じになる (§4.8)。表の段落の中に書くと `UnknownDirective` (Warning) を出して無視する。正確には、`#` で始まる段落が (`#COPY`/`#CUT`/`#PASTE` を展開した後に) 行を持たなければ、`#EXACTPASS FILE` の行が段落のどこにあっても範囲を開く。同じ段落の `#CUT` はふつうに保存され、`#ANYORDER` などの表の指示子は上の項と同じく効かずに `UnknownDirective` になる (§9.1 の `exactpassfile`)。
 - 履歴の無い表の最上位の `#STOP` は位置を名指さないので、`UnknownDirective` (Warning) を出して無視する。
 
 ```bml
@@ -631,7 +631,7 @@ P = {prio:-100} any hand
 
 - **書いた辺が勝つ**。`(any)` の辺は P の他の辺の後に加わる。相手の具体的なコール (`(2D)`、`(nX)` の候補) を書いた表、`(bid)`/`(suit)`/`(any)` を書いた表があれば、ファイル上の順序にかかわらず、そのコールはその表へ行く。守りが受けるのは、どの辺も受けないコールだけである (`(bid)` を書いた位置ではダブル)。
 - **停止が勝つ**。P に停止 (§7.7) の `(any)` があれば、相手のどのコールも既に辺を持つので、守りは何も加えない。停止のパスは従来どおり出る。同様に、相手のパス以外の全てのコールに辺がある P には何も加えない。
-- **席とバル**。守りの `(any)` のノードは表の `#SEAT`/`#VUL` の条件を持つが、トライの辺には条件が無い (手で書いた `(any)` と同じ)。同じ P に別の席の条件で行を書いた表があっても、その席でも守りが効く。
+- **席とバル**。守りの `(any)` のノードは表の `#SEAT`/`#VUL` の条件を持つが、トライの辺には条件が無い (手で書いた `(any)` と同じ)。同じ P に別の席の条件で行を書いた表があっても、その席でも守りが効く。違う条件の表がそれぞれ同じ P を守れば、表ごとに上の行を書いたのと同じく条件ごとのエントリを持ち、ファイル上の順序に依らない (`#SEAT 34` の表の後に条件の無い表が守っても、1 席目に条件の無いエントリがある。前の表の条件が後の条件を覆うときは、空の説明の行と同じくそのノードを使う)。
 - **Lint**。守りの `(any)` は手で書いた `(any)` と同じ Lint を出す: 説明が空なので `EmptyDescription` (Info)、説明の無い相手の兄弟 (説明の無い `(P)` など) があれば `SiblingSubset` (Warning、位置は指示子の行。§11)。
 
 ```bml
@@ -1756,19 +1756,22 @@ comment     = "//" , { CHAR } ;                     (* only at column 0; the lin
 include     = WS0 , "#" , WS0 , "INCLUDE" , WS0 , PATH , [ WS , { CHAR } ] ;   (* prefix match: "#INCLUDED x" includes "D" *)
 PATH        = CHAR - SP , { CHAR - SP } ;           (* relative to the including file; "/" and "\" both separate *)
 
-(* a paragraph's kind is decided by its first line, in this order *)
+(* a paragraph's kind is decided by its first line, in this order; a first line starting with
+   "#" (none of the above) gives a directivetable or an exactpassfile, told apart by whether the
+   paragraph has a row once its #COPY/#CUT/#PASTE are expanded *)
 paragraph   = heading | list | vulpara | seatpara | enumeration
-            | bidtable | metapara | exactpassfile | directivetable | prose ;
+            | bidtable | metapara | directivetable | exactpassfile | prose ;
 heading     = WS0 , "*" , { CHAR } , { NL , line } ;
 list        = WS0 , "-" , { CHAR } , { NL , line } ;
 vulpara     = WS0 , "#VUL" , WS , TRI , TRI , WS0 , { NL , line } ;
 seatpara    = WS0 , "#SEAT" , WS , SEAT , WS0 , { NL , line } ;
 enumeration = WS0 , DIGIT , { DIGIT } , "." , ( SP | NL ) , { CHAR } , { NL , line } ;
-bidtable    = { directive , NL } , firstrow , { NL , ( row | directive | contline ) } ;
+bidtable    = { directive , NL } , firstrow , { NL , ( row | directive | filedirective | contline ) } ;   (* filedirective here: recovery, UnknownDirective, ignored *)
 metapara    = metaline , { NL , metaline } ;
-directivetable = directive , { NL , ( directive | row | contline ) } ;   (* a table starting with "#..." *)
-exactpassfile  = filedirective , { NL , ( directive | filedirective ) } ;   (* no row: a directivetable without rows; other directives in it: UnknownDirective *)
-filedirective  = WS0 , "#EXACTPASS" , WS , "FILE" , WS0 ;   (* every later table of the same file (one #INCLUDE instance) gets "#EXACTPASS"; inside a bidtable: UnknownDirective, ignored *)
+directivetable = dirline , { NL , ( dirline | row | contline ) } ;   (* a table starting with "#...": at least one row once the clipboard is expanded; filedirective here: recovery, UnknownDirective, ignored. With no row (directives alone) it names no table: #ANYORDER/#EXACTPASS/#STOP/#HIDE/#BIDTABLE in it give one UnknownDirective *)
+exactpassfile  = dirline , { NL , dirline } ;   (* no row once the clipboard is expanded, and a filedirective anywhere in it (not only first): opens the scope. #COPY/#CUT/#PASTE in it are processed as anywhere else (a #CUT is stored without a lint; a #PASTE that brings rows makes the paragraph a directivetable). #ANYORDER/#EXACTPASS/#STOP/#HIDE/#BIDTABLE in it have no effect (one UnknownDirective, as for a directivetable without rows) *)
+dirline        = directive | filedirective ;
+filedirective  = WS0 , "#EXACTPASS" , WS , "FILE" , WS0 ;   (* every later table of the same file (one #INCLUDE instance) gets "#EXACTPASS"; a second one in the same file changes nothing *)
 prose       = line , { NL , line } ;
 
 TRI         = "Y" | "N" | "0" ;

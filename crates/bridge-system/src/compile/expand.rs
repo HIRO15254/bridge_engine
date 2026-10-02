@@ -62,11 +62,12 @@ pub(crate) struct Expansion {
     row_by_span: std::collections::HashMap<Span, RowId>,
     /// The system stops met so far, grafted by [`graft_stops`] once every table is expanded.
     stops: Vec<StopSite>,
-    /// The positions `#EXACTPASS` guards, met so far (first one per position), grafted by
-    /// [`graft_exact_pass_guards`] once every table is expanded and every stop grafted.
+    /// The positions `#EXACTPASS` guards, met so far (the first site per position and
+    /// `#SEAT`/`#VUL` condition), grafted by [`graft_exact_pass_guards`] once every table is
+    /// expanded and every stop grafted.
     guards: Vec<GuardSite>,
-    /// `(we_opened, trie path)` of every position in `guards`.
-    guarded: std::collections::HashSet<(bool, Vec<Edge>)>,
+    /// `(we_opened, trie path, seat, vul)` of every site in `guards`.
+    guarded: std::collections::HashSet<(bool, Vec<Edge>, SeatCond, VulCond)>,
 }
 
 /// One opponents' pass that `#EXACTPASS` makes exact (`docs/design/06-system.md` §4.8): a row
@@ -145,13 +146,15 @@ pub(crate) fn expand_file(
     ex
 }
 
-/// Records the guard of the opponents' pass at `at` (see [`GuardSite`]), once per position.
+/// Records the guard of the opponents' pass at `at` (see [`GuardSite`]), once per position and
+/// `#SEAT`/`#VUL` condition. A hand-written `<P>-(any)-` in every guarding table would give the
+/// guard node one entry per distinct condition too (`AuctionTrie::insert_path` refuses only an
+/// identical one), so the guard does not depend on which table comes first in the file.
 fn record_guard(at: Vec<Edge>, from: &Frame, seat: SeatCond, vul: VulCond, ex: &mut Expansion) {
     let we_opened = we_opened_of(from);
-    if at.is_empty() || ex.guarded.contains(&(we_opened, at.clone())) {
+    if at.is_empty() || !ex.guarded.insert((we_opened, at.clone(), seat, vul)) {
         return;
     }
-    ex.guarded.insert((we_opened, at.clone()));
     ex.guards.push(GuardSite {
         at,
         from: from.clone(),
@@ -173,23 +176,36 @@ fn record_guard(at: Vec<Edge>, from: &Frame, seat: SeatCond, vul: VulCond, ex: &
 /// of `resolve_lenient` reading the call as a pass. The node is built like the history row's
 /// `(any)` (an empty description: any hand, `EmptyDescription`), its row is the directive's
 /// line, and it joins the children of the node it follows.
+///
+/// A position guarded under several `#SEAT`/`#VUL` conditions (tables under different
+/// conditions) gets one edge and one entry per condition, as a hand-written `(any)` in each
+/// table would: whether the position needs the guard is decided once, before its first guard is
+/// grafted, since that guard's own `(any)` edge would otherwise take every call for the later
+/// conditions. An entry whose condition an earlier one covers reuses that node, as for any
+/// row with an empty description (`build_or_reuse_node`).
 fn graft_exact_pass_guards(ex: &mut Expansion, meta: &SystemMeta, opts: &CompileOptions) {
     let sites = std::mem::take(&mut ex.guards);
     ex.guarded.clear();
+    let mut needed: std::collections::HashMap<(bool, Vec<Edge>), bool> =
+        std::collections::HashMap::new();
     for site in &sites {
         let we_opened = we_opened_of(&site.from);
         let Some(at) = ex.trie.find_path(we_opened, &site.at) else {
             continue;
         };
-        let without_edge = (0..=37u8).filter_map(Call::from_index).any(|call| {
-            call != Call::Pass
-                && relaxed_is_legal(&site.at, call)
-                && ex.trie.find_child_call(at, call).is_none()
-                && !ex
-                    .trie
-                    .class_edges(at)
-                    .any(|(class, _)| class.matches(call))
-        });
+        let without_edge = *needed
+            .entry((we_opened, site.at.clone()))
+            .or_insert_with(|| {
+                (0..=37u8).filter_map(Call::from_index).any(|call| {
+                    call != Call::Pass
+                        && relaxed_is_legal(&site.at, call)
+                        && ex.trie.find_child_call(at, call).is_none()
+                        && !ex
+                            .trie
+                            .class_edges(at)
+                            .any(|(class, _)| class.matches(call))
+                })
+            });
         if !without_edge {
             continue;
         }

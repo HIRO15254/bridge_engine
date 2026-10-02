@@ -70,6 +70,8 @@ pub const IR_FORMAT: u32 = 3;
 /// `StopUnderForcing`. 9: every node's description is stored without its `{prio:N}` /
 /// `{w:X}` / `{stop}` annotations (`Row::description_raw` keeps them); this was revision 6 on
 /// the integration line before lane D2 merged. 10: the `#EXACTPASS` table directive and its
-/// file form `#EXACTPASS FILE` (an empty `(any)` sibling after a row of ours that follows an
-/// opponents' pass), and the lint `ExactPassWithoutPass`.
-pub const COMPILE_REVISION: u32 = 10;
+/// file form `#EXACTPASS FILE` (an empty `(any)` sibling of the opponents' pass right before a
+/// row of ours), and the lint `ExactPassWithoutPass`. 11: a position that `#EXACTPASS` tables
+/// under different `#SEAT`/`#VUL` conditions guard gets one guard entry per condition, as a
+/// hand-written `(any)` in each table would (revision 10 kept the first table's condition only).
+pub const COMPILE_REVISION: u32 = 11;

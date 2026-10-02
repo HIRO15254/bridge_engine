@@ -1290,19 +1290,39 @@ fn headline_counts_an_auction_that_many_deals_reproduce() {
     assert_eq!(h.median_rate, rate);
 }
 
-/// Under `human` (δ > 0) the strict support also holds the natural deviation pieces `Y_c`, whose
-/// likelihood is the smaller `δ` share. The policy-weighted rejection sampler weights each kept
-/// deal by `exp(ln L - max)` of `AuctionPolicy`, so the weights vary (ESS < kept) and the rate
-/// is the likelihood-weighted one; unit weights keep the same deals but overcount the deviation
-/// pieces, whose deals the policy mostly bids differently. On the passed-out auction the
-/// weighted rate is above the unweighted one: 0.931 against 0.835 at the 200 kept deals here
-/// under the fitted preset (`ε = 0.3404`, `δ = 0.3959`). The margin is preset-dependent: the
-/// phase-4 placeholder (`ε = 0.01`, `δ = 0.3`) weighted a deviation call about 2.3 times below
-/// a system call and gave 0.948, the fitted preset about 1.5 times, so 0.05 is asserted.
+/// The phase-4 fitted human preset (`PolicyParams::human()` at the phase-4 integration), pinned
+/// so that a later refit of `human()` does not move the margin asserted below.
+const FITTED_PHASE4: PolicyParams = PolicyParams {
+    epsilon: 0.3404,
+    deviation: 0.3959,
+    ..PolicyParams::system_players()
+};
+
+/// Under a preset with δ > 0 the strict support also holds the natural deviation pieces `Y_c`,
+/// whose likelihood is the smaller `δ` share. The policy-weighted rejection sampler weights
+/// each kept deal by `exp(ln L - max)` of `AuctionPolicy`, so the weights vary (ESS < kept) and
+/// the rate is the likelihood-weighted one; unit weights keep the same deals but overcount the
+/// deviation pieces, whose deals the policy mostly bids differently. On the passed-out auction
+/// the weighted rate is above the unweighted one: 0.931 against 0.835 at the 200 kept deals
+/// here under the fitted preset (`ε = 0.3404`, `δ = 0.3959`).
+///
+/// The size of the gap follows from the per-seat pass ratio. On this auction nearly every seat
+/// whose system call is a pass also passes under the natural engine, so the system and natural
+/// shares add up: such a hand has `p(Pass|h) = (1−ε) + ε/n`, against `(1−ε)δ + ε/n` for a hand
+/// that passes only as a natural deviation, with `n = 36` legal calls before any bid. The ratio
+/// `(1−ε+ε/n) / ((1−ε)δ+ε/n)` is about 3.3 under the phase-4 placeholder (`ε = 0.01`,
+/// `δ = 0.3`) and about 2.5 under the fitted preset (`(1−δ)/δ`, 2.3 and 1.5, holds only for
+/// the few seats where the system passes and the natural engine does not). With one deviating
+/// seat per deal that does not reproduce, the weighted rate is about `u / (u + (1−u)/R)` with
+/// `u = 0.835`: 0.944 and 0.926 (measured 0.948 and 0.931). The expected gap under the fitted
+/// preset is therefore about 0.09, and the asserted 0.05 keeps about half of it as headroom.
+/// The test pins that preset ([`FITTED_PHASE4`]) instead of calling `PolicyParams::human()`:
+/// it checks the weighting, and a refit with a larger `δ` would shrink the gap without any
+/// regression.
 #[test]
 fn policy_weighted_rejection_follows_the_likelihood() {
     let table = common::compile_sayc("sayc.bml");
-    let ctx = bid_ctx(&table, PolicyParams::human());
+    let ctx = bid_ctx(&table, FITTED_PHASE4);
     let auction = passed_out();
     let opts = InterpretOptions::for_context(&ctx);
     let sampler = |weight| Sampler::StrictRejection {

@@ -405,6 +405,69 @@ fn the_guard_carries_the_table_seat_and_vul_but_its_edge_does_not() {
     assert_eq!(lookup.by_depth[1], None);
 }
 
+/// The seat condition of the guard's node for `1C (1S)` with North opening in first seat
+/// (dealer North) and in third seat (dealer South), `None` when it has no entry there.
+fn guard_seats(ir: &SystemIR) -> [Option<SeatCond>; 2] {
+    [
+        (Seat::North, vec!["1C", "1S"]),
+        (Seat::South, vec!["P", "P", "1C", "1S"]),
+    ]
+    .map(|(dealer, calls)| {
+        let calls = calls.into_iter().map(|c| c.parse().unwrap());
+        let auction = Auction::from_calls(dealer, Vulnerability::None, calls).unwrap();
+        let key = LookupKey::for_auction(&auction, Seat::North).unwrap();
+        let lookup = ir.index.resolve(&key);
+        assert_eq!(lookup.matched_depth, 2);
+        lookup.by_depth[1].map(|n| ir.node(n).seat)
+    })
+}
+
+#[test]
+fn tables_under_different_seat_conditions_each_guard_the_position() {
+    // A `#SEAT 34` table and an unconditioned one guard the same position, in both orders.
+    // Each guard behaves like a `1C-(any)-` written under its table's `#SEAT` after every
+    // table, whatever the file order: the unconditioned table's guard has an entry in first
+    // seat too.
+    let opening = "1C = 12--21 hcp, 3+!c\n";
+    let third = "#SEAT 34\n\n#EXACTPASS\n1C-\n1H = 6+ hcp, 4+!h\n";
+    let any = "#SEAT 0\n\n#EXACTPASS\n1C-\n1N = 6--10 hcp\n";
+    let written = |table: &str| {
+        let seat = table.lines().next().unwrap();
+        format!("{seat}\n\n1C-(any)-\n")
+    };
+    for (a, b, expected) in [
+        (
+            third,
+            any,
+            [Some(SeatCond::Any), Some(SeatCond::ThirdOrFourth)],
+        ),
+        // The third-seat guard's condition is covered by the unconditioned entry before it,
+        // so it reuses that node (an empty description, like any history token).
+        (any, third, [Some(SeatCond::Any), Some(SeatCond::Any)]),
+    ] {
+        let ir = compile(&format!("{opening}\n{a}\n{b}"));
+        no_warnings(&ir);
+        assert_eq!(guard_seats(&ir), expected, "{a}{b}");
+        for dealer_calls in [("1C 1S", Seat::North), ("P P 1C 1S", Seat::South)] {
+            assert_eq!(
+                read_seat(&ir, dealer_calls.0, dealer_calls.1),
+                off_system(),
+                "{a}{b}{dealer_calls:?}"
+            );
+        }
+        let by_hand = compile(&format!(
+            "{opening}\n{}\n{}\n{}\n{}",
+            a.replace("#EXACTPASS\n", ""),
+            b.replace("#EXACTPASS\n", ""),
+            written(a),
+            written(b)
+        ));
+        assert_eq!(guard_seats(&by_hand), expected, "{a}{b}");
+        assert_eq!(ir.nodes.len(), by_hand.nodes.len(), "{a}{b}");
+        assert_eq!(ir.index.len(), by_hand.index.len(), "{a}{b}");
+    }
+}
+
 #[test]
 fn the_file_form_covers_the_later_tables_of_its_own_file_only() {
     let ir = compile_files(&[
@@ -593,4 +656,158 @@ fn the_pass_of_an_alternative_is_guarded() {
     assert_eq!(read(&ir, "1C P 1H X"), off_system());
     assert_eq!(read(&ir, "1C P 1H 2C"), off_system());
     assert_eq!(guards(&ir, 6), 1);
+}
+
+#[test]
+fn a_directive_in_a_cut_applies_to_the_table_it_is_pasted_into() {
+    let source = "1C = 12--21 hcp, 3+!c
+
+#CUT responses
+{DIRECTIVE}
+1H = 6+ hcp, 4+!h
+#ENDCUT
+
+1C-
+#PASTE responses
+1N = 6--10 hcp
+";
+    let plain = compile(&source.replace("{DIRECTIVE}\n", ""));
+    assert_eq!(read(&plain, "1C 1S"), (1, true, calls_of("1H 1NT")));
+    let ir = compile(&source.replace("{DIRECTIVE}", "#EXACTPASS"));
+    no_warnings(&ir);
+    assert_eq!(count(&ir, LintCode::ExactPassWithoutPass), 0);
+    assert_eq!(read(&ir, "1C P"), (0, true, calls_of("1H 1NT")));
+    assert_eq!(read(&ir, "1C 1S"), off_system());
+    assert_eq!(read(&ir, "1C X"), off_system());
+}
+
+#[test]
+fn a_pasted_table_belongs_to_the_file_it_is_pasted_in() {
+    // The clip is cut in `part.bml` and pasted in `root.bml`: the pasted lines take the
+    // `#PASTE` line's file, so the scope of `#EXACTPASS FILE` is the paste site's.
+    let clip = "#CUT table
+1C-
+1H = 6+ hcp, 4+!h
+#ENDCUT
+";
+    let guarded = compile_files(&[
+        (
+            "root.bml",
+            "1C = 12--21 hcp, 3+!c
+
+#INCLUDE part.bml
+
+#EXACTPASS FILE
+
+#PASTE table
+",
+        ),
+        ("part.bml", clip),
+    ]);
+    no_warnings(&guarded);
+    assert_eq!(count(&guarded, LintCode::ExactPassWithoutPass), 0);
+    assert_eq!(read(&guarded, "1C 1S"), off_system());
+    assert_eq!(read(&guarded, "1C P"), (0, true, calls_of("1H")));
+
+    // The reverse: cut after `#EXACTPASS FILE` in `part.bml`, pasted in `root.bml`, which
+    // has none. The table is not guarded, and the file form in `part.bml` covers no table.
+    let unguarded = compile_files(&[
+        (
+            "root.bml",
+            "1C = 12--21 hcp, 3+!c
+
+#INCLUDE part.bml
+
+#PASTE table
+",
+        ),
+        ("part.bml", &format!("#EXACTPASS FILE\n\n{clip}")),
+    ]);
+    assert_eq!(count(&unguarded, LintCode::ExactPassWithoutPass), 1);
+    assert_eq!(read(&unguarded, "1C 1S"), (1, true, calls_of("1H")));
+}
+
+#[test]
+fn a_file_included_twice_has_two_scopes() {
+    // Each inclusion is a file of its own: the 1D table before the directive is outside the
+    // scope in both copies (the first copy's scope ends with that copy), and the 1C table
+    // after it is inside in both.
+    let ir = compile_files(&[
+        (
+            "root.bml",
+            "1C = 12--21 hcp, 3+!c
+1D = 12--21 hcp, 4+!d
+
+#INCLUDE part.bml
+
+#INCLUDE part.bml
+",
+        ),
+        (
+            "part.bml",
+            "1D-
+1H = 6+ hcp, 4+!h
+
+#EXACTPASS FILE
+
+1C-
+1H = 6+ hcp, 4+!h
+",
+        ),
+    ]);
+    assert_eq!(count(&ir, LintCode::ExactPassWithoutPass), 0);
+    assert_eq!(read(&ir, "1C 1S"), off_system());
+    assert_eq!(read(&ir, "1D 1S"), (1, true, calls_of("1H")));
+}
+
+#[test]
+fn a_written_pass_after_their_own_call_is_guarded_from_the_call_before_it() {
+    // `(P)` follows their 1S, with our implicit pass between them: the guard is the `(any)`
+    // sibling of that `(P)`, expanded from 1S like a row written after it (`1C-(1S)-P-(any)-`).
+    let ir = compile(
+        "1C = 12--21 hcp, 3+!c
+
+#EXACTPASS
+1C-(1S)-
+(P)
+  1N = 12--14 hcp, bal
+",
+    );
+    no_warnings(&ir);
+    assert_eq!(count(&ir, LintCode::ExactPassWithoutPass), 0);
+    assert_eq!(read(&ir, "1C 1S P P"), (0, true, calls_of("1NT")));
+    assert_eq!(read(&ir, "1C 1S P 2D"), off_system());
+    assert_eq!(read(&ir, "1C 1S P 2S"), off_system());
+    assert_eq!(guards(&ir, 3), 1);
+}
+
+/// The `exactpassfile` paragraph of `docs/design/16-extended-bml.md` §9.1: a `#...` paragraph
+/// with no row once its clipboard directives are expanded opens the scope wherever the line
+/// is; table directives in it have no effect (one `UnknownDirective`); a `#PASTE` that brings
+/// rows makes it a table, where the file form is ignored.
+#[test]
+fn the_file_form_paragraph_follows_the_grammar() {
+    let tables = "\n\n1C-\n1H = 6+ hcp, 4+!h\n";
+    let compile_with = |paragraph: &str| {
+        compile(&format!(
+            "1C = 12--21 hcp, 3+!c\n\n#CUT rows\n1H = 6+ hcp, 4+!h\n#ENDCUT\n\n{paragraph}{tables}"
+        ))
+    };
+    // Not first in the paragraph: still opens the scope; `#ANYORDER` is the orphan.
+    let ir = compile_with("#ANYORDER\n#EXACTPASS FILE");
+    assert_eq!(read(&ir, "1C 1S"), off_system());
+    assert_eq!(count(&ir, LintCode::UnknownDirective), 1);
+    // A `#CUT` block in the paragraph is stored with no lint, before or after the line.
+    for paragraph in [
+        "#CUT more\n1N = 6--10 hcp\n#ENDCUT\n#EXACTPASS FILE",
+        "#EXACTPASS FILE\n#CUT more\n1N = 6--10 hcp\n#ENDCUT",
+    ] {
+        let ir = compile_with(paragraph);
+        assert_eq!(read(&ir, "1C 1S"), off_system(), "{paragraph}");
+        assert_eq!(count(&ir, LintCode::UnknownDirective), 0, "{paragraph}");
+    }
+    // A `#PASTE` that brings rows makes the paragraph a table: the file form is ignored.
+    let ir = compile_with("#EXACTPASS FILE\n#PASTE rows");
+    assert_eq!(count(&ir, LintCode::UnknownDirective), 1);
+    assert_eq!(read(&ir, "1C 1S").0, 1);
 }

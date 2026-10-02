@@ -29,7 +29,7 @@
 //! is *shadowed*: the policy never makes it at this position.
 //!
 //! Build: [`crate::compile()`] builds the index eagerly at the end of compilation (SAYC with its
-//! system stops: about 2.75k groups, 7.2k pieces, 3 tree fallbacks, about 8 ms release) and
+//! system stops: about 4.07k groups, 10.8k pieces, 3 tree fallbacks, about 8 ms release) and
 //! stores it in the cell; a deserialised or hand-built IR builds it on the first
 //! [`SystemIR::exclusive`] call. Per trie position the sibling list is computed once when no
 //! child entry carries a seat/vulnerability condition (the common case), and once per condition
