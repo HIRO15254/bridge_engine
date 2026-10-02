@@ -30,3 +30,30 @@ them without a `cargo xtask dds vendor` step. `vendor/dds-2.9.0.tar.gz` and `ven
 in `build.rs` reads them, only the already-extracted `src/`/`include`/`LICENSE`. Verify with
 `cargo package -p bridge-dds --list` before a release; the vendored files should be present and
 the `.tar.gz` should not.
+
+## Stale vendor directory: `../include/portab.h: No such file or directory`
+
+`src/dds.h` includes `../include/portab.h` (the per-OS typedefs, and the `<omp.h>` include when
+`-fopenmp` is on), so `vendor/dds-2.9.0/include/portab.h` must exist next to `dll.h`. The
+phase-1 version of `cargo xtask dds vendor` extracted only `include/dll.h`; a tree vendored by it
+(or a `main` whose nightly job runs it) fails to build with the error above. The current
+`xtask` extracts `portab.h` and refuses to finish without it, and `build.rs` treats a tree
+without it as "not vendored" (FFI disabled, with a `cargo:warning`) instead of letting the C++
+compiler fail. To recover, re-run `cargo xtask dds vendor`; it deletes `vendor/dds-2.9.0/` and
+extracts it again from the cached, hash-checked archive.
+
+## The `openmp` feature
+
+By default DDS runs on the `std::thread` backend (`DDS_THREADS_STL`). With `--features openmp`,
+`build.rs` additionally defines `DDS_THREADS_OPENMP` (DDS takes the first backend that is
+defined, and OpenMP comes before STL) and passes `-fopenmp` (`-Xpreprocessor -fopenmp` plus
+`-lomp` on macOS, `/openmp` on MSVC; `libgomp` is linked on Linux). It first compiles and links a
+trivial OpenMP program with the same flags; when that fails (Apple clang without Homebrew's
+`libomp`, whose keg-only headers and library are on no default search path, so `CPATH` and
+`LIBRARY_PATH` would have to point at it) the build prints a `cargo:warning` and falls back to
+the STL backend instead of failing.
+
+Only `ubuntu-latest` is known to have a system OpenMP runtime (gcc's `libgomp`). The CI `dds`
+job runs `cargo test -p bridge-dds --features openmp` there, and the nightly job reaches the same
+build through `--all-features` after `cargo xtask dds vendor`. The other jobs' `--all-features`
+runs never vendor DDS first, so their `build.rs` returns before it gets to the OpenMP code.
