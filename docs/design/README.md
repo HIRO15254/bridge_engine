@@ -66,6 +66,7 @@ flowchart TD
   sample[bridge-sample]
   dds[bridge-dds]
   facade[bridge]
+  lead[bridge-lead]
 
   core --> format
   core --> eval
@@ -79,6 +80,8 @@ flowchart TD
   format --> facade
   sample --> facade
   dds -. "feature dds, non-wasm" .-> facade
+  facade --> lead
+  sample --> lead
 ```
 
 層の対応は次の通り。
@@ -93,6 +96,7 @@ flowchart TD
 | L4 | `bridge-sample` |
 | L5 | `bridge-play` |
 | ファサード | `bridge` |
+| アプリ (別クレート、フェーズ 6) | `bridge-lead` (`14-lead.md`。ファサードと下位クレートを消費するだけで、他のクレートからは依存されない) |
 
 ## 5. 表記規約
 
