@@ -577,11 +577,19 @@ fn answers_and_follow_ups_of_a_slam_ask_keep_the_ordinary_floor() {
     assert_eq!(inf.rule, "raise");
     assert_eq!(min_hcp(&inf), 14);
     // The asker signing off after the answer (partner's 5D is a game-level bid): the ordinary
-    // five-level floor (26 - 10) under the re-raise's own 16-18, where the slam floor (21) left
-    // no hand at all.
+    // five-level floor (26 - 10) over the opening's range, where the slam floor (21) left no
+    // hand at all. A re-raise after a slam ask is no game try (it was the game try's 16-18).
     let inf = last_with_partner("1H P 3H P 4NT P 5D P 5H", 10..=12);
     assert_eq!(inf.rule, "rebid_own");
-    assert_eq!(inf.constraint.hcp_range(), 16..=18);
+    assert_eq!(inf.constraint.hcp_range(), 16..=21);
+    // With two agreed suits (spades and hearts) the same holds for the opener's 5S after a
+    // follow-up of partner's 4NT; partner's minimum 12 leaves the ordinary floor at 14, so the
+    // corpus hand with 14 hcp (AKT963.K.874.A72) fits.
+    let calls = "P 1S P 2C P 3H P 3S P 3NT P 4C P 4H P 4NT P 5D P 5H P 5S";
+    let inf = last_with_partner(calls, 12..=37);
+    assert_eq!(inf.rule, "rebid_own");
+    assert_eq!(inf.constraint.hcp_range(), 14..=21);
+    assert!(inf.constraint.satisfies(hand("A72", "874", "K", "AKT963")));
 }
 
 // --- opener's notrump rebid (is_openers_rebid) -------------------------------------------------

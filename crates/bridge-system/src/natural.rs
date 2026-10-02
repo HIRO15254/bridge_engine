@@ -2757,7 +2757,9 @@ fn opened_one_of_a_suit(ctx: &CallContext) -> bool {
 /// merely competitive (`opening_hcp`); a jump (to game) shows `rebid.jump_rebid`'s minimum or
 /// more; a correction of partner's 3NT to game in the suit ([`corrects_partners_3nt`]), also
 /// after the game try (`1S-P-2S-P-3S-P-3NT-P-4S`), is a choice of game, any opening
-/// (`opening_hcp`). Length is the opening's own minimum for the opened suit, 4 for a second
+/// (`opening_hcp`); so is an answer to or a follow-up of a slam ask
+/// ([`CallContext::our_slam_ask`]: the sign-off `1H-P-3H-P-4NT-P-5D-P-5H`), which is no game
+/// try. Length is the opening's own minimum for the opened suit, 4 for a second
 /// suit. Every suit both partners bid takes this branch ([`CallContext::agreed_suits`]), not
 /// only the lowest-ranking one.
 fn rule_reraise_agreed(
@@ -2777,7 +2779,7 @@ fn rule_reraise_agreed(
         }
         _ => 4,
     };
-    let hcp = if corrects_partners_3nt(ctx) {
+    let hcp = if corrects_partners_3nt(ctx) || ctx.our_slam_ask {
         p.opening_hcp.clone()
     } else if jump >= 1 {
         *p.rebid.jump_rebid.start()..=*p.opening_hcp.end()
