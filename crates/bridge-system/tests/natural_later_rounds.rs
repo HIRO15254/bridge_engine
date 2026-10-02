@@ -278,6 +278,19 @@ fn bids_over_partners_3nt_that_are_not_corrections_keep_the_slam_floor() {
     let inf = last_with_partner("1H P 3NT P 5C", 10..=37);
     assert_eq!(inf.rule, "rebid_new_suit");
     assert_eq!(min_hcp(&inf), 21);
+    // A weak two or a preempt pulling partner's to-play 3NT (SAYC: 15+ over a weak two, 14+
+    // over a preempt) to the suit it opened: the opening promised the long suit already. The
+    // slam floor (31 - partner's minimum) is above the opening's range, so no hand bids it.
+    for (calls, partner_min) in [
+        ("2S P 3NT P 4S", 15),
+        ("2H P 3NT P 4H", 15),
+        ("3H P 3NT P 4H", 14),
+    ] {
+        let inf = last_with_partner(calls, partner_min..=37);
+        assert_eq!(inf.rule, "rebid_own", "{calls}");
+        assert_eq!(min_hcp(&inf), 31 - partner_min, "{calls}");
+        assert!(!inf.constraint.is_satisfiable(), "{calls}");
+    }
 }
 
 #[test]

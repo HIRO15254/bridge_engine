@@ -1065,9 +1065,9 @@ pub const SLAM_LEVEL: u8 = 6;
 ///   six hearts, `1NT-P-2H-P-2S-P-3NT-P-4S`.
 ///
 /// What is left is a slam move, or pulling partner's game when the bid adds nothing partner did
-/// not know (`2S-P-2NT-P-3S-P-3NT-P-4S`: the weak-two opener has already rebid the spades), which
-/// the natural rules describe only with slam values: [`apply_level_floor`] raises its combined
-/// target to the six level's.
+/// not know (`2S-P-3NT-P-4S`: the weak two promised the six spades; `2S-P-2NT-P-3S-P-3NT-P-4S`),
+/// which the natural rules describe only with slam values: [`apply_level_floor`] raises its
+/// combined target to the six level's.
 fn overrides_partners_game(ctx: &CallContext) -> bool {
     let Some(Call::Bid(partner_bid)) = ctx.partner_last else {
         return false;
@@ -1081,7 +1081,8 @@ fn overrides_partners_game(ctx: &CallContext) -> bool {
 
 /// `true` when the bid corrects partner's 3NT (the right-hand opponent passed it) to game in a
 /// suit our side has bid and the opponents have not: four of a major or five of a minor, in a
-/// strain `owner` has not bid twice already ([`CallContext::owner_repeated_strains`]).
+/// strain `owner` has not bid twice already ([`CallContext::owner_repeated_strains`]) and did
+/// not open with a weak two or a preempt ([`opened_preemptively_in`]).
 ///
 /// Such a bid tells partner something partner did not know when choosing 3NT: a sixth card in
 /// the suit opened (`1H-P-3NT-P-4H`; SAYC's 3NT response promises only two hearts), or support
@@ -1089,8 +1090,9 @@ fn overrides_partners_game(ctx: &CallContext) -> bool {
 /// ordinary rule describes it with the ordinary level floor, read as the cheapest game bid in
 /// the suit (five of a minor is not a jump rebid or a jump raise) and, in a minor, with a hand
 /// unsuited to notrump ([`unsuited_to_notrump`]). A suit nobody on our side has bid
-/// (`1H-P-3NT-P-5C`), the opponents' suit (a cue bid) and a suit `owner` has already rebid are
-/// not corrections.
+/// (`1H-P-3NT-P-5C`), the opponents' suit (a cue bid), a suit `owner` has already rebid and the
+/// suit of a weak two or a preempt (`2S-P-3NT-P-4S`: the opening already promised the six
+/// cards) are not corrections.
 fn corrects_partners_3nt(ctx: &CallContext) -> bool {
     let (Some(Call::Bid(partner_bid)), Some(bid)) = (ctx.partner_last, ctx.call.bid()) else {
         return false;
@@ -1104,6 +1106,17 @@ fn corrects_partners_3nt(ctx: &CallContext) -> bool {
         && ctx.our_suits.contains(strain)
         && !ctx.their_suits.contains(strain)
         && !ctx.owner_repeated_strains.contains(strain)
+        && !opened_preemptively_in(ctx, strain)
+}
+
+/// `true` when `owner` opened a weak two or a preempt in `strain` (two or more of a suit, but
+/// not a strong 2C): the opening promised the long suit already, so bidding it again over
+/// partner's 3NT (`2S-P-3NT-P-4S`, `3H-P-3NT-P-4H`) adds nothing partner did not know.
+fn opened_preemptively_in(ctx: &CallContext, strain: Strain) -> bool {
+    ctx.role == Role::Opener
+        && ctx.opener_first_bid.is_some_and(|b| {
+            b.strain() == strain && b.level() >= 2 && !(b.level() == 2 && strain == Strain::Clubs)
+        })
 }
 
 /// A hand unsuited to notrump: a singleton or a void. A correction of partner's 3NT to five of
