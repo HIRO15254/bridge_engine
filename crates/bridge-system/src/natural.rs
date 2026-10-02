@@ -265,6 +265,40 @@ pub enum CallKind {
     },
 }
 
+/// The kinds of a one-level suit opener's non-pass calls after its opening, other than its bids
+/// of the opened strain, each as the natural rule that reads it ([`CallContext::opener_other_calls`]).
+/// All `false` ([`OpenerCalls::is_empty`]) while the opener has only opened and bid the opened
+/// strain again (passes aside).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub struct OpenerCalls {
+    /// A raise of partner's suit (rule `raise`: `rebid.raise`).
+    pub raise: bool,
+    /// A jump raise of partner's suit (rule `raise`: `rebid.jump_raise`).
+    pub jump_raise: bool,
+    /// A jump rebid of another suit opener bid before (rule `rebid_own`: `rebid.jump_rebid`).
+    pub jump_rebid: bool,
+    /// A reverse (rule `reverse`: `rebid.reverse`+).
+    pub reverse: bool,
+    /// The cheapest notrump at opener's rebid (rule `rebid_nt`: `rebid.nt_1`).
+    pub nt_rebid: bool,
+    /// A jump in notrump at opener's rebid (rule `rebid_nt`: `rebid.nt_2`).
+    pub jump_nt_rebid: bool,
+    /// A new suit that is not a reverse (rule `rebid_new_suit`).
+    pub new_suit: bool,
+    /// A jump shift (rule `rebid_new_suit` with a jump).
+    pub jump_shift: bool,
+    /// Any other call (a double, a redouble, a cue bid, a non-jump rebid of another suit, a
+    /// notrump bid after the rebid): no range beyond the opening's.
+    pub other: bool,
+}
+
+impl OpenerCalls {
+    /// `true` when there is no such call.
+    pub fn is_empty(&self) -> bool {
+        *self == OpenerCalls::default()
+    }
+}
+
 /// The context of one call, derived from the auction alone.
 #[derive(Clone, Debug)]
 pub struct CallContext {
@@ -344,6 +378,10 @@ pub struct CallContext {
     /// jump (measured like [`CallKind::Bid::jump`]): `S` after `1S-P-1NT-P-3S`, nothing after
     /// `1S-P-2C-P-2S`.
     pub owner_jump_rebid_strains: StrainSet,
+    /// When `owner` opened one of a suit: its non-pass calls since, other than bids of the opened
+    /// strain ([`OpenerCalls`]): a reverse after `1D-P-1S-P-2H`, nothing after `1S-P-2C-P-2S`.
+    /// Empty for any other caller.
+    pub opener_other_calls: OpenerCalls,
     /// `owner` or partner has bid 4NT or 5NT earlier in the auction (a Blackwood-style ask or a
     /// quantitative 4NT): later bids past game answer or follow up the ask.
     pub our_slam_ask: bool,
@@ -392,6 +430,7 @@ struct HistoryContext {
     owner_last: Option<Call>,
     owner_repeated_strains: StrainSet,
     owner_jump_rebid_strains: StrainSet,
+    opener_other_calls: OpenerCalls,
     our_slam_ask: bool,
 }
 
@@ -508,6 +547,12 @@ impl HistoryContext {
             .count();
         let owner_answered_partners_double = owner_actions == 1
             && matches!(owner_first, Some((i, Call::Bid(_))) if i >= 2 && history[i - 2] == Call::Double);
+        let opener_other_calls = match opener_first_bid {
+            Some(opening) if role == Role::Opener => {
+                opener_other_calls(auction, history, owner, opening)
+            }
+            _ => OpenerCalls::default(),
+        };
 
         HistoryContext {
             index,
@@ -538,6 +583,7 @@ impl HistoryContext {
             owner_last,
             owner_repeated_strains,
             owner_jump_rebid_strains,
+            opener_other_calls,
             our_slam_ask,
         }
     }
@@ -606,6 +652,7 @@ impl HistoryContext {
             owner_last: self.owner_last,
             owner_repeated_strains: self.owner_repeated_strains,
             owner_jump_rebid_strains: self.owner_jump_rebid_strains,
+            opener_other_calls: self.opener_other_calls,
             our_slam_ask: self.our_slam_ask,
         }
     }
@@ -697,6 +744,112 @@ fn first_bid_of(auction: &Auction, history: &[Call], seat: Seat, strain: Strain)
     history.iter().enumerate().position(|(i, c)| {
         auction.seat_at(i) == seat && matches!(c, Call::Bid(b) if b.strain() == strain)
     })
+}
+
+/// [`CallContext::opener_other_calls`]: `owner` opened with `opening` (its first bid); when that
+/// is one of a suit, each later non-pass call of `owner` in `history` that is not a bid of the
+/// opened strain, classified as the natural rules read it (the same [`classify_kind`] and the
+/// same rule order: `raise`, `rebid_own`, `reverse`, `rebid_nt`, `rebid_new_suit`).
+fn opener_other_calls(
+    auction: &Auction,
+    history: &[Call],
+    owner: Seat,
+    opening: Bid,
+) -> OpenerCalls {
+    let mut out = OpenerCalls::default();
+    let Some(opening_suit) = opening.strain().suit().filter(|_| opening.level() == 1) else {
+        return out;
+    };
+    let mut seen_opening = false;
+    let mut previous: Option<Call> = None;
+    for (j, &call) in history.iter().enumerate() {
+        if auction.seat_at(j) != owner {
+            continue;
+        }
+        let before = previous.replace(call);
+        if !seen_opening {
+            seen_opening = call == Call::Bid(opening);
+            continue;
+        }
+        if call == Call::Pass || matches!(call, Call::Bid(b) if b.strain() == opening.strain()) {
+            continue;
+        }
+        let prefix = &history[..j];
+        let owner_suits = suits_bid_by(auction, prefix, |s| s == owner);
+        let partner_suits = suits_bid_by(auction, prefix, |s| s == owner.partner());
+        let their_suits = suits_bid_by(auction, prefix, |s| s.side() != owner.side());
+        let our_suits = StrainSet(owner_suits.0 | partner_suits.0);
+        let kind = classify_kind(
+            auction,
+            prefix,
+            owner,
+            call,
+            Role::Opener,
+            our_suits,
+            their_suits,
+            owner_suits,
+            partner_suits,
+            Some((opening_suit, 1)),
+        );
+        match kind {
+            CallKind::Bid {
+                raise: true, jump, ..
+            } => {
+                if jump >= 1 {
+                    out.jump_raise = true;
+                } else {
+                    out.raise = true;
+                }
+            }
+            CallKind::Bid {
+                rebid_own: true,
+                jump,
+                ..
+            } => {
+                if jump >= 1 {
+                    out.jump_rebid = true;
+                } else {
+                    out.other = true;
+                }
+            }
+            CallKind::Bid { reverse: true, .. } => out.reverse = true,
+            CallKind::Bid { nt: true, jump, .. } => {
+                // `rule_rebid_nt`: opener's rebid proper (`is_openers_rebid`), at most the two
+                // level, no agreed suit.
+                let partner_acted = prefix
+                    .iter()
+                    .enumerate()
+                    .any(|(i, c)| auction.seat_at(i) == owner.partner() && *c != Call::Pass);
+                let agreed = Suit::ALL.into_iter().any(|s| {
+                    let strain = Strain::from_suit(s);
+                    owner_suits.contains(strain) && partner_suits.contains(strain)
+                });
+                let rebid = before == Some(Call::Bid(opening))
+                    && partner_acted
+                    && !their_suits.contains(Strain::NoTrump)
+                    && !agreed
+                    && call.bid().is_some_and(|b| b.level() <= 2);
+                match (rebid, jump) {
+                    (true, 0) => out.nt_rebid = true,
+                    (true, 1) => out.jump_nt_rebid = true,
+                    _ => out.other = true,
+                }
+            }
+            CallKind::Bid {
+                new_suit: true,
+                jump,
+                ..
+            } => {
+                if jump >= 1 {
+                    out.jump_shift = true;
+                } else {
+                    out.new_suit = true;
+                }
+            }
+            _ => out.other = true,
+        }
+    }
+    out
 }
 
 /// The lowest level at which `strain` may legally be bid over `last_bid`.
@@ -1136,8 +1289,10 @@ fn overrides_partners_game(ctx: &CallContext) -> bool {
 /// ordinary rule describes it with the ordinary level floor, read as the cheapest game bid in
 /// the suit (five of a minor is not a jump rebid or a jump raise) and, in a minor, with a hand
 /// unsuited to notrump ([`unsuited_to_notrump`]). A one-level opener that has rebid its suit
-/// (`1S-P-2C-P-2S-P-3NT-P-4S`) corrects too: the rebid limited the hand, and the pull shows a
-/// seventh card ([`rule_rebid_opened_suit_over_3nt`]). A suit nobody on our
+/// (`1S-P-2C-P-2S-P-3NT-P-4S`) corrects too: the pull shows a seventh card, with the minimum the
+/// rebid showed while the rebid limited the hand, or the range of opener's strongest other call
+/// (a reverse, a jump shift, a 2NT rebid) when it did not
+/// ([`rule_rebid_opened_suit_over_3nt`]). A suit nobody on our
 /// side has bid (`1H-P-3NT-P-5C`), the opponents' suit (a cue bid), any other suit `owner` has
 /// already rebid (`2S-P-2NT-P-3S-P-3NT-P-4S`) and the suit of a weak two or a preempt
 /// (`2S-P-3NT-P-4S`: the opening already promised the six cards) are not corrections.
@@ -2346,25 +2501,36 @@ pub const REBID_SUIT_PULL_LEN: u8 = 7;
 
 /// A one-level opener that has rebid its suit pulls partner's 3NT to game in it
 /// (`1S-P-2C-P-2S-P-3NT-P-4S`, `1H-P-1S-P-2H-P-3NT-P-4H`): a choice of game, not a slam move
-/// (partner's 3NT chose the contract, and opener's rebid limited the hand).
+/// (partner's 3NT chose the contract).
 ///
 /// The rebid showed six cards (rule `rebid_own`), so partner chose 3NT knowing them, and the
 /// news is a seventh: [`REBID_SUIT_PULL_LEN`]+ cards (in a minor also a singleton or a void,
 /// [`with_correction_shape`]). Six cards with a short suit are not enough (the corpus check is
-/// in docs/design/06-system.md §8.6). The strength is what the rebid showed: after a non-jump
-/// rebid a minimum (`opening_hcp.start..rebid.jump_rebid.start`, 12-15 with the default
-/// parameters), after a jump rebid ([`CallContext::owner_jump_rebid_strains`])
-/// `rebid.jump_rebid` (16-18). The ordinary level floor applies ([`corrects_partners_3nt`]).
+/// in docs/design/06-system.md §8.6). The strength:
+///
+/// - while the rebid limited the hand, that is, opener's only non-pass calls are the opening and
+///   bids of the opened suit ([`CallContext::opener_other_calls`] is empty), what the rebid
+///   showed: after a non-jump rebid a minimum (`opening_hcp.start..rebid.jump_rebid.start`,
+///   12-15 with the default parameters), after a jump rebid
+///   ([`CallContext::owner_jump_rebid_strains`]) `rebid.jump_rebid` (16-18);
+/// - otherwise the rebid did not limit it: a later non-jump rebid after a reverse
+///   (`1D-P-1S-P-2H-P-2NT-P-3D-P-3NT-P-5D`), a jump shift or a 2NT rebid is not a minimum. The
+///   range of opener's strongest earlier call ([`openers_strongest_call_hcp`]): 17-21 after a
+///   reverse, 19-21 after a jump shift, 18-19 after a 2NT rebid.
+///
+/// The ordinary level floor applies ([`corrects_partners_3nt`]).
 fn rule_rebid_opened_suit_over_3nt(
     p: &NaturalParams,
     ctx: &CallContext,
     suit: Suit,
     ex: bool,
 ) -> Inference {
-    let hcp = if ctx
+    let jump_rebid = ctx
         .owner_jump_rebid_strains
-        .contains(Strain::from_suit(suit))
-    {
+        .contains(Strain::from_suit(suit));
+    let hcp = if !ctx.opener_other_calls.is_empty() {
+        openers_strongest_call_hcp(p, ctx.opener_other_calls, jump_rebid)
+    } else if jump_rebid {
         p.rebid.jump_rebid.clone()
     } else {
         let top = p.rebid.jump_rebid.start().saturating_sub(1);
@@ -2388,6 +2554,39 @@ fn rule_rebid_opened_suit_over_3nt(
             hcp.end()
         ),
     }
+}
+
+/// The HCP range of a one-level suit opener's strongest earlier call besides its opening and its
+/// bids of the opened suit ([`CallContext::opener_other_calls`]), or of a jump rebid of the
+/// opened suit (`jump_rebid`): each call's range as its natural rule reads it, the one with the
+/// highest minimum (the narrowest among equal minimums), within `opening_hcp`. With the default
+/// parameters: a reverse 17-21, a jump shift 19-21, a 2NT rebid 18-19, a jump raise or a jump
+/// rebid 16-18, a raise 12-15, a 1NT rebid 12-14, a new suit 12-18, anything else 12-21.
+fn openers_strongest_call_hcp(
+    p: &NaturalParams,
+    calls: OpenerCalls,
+    jump_rebid: bool,
+) -> RangeInclusive<u8> {
+    let opening = &p.opening_hcp;
+    let ranges = [
+        (calls.raise, p.rebid.raise.clone()),
+        (calls.jump_raise, p.rebid.jump_raise.clone()),
+        (calls.jump_rebid || jump_rebid, p.rebid.jump_rebid.clone()),
+        (calls.reverse, p.rebid.reverse..=37),
+        (calls.nt_rebid, p.rebid.nt_1.clone()),
+        (calls.jump_nt_rebid, p.rebid.nt_2.clone()),
+        (calls.new_suit, opener_new_suit_hcp(p, 0)),
+        (calls.jump_shift, opener_new_suit_hcp(p, 1)),
+        (calls.other, opening.clone()),
+    ];
+    let strongest = ranges
+        .into_iter()
+        .filter(|(made, _)| *made)
+        .map(|(_, hcp)| hcp)
+        .max_by(|a, b| a.start().cmp(b.start()).then(b.end().cmp(a.end())))
+        .unwrap_or_else(|| opening.clone());
+    let from = (*strongest.start()).max(*opening.start());
+    from..=(*strongest.end()).min(*opening.end()).max(from)
 }
 
 /// The minimum length a notrump opener shows by bidding again a suit it bid after the opening
@@ -2587,9 +2786,18 @@ fn rule_rebid_nt(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infer
     })
 }
 
+/// The HCP range of opener's new suit (`rule_rebid_new_suit`): from the opening minimum up to
+/// `rebid.jump_raise`'s maximum; a jump shift (`jump >= 1`) shows more than `rebid.jump_rebid`.
+fn opener_new_suit_hcp(p: &NaturalParams, jump: u8) -> RangeInclusive<u8> {
+    if jump >= 1 {
+        p.rebid.jump_rebid.end().saturating_add(1)..=37
+    } else {
+        *p.opening_hcp.start()..=*p.rebid.jump_raise.end()
+    }
+}
+
 /// Opener's new suit that is not a reverse (`rule_reverse` runs first), after a 1-of-a-suit
-/// opening: 4+ cards, from the opening minimum up to `rebid.jump_raise`'s maximum; a jump shift
-/// shows more than `rebid.jump_rebid`.
+/// opening: 4+ cards, [`opener_new_suit_hcp`].
 fn rule_rebid_new_suit(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.role != Role::Opener || !opened_one_of_a_suit(ctx) {
         return None;
@@ -2603,11 +2811,7 @@ fn rule_rebid_new_suit(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option
         return None;
     };
     let suit = ctx.call.bid()?.strain().suit()?;
-    let hcp = if jump >= 1 {
-        p.rebid.jump_rebid.end().saturating_add(1)..=37
-    } else {
-        *p.opening_hcp.start()..=*p.rebid.jump_raise.end()
-    };
+    let hcp = opener_new_suit_hcp(p, jump);
     Some(Inference {
         constraint: HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, 4..=13)),
         confidence: 0.35,

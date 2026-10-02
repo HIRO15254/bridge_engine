@@ -329,6 +329,59 @@ fn a_one_level_opener_pulling_3nt_to_its_rebid_suit_corrects() {
     assert!(!inf.constraint.is_satisfiable());
 }
 
+#[test]
+fn a_pull_after_an_unlimited_call_shows_openers_strongest_range() {
+    // After a reverse, a jump shift or a 2NT rebid, a later non-jump rebid of the opened suit
+    // does not limit opener to a minimum. The pull of partner's 3NT is still a correction (seven
+    // cards, the ordinary floor) and shows the range of opener's strongest earlier call: a
+    // reverse 17-21, a jump shift 19-21, a 2NT rebid 18-19.
+    for (calls, partner_min, hcp) in [
+        ("1D P 1S P 2H P 2NT P 3D P 3NT P 5D", 6, 20..=21), // reverse; floor 26 - 6
+        ("1C P 1H P 2S P 2NT P 3C P 3NT P 5C", 8, 18..=21), // a jump reverse; floor 26 - 8
+        ("1H P 1S P 3C P 3D P 3H P 3NT P 4H", 6, 19..=21),  // jump shift
+        ("1H P 1S P 2NT P 3C P 3H P 3NT P 4H", 6, 18..=19), // 2NT rebid
+        ("1D P 1H P 2NT P 3C P 3D P 3NT P 5D", 8, 18..=19),
+    ] {
+        let (ctx, _) = last(calls);
+        assert!(!ctx.opener_other_calls.is_empty(), "{calls}");
+        let inf = last_with_partner(calls, partner_min..=37);
+        assert_eq!(inf.rule, "rebid_own", "{calls}");
+        assert_eq!(inf.constraint.hcp_range(), hcp, "{calls}");
+        assert_eq!(inf.constraint.suit_len(inf_suit(calls)), 7..=13, "{calls}");
+        assert!(inf.constraint.is_satisfiable(), "{calls}");
+    }
+    let (ctx, inf) = last("1D P 1S P 2H P 2NT P 3D P 3NT P 5D");
+    assert!(ctx.opener_other_calls.reverse);
+    assert_eq!(inf.constraint.hcp_range(), 17..=21);
+    // 21 hcp, seven diamonds and the reverse's four hearts, unsuited to notrump.
+    assert!(inf.constraint.satisfies(hand("2", "AKQ5432", "AKJ2", "A")));
+    assert!(
+        last("1H P 1S P 3C P 3D P 3H P 3NT P 4H")
+            .0
+            .opener_other_calls
+            .jump_shift
+    );
+    assert!(
+        last("1H P 1S P 2NT P 3C P 3H P 3NT P 4H")
+            .0
+            .opener_other_calls
+            .jump_nt_rebid
+    );
+    // A non-jump new suit (12-18) does not limit the hand to a minimum either.
+    let (ctx, inf) = last("1H P 1S P 2C P 2D P 2H P 3NT P 4H");
+    assert!(ctx.opener_other_calls.new_suit);
+    assert_eq!(inf.constraint.hcp_range(), 12..=18);
+    // While the rebid limits the hand (only the opening and bids of the opened suit) the field
+    // is empty, also in competition.
+    for calls in [
+        "1S P 2C P 2S P 3NT P 4S",
+        "1S P 1NT P 3S P 3NT P 4S",
+        "1H 1S 2C 2S 3H P 3NT P 4H",
+    ] {
+        assert!(last(calls).0.opener_other_calls.is_empty(), "{calls}");
+    }
+}
+
 /// The suit of the last bid of `calls`.
 fn inf_suit(calls: &str) -> Suit {
     let (ctx, _) = last(calls);
