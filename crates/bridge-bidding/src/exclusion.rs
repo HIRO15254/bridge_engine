@@ -83,8 +83,9 @@ pub(crate) struct MirrorPiece<'a> {
     pub(crate) raw: f64,
     /// The proposal form: a superset of the exact region (equal to it unless `exact` is set).
     pub(crate) flat: Cow<'a, HandConstraint>,
-    /// The exact region when `flat` over-covers it (kept only under [`MirrorSpec::membership`]).
-    pub(crate) exact: Option<HandConstraint>,
+    /// The exact region when `flat` over-covers it (kept only under [`MirrorSpec::membership`];
+    /// boxed, since it is rare and a piece is moved a few times per call).
+    pub(crate) exact: Option<Box<HandConstraint>>,
     /// The exact region as a grid, when it is literal-free and was computed on the grid (kept
     /// only under [`MirrorSpec::membership`]).
     pub(crate) grid: Option<Box<HcpShapeGrid>>,
@@ -95,7 +96,7 @@ pub(crate) struct MirrorPiece<'a> {
 impl MirrorPiece<'_> {
     /// The exact membership form.
     pub(crate) fn membership(&self) -> &HandConstraint {
-        self.exact.as_ref().unwrap_or(&self.flat)
+        self.exact.as_deref().unwrap_or(&self.flat)
     }
 }
 
@@ -922,7 +923,7 @@ pub(crate) fn mirror_call<'t>(
             raw,
             flat: Cow::Owned(p.flat.clone()),
             exact: if spec.membership {
-                p.exact.clone()
+                p.exact.as_ref().map(|e| Box::new(e.clone()))
             } else {
                 None
             },

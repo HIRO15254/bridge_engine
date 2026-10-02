@@ -894,8 +894,9 @@ fn step_a_mirror(table: &Table, auction: &Auction, opts: &InterpretOptions) -> S
             .iter()
             .filter(|p| !own_text(p) && (!p.role.is_fallback() || m.shadowed))
             .count();
-        let pieces = std::mem::take(&mut m.pieces);
-        for (i, piece) in pieces.into_iter().enumerate() {
+        // Drained in place: the pieces are moved out one by one, the inline buffer is not
+        // moved as a whole first.
+        for (i, piece) in m.pieces.drain(..).enumerate() {
             let fallback = piece.role.is_fallback();
             if piece.role == PieceRole::Any {
                 any = Some(i);
