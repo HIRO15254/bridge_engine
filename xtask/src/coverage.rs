@@ -643,7 +643,6 @@ fn natural_choice(
         policy: PolicyParams {
             epsilon: 0.0,
             deviation: 1.0,
-            legacy_temperature: None,
         },
         ..*ctx
     };
@@ -1469,11 +1468,7 @@ fn policy_obs(
     let system = &table.systems[seat.index() as usize];
     let on = on_system(system, prefix).0 != OnSystem::Off;
     let with = |epsilon: f32, deviation: f32| BidContext {
-        policy: PolicyParams {
-            epsilon,
-            deviation,
-            legacy_temperature: None,
-        },
+        policy: PolicyParams { epsilon, deviation },
         ..*ctx
     };
     let n = prefix.legal_calls().count() as u8;

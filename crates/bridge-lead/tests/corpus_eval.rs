@@ -23,11 +23,10 @@
 //! evaluation, not just baseline (a)), `LEAD_SPLIT` (`eval`, the default: boards from the corpus
 //! eval split of D20, the odd auction indices in the enumeration order of
 //! `crates/bridge-bidding/tests/reproduction.rs`'s `corpus_auctions`; `all`: the first boards in
-//! file order, as phase 3 selected them), `LEAD_POLICY` (`human`, the default, `system`, or
-//! `legacy1`: the retired priority softmax at τ = 1, `PolicyParams::legacy(1.0)`),
+//! file order, as phase 3 selected them), `LEAD_POLICY` (`human`, the default, or `system`),
 //! `LEAD_INTERPRET` (`mirror`, the default: the proposal interprets the auction with the mirror of
-//! the human preset, or of the likelihood's own policy when that is `system`; `legacy`: the phase-3
-//! interpretation, `InterpretOptions::legacy()`), `LEAD_RESIDUAL` (default `1`: the constraint
+//! the likelihood's own policy; `legacy`: the phase-3 interpretation,
+//! `InterpretOptions::legacy()`), `LEAD_RESIDUAL` (default `1`: the constraint
 //! proposal is `bridge_lead::lead_proposal()`, residual rejection at an acceptance floor of
 //! 0.125, `09-sample.md` §6.5; `0` turns rejection off), `BRIDGE_CORPUS_DIR`
 //! and `BRIDGE_SYSTEMS_DIR` (both follow `crates/bridge-format/tests/common/mod.rs` /
@@ -721,7 +720,7 @@ struct Settings {
     uniform: bool,
     seed: u64,
     boards: usize,
-    /// `human`, `system` or `legacy1`.
+    /// `human` or `system`.
     policy: String,
     /// `mirror` or `legacy`.
     interpret: String,
@@ -746,7 +745,7 @@ impl Default for Settings {
 
 /// `lead_report.json` for the default configuration, `lead_report_<suffix>.json` otherwise, where
 /// the suffix lists only the settings that differ from the default (`n500`, `uniform`,
-/// `legacy1`, `legacyinterp`, `noresidual`, `all`, `seed7`, `boards20`, joined by `-`).
+/// `system`, `legacyinterp`, `noresidual`, `all`, `seed7`, `boards20`, joined by `-`).
 fn report_file_name(settings: &Settings) -> String {
     let Settings {
         samples,
@@ -808,13 +807,13 @@ fn report_file_names() {
     );
     assert_eq!(
         report_file_name(&Settings {
-            policy: "legacy1".to_string(),
+            policy: "system".to_string(),
             interpret: "legacy".to_string(),
             residual: false,
             split: Split::All,
             ..Settings::default()
         }),
-        "lead_report_legacy1-legacyinterp-noresidual-all.json"
+        "lead_report_system-legacyinterp-noresidual-all.json"
     );
 }
 
@@ -849,24 +848,15 @@ fn corpus_eval() {
     let policy = match settings.policy.as_str() {
         "human" => PolicyParams::human(),
         "system" => PolicyParams::system_players(),
-        "legacy1" => PolicyParams::legacy(1.0),
-        other => panic!("LEAD_POLICY must be human, system or legacy1, not {other}"),
+        other => panic!("LEAD_POLICY must be human or system, not {other}"),
     };
-    // The proposal's interpretation: the mirror of the likelihood's policy, except that the
-    // legacy softmax has no mirror of its own and borrows the human preset's.
+    // The proposal's interpretation: the mirror of the likelihood's policy.
     let interpret_opts = match settings.interpret.as_str() {
-        "mirror" => {
-            let mirror_policy = if policy.legacy_temperature.is_some() {
-                PolicyParams::human()
-            } else {
-                policy
-            };
-            InterpretOptions {
-                policy: mirror_policy,
-                implicit_pass: ImplicitPass::Complement,
-                ..InterpretOptions::default()
-            }
-        }
+        "mirror" => InterpretOptions {
+            policy,
+            implicit_pass: ImplicitPass::Complement,
+            ..InterpretOptions::default()
+        },
         "legacy" => InterpretOptions::legacy(),
         other => panic!("LEAD_INTERPRET must be mirror or legacy, not {other}"),
     };

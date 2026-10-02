@@ -1,8 +1,7 @@
 //! The phase-4 policy API (docs/design/15-phase4-plan.md D18/D19): the exact values of the new
-//! `call_distribution` formula `p = (1 − ε)·[(1 − δ)·S + δ·M] + ε/n`, the legacy softmax path,
-//! `AuctionPolicy` against the reference `sequence_log_likelihood`, `InterpretOptions` built from
-//! a `BidContext`, and the single rank order shared by `choose_bid` and
-//! `bridge_system::exclusive::rank_cmp_keys`.
+//! `call_distribution` formula `p = (1 − ε)·[(1 − δ)·S + δ·M] + ε/n`, `AuctionPolicy` against
+//! the reference `sequence_log_likelihood`, `InterpretOptions` built from a `BidContext`, and
+//! the single rank order shared by `choose_bid` and `bridge_system::exclusive::rank_cmp_keys`.
 
 mod common;
 
@@ -122,7 +121,6 @@ fn deviation_moves_delta_mass_to_the_natural_choice() {
     let policy = PolicyParams {
         epsilon: 1e-3,
         deviation: 0.3,
-        legacy_temperature: None,
     };
     let hand = weak_hand();
     let dist = call_distribution(&table, hand, &empty, &ctx(policy, Some(natural.as_ref())));
@@ -154,31 +152,11 @@ fn deviation_moves_delta_mass_to_the_natural_choice() {
 }
 
 #[test]
-fn legacy_temperature_restores_the_priority_softmax() {
-    let table = two_openings();
-    let empty = Auction::new(Seat::North, Vulnerability::None);
-    // A 13-HCP hand satisfies both openings.
-    let strong = hand("AKQ2", "A32", "432", "432");
-    let policy = PolicyParams::legacy(10.0);
-    let dist = call_distribution(&table, strong, &empty, &ctx(policy, None));
-    let n = dist.len() as f32;
-    let eps = policy.epsilon;
-    // softmax over priorities 10/τ and 1/τ with τ = 10: e^1 : e^0.1.
-    let z = 1f32.exp() + 0.1f32.exp();
-    let want_1c = (1.0 - eps) * 1f32.exp() / z + eps / n;
-    let want_1d = (1.0 - eps) * 0.1f32.exp() / z + eps / n;
-    assert!((p_of(&dist, bid(1, Strain::Clubs)) - want_1c).abs() < 1e-5);
-    assert!((p_of(&dist, bid(1, Strain::Diamonds)) - want_1d).abs() < 1e-5);
-}
-
-#[test]
 fn presets_are_distinct_and_default_is_system_players() {
     assert_eq!(PolicyParams::default(), PolicyParams::system_players());
     let h = PolicyParams::human();
     assert!(h.deviation > 0.0 && h.deviation < 0.5);
     assert!(h.epsilon > 0.0);
-    assert_eq!(h.legacy_temperature, None);
-    assert_eq!(PolicyParams::legacy(1.0).legacy_temperature, Some(1.0));
 }
 
 #[test]

@@ -1295,7 +1295,6 @@ fn headline_counts_an_auction_that_many_deals_reproduce() {
 const FITTED_PHASE4: PolicyParams = PolicyParams {
     epsilon: 0.3404,
     deviation: 0.3959,
-    ..PolicyParams::system_players()
 };
 
 /// Under a preset with δ > 0 the strict support also holds the natural deviation pieces `Y_c`,
