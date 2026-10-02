@@ -161,3 +161,25 @@ fn negative_double_is_responders_first_turn_only() {
         assert_ne!(inf.rule, "negative_x", "{calls}");
     }
 }
+
+// --- a defender's second takeout double (SECOND_TAKEOUT_DOUBLE_EXTRA) --------------------------
+
+#[test]
+fn defenders_second_takeout_double_shows_extra_values() {
+    // First takeout doubles keep their minimum.
+    assert_eq!(min_hcp(&last("1S X").1), 12);
+    assert_eq!(min_hcp(&last("1S P P X").1), 9);
+    // The overcaller doubling after the overcall, the balancer doubling again: 15+, 12+ in
+    // the balancing seat.
+    let (ctx, inf) = last("1C 1S X P 2H X");
+    assert_eq!(ctx.kind, CallKind::Double(DoubleKind::Takeout));
+    assert_eq!(inf.rule, "takeout_x");
+    assert_eq!(min_hcp(&inf), 15);
+    let (_, inf) = last("1S P P X 2S P P X");
+    assert_eq!(inf.rule, "takeout_x");
+    assert_eq!(min_hcp(&inf), 12);
+    // Opener's reopening double is not a defender's: a minimum opening.
+    let (_, inf) = last("1D 1S P P X");
+    assert_eq!(inf.rule, "takeout_x");
+    assert_eq!(min_hcp(&inf), 12);
+}

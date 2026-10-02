@@ -1493,6 +1493,22 @@ fn rule_nt_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<In
     })
 }
 
+/// Extra HCP over `takeout_double`'s minimum that a defender's second takeout double shows
+/// ([`is_defenders_second_action`]): a king more, the booklet's "extra values".
+pub const SECOND_TAKEOUT_DOUBLE_EXTRA: u8 = 3;
+
+/// `true` when a defender (overcaller, advancer or balancer) makes a takeout double after an
+/// earlier non-pass call of their own: `(1C)-1S-(X)-P-(2H)-X`, `(1S)-P-(P)-X-(2S)-P-(P)-X`.
+///
+/// The first action (the overcall, the takeout double, the balancing call) already showed a
+/// minimum; with no more than that the defender passes or bids the suit again, so the second
+/// double shows [`SECOND_TAKEOUT_DOUBLE_EXTRA`] points more than a takeout double (12+, or 15+
+/// before the balancing-seat shift). Opener is not a defender: a reopening double with a
+/// minimum opening (`1D-(1S)-P-(P)-X`) is standard (docs/design/06-system.md §8.3).
+fn is_defenders_second_action(ctx: &CallContext) -> bool {
+    matches!(ctx.role, Role::Overcaller | Role::Advancer | Role::Balancer) && ctx.owner_acted
+}
+
 fn rule_takeout_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.call != Call::Double {
         return None;
@@ -1502,6 +1518,11 @@ fn rule_takeout_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
     };
     let their_suit = ctx.last_bid.and_then(|b| b.strain().suit());
     let (min_hcp, their_max, unbid_min) = p.takeout_double;
+    let min_hcp = if is_defenders_second_action(ctx) {
+        min_hcp.saturating_add(SECOND_TAKEOUT_DOUBLE_EXTRA)
+    } else {
+        min_hcp
+    };
     let min_hcp = opener_or_balancer_hcp(p, ctx.role, min_hcp..=37);
 
     let mut constraint = HandConstraint::Atom(Atom::ANY.with_hcp(min_hcp.clone()));

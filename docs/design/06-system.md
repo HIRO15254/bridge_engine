@@ -1142,7 +1142,7 @@ impl Default for NaturalInference { /* NaturalParams::default() */ }
 | `overcall` | `Overcaller` の最初のアクション (`!owner_acted`), `new_suit` (相手スートのキュービッドを除く), `jump == 0`。相手が 2 回以上ビッドした後 (`their_bids ≥ 2`) は、相手のゲーム未満で 4 レベル以下 (§8.6「後の巡の制限」(1)) | `suit_len[s] ≥ overcall[l].0` ∧ `hcp = overcall[l].1` (`l` = 0: 1 レベル、1: 2 レベル以上); `Balancer` は下限に `balancing_shift`。相手の交換後の 4 レベルは `suit_len[s] ≥ 6` ∧ `hcp ≥ opening_hcp.start` (`Balancer` はその後で `balancing_shift`) | 0.35 (旧 0.5) |
 | `jump_overcall` | `Overcaller` の最初のアクション, `new_suit`, `jump == 1`, 3 レベル以下。相手の交換後の制限は `overcall` と同じ | `suit_len[s] ≥ overcall[2].0` ∧ `hcp = overcall[2].1` | 0.5 (旧 0.4) |
 | `nt_overcall` | `Overcaller` の最初のアクション, 最安の NT (`jump == 0`) で 2 レベル以下 (1 レベルのオープンに 1N、ウィーク・ツーに 2N) | `hcp = nt_overcall` ∧ `BALANCED` ∧ `Stopper(their suit)` | 0.6 |
-| `takeout_x` | `Double(Takeout)`: パートナー未ビッド、相手のスートが 2 レベル以下 | `hcp ≥ takeout_double.0` ∧ `suit_len[their] ≤ takeout_double.1` ∧ 未ビッドスート各 `≥ takeout_double.2` (未ビッドが 3 つ以上なら `Or` で 2 つ以上を要求) | 0.45 (旧 0.5) |
+| `takeout_x` | `Double(Takeout)`: パートナー未ビッド、相手のスートが 2 レベル以下 | `hcp ≥ takeout_double.0` ∧ `suit_len[their] ≤ takeout_double.1` ∧ 未ビッドスート各 `≥ takeout_double.2` (未ビッドが 3 つ以上なら `Or` で 2 つ以上を要求)。既に非パスのコールをしたディフェンダー (`Overcaller`/`Advancer`/`Balancer`) は下限に `SECOND_TAKEOUT_DOUBLE_EXTRA` (3) を加える (§8.6「後の巡の制限」(5)) | 0.45 (旧 0.5) |
 | `penalty_x` | `Double(Penalty)`: パートナーの最後のビッドが NT、相手が NT または 4 レベル以上、または我々がスートを合意済み | `hcp ≥ 10` ∧ `suit_len[their] ≥ 4` | 0.3 |
 | `negative_x` | `Double(Negative)`: パートナーがスートを開き RHO が 2 レベル以下でオーバーコール。レスポンダーの最初のターン (パートナーのオープンがパートナーの唯一の非パスで最後のコール、RHO の最後のコールがビッド) に限る (§8.6「後の巡の制限」(3)) | `hcp ≥ response.new_suit_1.1 + 2 × (level − 1)` ∧ 未ビッドメジャーの条件: 両メジャーが未ビッドで 1 レベルで言える (`1C (1D) X`) なら両方 `≥ 4`; 1 つだけ未ビッドで 1 レベルで言える (`1C (1H) X`) ならちょうど 4 枚; それ以外 (2 レベルのオーバーコール) は未ビッドメジャー `≥ 4` (`Or`) | 両メジャーの場合 0.5、それ以外 0.4 (旧 0.5) |
 | `raise` | パートナーが先にビッドしたスート `s` を我々がビッド | `suit_len[s] ≥ raise.0` ∧ 役割/レベル別の `hcp` (`Responder`: `response.raise.1` 単純、`response.jump_raise.1` ジャンプ、ゲームレイズ `13+`; `Advancer`: `advance.raise`; `Opener`: `rebid.raise` / `rebid.jump_raise`) | 0.45 (旧 0.6) |
@@ -1341,6 +1341,18 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
   - リビッドの機会にパスした後 (`1C-P-1D-(1S)-P-(2S)-P-(P)-2NT`)。
   - パートナーが応答していないとき (`1C-(1D)-P-(1S)-1NT`)。SAYC はミニマムの手でリオープンしない。
   - 相手の NT の上 (`1C-(1NT)-2H-(P)-2NT`)。
+- (5) ディフェンダー (`Overcaller`/`Advancer`/`Balancer`) の 2 回目のテイクアウト・ダブル (自分が既に非パスのコールをした後) は、下限に `SECOND_TAKEOUT_DOUBLE_EXTRA` (3) を加える。12 → 15、バランシング席では 9 → 12 になる。
+  - 最初の行動がミニマムを示しており、ミニマムの手なら 2 回目はパスするか自分のスートを再びビッドする。例: `(1C)-1S-(X)-P-(2H)-X` の 12 HCP。
+  - オープナーのリオープニング・ダブル (`1D-(1S)-P-(P)-X`) はミニマムでも標準なので、対象外。
+
+効果:
+
+- `xtask coverage` (既定サイズ、release) の strict [G]: 0.745 → (1) 0.798 → (2) 0.826 → (3) 0.839 → (4) 0.852 → (5) 0.861。stop-audited [G] は 0.521 → 0.625、上書きは 276 → 115。raw [G]、コーパスの [C]、IR は変わらない。
+- §8.5 の測定 (現行 SAYC。変更前 → 変更後):
+  - 測定 1: SAYC 再現率 0.7262 → 0.7274、精度 0.7167 → 0.7213 (1500 ノード)。vendor 再現率 0.5793 → 0.5831、精度 0.5966 → 0.5966 (795 ノード)。
+  - 測定 2: 旧定義 0.2812 → 0.2737、文脈付き 0.3357 → 0.3286 (600 決定点。候補は 8,597 → 8,474)。下がった 0.007 は、上の局面で規則が当たらなくなり候補が減った分で、レーン S の基準 (0.01 以内) の内側にある。
+  - 測定 3: 0.7981 → 0.8005。規則別では `rebid_nt` が 69 コール 0.362 → 48 コール 0.417、`negative_x` が 57 → 46 コール、`takeout_x` が 0.466 → 0.447。
+- レベル下限の検証 (2000 配牌、既定の表): 6 レベル以上 6 → 5、7 レベル 0 のまま。
 
 ---
 
