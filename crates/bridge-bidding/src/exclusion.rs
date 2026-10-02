@@ -529,11 +529,13 @@ fn push_boxes(c: &HandConstraint, boxes: &mut SmallVec<[(u8, u8, ShapeSet); 8]>)
     }
 }
 
-/// The grid of `boxes` (see [`push_boxes`]) united with `grid`.
-fn or_boxes(grid: HcpShapeGrid, boxes: &[(u8, u8, ShapeSet)]) -> HcpShapeGrid {
-    boxes.iter().fold(grid, |g, &(lo, hi, shapes)| {
-        g.or(&HcpShapeGrid::from_box(shapes, lo..=hi))
-    })
+/// The grid of `boxes` (see [`push_boxes`]) united with `grid` (in place: no box grid is
+/// built).
+fn or_boxes(mut grid: HcpShapeGrid, boxes: &[(u8, u8, ShapeSet)]) -> HcpShapeGrid {
+    for &(lo, hi, shapes) in boxes {
+        grid.union_box(shapes, lo..=hi);
+    }
+    grid
 }
 
 /// The union of the guaranteed subsets (`sub` of [`bounds`]) of `cs`, and whether every one is
@@ -614,7 +616,8 @@ fn natural_regions(
             }
             None => (none_below, true),
         };
-        let grid = above.not().and(&inner);
+        // `¬above ∧ inner`.
+        let grid = inner.diff(&above);
         let exact = above_exact && own_exact && below_exact;
         grid_piece(&grid, exact, None, || {
             let not_below = or_of(below_c).map(|u| u.not());
@@ -635,7 +638,8 @@ fn natural_regions(
         let own_c = &ranked[i].constraint;
         let (own_sup, own_exact) = sup_of(own_c);
         let (above, exact_above) = union_sub(constraints[..i].iter().copied());
-        let grid = own_sup.and(&above.not());
+        // `own ∧ ¬above`.
+        let grid = own_sup.diff(&above);
         let own = (!own_exact).then_some(own_c);
         grid_piece(&grid, exact_above, own, || {
             subtract_tree(own_c, &constraints[..i])

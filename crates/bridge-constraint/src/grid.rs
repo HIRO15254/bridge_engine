@@ -79,6 +79,18 @@ impl HcpShapeGrid {
         g
     }
 
+    /// Adds `shapes × hcp` to the set in place: `*self = self.or(&HcpShapeGrid::from_box(shapes,
+    /// hcp))` without building the box grid (the range is clamped to `0..=37`).
+    pub fn union_box(&mut self, shapes: ShapeSet, hcp: RangeInclusive<u8>) {
+        let lo = *hcp.start() as usize;
+        let hi = (*hcp.end()).min(HCP_MAX) as usize;
+        if lo <= hi {
+            for cell in &mut self.0[lo..=hi] {
+                *cell = cell.union(shapes);
+            }
+        }
+    }
+
     /// The box of an atom's `shapes`/`hcp` (its `cards`/`eval` literals are ignored, so this is
     /// a superset of the atom, and equal to it when the atom is literal-free).
     pub fn of_atom_box(atom: &Atom) -> HcpShapeGrid {
@@ -197,7 +209,7 @@ impl HcpShapeGrid {
 
     /// `true` when no *feasible* cell is set, i.e. no 13-card hand lies in the set.
     pub fn is_empty_hands(&self) -> bool {
-        self.and(HcpShapeGrid::feasible()).is_empty()
+        !self.intersects(HcpShapeGrid::feasible())
     }
 
     /// `self ⊆ other`.
@@ -464,6 +476,23 @@ mod tests {
             cards: Vec::new(),
             eval: Vec::new(),
         })
+    }
+
+    #[test]
+    fn union_box_is_the_union_with_the_box() {
+        let base = HcpShapeGrid::from_box(ShapeSet::BALANCED, 15..=17);
+        for (shapes, lo, hi) in [
+            (ShapeSet::ALL, 12, 21),
+            (ShapeSet::from_suit_len(Suit::Spades, 5, 13), 0, 40),
+            (ShapeSet::EMPTY, 0, 37),
+            (ShapeSet::ALL, 20, 10),
+            (ShapeSet::ALL, 37, 37),
+            (ShapeSet::ALL, 38, 40),
+        ] {
+            let mut g = base;
+            g.union_box(shapes, lo..=hi);
+            assert_eq!(g, base.or(&HcpShapeGrid::from_box(shapes, lo..=hi)));
+        }
     }
 
     #[test]
