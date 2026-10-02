@@ -42,6 +42,7 @@ use std::path::{Path, PathBuf};
 
 use bridge_bidding::{
     BidChoice, BidContext, ImplicitPass, PolicyParams, Scoring, Table, choose_bid,
+    natural_partner_context,
 };
 use bridge_constraint::{HandConstraint, SampleOptions, Sampler};
 use bridge_core::{Auction, Call, Deal, Hand, Seat, Vulnerability};
@@ -1127,39 +1128,6 @@ fn infer_batch_matches_infer_on_generated_and_corpus_auctions_full() {
 // split (docs/design/15-phase4-plan.md step 5, D20).
 // --------------------------------------------------------------------------------------------
 
-/// The partner context `choose_bid`'s natural branch computes for `seat`, about to make call
-/// `j`, on a natural-only table: the heaviest non-`Fallback` alternative of partner's last call
-/// in the (strict) interpretation of any auction extending the first `j` calls. Nothing is
-/// forcing (the table has no nodes).
-fn natural_partner_context(
-    interp: &bridge_bidding::Interpretation,
-    j: usize,
-    seat: Seat,
-) -> bridge_system::PartnerContext {
-    let partner = seat.partner();
-    let alt = interp.per_call[..j]
-        .iter()
-        .rev()
-        .find(|ci| ci.seat == partner)
-        .and_then(|last| {
-            last.alternatives
-                .iter()
-                .filter(|(_, _, ex)| ex.kind != bridge_bidding::ResolutionKind::Fallback)
-                .max_by(|a, b| a.1.total_cmp(&b.1))
-        });
-    bridge_system::PartnerContext {
-        partner_constraint: alt.map(|a| a.0.clone()),
-        forcing_situation: false,
-    }
-}
-
-fn strict_interpret_options() -> bridge_bidding::InterpretOptions {
-    bridge_bidding::InterpretOptions {
-        strict: true,
-        ..bridge_bidding::InterpretOptions::default()
-    }
-}
-
 /// `(rule, default priority)` pairs seen so far; a pair's position is its key in a priority
 /// vector. A rule with two default confidences (`pass_default`, limited or not) gets two keys.
 #[derive(Default)]
@@ -1263,8 +1231,8 @@ fn rate((hits, total): (u64, u64)) -> f64 {
 
 /// Measurement 2 prepared for re-ranking, per decision point: `bare` samples each call's
 /// constraint from `NaturalInference::candidates` (the phase-3 definition, no partner context),
-/// `contextual` samples the constraint of the ranked candidate `choose_bid` itself uses (partner
-/// context from the prefix's interpretation, so the level floor included). Hands are drawn with
+/// `contextual` samples the constraint of the ranked candidate `choose_bid` itself uses (under
+/// its own partner context, `natural_partner_context`, so the level floor included). Hands are drawn with
 /// a per-decision-point seed, so every parameter set sees the same hands for the same
 /// constraint. With `check`, every bare hand's prediction under the default priorities is
 /// asserted equal to `choose_bid` on the natural-only table.
@@ -1283,7 +1251,6 @@ fn reproduction_positions(
         policy: PolicyParams::default(),
     };
     let opts = SampleOptions::default();
-    let iopts = strict_interpret_options();
     let tie_break = bridge_system::TieBreak::default();
     let (mut bare, mut contextual) = (Vec::new(), Vec::new());
     for (k, dp) in points.iter().enumerate() {
@@ -1294,8 +1261,7 @@ fn reproduction_positions(
         ) else {
             continue;
         };
-        let interp = bridge_bidding::interpret(&table, &prefix, &iopts);
-        let partner = natural_partner_context(&interp, prefix.len(), dp.owner);
+        let partner = natural_partner_context(&table, &natural, &prefix, bid_ctx.implicit_pass);
         let ranked = natural.ranked_candidates(&prefix, dp.owner, &partner, tie_break);
         let mut pos_bare = TunePos::new(&ranked, keys);
         let mut pos_ctx = TunePos::new(&ranked, keys);
@@ -1350,7 +1316,9 @@ fn reproduction_positions(
 
 /// Every call of every corpus game prepared for re-ranking against the real call with the real
 /// hand (true-deal agreement of the natural policy), split by game enumeration index: even
-/// games tune, odd games evaluate.
+/// games tune, odd games evaluate. Candidates are ranked under `choose_bid`'s partner context
+/// with `ImplicitPass::Complement`, the reading of a hand that fits no candidate that the
+/// corpus rates (`tune_eval` with `pass_when_none`) assume.
 fn corpus_positions(
     games: &[(Deal, Auction)],
     params: &bridge_system::NaturalParams,
@@ -1358,11 +1326,9 @@ fn corpus_positions(
 ) -> (Vec<TunePos>, Vec<TunePos>) {
     let natural = std::sync::Arc::new(NaturalInference::new(params.clone()));
     let table = Table::uniform(std::sync::Arc::new(empty_system()), natural.clone());
-    let iopts = strict_interpret_options();
     let tie_break = bridge_system::TieBreak::default();
     let (mut tune, mut eval) = (Vec::new(), Vec::new());
     for (g, (deal, auction)) in games.iter().enumerate() {
-        let interp = bridge_bidding::interpret(&table, auction, &iopts);
         for (j, &call) in auction.calls().iter().enumerate() {
             let Ok(prefix) = Auction::from_calls(
                 auction.dealer(),
@@ -1372,7 +1338,8 @@ fn corpus_positions(
                 break;
             };
             let owner = prefix.next_seat();
-            let partner = natural_partner_context(&interp, j, owner);
+            let partner =
+                natural_partner_context(&table, &natural, &prefix, ImplicitPass::Complement);
             let ranked = natural.ranked_candidates(&prefix, owner, &partner, tie_break);
             let mut pos = TunePos::new(&ranked, keys);
             pos.add(TunePos::mask(&ranked, deal.hand(owner)), call.index());

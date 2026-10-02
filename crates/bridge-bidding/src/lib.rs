@@ -27,7 +27,7 @@ pub use bridge_system::{NaturalInference, NodeId, SystemIR};
 pub use cache::InterpretCache;
 pub use choose::{
     Alternative, BidChoice, ChoiceSource, Chosen, Diagnostic, NoCandidate, Rejected, Tried,
-    choose_bid,
+    choose_bid, natural_partner_context,
 };
 pub use interpret::{
     CallExplanation, CallInterpretation, Explanation, InterpretMode, InterpretOptions,
