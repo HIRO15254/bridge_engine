@@ -72,7 +72,7 @@ crates/bridge-dds/
 
 ## 4. `build.rs`
 
-要件: 27 個の `.cpp` を `-std=c++11 -O3` でビルド、`DDS_THREADS_STL` を定義 (std::thread、外部依存なし、MSVC/clang/gcc で動く)、feature `openmp` で `DDS_THREADS_OPENMP`、`wasm32` は何もしない (`lib.rs` が `compile_error!`)、`vendor/` 未取得なら警告して FFI を cfg で除外する (フェーズ 0 で確定済み)。
+要件: 27 個の `.cpp` を `-std=c++11 -O3` でビルド、`DDS_THREADS_STL` を定義 (std::thread、外部依存なし、MSVC/clang/gcc で動く)、feature `openmp` で `DDS_THREADS_OPENMP` (MSVC 以外は OpenMP ランタイムのプローブに成功したときだけ。補足を参照)、`wasm32` は何もしない (`lib.rs` が `compile_error!`)、`vendor/` 未取得なら警告して FFI を cfg で除外する (フェーズ 0 で確定済み)。
 
 ```rust
 //! Compiles the vendored DDS 2.9.0 sources with `cc`.
@@ -104,10 +104,14 @@ fn main() {
         return;
     }
 
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let msvc = target_env == "msvc";
+
     let mut build = cc::Build::new();
     build
         .cpp(true)
-        .std("c++11")
+        .std(if msvc { "c++14" } else { "c++11" }) // MSVC の /std は c++14 から
         .opt_level(3)
         .include("vendor/dds-2.9.0/include")
         .include(src)
@@ -117,18 +121,43 @@ fn main() {
         .flag_if_supported("-Wno-unused-parameter")
         .flag_if_supported("-Wno-deprecated-declarations");
     if std::env::var("CARGO_FEATURE_OPENMP").is_ok() {
-        build.define("DDS_THREADS_OPENMP", None).flag("-fopenmp");
-        println!("cargo:rustc-link-lib=gomp");
+        if msvc {
+            // MSVC は vcomp を同梱し /openmp で自動リンクするので、プローブしない。
+            build.define("DDS_THREADS_OPENMP", None).flag("/openmp");
+        } else {
+            let (flags, link_lib): (&[&str], &str) = if target_os == "macos" {
+                (&["-Xpreprocessor", "-fopenmp"], "omp") // Homebrew の libomp
+            } else {
+                (&["-fopenmp"], "gomp")
+            };
+            // 小さな OpenMP プログラムをコンパイルしてリンクできたときだけ OpenMP にする。
+            if probe_openmp(&target_env, flags, link_lib) {
+                build.define("DDS_THREADS_OPENMP", None);
+                for flag in flags {
+                    build.flag(flag);
+                }
+                println!("cargo:rustc-link-lib={link_lib}");
+            } else {
+                // ランタイムが無いホストでビルドを落とさず、STL のバックエンドだけで組む。
+                println!("cargo:warning=bridge-dds: no OpenMP runtime found ... std::thread backend instead");
+            }
+        }
     }
     build.compile("dds");
     println!("cargo:rustc-cfg=dds_vendored");
 }
+
+// `omp.h` を使う 3 行のプログラムを `flags` と `-l{link_lib}` で試しにビルドする。
+// 成功すれば true、ツールチェーンが OpenMP を持たなければ false (ビルドは落とさない)。
+fn probe_openmp(target_env: &str, flags: &[&str], link_lib: &str) -> bool { /* … */ }
 ```
+
+このリストは骨格を示す抜粋で、実際の `build.rs` は `src/ffi_guard.cpp` のコンパイル、`include/portab.h` の存在確認 (無ければ「未取得」扱い)、警告の抑制 (`.warnings(false)`)、MSVC 向けの `-EHsc` と `_CRT_SECURE_NO_WARNINGS` も持つ。食い違えば `build.rs` が正である。
 
 補足:
 
 - `DDS_THREADS_STL` は 2.9.0 の `Makefile_linux_shared` にあるバックエンドの 1 つ。マクロ無指定だと DDS は単一スレッドになる。
-- `openmp` は gcc (`-fopenmp`, `libgomp`) を前提にし、CI では Linux のみ有効化する。未決: MSVC (`/openmp`) と Apple clang (`libomp`) の対応。
+- `openmp` は `DDS_THREADS_STL` に加えて `DDS_THREADS_OPENMP` を定義する (DDS は定義されたバックエンドのうち番号の小さいものを取るので OpenMP が選ばれ、STL のコードは使われない)。MSVC は `/openmp` (同梱の vcomp、プローブなし)。それ以外は Linux/gcc が `-fopenmp` + `gomp`、macOS が `-Xpreprocessor -fopenmp` + `omp` (Homebrew の libomp、Apple clang は OpenMP を持たない) で小さな OpenMP プログラムのコンパイルとリンクをプローブし、失敗すれば `cargo:warning` を出して std::thread のバックエンドだけで組む。MSVC と Apple clang の対応は済んでいる (`VENDOR.md`)。CI で `--features openmp` を走らせるのは ubuntu だけで、Linux の実経路・MSVC の `/openmp`・macOS の libomp は実行では未確認 (`12-roadmap.md` 節「フェーズ 5 の完了」。Homebrew の libomp が無い Mac では probe が失敗して STL に戻る経路を確かめた)。
 - Windows: `dll.h` の `DLLEXPORT` は `__declspec(dllexport)` だが静的リンクなので問題ない。`STDCALL = __stdcall` は 32 bit x86 でのみ意味を持つが、`sys.rs` は `extern "C"` だけを宣言し、x86 Windows は「未検証・未サポート」と明記する (R6。`sys.rs` の NOTE コメント)。
 - edition 2024 では `unsafe extern "C" { … }` ブロック。
 - `wasm32-unknown-unknown` には libc もスレッドもないため `lib.rs` で `compile_error!`。ファサードは `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]` で本クレートを optional に持つ。
@@ -486,7 +515,7 @@ pub mod dd {
 
 - 未決: `cargo publish` での `vendor/` 同梱方法 (§3)。
 - 未決: `contractType.denom` のエンコード確認 (§5)。
-- 未決: `openmp` feature の MSVC / Apple clang 対応 (§4)。
+- 解決済み: `openmp` feature の MSVC / Apple clang 対応 (§4。MSVC は `/openmp`、macOS は libomp のプローブで、無ければ STL にフォールバックする)。未確認: `openmp` feature の実経路 (Linux/gcc、MSVC `/openmp`、macOS の libomp) は実行していない。コードは対応済み。
 - 未決: DDS3 への移行時期。ラッパーの公開面はレガシー名と同一に保ち、`vendor/` と `build.rs` の差し替えだけで済むようにしておく。DDS3 の Emscripten ビルドは将来の `wasm32-emscripten` feature の候補 (対象外)。
 
 アーカイブの sha256 は `VENDOR.md` ではなく `vendor/SHA256SUMS` (git-ignored) に記録するので、コミット sha を文書に固定する作業は無い。`DoubleDummy::lead_scores` は `bridge-core` の型だけを取るので、`Position` を `bridge-core` へ移す必要は無くなった。
