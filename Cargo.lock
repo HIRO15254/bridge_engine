@@ -202,6 +202,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "bridge-lead"
+version = "0.0.1"
+dependencies = [
+ "bridge",
+ "bridge-bidding",
+ "bridge-constraint",
+ "bridge-core",
+ "bridge-format",
+ "bridge-sample",
+ "bridge-system",
+ "rayon",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "bridge-play"
 version = "0.0.1"
 dependencies = [
