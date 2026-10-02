@@ -681,23 +681,24 @@ fn check_sibling_group(
     opts: &DnfOptions,
     new_lints: &mut Vec<Lint>,
 ) {
-    let mut groups: HashMap<
-        (
-            crate::pattern::Side,
-            crate::ast::SeatCond,
-            crate::ast::VulCond,
-        ),
-        Vec<NodeId>,
-    > = HashMap::new();
+    // Groups in order of first appearance, so the lints (part of the serialised IR) come out in
+    // the same order on every compile; a `HashMap` here made that order vary between runs.
+    type GroupKey = (
+        crate::pattern::Side,
+        crate::ast::SeatCond,
+        crate::ast::VulCond,
+    );
+    let mut groups: Vec<(GroupKey, Vec<NodeId>)> = Vec::new();
     for &child in children {
         let n = ir.node(child);
-        groups
-            .entry((n.side, n.seat, n.vul))
-            .or_default()
-            .push(child);
+        let key = (n.side, n.seat, n.vul);
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, members)) => members.push(child),
+            None => groups.push((key, vec![child])),
+        }
     }
 
-    for siblings in groups.into_values() {
+    for (_, siblings) in groups {
         if siblings.len() < 2 {
             continue;
         }

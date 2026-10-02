@@ -120,6 +120,26 @@ fn sayc_compiles_with_zero_errors_and_no_custom() {
     }
 }
 
+/// Two compiles of the same sources give the same IR: the lints come out in the same order (the
+/// sibling-group lints were once grouped through a `HashMap`, whose per-instance random keys
+/// reordered them between compiles in one process) and, with the `cache` feature, the postcard
+/// encoding is byte-identical, so a digest of the IR is stable.
+#[test]
+fn sayc_compiles_deterministically() {
+    let (first, _) = compile_sayc("sayc.bml");
+    let (second, _) = compile_sayc_uncached("sayc.bml");
+    assert_eq!(first.lints.len(), second.lints.len(), "lint count differs");
+    for (i, (a, b)) in first.lints.iter().zip(&second.lints).enumerate() {
+        assert_eq!(a, b, "lint {i} differs between two compiles");
+    }
+    #[cfg(feature = "cache")]
+    {
+        let a = postcard::to_allocvec(first).expect("postcard encode");
+        let b = postcard::to_allocvec(&second).expect("postcard encode");
+        assert!(a == b, "postcard IR differs between two compiles");
+    }
+}
+
 /// R9 (review, blocker + major findings): a `Warning`-severity `SiblingSubset` lint on a Us-side
 /// node whose description is non-empty means that node's bid can never be chosen by `choose_bid`
 /// -- an earlier, equal-priority sibling's constraint already covers every hand that would
