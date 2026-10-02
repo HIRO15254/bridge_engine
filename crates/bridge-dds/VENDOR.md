@@ -47,8 +47,9 @@ extracts it again from the cached, hash-checked archive.
 By default DDS runs on the `std::thread` backend (`DDS_THREADS_STL`). With `--features openmp`,
 `build.rs` additionally defines `DDS_THREADS_OPENMP` (DDS takes the first backend that is
 defined, and OpenMP comes before STL) and passes `-fopenmp` (`-Xpreprocessor -fopenmp` plus
-`-lomp` on macOS, `/openmp` on MSVC; `libgomp` is linked on Linux). It first compiles and links a
-trivial OpenMP program with the same flags; when that fails (Apple clang without Homebrew's
+`-lomp` on macOS, `/openmp` on MSVC; `libgomp` is linked on Linux). On gcc/clang it first
+compiles and links a trivial OpenMP program with the same flags (MSVC needs no probe, since it
+ships the `vcomp` runtime); when that fails (Apple clang without Homebrew's
 `libomp`, whose keg-only headers and library are on no default search path, so `CPATH` and
 `LIBRARY_PATH` would have to point at it) the build prints a `cargo:warning` and falls back to
 the STL backend instead of failing.
