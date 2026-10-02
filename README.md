@@ -55,7 +55,7 @@ The double-dummy solver sources are fetched with `cargo xtask dds vendor` (phase
 | 3 | BML compiler, `interpret` / `choose_bid`, bidirectional consistency test | done: SAYC compiles in 342 ms, strict consistency on 10^6 positions (5% random off-system calls) has 0 violations other than the 2,645 caused by coverage holes (reported separately), policy argmax 10^5/10^5, `.bss` oracle 228/228, recognition jdh8 0.858 / gjp 0.524; `interpret` on 12 calls 11-18 µs, above the 10 µs target |
 | 4 | system definitions (SAYC) | done (unmet criterion recorded): strict [G] 0.847 on 1000 generated auctions (target 0.80; held-out seeds 0.807 / 0.785 / 0.772), strict [C] 0.487 on the SAYC-compatible opening subset of the corpus (target 0.80, not met; raw 0.709), all-call Exact 0.320 (baseline 0.041), policy mirror under-cover 0 and exact >= 99.5%, consistency 10^6 with 0 violations other than 23 gap-induced, `interpret` on 12 SAYC calls 8.09 µs, SAYC compiles in 665-683 ms, `PolicyParams::human()` = (0.3404, 0.3959) |
 | 5 | deal sampler, play inference, DDS | |
-| 6 | opening-lead advisor | |
+| 6 | opening-lead advisor (`bridge-lead`) | done (one reading of the criterion unmet): on the 100-board eval split with `human()`, top-3 DD-best hit rate 0.93 (target 0.90) and top-1 0.78 vs 0.74 for the no-bidding baseline on the same boards; against the plan's literal 0.808, top-1 is below on the eval split (0.78; 0.83 on the phase-3 board set); ESS median 78.1 (target 20), hard policy matches the retired softmax on hit rate with 3x the ESS |
 
 ## License
 
