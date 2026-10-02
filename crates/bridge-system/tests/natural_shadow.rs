@@ -10,6 +10,13 @@
 //! by call order, §8.6), and the single jump to the four level over a weak two (`(2S)-4H`),
 //! whose hands (6+ cards, opening values) are a subset of the cheaper overcall's and rank with
 //! it, so the cheaper call wins (§8.6, "後の巡の制限の見直し" (2)).
+//!
+//! The jump's range is therefore used only by explanation text, the Legacy interpretation,
+//! direct `infer` callers and the partner context of the jumper's partner's later calls (which
+//! reads an off-system call through its whole natural constraint). The default Mirror
+//! interpretation reads a call through its natural exclusive region, which is empty for the
+//! shadowed jump, so the jump itself is read as ANY there; that review finding (natural-3)
+//! stays open as a known limit (§8.6, "後の巡の制限の見直し (2)", N-C).
 
 mod common;
 

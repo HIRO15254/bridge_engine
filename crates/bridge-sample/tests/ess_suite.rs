@@ -1162,13 +1162,7 @@ fn ess_fixture_parses() {
 /// hands. A change to SAYC, the natural fallback or the policy that makes any of them off-policy
 /// (`p < 0.01`) leaves the frozen cases stale; regenerate them with `ESS_SUITE_WRITE_FIXTURE=1`
 /// (see the module docs).
-///
-/// Ignored on the phase-5 integration branch: the fixture was regenerated against the phase-4
-/// state lane P integrated, and the final phase-4 line has changed SAYC and the policy since, so
-/// 13 of the 25 generated cases are off-policy. Remove the `#[ignore]` when the fixture is
-/// regenerated against the final phase-4 line (`ESS_SUITE_WRITE_FIXTURE=1`).
 #[test]
-#[ignore = "fixture is stale against the final phase-4 line; regenerate it, then remove this"]
 fn ess_fixture_generated_cases_are_on_policy() {
     let path = fixture_path();
     let cases = read_fixture(&path).unwrap_or_else(|| panic!("{} is missing", path.display()));

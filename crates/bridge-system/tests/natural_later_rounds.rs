@@ -8,7 +8,7 @@ mod common;
 use std::ops::RangeInclusive;
 
 use bridge_constraint::{Atom, HandConstraint};
-use bridge_core::{Hand, Seat, Suit, Vulnerability};
+use bridge_core::{Hand, Seat, Strain, Suit, Vulnerability};
 use bridge_system::natural::{
     CallContext, CallKind, DoubleKind, Inference, NaturalInference, Role, classify,
 };
@@ -65,11 +65,23 @@ fn no_natural_entry_at_the_five_level_after_their_exchange() {
         "1S P 4S 5H",          // direct, over their game raise
         "1D P 4D 5C",          // five-level first entry below their game
         "1D P 4D P P 5C",      // the same in the balancing seat
-        "1H P 2NT P 4H 5C",    // a single jump is not described either
+        "1H P 2NT P 4H 5C",    // the cheapest club over their game (jump 0)
     ] {
         let (ctx, inf) = last(calls);
         assert_eq!(ctx.level, 5, "{calls}");
         assert!(ctx.their_bids >= 2, "{calls}");
+        assert_eq!(inf.rule, "fallback", "{calls}");
+    }
+    // A single jump to the five level after their exchange is not described either.
+    for calls in ["1H P 3H 5C", "1H P 3H P P 5C"] {
+        let (ctx, inf) = last(calls);
+        assert_eq!(ctx.level, 5, "{calls}");
+        assert_eq!(ctx.their_bids, 2, "{calls}");
+        assert!(
+            matches!(ctx.kind, CallKind::Bid { jump: 1, .. }),
+            "{calls}: {:?}",
+            ctx.kind
+        );
         assert_eq!(inf.rule, "fallback", "{calls}");
     }
 }
@@ -129,9 +141,34 @@ fn four_level_entry_after_their_exchange_needs_six_cards_and_opening_values() {
     // The balancing seat below their game: a king less.
     assert_four_level_entry("1S P 3S P P 4H", "overcall", true);
     assert_four_level_entry("1H P 3H P P 4D", "overcall", true);
-    // The pass-out seat over their game is not a balance: opening values.
-    assert_four_level_entry("1H P 4H P P 4S", "overcall", false);
-    assert_four_level_entry("1NT P 2NT P 3NT P P 4H", "overcall", false);
+}
+
+#[test]
+fn entry_over_their_game_after_a_pass_is_not_described() {
+    // A player who passed earlier, after their opening, where an overcall of the same suit was
+    // available (1S over 1H, 3H over 2NT), enters over their game: six cards and opening values
+    // are what that pass denied. No rule describes the entry, in the pass-out seat or in the
+    // direct seat.
+    for (calls, role) in [
+        ("1H P 4H P P 4S", Role::Balancer),
+        ("1NT P 2NT P 3NT P P 4H", Role::Balancer),
+        ("1H P 3NT P P 4S", Role::Balancer),
+        ("1H P 2H P 4H 4S", Role::Overcaller),
+        ("1H P 2H P 3H P 4H 4S", Role::Overcaller),
+        ("1NT P 2C P 2H P 3NT 4S", Role::Overcaller),
+    ] {
+        let (ctx, inf) = last(calls);
+        assert_eq!(ctx.role, role, "{calls}");
+        assert!(ctx.passed_after_opening, "{calls}");
+        assert_eq!(inf.rule, "fallback", "{calls}");
+    }
+    // A first chance over their game keeps the four-level entry (tested above): no pass after
+    // their opening. A pass before it (`P-(1H)-P-(4H)-4S`) is not keyed (a known limit).
+    for calls in ["1H P 4H 4S", "1NT P 3NT 4H", "P 1H P 4H 4S"] {
+        let (ctx, inf) = last(calls);
+        assert!(!ctx.passed_after_opening, "{calls}");
+        assert_eq!(inf.rule, "overcall", "{calls}");
+    }
 }
 
 #[test]
@@ -186,10 +223,6 @@ fn overriding_partners_game_needs_slam_values() {
         let inf = last_with_partner(calls, 12..=37);
         assert_eq!(min_hcp(&inf), 19, "{calls}: {}", inf.rule);
     }
-    // Opener pulling 3NT to four of the suit already rebid: nothing partner did not know.
-    let inf = last_with_partner("1H P 1S P 2H P 3NT P 4H", 10..=37);
-    assert_eq!(inf.rule, "rebid_own");
-    assert_eq!(min_hcp(&inf), 21);
     // Below game over partner's 3NT (a slam try, not a correction): the slam floor too.
     let inf = last_with_partner("1D P 3NT P 4D", 13..=15);
     assert_eq!(inf.rule, "rebid_own");
@@ -268,6 +301,243 @@ fn corrections_of_partners_3nt_keep_the_ordinary_floor() {
 }
 
 #[test]
+fn a_one_level_opener_pulling_3nt_to_its_rebid_suit_corrects() {
+    // After a minimum rebid of the opened suit (SAYC: 12-15), the pull of partner's 3NT is a
+    // choice of game: a seventh card, in the minimum's range. The ordinary floor (22 - 10,
+    // 22 - 13) is below it (it was 21+ and 18+ under the slam floor).
+    for (calls, partner_min) in [
+        ("1H P 1S P 2H P 3NT P 4H", 10),
+        ("1S P 2C P 2S P 3NT P 4S", 13),
+    ] {
+        let inf = last_with_partner(calls, partner_min..=37);
+        let suit = inf_suit(calls);
+        assert_eq!(inf.rule, "rebid_own", "{calls}");
+        assert_eq!(inf.constraint.hcp_range(), 12..=15, "{calls}");
+        let accepts = |long, others| inf.constraint.satisfies(hand_with(suit, long, others));
+        assert!(
+            accepts("AKJ5432", ["32", "K2", "Q2"]),
+            "{calls}: seven, 13 hcp"
+        );
+        assert!(
+            !accepts("AKJ543", ["2", "K32", "Q32"]),
+            "{calls}: six and a singleton"
+        );
+        assert!(
+            !accepts("AKJ543", ["32", "K32", "Q2"]),
+            "{calls}: six, 6-3-2-2"
+        );
+        assert!(
+            !accepts("AKQ5432", ["32", "K2", "A2"]),
+            "{calls}: seven, 16 hcp"
+        );
+    }
+    // After a jump rebid the pull shows the jump rebid's range (16-18).
+    let inf = last_with_partner("1S P 1NT P 3S P 3NT P 4S", 8..=37);
+    assert_eq!(inf.rule, "rebid_own");
+    assert_eq!(inf.constraint.hcp_range(), 16..=18);
+    // A weak two's rebid suit is not corrected this way: the slam floor (above).
+    let inf = last_with_partner("2S P 2NT P 3S P 3NT P 4S", 12..=37);
+    assert!(!inf.constraint.is_satisfiable());
+}
+
+#[test]
+fn a_pull_after_an_unlimited_call_shows_openers_strongest_range() {
+    // After a reverse, a jump shift or a 2NT rebid, a later non-jump rebid of the opened suit
+    // does not limit opener to a minimum. The pull of partner's 3NT is still a correction (seven
+    // cards, the ordinary floor) and shows the range of opener's strongest earlier call: a
+    // reverse 17-21, a jump shift 19-21, a 2NT rebid 18-19.
+    for (calls, partner_min, hcp) in [
+        ("1D P 1S P 2H P 2NT P 3D P 3NT P 5D", 6, 20..=21), // reverse; floor 26 - 6
+        ("1C P 1H P 2S P 2NT P 3C P 3NT P 5C", 8, 18..=21), // a jump reverse; floor 26 - 8
+        ("1H P 1S P 3C P 3D P 3H P 3NT P 4H", 6, 19..=21),  // jump shift
+        ("1H P 1S P 2NT P 3C P 3H P 3NT P 4H", 6, 18..=19), // 2NT rebid
+        ("1D P 1H P 2NT P 3C P 3D P 3NT P 5D", 8, 18..=19),
+    ] {
+        let (ctx, _) = last(calls);
+        assert!(!ctx.opener_other_calls.is_empty(), "{calls}");
+        let inf = last_with_partner(calls, partner_min..=37);
+        assert_eq!(inf.rule, "rebid_own", "{calls}");
+        assert_eq!(inf.constraint.hcp_range(), hcp, "{calls}");
+        assert_eq!(inf.constraint.suit_len(inf_suit(calls)), 7..=13, "{calls}");
+        assert!(inf.constraint.is_satisfiable(), "{calls}");
+    }
+    let (ctx, inf) = last("1D P 1S P 2H P 2NT P 3D P 3NT P 5D");
+    assert!(ctx.opener_other_calls.reverse);
+    assert_eq!(inf.constraint.hcp_range(), 17..=21);
+    // 21 hcp, seven diamonds and the reverse's four hearts, unsuited to notrump.
+    assert!(inf.constraint.satisfies(hand("2", "AKQ5432", "AKJ2", "A")));
+    assert!(
+        last("1H P 1S P 3C P 3D P 3H P 3NT P 4H")
+            .0
+            .opener_other_calls
+            .jump_shift
+    );
+    assert!(
+        last("1H P 1S P 2NT P 3C P 3H P 3NT P 4H")
+            .0
+            .opener_other_calls
+            .jump_nt_rebid
+    );
+    // A non-jump new suit (12-18) does not limit the hand to a minimum either.
+    let (ctx, inf) = last("1H P 1S P 2C P 2D P 2H P 3NT P 4H");
+    assert!(ctx.opener_other_calls.new_suit);
+    assert_eq!(inf.constraint.hcp_range(), 12..=18);
+    // While the rebid limits the hand (only the opening and bids of the opened suit) the field
+    // is empty, also in competition.
+    for calls in [
+        "1S P 2C P 2S P 3NT P 4S",
+        "1S P 1NT P 3S P 3NT P 4S",
+        "1H 1S 2C 2S 3H P 3NT P 4H",
+    ] {
+        assert!(last(calls).0.opener_other_calls.is_empty(), "{calls}");
+    }
+}
+
+#[test]
+fn every_suit_both_partners_bid_is_agreed() {
+    // Responder bid hearts and clubs, opener clubs and hearts: both are agreed, not only the
+    // lowest-ranking one. Responder's 4H over opener's 3NT bids a suit opener raised, so it is
+    // not the correction of an unsupported suit (it was 6+ hearts, 7+ hcp), the same as when
+    // hearts are the only agreed suit.
+    let (ctx, _) = last("1C P 1H P 2H P 3C P 3NT P 4H");
+    assert!(ctx.agreed_suits.contains(Strain::Clubs));
+    assert!(ctx.agreed_suits.contains(Strain::Hearts));
+    assert_eq!(ctx.agreed_suit, Some(Suit::Clubs));
+    for calls in [
+        "1C P 1H P 2H P 3C P 3NT P 4H",
+        "1D P 1H P 2H P 3C P 3NT P 4H",
+    ] {
+        let inf = last_with_partner(calls, 15..=37);
+        assert_eq!(inf.rule, "fallback", "{calls}");
+    }
+    // Opener: diamonds, clubs and hearts are all agreed. The pull of 3NT to 5D re-raises an
+    // agreed suit (opening values, the ordinary floor 26 - 10) rather than rebidding an
+    // unsupported opened suit (it was 16-15, unsatisfiable).
+    let calls = "1D P 2C P 2D P 2H P 3C P 3D P 3H P 3NT P 5D";
+    let (ctx, _) = last(calls);
+    for strain in [Strain::Clubs, Strain::Diamonds, Strain::Hearts] {
+        assert!(ctx.agreed_suits.contains(strain), "{strain:?}");
+    }
+    let partner = Atom::ANY
+        .with_hcp(10..=37)
+        .with_suit_len(Suit::Diamonds, 3..=13);
+    let inf = last_with_partner_constraint(calls, partner);
+    assert_eq!(inf.rule, "rebid_own");
+    assert_eq!(inf.constraint.hcp_range(), 16..=21);
+    assert_eq!(inf.constraint.suit_len(Suit::Diamonds), 5..=13);
+    // 17 hcp, five diamonds (an eight-card fit) and a singleton.
+    assert!(inf.constraint.satisfies(hand("K32", "AKJ54", "AQ32", "2")));
+}
+
+#[test]
+fn a_pull_after_a_reraise_game_try_is_a_choice_of_game() {
+    // 1S-P-2S-P-3S invites (16-18); partner's 3NT accepts and offers a choice of game, which
+    // the pull to four of the major makes: an opening with the ordinary floor (22 - 8) and an
+    // eight-card fit, not a slam move (it was 23-18, unsatisfiable).
+    assert_eq!(
+        last("1S P 2S P 3S").1.constraint.hcp_range(),
+        16..=18,
+        "the game try itself"
+    );
+    for (calls, suit) in [
+        ("1S P 2S P 3S P 3NT P 4S", Suit::Spades),
+        ("1H P 2H P 3H P 3NT P 4H", Suit::Hearts),
+    ] {
+        let partner = Atom::ANY.with_hcp(8..=37).with_suit_len(suit, 3..=13);
+        let inf = last_with_partner_constraint(calls, partner);
+        assert_eq!(inf.rule, "rebid_own", "{calls}");
+        assert_eq!(inf.constraint.hcp_range(), 14..=21, "{calls}");
+        assert_eq!(inf.constraint.suit_len(suit), 5..=13, "{calls}");
+        assert!(inf.constraint.is_satisfiable(), "{calls}");
+    }
+    // In a minor: five of it with the ordinary floor (26 - 6) and a hand unsuited to notrump
+    // (it was 25-21).
+    let partner = Atom::ANY
+        .with_hcp(6..=37)
+        .with_suit_len(Suit::Diamonds, 4..=13);
+    let inf = last_with_partner_constraint("1D P 2D P 3D P 3NT P 5D", partner);
+    assert_eq!(inf.rule, "rebid_own");
+    assert_eq!(inf.constraint.hcp_range(), 20..=21);
+    assert!(inf.constraint.satisfies(hand("A2", "AKQ5432", "AK2", "2")));
+    assert!(!inf.constraint.satisfies(hand("A2", "AKQ54", "AK2", "432")));
+}
+
+/// The suit of the last bid of `calls`.
+fn inf_suit(calls: &str) -> Suit {
+    let (ctx, _) = last(calls);
+    ctx.call.bid().unwrap().strain().suit().unwrap()
+}
+
+#[test]
+fn responders_corrections_of_openers_3nt_keep_responders_range() {
+    // Responder's preference to opener's suit over opener's 3NT is a choice of game, not a game
+    // raise (13+): the range of responder's first call and an eight-card fit with opener's five.
+    // After `1H-1S` that is the one-level response's 6+.
+    let opener = |suit, hcp| Atom::ANY.with_hcp(hcp).with_suit_len(suit, 5..=13);
+    let inf = last_with_partner_constraint("1H P 1S P 3NT P 4H", opener(Suit::Hearts, 19..=21));
+    assert_eq!(inf.rule, "raise");
+    assert_eq!(inf.constraint.hcp_range(), 6..=37);
+    assert_eq!(inf.constraint.suit_len(Suit::Hearts), 3..=13);
+    for (spades, hearts, hcp) in [("KJ32", "K32", 9), ("Q432", "Q32", 6), ("KJ32", "A32", 10)] {
+        let h = hand("432", "Q32", hearts, spades);
+        assert!(inf.constraint.satisfies(h), "{hcp} hcp, three hearts");
+    }
+    assert!(!inf.constraint.satisfies(hand("5432", "Q32", "K2", "KJ32"))); // two hearts
+    // After a two-level response (SAYC 3NT: 18-19 balanced) the two-level response's 10+.
+    let inf = last_with_partner_constraint("1S P 2C P 3NT P 4S", opener(Suit::Spades, 18..=19));
+    assert_eq!(inf.rule, "raise");
+    assert_eq!(inf.constraint.hcp_range(), 10..=37);
+    assert!(inf.constraint.satisfies(hand("AQJ32", "K32", "J2", "432"))); // 11, three spades
+    assert!(!inf.constraint.satisfies(hand("AQJ32", "K432", "J2", "32"))); // two spades
+    // Responder's own suit, six cards or more, in the first call's range.
+    let inf = last_with_partner("1C P 1S P 3NT P 4S", 19..=21);
+    assert_eq!(inf.rule, "rebid_own");
+    assert_eq!(inf.constraint.hcp_range(), 6..=37);
+    assert!(inf.constraint.satisfies(hand("32", "432", "Q2", "KJ5432"))); // 6 spades, 6 hcp
+    assert!(!inf.constraint.satisfies(hand("32", "5432", "Q2", "KJ432"))); // five spades
+}
+
+#[test]
+fn responders_unlimited_first_calls_keep_their_open_ended_minimum() {
+    let opener = |suit, hcp| Atom::ANY.with_hcp(hcp).with_suit_len(suit, 5..=13);
+    // A non-jump new suit at the three level in competition (SAYC: forcing, 11+) is no weaker
+    // than the two-level one: 10+, open-ended (it was the simple raise's 6-9, so the minor
+    // correction described no hand). The floor (22 - 15, 26 - 15) is below or at it.
+    let inf = last_with_partner_constraint("1S 2H 3C P 3NT P 4S", opener(Suit::Spades, 15..=19));
+    assert_eq!(inf.rule, "raise");
+    assert_eq!(inf.constraint.hcp_range(), 10..=37);
+    assert!(inf.constraint.satisfies(hand("AQJ32", "K32", "32", "Q32"))); // 12, three spades
+    let inf = last_with_partner("1S 2H 3C P 3NT P 5C", 15..=37);
+    assert_eq!(inf.rule, "rebid_own");
+    assert_eq!(inf.constraint.hcp_range(), 11..=37);
+    assert_eq!(inf.constraint.suit_len(Suit::Clubs), 6..=13);
+    assert!(inf.constraint.satisfies(hand("AKJ432", "K32", "2", "Q32"))); // 13, singleton
+    // A negative double: its own minimum at the level it doubled, open-ended (8+ over 2H).
+    let inf = last_with_partner_constraint("1S 2H X P 3NT P 4S", opener(Suit::Spades, 15..=19));
+    assert_eq!(inf.rule, "raise");
+    assert_eq!(inf.constraint.hcp_range(), 8..=37);
+    let (ctx, _) = last("1S 2H X P 3NT P 4S");
+    assert_eq!(ctx.owner_first_negative_double, Some(2));
+    // A redouble: 10+ (it was 6-9 against the redouble's 10+ and responder's own 2NT 11-12).
+    let inf = last_with_partner_constraint(
+        "1H X XX 1S P P 2NT P 3NT P 4H",
+        opener(Suit::Hearts, 15..=21),
+    );
+    assert_eq!(inf.rule, "raise");
+    assert_eq!(inf.constraint.hcp_range(), 10..=37);
+    // A first call no rule ranges (a penalty double of their 1NT), and no non-pass call before
+    // the correction (responder passed 1H): no rule describes the correction.
+    for calls in ["1H 1NT X 2C 3NT P 4H", "1H 1S P 2S 3NT P 4H"] {
+        let inf = last_with_partner_constraint(calls, opener(Suit::Hearts, 15..=21));
+        assert_eq!(inf.rule, "fallback", "{calls}");
+    }
+    assert_eq!(
+        last("1H 1NT X 2C 3NT P 4H").0.owner_first_negative_double,
+        None
+    );
+}
+
+#[test]
 fn bids_over_partners_3nt_that_are_not_corrections_keep_the_slam_floor() {
     // The opponents' suit (partner's cue bid, which the natural rules read as a suit partner
     // bid first) is not a correction: the slam floor (31 - 12).
@@ -278,6 +548,25 @@ fn bids_over_partners_3nt_that_are_not_corrections_keep_the_slam_floor() {
     let inf = last_with_partner("1H P 3NT P 5C", 10..=37);
     assert_eq!(inf.rule, "rebid_new_suit");
     assert_eq!(min_hcp(&inf), 21);
+    // A weak two or a preempt pulling partner's to-play 3NT (SAYC: 15+ over a weak two, 14+
+    // over a preempt) to the suit it opened: the opening promised the long suit already. The
+    // slam floor (31 - partner's minimum) is above the opening's range, so no hand bids it. In a
+    // minor, five over 3NT is read as the cheapest game bid (the opening's range), not as a
+    // 16-18 jump rebid the slam floor would leave satisfiable.
+    for (calls, partner_min) in [
+        ("2S P 3NT P 4S", 15),
+        ("2H P 3NT P 4H", 15),
+        ("3H P 3NT P 4H", 14),
+        ("2D P 3NT P 5D", 15),
+        ("3C P 3NT P 5C", 14),
+        ("3D P 3NT P 5D", 14),
+    ] {
+        let inf = last_with_partner(calls, partner_min..=37);
+        assert_eq!(inf.rule, "rebid_own", "{calls}");
+        assert_eq!(min_hcp(&inf), 31 - partner_min, "{calls}");
+        assert!(*inf.constraint.hcp_range().end() <= 10, "{calls}");
+        assert!(!inf.constraint.is_satisfiable(), "{calls}");
+    }
 }
 
 #[test]
@@ -288,11 +577,19 @@ fn answers_and_follow_ups_of_a_slam_ask_keep_the_ordinary_floor() {
     assert_eq!(inf.rule, "raise");
     assert_eq!(min_hcp(&inf), 14);
     // The asker signing off after the answer (partner's 5D is a game-level bid): the ordinary
-    // five-level floor (26 - 10) under the re-raise's own 16-18, where the slam floor (21) left
-    // no hand at all.
+    // five-level floor (26 - 10) over the opening's range, where the slam floor (21) left no
+    // hand at all. A re-raise after a slam ask is no game try (it was the game try's 16-18).
     let inf = last_with_partner("1H P 3H P 4NT P 5D P 5H", 10..=12);
     assert_eq!(inf.rule, "rebid_own");
-    assert_eq!(inf.constraint.hcp_range(), 16..=18);
+    assert_eq!(inf.constraint.hcp_range(), 16..=21);
+    // With two agreed suits (spades and hearts) the same holds for the opener's 5S after a
+    // follow-up of partner's 4NT; partner's minimum 12 leaves the ordinary floor at 14, so the
+    // corpus hand with 14 hcp (AKT963.K.874.A72) fits.
+    let calls = "P 1S P 2C P 3H P 3S P 3NT P 4C P 4H P 4NT P 5D P 5H P 5S";
+    let inf = last_with_partner(calls, 12..=37);
+    assert_eq!(inf.rule, "rebid_own");
+    assert_eq!(inf.constraint.hcp_range(), 14..=21);
+    assert!(inf.constraint.satisfies(hand("A72", "874", "K", "AKT963")));
 }
 
 // --- opener's notrump rebid (is_openers_rebid) -------------------------------------------------
@@ -340,12 +637,16 @@ fn negative_double_is_responders_first_turn_only() {
 
 #[test]
 fn responders_later_double_after_own_call_shows_extra_values() {
-    // After responder's own call (a negative double, a new suit): a king more than a negative
-    // double at that level (6 + 2 x (level - 1)).
+    // After responder's own unlimited call (a negative double, a new suit, a cue bid, a
+    // redouble, a penalty double): a king more than a negative double at that level
+    // (6 + 2 x (level - 1)).
     for (calls, min) in [
         ("1C 1H X 2D P P X", 11),  // a second double, over a two-level bid
         ("1D 1H 1S 2H P P X", 11), // after a one-level response
         ("1C P 1H 1S P P X", 9),   // over a one-level bid
+        ("1C 1D 2D 2H P P X", 11), // after a cue bid
+        ("1H X XX 2C P P X", 11),  // after a redouble
+        ("1H 1NT X 2C P P X", 11), // after a penalty double
     ] {
         let (ctx, inf) = last(calls);
         assert_eq!(ctx.kind, CallKind::Double(DoubleKind::Negative), "{calls}");
@@ -356,6 +657,18 @@ fn responders_later_double_after_own_call_shows_extra_values() {
     let (_, inf) = last("1C 1H X 2D P P X");
     assert!(inf.constraint.satisfies(hand("K32", "A32", "Q432", "Q32"))); // 11 hcp
     assert!(!inf.constraint.satisfies(hand("K32", "A32", "J432", "Q32"))); // 10 hcp
+    // After a limited first response (a raise, notrump) the double is competitive within that
+    // response's range (a maximum raise): no rule describes it.
+    for calls in [
+        "1H 1S 2H 2S P P X",
+        "1D 1S 1NT 2S P P X",
+        "1H P 2H 2S P P X",
+    ] {
+        let (ctx, inf) = last(calls);
+        assert_eq!(ctx.kind, CallKind::Double(DoubleKind::Negative), "{calls}");
+        assert!(ctx.owner_acted, "{calls}");
+        assert_eq!(inf.rule, "fallback", "{calls}");
+    }
     // After responder's first pass no rule describes the double.
     for calls in ["1H 1S P 2S P P X", "2D P P 2H P P X"] {
         let (ctx, inf) = last(calls);
@@ -394,4 +707,17 @@ fn defenders_second_takeout_double_shows_extra_values() {
         assert_eq!(inf.rule, "takeout_x", "{calls}");
         assert_eq!(min_hcp(&inf), 12, "{calls}");
     }
+    // The same advancer in the pass-out seat is classified `Balancer`: by its history (the
+    // forced answer) it keeps the ordinary balancing minimum, 9+.
+    for calls in ["1H X P 1S 2H P P X", "1C X P 1H 2C P P X"] {
+        let (ctx, inf) = last(calls);
+        assert_eq!(ctx.role, Role::Balancer, "{calls}");
+        assert!(ctx.owner_answered_partners_double, "{calls}");
+        assert_eq!(ctx.kind, CallKind::Double(DoubleKind::Takeout), "{calls}");
+        assert_eq!(inf.rule, "takeout_x", "{calls}");
+        assert_eq!(min_hcp(&inf), 9, "{calls}");
+    }
+    // A balancer whose earlier call was its own (a balancing double) still adds the +3.
+    let (ctx, _) = last("1S P P X 2S P P X");
+    assert!(!ctx.owner_answered_partners_double);
 }

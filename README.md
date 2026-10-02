@@ -53,7 +53,7 @@ The double-dummy solver sources are fetched with `cargo xtask dds vendor` (phase
 | 1 | `bridge-core`, `bridge-format`, corpus tooling | done: PBN corpus 724/724 games parsed, round trip exact, LIN 99/99 boards |
 | 2 | evaluation and the exact constraint sampler | done: `hcp` 0.8 ns, hand sampling ~0.2 µs/hand, exact counts (30,897,212,184 for 15-17 balanced), chi-square tests pass, thread-count invariant |
 | 3 | BML compiler, `interpret` / `choose_bid`, bidirectional consistency test | done: SAYC compiles in 342 ms, strict consistency on 10^6 positions (5% random off-system calls) has 0 violations other than the 2,645 caused by coverage holes (reported separately), policy argmax 10^5/10^5, `.bss` oracle 228/228, recognition jdh8 0.858 / gjp 0.524; `interpret` on 12 calls 11-18 µs, above the 10 µs target |
-| 4 | system definitions (SAYC) | |
+| 4 | system definitions (SAYC) | done (unmet criterion recorded): strict [G] 0.847 on 1000 generated auctions (target 0.80; held-out seeds 0.807 / 0.785 / 0.772), strict [C] 0.487 on the SAYC-compatible opening subset of the corpus (target 0.80, not met; raw 0.709), all-call Exact 0.320 (baseline 0.041), policy mirror under-cover 0 and exact >= 99.5%, consistency 10^6 with 0 violations other than 23 gap-induced, `interpret` on 12 SAYC calls 8.09 µs, SAYC compiles in 665-683 ms, `PolicyParams::human()` = (0.3404, 0.3959) |
 | 5 | deal sampler, play inference, DDS | |
 | 6 | opening-lead advisor | |
 
