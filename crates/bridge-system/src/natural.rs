@@ -2340,7 +2340,8 @@ fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
 }
 
 /// The suit length a one-level opener shows by pulling partner's 3NT to its suit after rebidding
-/// it ([`rule_rebid_opened_suit_over_3nt`]): a seventh card.
+/// it (`1S-P-2C-P-2S-P-3NT-P-4S`): a seventh card, since the rebid already showed six
+/// (docs/design/06-system.md §8.6).
 pub const REBID_SUIT_PULL_LEN: u8 = 7;
 
 /// A one-level opener that has rebid its suit pulls partner's 3NT to game in it
