@@ -2065,8 +2065,9 @@ fn rule_penalty_x(_p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inf
 /// `2D (P) P (2H) P (P) X`) is classified `Negative` by the §8.2 order but is not a negative
 /// double, whose range (6+, an unbid major) it does not have:
 ///
-/// - after responder's own unlimited first call (a negative double or a new suit), it is
-///   `competitive_x` ([`rule_competitive_x`]): the first call showed a minimum, so the double
+/// - after responder's own unlimited first call (a new suit, a cue bid of the opponents' suit,
+///   a double, negative or not, or a redouble: any first call but notrump or partner's strain),
+///   it is `competitive_x` ([`rule_competitive_x`]): the first call showed a minimum, so the double
 ///   shows [`LATER_RESPONDER_DOUBLE_EXTRA`] points more than a negative double at that level;
 /// - after a limited first response (a raise of partner's suit or notrump,
 ///   [`responders_first_call_limited`]) it is competitive within that response's range; no rule
@@ -2083,8 +2084,9 @@ fn responders_first_turn_over_overcall(ctx: &CallContext) -> bool {
 }
 
 /// `true` when `owner`'s first non-pass call was a limited response: notrump, or a bid of the
-/// strain of partner's first call (a raise of the opening, a jump raise included). A new suit,
-/// a cue bid of the opponents' suit and a negative double are not limited.
+/// strain of partner's first call (a raise of the opening, a jump raise included). Every other
+/// first call is unlimited: a new suit, a cue bid of the opponents' suit, a double (negative or
+/// not) and a redouble (`1H (X) XX (2C) P (P) X`).
 fn responders_first_call_limited(ctx: &CallContext) -> bool {
     let Some(Call::Bid(first)) = ctx.owner_first_action else {
         return false;
@@ -2117,8 +2119,9 @@ fn negative_double_min_at(p: &NaturalParams, their_level: u8) -> u8 {
 /// [`SECOND_TAKEOUT_DOUBLE_EXTRA`] for a defender. docs/design/06-system.md §8.3.
 pub const LATER_RESPONDER_DOUBLE_EXTRA: u8 = 3;
 
-/// Responder's later double after responder's own unlimited first call (a first negative
-/// double or a new suit): `1C (1H) X (2D) P (P) X`, `1D (1H) 1S (2H) P (P) X`. The §8.2 order
+/// Responder's later double after responder's own unlimited first call (a new suit, a cue bid,
+/// a first double or a redouble; [`responders_first_call_limited`]): `1C (1H) X (2D) P (P) X`,
+/// `1D (1H) 1S (2H) P (P) X`, `1C (1D) 2D (2H) P (P) X`, `1H (X) XX (2C) P (P) X`. The §8.2 order
 /// classifies it `Negative`, but it is not a negative double
 /// ([`responders_first_turn_over_overcall`]). Responder has shown a minimum already, and with
 /// no more than that passes or bids again; the double is competitive and shows the values
@@ -2597,18 +2600,26 @@ fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
 }
 
 /// The suit length a one-level opener shows by pulling partner's 3NT to its suit after rebidding
-/// it (`1S-P-2C-P-2S-P-3NT-P-4S`): a seventh card, since the rebid already showed six
-/// (docs/design/06-system.md §8.6).
+/// it (`1S-P-2C-P-2S-P-3NT-P-4S`): a seventh card.
+///
+/// Seven is a modelling choice, not a SAYC agreement. It rests on the natural rules' reading of
+/// a rebid of the opened suit as six cards (rule `rebid_own`), so that the pull adds a card
+/// partner did not know about. SAYC itself does not promise six with the minimum rebid after a
+/// two-over-one response (`1S-P-2C-P-2S` can be a five-card suit). On the corpus
+/// (docs/design/06-system.md §8.6, N-B) six cards with a singleton (not a void) was not worse
+/// than seven (the tuning set unchanged, the evaluation set's log-likelihood 2.8 higher); six
+/// cards with a singleton or a void lost two agreements; seven changes no number.
 pub const REBID_SUIT_PULL_LEN: u8 = 7;
 
 /// A one-level opener that has rebid its suit pulls partner's 3NT to game in it
 /// (`1S-P-2C-P-2S-P-3NT-P-4S`, `1H-P-1S-P-2H-P-3NT-P-4H`): a choice of game, not a slam move
 /// (partner's 3NT chose the contract).
 ///
-/// The rebid showed six cards (rule `rebid_own`), so partner chose 3NT knowing them, and the
-/// news is a seventh: [`REBID_SUIT_PULL_LEN`]+ cards (in a minor also a singleton or a void,
-/// [`with_correction_shape`]). Six cards with a short suit are not enough (the corpus check is
-/// in docs/design/06-system.md §8.6). The strength:
+/// The natural rules read the rebid as six cards (rule `rebid_own`; SAYC's minimum rebid after
+/// a two-over-one response does not promise six), so the pull is read as a seventh card, the
+/// news partner did not have when choosing 3NT: [`REBID_SUIT_PULL_LEN`]+ cards, a modelling
+/// choice explained there (in a minor also a singleton or a void, [`with_correction_shape`]).
+/// The strength:
 ///
 /// - while the rebid limited the hand, that is, opener's only non-pass calls are the opening and
 ///   bids of the opened suit ([`CallContext::opener_other_calls`] is empty), what the rebid

@@ -637,12 +637,16 @@ fn negative_double_is_responders_first_turn_only() {
 
 #[test]
 fn responders_later_double_after_own_call_shows_extra_values() {
-    // After responder's own call (a negative double, a new suit): a king more than a negative
-    // double at that level (6 + 2 x (level - 1)).
+    // After responder's own unlimited call (a negative double, a new suit, a cue bid, a
+    // redouble, a penalty double): a king more than a negative double at that level
+    // (6 + 2 x (level - 1)).
     for (calls, min) in [
         ("1C 1H X 2D P P X", 11),  // a second double, over a two-level bid
         ("1D 1H 1S 2H P P X", 11), // after a one-level response
         ("1C P 1H 1S P P X", 9),   // over a one-level bid
+        ("1C 1D 2D 2H P P X", 11), // after a cue bid
+        ("1H X XX 2C P P X", 11),  // after a redouble
+        ("1H 1NT X 2C P P X", 11), // after a penalty double
     ] {
         let (ctx, inf) = last(calls);
         assert_eq!(ctx.kind, CallKind::Double(DoubleKind::Negative), "{calls}");
