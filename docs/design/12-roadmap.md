@@ -349,3 +349,45 @@ coverage の数値 ([G]、[C]、最尤推定、lint、索引の統計) はレー
 δ を最尤推定値に固定したときの ln L は ε = 0.001 / 0.01 / 0.1 / 0.2 / 0.316 / 0.398 / 0.501 で −14172.3 / −11085.4 / −8224.9 / −7597.9 / −7384.3 / −7401.0 / −7567.1。ε を固定したときは δ = 0 / 0.1 / 0.2 / 0.3 / 0.4 / 0.5 で −7742.5 / −7460.6 / −7397.4 / −7378.2 / −7382.7 / −7405.7 で、最大値から 1.92 以内は δ 0.29〜0.37。仮置きの `human()` (0.01, 0.3) は −11086.3、`system_players()` は −15522.1。`PolicyParams::human()` はまだ仮置きのまま。フェーズ 5 の ESS の凍結 (レーン P) の前に、この値 (0.344, 0.327) へ合わせ直す。
 
 未達のまま残るもの: strict [G] 0.745 と strict [C] 部分集合 0.491 (どちらも 0.80)、索引の再構築 19〜20 ms (15 ms)、`interpret/sayc-12-call-auction` の中央値 10.13 µs (10 µs)、`resolve_lenient` の使用率。
+
+### フェーズ 4 の性能レーン (wip/p4-perf、wip/p4int の 9ac0b40 から)
+
+上の節で未達だった 2 つの時間の基準 (排他索引の再構築 ≤ 15 ms、`interpret/sayc-12-call-auction` の中央値 < 10 µs) を、結果を変えずに満たした。どの変更も、索引の Debug 出力の要約、1e5 組の所属検査、`policy_mirror`、`tightness`、高速尤度、argmax、整合性、`sayc_content`、再現フィクスチャの値を変えない (下記)。`IR_FORMAT` と `COMPILE_REVISION` は変えていない。
+
+プロファイル (macOS `sample`、release) で分かったこと。
+
+- 索引の再構築: 時間の大半は、メンバーを引くときの `Atom::intersect` + `is_trivially_unsat` (積を作ってから捨てる)、同じメンバーの原子の `Atom::negate` の繰り返し、原子だけの制約の `to_dnf`、同じ要約の `hcp_bounds` の再計算だった。
+- `interpret` (温): `ExclusiveIndex::group_for` が自己時間の 12.6% だった。`group` が全キー (約 6.5 万、780 KB) を二分探索し、探索ごとにキャッシュミスが起きていた。次は `MirrorPiece` (376 バイト、1 コールで 1.6 KB) の移動による memmove が約 11%。Step B の出力の組み立て (`materialize_*`、`Explanation::from_parts`、制約の複製) は約 45% あるが、出力型そのものの確保 (結果の複製 186 回に対し `interpret` は 199 回) なので触っていない。
+- `interpret` (冷): `ranked_candidates` (ナチュラルの規則表) が約 39%、2.7 KB の `HcpShapeGrid` の複製 (memmove) が約 14%、メモの世代交代での解放が約 9%。
+
+変更 (コミットごとに前後の実測を本文に書いた)。
+
+1. `ShapeSet::hcp_range_reachable` / `holding_hcp_in` (HCP 0..=37 ごとのしきい値マスクを const で前計算) と `Atom::intersection_is_trivially_unsat` (積を作らない判定。プロパティテスト 2×2000 件で `intersect().is_trivially_unsat()` と一致)。`Atom::normalize` と `intersect` の確保を減らした。
+2. 索引の構築: メンバーの DNF と原子ごとの否定の鎖を 1 度だけ求める (`MemberDnf`)、引く原子と交わらない項は分割しない、原子と原子の `Or` は `to_dnf` を通さない、要約は 1 度だけ求める、`grid_proves_empty` は `holding_hcp_in` で判定する。
+3. `ExclusiveIndex::group` を位置ごとのキー範囲 `starts` から引く (条件の無い位置は条件クラスで直接添字)。
+4. `MirrorPiece::exact` を `Box` にし (376 → 256 バイト)、Step A は片をその場で取り出す。
+5. ナチュラル領域のグリッドをその場で作る (`HcpShapeGrid::union_box`、`diff`、`is_empty_hands` は `intersects`)。
+6. 回帰検査 `sayc_exclusive_index_build_is_bounded` を 30 ms から 20 ms にした (現在値の約 2 倍。負荷平均 22〜24 でも best of 3 は 8.9〜9.8 ms)。
+
+基点 (9ac0b40) と最終ヘッドを交互に実行して比べた。他のレーンが同じ機械でビルドとテストをしていたので負荷平均は大きく揺れた。criterion は各 3 回で、warm-up 2 s、測定 4〜5 s。
+
+| 項目 | 基点 | 最終 | 基準 |
+| --- | --- | --- | --- |
+| 排他索引の再構築 (30 回の best、交互 3 回、負荷平均 20〜23) | 19.76〜20.21 ms | **8.36〜8.63 ms** | ≤ 15 ms 達成 |
+| 同: `sayc_exclusive_index_share` / `cargo xtask coverage` 内 | 18.9〜20.0 ms / 19.2 ms (上の節) | 8.9〜9.8 ms (負荷平均 22〜24) / 8.0 ms (負荷平均 7.5) | ≤ 15 ms 達成 |
+| `interpret/sayc-12-call-auction` (中央値 / best、負荷平均 3.7〜18) | 10.48 / 10.46 µs | **8.68 / 8.17 µs** | < 10 µs 達成 |
+| 同 (冷の比較と同じ実行、負荷平均 4.5〜8) | 10.03〜10.72 µs | 8.25〜8.65 µs | < 10 µs 達成 |
+| `sayc-1nt-auction` / `sayc-competitive-auction` | 7.84 / 5.40 µs | 5.72 / 4.53 µs | ≤ 10 / ≤ 8 µs 達成 |
+| 手組み `12-call-auction` / `12-call-auction-realistic` | 8.44 / 9.24 µs | 7.62 / 8.14 µs | < 10 / ≤ 12 µs 達成 |
+| `sayc-12-call-on-policy` / Step A だけ (`sayc-12`) | 10.43 / 4.79 µs | 8.41 / 2.94 µs | 報告 |
+| ナチュラルの多いオークション 温 / 冷、`sayc-12` 冷 (負荷平均 4.5〜8) | 8.39 / 58.2 µs、13.36 µs | 7.40 / 48.0 µs、11.22 µs | 報告 |
+| 冷の追加 (ナチュラル 1 コールあたり、中央値から / best から) | 5.2 / 5.0 µs | **4.2 / 4.0 µs** | ≤ 5 µs 達成 (余裕 0.8 µs) |
+| `human()` プリセットの `sayc-12` | 16.61 µs | 15.20 µs | ≤ 40 µs 達成 |
+| `AuctionPolicy::log_likelihood` (`system_players()` / `human()`) | 100 / 150 ns | 101 / 151 ns (変化なし) | ≤ 10 µs 達成 |
+| `AuctionPolicy::new` (`system_players()` / `human()`) | 8.36 / 15.78 µs | 6.90 / 13.78 µs | 報告 |
+
+表の criterion の値は中央値 (3 回の中央) で、「best」は 3 回の最小である。
+
+結果が変わらないことの確認 (最終ヘッド、release、負荷平均 3.6〜9.6)。索引は Debug 出力の要約 `da64975160e271d4` が全ての段階で同一で、4,070 グループ、65,120 キー、10,774 片、木の代替 3。所属検査は 10^5 組で不一致 0 (96,100 組がいずれかの片の中)。`tightness` は [[3060,0,0],[0,0,0],[7,0,0]] (大は [[104131,0,0],[535,0,0],[2386,0,0]])。`policy_mirror` は under-cover 0 で、exact は δ=0.3 で 99.691% (生成) / 99.496% (コーパス)、変種の最小 99.603%、大 (2000 局面) の最小 99.557%。高速尤度と参照の差は 4.66e-7 (大 6.52e-7)。argmax == `choose_bid` は `system_players()`・`human()` とも 100,000 / 100,000。整合性は 10^6 局面で gap 起因でない違反 0、gap 起因 29、`NoCandidate` 394。`sayc_content` と再現フィクスチャの試験は通る。いずれも上の節の値と同じである。
+
+残したもの: 冷のナチュラル位置の約 4 割を占める規則表 (`NaturalInference::infer_batch`) は、意味を変えずに速くする手が小さいので手を付けていない。温の `interpret` の約半分は出力 (`Interpretation`) の組み立てで、その複製と解放だけで約 4 µs かかる。

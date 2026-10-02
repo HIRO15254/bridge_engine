@@ -36,6 +36,7 @@ impl Atom {
     pub fn intersect(&self, other: &Atom) -> Atom;             // §4.1
     pub fn negate(&self) -> Vec<Atom>;                         // §4.2、互いに素
     pub fn is_trivially_unsat(&self) -> bool;                  // §5
+    pub fn intersection_is_trivially_unsat(&self, other: &Atom) -> bool;  // = intersect(other).is_trivially_unsat()、eval が無ければ積を作らない
     pub fn normalize(&mut self);                               // ソート + マージ + クランプ
     // 要約
     pub fn hcp_range(&self) -> RangeInclusive<u8>;
@@ -229,13 +230,14 @@ impl HcpShapeGrid {
     pub const EMPTY: HcpShapeGrid;
     pub const ALL: HcpShapeGrid;
     pub fn from_box(shapes: ShapeSet, hcp: RangeInclusive<u8>) -> HcpShapeGrid;
+    pub fn union_box(&mut self, shapes: ShapeSet, hcp: RangeInclusive<u8>);  // self ∪= from_box(..) をその場で
     pub fn of_atom_box(atom: &Atom) -> HcpShapeGrid;                 // リテラルを無視した箱
     pub fn of_exact(c: &HandConstraint) -> Option<HcpShapeGrid>;     // リテラルなしなら Some (厳密)
     pub fn feasible() -> &'static HcpShapeGrid;                      // 13 枚の手で実現できるセル
     pub fn contains(&self, hand: Hand) -> bool;
     pub fn and / or / diff / not (&self, …) -> HcpShapeGrid;         // 342 語の 1 回の走査
     pub fn is_empty(&self) -> bool;                                  // セルが 1 つも無い
-    pub fn is_empty_hands(&self) -> bool;                            // 実現できるセルが無い
+    pub fn is_empty_hands(&self) -> bool;                            // 実現できるセルが無い (!intersects(feasible()))
     pub fn is_subset / intersects (&self, other: &HcpShapeGrid) -> bool;
     pub fn cell_count(&self) -> u32;
     pub fn hull(&self) -> Option<(ShapeSet, RangeInclusive<u8>)>;
