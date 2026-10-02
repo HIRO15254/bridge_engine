@@ -405,6 +405,69 @@ fn the_guard_carries_the_table_seat_and_vul_but_its_edge_does_not() {
     assert_eq!(lookup.by_depth[1], None);
 }
 
+/// The seat condition of the guard's node for `1C (1S)` with North opening in first seat
+/// (dealer North) and in third seat (dealer South), `None` when it has no entry there.
+fn guard_seats(ir: &SystemIR) -> [Option<SeatCond>; 2] {
+    [
+        (Seat::North, vec!["1C", "1S"]),
+        (Seat::South, vec!["P", "P", "1C", "1S"]),
+    ]
+    .map(|(dealer, calls)| {
+        let calls = calls.into_iter().map(|c| c.parse().unwrap());
+        let auction = Auction::from_calls(dealer, Vulnerability::None, calls).unwrap();
+        let key = LookupKey::for_auction(&auction, Seat::North).unwrap();
+        let lookup = ir.index.resolve(&key);
+        assert_eq!(lookup.matched_depth, 2);
+        lookup.by_depth[1].map(|n| ir.node(n).seat)
+    })
+}
+
+#[test]
+fn tables_under_different_seat_conditions_each_guard_the_position() {
+    // A `#SEAT 34` table and an unconditioned one guard the same position, in both orders.
+    // Each guard behaves like a `1C-(any)-` written under its table's `#SEAT` after every
+    // table, whatever the file order: the unconditioned table's guard has an entry in first
+    // seat too.
+    let opening = "1C = 12--21 hcp, 3+!c\n";
+    let third = "#SEAT 34\n\n#EXACTPASS\n1C-\n1H = 6+ hcp, 4+!h\n";
+    let any = "#SEAT 0\n\n#EXACTPASS\n1C-\n1N = 6--10 hcp\n";
+    let written = |table: &str| {
+        let seat = table.lines().next().unwrap();
+        format!("{seat}\n\n1C-(any)-\n")
+    };
+    for (a, b, expected) in [
+        (
+            third,
+            any,
+            [Some(SeatCond::Any), Some(SeatCond::ThirdOrFourth)],
+        ),
+        // The third-seat guard's condition is covered by the unconditioned entry before it,
+        // so it reuses that node (an empty description, like any history token).
+        (any, third, [Some(SeatCond::Any), Some(SeatCond::Any)]),
+    ] {
+        let ir = compile(&format!("{opening}\n{a}\n{b}"));
+        no_warnings(&ir);
+        assert_eq!(guard_seats(&ir), expected, "{a}{b}");
+        for dealer_calls in [("1C 1S", Seat::North), ("P P 1C 1S", Seat::South)] {
+            assert_eq!(
+                read_seat(&ir, dealer_calls.0, dealer_calls.1),
+                off_system(),
+                "{a}{b}{dealer_calls:?}"
+            );
+        }
+        let by_hand = compile(&format!(
+            "{opening}\n{}\n{}\n{}\n{}",
+            a.replace("#EXACTPASS\n", ""),
+            b.replace("#EXACTPASS\n", ""),
+            written(a),
+            written(b)
+        ));
+        assert_eq!(guard_seats(&by_hand), expected, "{a}{b}");
+        assert_eq!(ir.nodes.len(), by_hand.nodes.len(), "{a}{b}");
+        assert_eq!(ir.index.len(), by_hand.index.len(), "{a}{b}");
+    }
+}
+
 #[test]
 fn the_file_form_covers_the_later_tables_of_its_own_file_only() {
     let ir = compile_files(&[
