@@ -66,8 +66,9 @@ pub mod dd {
         /// The full table for a deal.
         fn dd_table(&self, deal: &Deal) -> Result<DdTable, DdError>;
 
-        /// Every legal opening lead for `leader` against `trump` with the tricks the defence
-        /// then takes (the opening-lead advisor's query).
+        /// Every legal opening lead for `leader` against `trump` (one entry per card in the
+        /// leader's hand) with the tricks the defence then takes (the opening-lead advisor's
+        /// query).
         fn lead_scores(
             &self,
             deal: &Deal,
@@ -126,7 +127,17 @@ pub mod dd {
                 bridge_dds::Mode::Auto,
             )
             .map_err(|e| DdError::Backend(e.to_string()))?;
-            Ok(ft.cards.into_iter().map(|c| (c.card, c.score)).collect())
+            // DDS lists one representative per group of equivalent cards and puts the lower
+            // cards of the same suit that score the same in `equals`; expand them so every
+            // legal lead is reported, as the trait promises.
+            let mut out = Vec::with_capacity(13);
+            for c in ft.cards {
+                out.push((c.card, c.score));
+                for rank in c.equals.ranks() {
+                    out.push((Card::new(c.card.suit(), rank), c.score));
+                }
+            }
+            Ok(out)
         }
     }
 }

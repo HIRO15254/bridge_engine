@@ -126,6 +126,12 @@
 
 完了条件 (2026-09 改訂): 固定した 50 ケースの ESS スイート (生成 25 ケースは `PolicyParams::system_players()`、評価用分割のコーパス 25 ケースは `PolicyParams::human()`、プリセットは事前登録) で ESS/n の中央値が全体 ≥ 0.5 かつ生成側 ≥ 0.5、コーパス側は報告 (目標 ≥ 0.4)。試行あたりの ESS、受理率、所要時間を常に報告する。残差棄却を使う場合は試行予算 ≤ 20n、予算を使い切るケースは 50 中 2 以下、所要時間は棄却なしの 2 倍以下。配牌 ≥ 10^4/秒/コア (Stayman 3NT を含む)。パラメータは調整用分割と調整用 seed だけで決める。DDS FFI が動き、サンプル配牌の解析結果が返る。
 
+5.3 の状況 (2026-09-26、詳細は 09-sample.md §10.2): ESS スイート (`tests/ess_suite.rs`、50 オークション × n = 1000、`target/ess_report.json`) と INFO 行のテスト (`tests/tracing_info.rs`) を追加。`ConstraintProposal` の ESS/n 中央値は 0.028 (生成 0.047、コーパス 0.017、一様提案 0.0026) で **完了条件は未達**。主因は `bridge-bidding` の `interpret` と方策 `call_distribution` の不整合 (Exact 解釈が上位優先度の兄弟を除外しない、ナチュラル推定の解釈が方策と食い違う、ナチュラル補完ありの `replay` の暴走) で、`bridge-sample` 側で試した厳密な改善 (成分重みの較正、`Fallback` の取り分、(c) の撤回、受理・棄却) は最大でも 2 倍程度。`bridge-bidding` 側の別タスクとして扱う。
+
+5.4 の状況 (2026-09-26、詳細は 09-sample.md §10.1): (a)(b)(c) はすべて採用、加えて再 prepare 席の同一要約の併合と `Sampler::prepare_many` による表・対畳み込みの共有。single_thread で `four_call_three_seats` 32.8 K 配牌/秒、実 SAYC (実ビディング尤度) の競り合い 2 ケース 10.4 K 配牌/秒で目標達成、Stayman 3NT は 8.1 K 配牌/秒で未達 (残りの約 8 割は `bridge-bidding` の `sequence_log_likelihood`、≈ 92 µs/配牌)。`propose_with_log_prob` は足さない。実 SAYC 3 ケースの ESS 比は 0.2〜2.6% で、完了条件の ESS は 5.3 側の課題として残る。
+
+5.5–5.7 の検証状況 (2026-09-26、`wip/p5dds`): `list100.txt` で `calc_dd_table`/`solve_board`/`analyse_play`/`dealer_par` がそれぞれ 100/100 一致、バッチ版は `calc_dd_tables` 45/45・`solve_all_boards` 201/201 (チャンク境界越え) 一致。8 スレッド × 100 局面の並行 `solve_board` が逐次と一致 (release)。チャンク境界 39/40/41・199/200/201、バルクとスロット呼び出しの混在、`init` の冪等性、エラー経路 (`Target::Tricks(14)`、手番違い・重複・4 枚の `trick`) のテストあり。`unsafe` の見直しで実際の不具合 5 件を修正 (`10-dds.md` §7.4: `Mode::ReuseTable` のセグフォルト、`Mode::Auto` の強制 1 枚で得点 0、DDS の `dump.txt` 書き出し、C++ 例外の Rust への巻き戻り、`lead_scores` が同等カードを落とす)。ファサードは `dds` feature の有無の両方で `dds()` が `None`/`Some` を返し、`DdTable` は DDS なしで PBN から読める。wasm check は緑。計時 (release、負荷下): `calc_dd_table` 78.8 ms/配牌、`calc_dd_tables` 36.3 ms/配牌、`solve_board(AllRanked)` 40.0 ms/回 (`10-dds.md` §8)。
+
 ## 7. フェーズ 6: オープニングリードアドバイザ (別クレート)
 
 | id | 内容 | 証明 / 完了基準 |
@@ -177,14 +183,13 @@
 | R11 | DNF の項が重なると `ConstraintProposal::log_prob` が全成分を数えるためコストが増える | D4 の排他的連鎖で否定由来の項は素。利用者の `Or` だけが重なりうる |
 | R12 | `HandConstraint` に `PartialEq` が無いため Step B の重複除去はノード id でしか行えず、構造的に等しい代替が二重に残る | K=8 で有界。`(node, kind)` 列のキーで除去 |
 | R13 | `ImplicitPass::Complement` の Pass が緩すぎる、または兄弟が全域を覆って充足不能 | `coverage_report.json` で `ImplicitPass` を本当の穴と分けて数える |
-| R14 | `cargo publish` 時に git-ignored の `vendor/` が同梱されない | フェーズ 5.5 で `include` 指定か公開前取得の必須化を決める (未決) |
+| R14 | `cargo publish` 時に git-ignored の `vendor/` が同梱されない | フェーズ 5.5 で解決済み: `crates/bridge-dds/Cargo.toml` の `include` で抽出済みソース (`vendor/dds-2.9.0/{src,include}/**`, `LICENSE`) のみを明示的に同梱 (`vendor/*.tar.gz`/`SHA256SUMS` は除外)。詳細は `crates/bridge-dds/VENDOR.md` |
 | R15 | DDS3 への移行 | ラッパーの公開面をレガシー名と同一に保ち、`vendor/` と `build.rs` の差し替えだけで済ませる |
 
 ## 11. 未決
 
 - 未決: `two-over-one.bml` の着手時期 (フェーズ 4.5、任意)。
 - 未決: フェーズ 5.8 (軟情報) をフェーズ 6 の後ろに回すか。
-- 未決: `cargo publish` での `vendor/` 同梱 (R14、フェーズ 5.5)。
 
 ## 実績
 

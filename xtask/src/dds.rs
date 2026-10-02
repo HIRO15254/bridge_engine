@@ -2,8 +2,9 @@
 //! files `crates/bridge-dds/build.rs` compiles into `crates/bridge-dds/vendor/dds-2.9.0/`
 //! (see `crates/bridge-dds/VENDOR.md`).
 //!
-//! Only `src/*.cpp`, `src/*.h`, `include/dll.h`, `LICENSE` and (if present) `NOTICE` are
-//! extracted; the archive stays in `vendor/` so that `sha256sum -c SHA256SUMS` works there.
+//! Only `src/*.cpp`, `src/*.h`, `include/dll.h`, `include/portab.h`, `LICENSE` and (if present)
+//! `NOTICE` are extracted; the archive stays in `vendor/` so that `sha256sum -c SHA256SUMS`
+//! works there.
 
 use std::fs::{self, File};
 use std::io;
@@ -62,7 +63,12 @@ pub fn vendor() -> Result<ExitCode> {
         fs::remove_dir_all(&out_dir)?;
     }
     let (files, cpp) = extract(&archive, &out_dir)?;
-    for required in ["src/dds.cpp", "include/dll.h", "LICENSE"] {
+    for required in [
+        "src/dds.cpp",
+        "include/dll.h",
+        "include/portab.h",
+        "LICENSE",
+    ] {
         if !out_dir.join(required).is_file() {
             return Err(format!(
                 "{required} missing after extraction into {}",
@@ -130,10 +136,13 @@ fn extract(archive: &Path, out_dir: &Path) -> Result<(usize, usize)> {
     Ok((files, cpp))
 }
 
-/// The layout `build.rs` expects: `src/*.cpp`, `src/*.h`, `include/dll.h`, `LICENSE`, `NOTICE`.
+/// The layout `build.rs` expects: `src/*.cpp`, `src/*.h`, `include/dll.h`, `include/portab.h`,
+/// `LICENSE`, `NOTICE`; plus `hands/list100.txt`, the reference data of bridge-dds's
+/// `list100_matches_upstream` differential test (the same file as the corpus entry
+/// `dds-list100`), so that the test runs wherever DDS is vendored, CI's `dds` job included.
 fn wanted(relative: &str) -> bool {
     match relative {
-        "LICENSE" | "NOTICE" | "include/dll.h" => true,
+        "LICENSE" | "NOTICE" | "include/dll.h" | "include/portab.h" | "hands/list100.txt" => true,
         _ => relative
             .strip_prefix("src/")
             .is_some_and(|f| !f.contains('/') && (f.ends_with(".cpp") || f.ends_with(".h"))),
@@ -150,9 +159,11 @@ mod tests {
             "LICENSE",
             "NOTICE",
             "include/dll.h",
+            "include/portab.h",
             "src/dds.cpp",
             "src/dds.h",
             "src/TransTableL.cpp",
+            "hands/list100.txt",
         ] {
             assert!(wanted(path), "{path}");
         }
@@ -161,7 +172,8 @@ mod tests {
             "include/other.h",
             "src/sub/x.cpp",
             "src/Makefile",
-            "hands/list100.txt",
+            "hands/list1000.txt",
+            "hands/masterDD.txt",
             "test/x.cpp",
         ] {
             assert!(!wanted(path), "{path}");

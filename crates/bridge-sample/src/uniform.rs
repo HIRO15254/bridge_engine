@@ -78,6 +78,20 @@ fn fisher_yates(cards: &mut [Card], rng: &mut dyn rand_core::Rng) {
     }
 }
 
+/// Draws `needed` cards uniformly at random from `pool`, without replacement (§6.4 (a) of
+/// `09-sample.md`: direct combinatorial dealing for a seat whose only surviving alternative is
+/// unconstrained). Shares the same shuffle as [`PreparedUniform::propose`], so the distribution
+/// over `needed`-subsets is exactly uniform.
+pub(crate) fn draw_subset(pool: Hand, needed: u8, rng: &mut dyn rand_core::Rng) -> Hand {
+    let mut cards: Vec<Card> = pool.cards().collect();
+    fisher_yates(&mut cards, rng);
+    let mut hand = Hand::EMPTY;
+    for &card in cards.iter().take(needed as usize) {
+        hand = hand.with(card);
+    }
+    hand
+}
+
 /// A uniform integer in `0..n` (`n ≥ 1`) via Lemire's nearly-divisionless method, so that the
 /// sample stream depends only on `rng.next_u64()` and never on `rand`'s own range-sampling
 /// algorithm (which is free to change between versions).
@@ -99,8 +113,15 @@ fn bounded(rng: &mut dyn rand_core::Rng, n: u64) -> u64 {
 }
 
 /// `ln(n!)` for `n ≤ 52` from a precomputed table (there are at most 52 cards to place).
-fn ln_factorial(n: u8) -> f64 {
+pub(crate) fn ln_factorial(n: u8) -> f64 {
     LN_FACTORIAL[n as usize]
+}
+
+/// `ln C(n, k)` for `k ≤ n ≤ 52`, from the same table (§6.4 (a): `log_prob = −ln C(|P_k|,
+/// needed)` for a direct-dealt seat).
+pub(crate) fn ln_choose(n: u8, k: u8) -> f64 {
+    debug_assert!(k <= n, "ln_choose({n}, {k}): k must not exceed n");
+    ln_factorial(n) - ln_factorial(k) - ln_factorial(n - k)
 }
 
 /// `ln(k!)` for `k = 0..=52`, i.e. `ln_gamma(k + 1)`.

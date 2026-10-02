@@ -37,12 +37,12 @@
 | `sequence_log_likelihood` ベンチ | 同 | criterion | 2〜5 μs / 配牌 |
 | スレッド数不変 `deterministic_across_threads` | `bridge-sample` `tests/determinism.rs` | unit、同一 seed で `Threads::Single` と 7 スレッドプール | `Vec<WeightedDeal>` と `SampleReport` (`elapsed` 除く) がバイト一致 |
 | `ConstraintProposal` の `log_prob` 整合 | `bridge-sample` `tests/proposal.rs` | 小プールで 10^5 提案のヒストグラム vs `exp(log_prob)` | χ² 通過 |
-| ESS スイート `uniform_vs_constraint_ess` | `bridge-sample` `tests/ess.rs` | `#[ignore]`、50 オークション × n = 1000 | `ConstraintProposal` の ESS 中央値 ≥ 0.5n。Uniform は比較用に報告 |
+| ESS スイート `uniform_vs_constraint_ess_suite` | `bridge-sample` `tests/ess_suite.rs` | `#[ignore]`、release、50 オークション（SAYC の `replay` 25 + コーパス 25）× n = 1000、実ビディング尤度、`target/ess_report.json` | `ConstraintProposal` の ESS 中央値 ≥ 0.5n（2026-09-26 時点で 0.028、未達。09-sample.md §10.2）。Uniform は比較用に報告 |
 | 配牌サンプラーベンチ | `bridge-sample` `benches/deals.rs` | criterion | ≥ 10^4 配牌/秒/コア |
 | ショウアウトからのハード制約 `hard_constraints_from_showout` | `bridge-play` `tests/hard.rs` | unit (手組みの履歴、`hard_constraints`) | 長さ確定、`KnownCards` 一致、不整合は `PlayWarning::Inconsistent` |
 | リード・シグナル規則表 `lead_rules_table` | `bridge-play` `tests/leads.rs` | table-driven ((約束, リード札) → 期待制約の充足/不充足) | 全通過 |
 | DDS レイアウト | `bridge-dds` `tests/layout.rs` | unit (C++ プローブ) | 全構造体・全フィールドで一致 |
-| DDS 差分 `differential_dds` | `bridge-dds` `tests/differential.rs` | `list100.txt` (コーパス取得時)、`masterDD.txt` は `#[ignore]` | 100% 一致 |
+| DDS 差分 `differential_dds` | `bridge-dds` `tests/differential.rs` | `list100.txt` (コーパス、または `cargo xtask dds vendor` が展開する `vendor/dds-2.9.0/hands/list100.txt`。CI の `dds` ジョブで必須)、`masterDD.txt` は `#[ignore]` | 100% 一致 |
 | 並行 `SolveBoard` `concurrent_solve_board` | `bridge-dds` `tests/concurrency.rs` | 8 スレッド × 100 局面 | エラー 0、逐次結果と一致 |
 | wasm ビルド | CI `wasm` ジョブ | `cargo check --target wasm32-unknown-unknown` | 通る |
 

@@ -11,15 +11,95 @@
 //!
 //! **log_prob.** Replay the same order and pools; `π_k(h) = Σ_{components ∋ h} u / count`,
 //! summing over every component that could have produced `h`; the last seat contributes 0.
+//!
+//! **§6.4 (c), coarse re-preparation.** Every `Sampled` seat other than the first (cached) and
+//! the last (only ever `satisfies`-checked, never `Sampler::prepare`d) is re-prepared on every
+//! `propose`/`log_prob` call. Those re-prepared seats use [`coarsen`] instead of their original
+//! candidates: a summary `Atom` (shapes + HCP range only, from `HandConstraint::shapes` /
+//! `HandConstraint::hcp_range`) that always covers a superset of the original candidate (`Or`
+//! unions, `And` intersects, so the summary's satisfying set is never smaller), so it never turns
+//! a satisfiable candidate unsatisfiable. The resulting proposal can land on hands the fine
+//! candidate would have rejected; `Interpretation::likelihood` still scores those against the
+//! fine constraint, so the importance weight absorbs the mismatch — ESS drops but stays finite,
+//! exactly as §6.4 describes. `log_prob` replays the same coarsened candidates for these seats,
+//! since it must match the density `propose` actually drew from.
+//!
+//! This is *not* a fix for a per-literal filtering cost at `Sampler::prepare` — measured on the
+//! bench cases (`09-sample.md` §10.1) and on `Sampler::prepare` directly, a `cards` literal adds
+//! no measurable cost on the pool sizes (c) applies to (39 and 26 unknown cards): the DNF/atom
+//! evaluation there is dominated by the shape/HCP walk regardless of whether a `cards` literal
+//! rides along. (c) *does* help when coarsening removes something that changes which code path
+//! `Sampler::prepare` takes — most obviously when the summary collapses to (or near) `ANY`, or
+//! drops enough of the HCP window that shape-DP pruning does less work — and it always costs
+//! acceptance and ESS, because it drops `cards` / `eval`, `Not`-inferences and card-level hard
+//! play constraints at every re-prepared seat, whether or not that seat's own bench case happens
+//! to exercise them.
 
-use bridge_core::Deal;
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use bridge_constraint::{Atom, Dnf, DnfOptions, HandConstraint, Sampler};
+use bridge_core::{Deal, Hand, Seat};
+
+use crate::uniform::{draw_subset, ln_choose};
 use crate::{PreparedProposal, Proposal, SampleContext, SampleError};
+
+// `sample_deals`'s own `process_slot` (in `lib.rs`) always calls `propose` and then immediately
+// `log_prob` for the *same* accepted deal, on the same thread, before touching any other
+// `PreparedProposal` — so for every re-prepared seat (every position but the cached first and the
+// residual last, §6.4 (c)), `log_prob`'s walk hits exactly the `(pool, fixed)` `propose` just built
+// a `Sampler` for. Without this cache, `log_prob` re-runs `prepare_components` (re-preparing a
+// `Sampler` per surviving candidate) from scratch, duplicating work `propose` already did a moment
+// earlier — measured on `four_call_three_seats` (09-sample.md §10.1), `propose` and `log_prob` cost
+// almost exactly the same, so this removes close to half the per-deal cost at those seats.
+//
+// A thread-local, not a field on `PreparedConstraint`, because `PreparedProposal` must stay
+// `Send + Sync` (it is shared as `&(dyn PreparedProposal + Send + Sync)` across rayon's pool in
+// `Threads::Auto`, per `lib.rs`'s `run_parallel`); a `RefCell` field would break `Sync`. Each slot
+// records which `PreparedConstraint` wrote it (its `id`, unique per `prepare_constraint` call and
+// never reused, unlike an address) together with the `(pool, fixed)` it was built for, and
+// `log_prob` trusts a slot only when all three match its own. Anything else — a different deal, a
+// different proposal on the same thread (e.g. scoring one proposal's deal under another), or
+// `log_prob` with no preceding `propose` on this thread — falls back to rebuilding from its own
+// coarse candidates, so the cache never changes the density `log_prob` returns.
+/// One re-prepared seat's cached `(proposal id, pool, fixed, components)`, keyed by seat position
+/// in `REPREPARE_CACHE`.
+type CachedSeatComponents = Option<(u64, Hand, Hand, Vec<(Sampler, f64)>)>;
+
+/// Source of [`PreparedConstraint::id`]: a fresh value per `prepare_constraint` call.
+static NEXT_PREPARED_ID: AtomicU64 = AtomicU64::new(0);
+
+thread_local! {
+    static REPREPARE_CACHE: RefCell<Vec<CachedSeatComponents>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+/// At most `K` alternatives per seat are sampled: the `K - 1` highest-weighted plus, when more
+/// exist, a catch-all carrying the rest (D11, §6.1 point 1; see [`truncate_keeping_support`]).
+const MAX_ALTERNATIVES: usize = 8;
 
 /// Hierarchical constraint sampling.
 #[derive(Clone, Debug)]
 pub struct ConstraintProposal {
     /// Retries per proposed deal before giving up (default 16).
+    ///
+    /// Passed through as [`bridge_constraint::SampleOptions::max_tries`] to every `Sampler` this
+    /// proposal prepares, so a literal that can only be rejection-sampled (`Custom`, a DNF
+    /// residual, a second additive feature) gets this many draws before its `Sampler::sample`
+    /// gives up. `sample_deals`'s own outer retry loop (`SampleOptions::max_attempts_per_sample`
+    /// in `report.rs`) is a separate knob: it retries the whole `propose` → `log_prob` pair, not
+    /// a single `Sampler`'s internal rejection loop.
+    ///
+    /// This default is lower than [`bridge_constraint::SampleOptions`]'s own default of 256 (the
+    /// value `sample_deals`'s own §2.3 support probe uses). For a rejection-sampled term with
+    /// acceptance rate `α`, the probability the term's `Sampler` gives up within `max_retries`
+    /// draws is `(1 − α)^max_retries`, so a lower `max_retries` gives up more often, and does so
+    /// unevenly across terms and components with different `α` — which skews `log_prob` for the
+    /// (already only approximate; see `SampleWarning::CustomConstraint`) inexact case. Raising
+    /// this default to 256 would even out that skew at the cost of up to 16× more retries per
+    /// inexact term; `sample_deals`'s own bench (`benches/deals.rs`) has no inexact terms in its
+    /// cases, so this trade was left as `SampleWarning::CustomConstraint`'s documented caveat
+    /// rather than measured and changed here.
     pub max_retries: u32,
 }
 
@@ -29,26 +109,1042 @@ impl Default for ConstraintProposal {
     }
 }
 
+/// One candidate alternative for a seat: a hand constraint (already AND-ed with the seat's hard
+/// play constraint) and its raw, pre-normalisation weight `w_i`.
+#[derive(Clone)]
+struct Candidate {
+    constraint: HandConstraint,
+    weight: f64,
+}
+
+/// How a seat is drawn.
+enum SeatPlan {
+    /// The seat's surviving alternative reduces to `ANY` (§6.4 (a)): drawn combinatorially,
+    /// uniformly at random from whatever pool remains, no `Sampler` involved. `log_prob =
+    /// −ln C(|pool|, needed)`.
+    Direct,
+    /// Drawn by choosing one candidate proportional to `w_i · count_i` — the same count-weighting
+    /// that orders seats by `mass_s` (§6.1 point 4, §6.2 step 3), applied per candidate this time
+    /// instead of summed over all of them — then sampling uniformly within it.
+    ///
+    /// `coarse` (§6.4 (c)) is the same candidates with [`coarsen`] applied, used instead of
+    /// `candidates` whenever this seat is re-prepared per draw (every position except the cached
+    /// first seat and the residual last seat, which need `candidates` unchanged: the first is
+    /// prepared once regardless, and the last only ever calls `HandConstraint::satisfies`, never
+    /// `Sampler::prepare`).
+    ///
+    /// `coarse` is deduplicated: candidates whose summaries coincide (common in real
+    /// interpretations, where several alternatives differ only in `cards` / `eval` detail) are
+    /// merged into one component carrying the sum of their weights. That leaves the mixture
+    /// unchanged — identical components `U` with shares `v_1, v_2` are the single component `U`
+    /// with share `v_1 + v_2`, since `v_i ∝ w_i · cnt` and `cnt` is shared — while preparing each
+    /// distinct summary only once per draw.
+    ///
+    /// `coarse_direct` is `true` when the deduplicated `coarse` is the single unconstrained atom:
+    /// a uniform draw of `needed` cards from the pool, exactly what [`SeatPlan::Direct`] does, so
+    /// a re-prepared seat whose every alternative coarsens to `ANY` (e.g. a passing seat whose
+    /// passes only carry `cards` / `eval` detail) skips `Sampler::prepare` entirely.
+    Sampled {
+        candidates: Vec<Candidate>,
+        coarse: Vec<Candidate>,
+        /// `coarse[i].constraint.to_dnf(..)`, converted once here instead of inside every
+        /// per-draw `Sampler::prepare` (see `Sampler::prepare_many_dnf`).
+        coarse_dnfs: Vec<Dnf>,
+        coarse_direct: bool,
+    },
+}
+
+/// One seat in the sampling order `σ` (§6.1 point 3): most constrained first, so failure is
+/// discovered as early (and as cheaply) as possible.
+struct SeatEntry {
+    seat: Seat,
+    plan: SeatPlan,
+}
+
+/// The first seat's prepared samplers, cached because its pool (`known.pool()`) never shrinks
+/// before it is drawn (§6.1 point 4): `(Sampler, v_i)` with `v_i = w_i · cnt_i / Σ_j w_j · cnt_j`
+/// normalised over the candidates that survived (`count() > 0`).
+struct CachedFirst {
+    components: Vec<(Sampler, f64)>,
+}
+
 impl Proposal for ConstraintProposal {
     fn prepare<'c>(
         &self,
         ctx: &'c SampleContext<'c>,
     ) -> Result<Box<dyn PreparedProposal + Send + Sync + 'c>, SampleError> {
-        todo!("phase 5")
+        Ok(Box::new(self.prepare_constraint(ctx)?))
+    }
+}
+
+impl ConstraintProposal {
+    /// [`Proposal::prepare`] without the boxing, so this module's tests can reach the prepared
+    /// seat plans.
+    fn prepare_constraint<'c>(
+        &self,
+        ctx: &'c SampleContext<'c>,
+    ) -> Result<PreparedConstraint<'c>, SampleError> {
+        let sampler_opts = bridge_constraint::SampleOptions {
+            max_tries: self.max_retries.max(1),
+            ..bridge_constraint::SampleOptions::default()
+        };
+        let pool = ctx.known.pool();
+
+        let mut order: Vec<(SeatEntry, f64)> = Vec::new();
+        for seat in Seat::ALL {
+            let needed = ctx.known.needed(seat);
+            let fixed = ctx.known.known[seat.index() as usize];
+            let hard = &ctx.play_constraints[seat.index() as usize];
+            if needed == 0 {
+                // Fully known already (the viewer, or an exposed dummy): still must satisfy this
+                // seat's own hard play constraint, or no deal exists at all (§2.3 of
+                // `09-sample.md`). `sample_deals` checks this too before calling `prepare`, but
+                // `ConstraintProposal::prepare` is public and can be called directly.
+                if !hard.satisfies(fixed) {
+                    return Err(SampleError::EmptySupport);
+                }
+                continue;
+            }
+
+            let mut candidates = seat_candidates(ctx, seat, hard);
+            candidates.sort_by(|a, b| {
+                b.weight
+                    .partial_cmp(&a.weight)
+                    .unwrap_or(core::cmp::Ordering::Equal)
+            });
+            truncate_keeping_support(&mut candidates, hard);
+
+            if candidates.len() == 1 && is_unconstrained(&candidates[0].constraint) {
+                let mass = ln_choose(pool.len(), needed);
+                order.push((
+                    SeatEntry {
+                        seat,
+                        plan: SeatPlan::Direct,
+                    },
+                    mass,
+                ));
+                continue;
+            }
+
+            let mut alts: Vec<(Candidate, u64)> = Vec::with_capacity(candidates.len());
+            for candidate in candidates {
+                let sampler = Sampler::prepare(&candidate.constraint, pool, fixed, &sampler_opts)
+                    .map_err(|e| SampleError::Prepare(e.to_string()))?;
+                let count = sampler.count();
+                if count == 0 {
+                    continue;
+                }
+                alts.push((candidate, count));
+            }
+            if alts.is_empty() {
+                // `sample_deals` (§2.3 of `09-sample.md`) already checked that at least one
+                // interpretation alternative survives AND-ing with `hard` against the full pool;
+                // this can still be empty when `play_soft` narrows further than that check
+                // accounts for. Fall back to the hard constraint alone rather than leaving this
+                // seat with no way to be drawn at all — but if even `hard` alone has no support
+                // against the full pool, no deal exists, and that must surface as
+                // `EmptySupport`, not a fabricated single-hand fallback (`count().max(1)` would
+                // silently claim support that isn't there).
+                let sampler = Sampler::prepare(hard, pool, fixed, &sampler_opts)
+                    .map_err(|e| SampleError::Prepare(e.to_string()))?;
+                let count = sampler.count();
+                if count == 0 {
+                    return Err(SampleError::EmptySupport);
+                }
+                alts.push((
+                    Candidate {
+                        constraint: hard.clone(),
+                        weight: 1.0,
+                    },
+                    count,
+                ));
+            }
+
+            let mass: f64 = alts.iter().map(|(c, count)| c.weight * *count as f64).sum();
+            let candidates: Vec<Candidate> = alts.into_iter().map(|(c, _)| c).collect();
+            let coarse = coarsen_candidates(&candidates);
+            let coarse_direct = coarse.len() == 1 && is_unconstrained(&coarse[0].constraint);
+            let coarse_dnfs = coarse
+                .iter()
+                .map(|c| {
+                    c.constraint
+                        .to_dnf(&DnfOptions::default())
+                        .expect("DnfOptions::default uses Overflow::Residual, which never errors")
+                })
+                .collect();
+            order.push((
+                SeatEntry {
+                    seat,
+                    plan: SeatPlan::Sampled {
+                        candidates,
+                        coarse,
+                        coarse_dnfs,
+                        coarse_direct,
+                    },
+                },
+                mass.ln(),
+            ));
+        }
+
+        order.sort_by(|(a, mass_a), (b, mass_b)| {
+            mass_a
+                .partial_cmp(mass_b)
+                .unwrap_or(core::cmp::Ordering::Equal)
+                .then_with(|| a.seat.index().cmp(&b.seat.index()))
+        });
+        let order: Vec<SeatEntry> = order.into_iter().map(|(entry, _)| entry).collect();
+
+        let cached_first = match order.first() {
+            Some(SeatEntry {
+                seat,
+                plan: SeatPlan::Sampled { candidates, .. },
+            }) => {
+                let fixed = ctx.known.known[seat.index() as usize];
+                Some(CachedFirst {
+                    components: prepare_components(candidates, None, pool, fixed, &sampler_opts)
+                        .ok_or_else(|| {
+                            SampleError::Prepare(
+                                "the first seat's alternatives lost all support against the \
+                                 full pool, which its own prepare pass should have prevented"
+                                    .to_string(),
+                            )
+                        })?,
+                })
+            }
+            _ => None,
+        };
+
+        Ok(PreparedConstraint {
+            id: NEXT_PREPARED_ID.fetch_add(1, Ordering::Relaxed),
+            ctx,
+            sampler_opts,
+            order,
+            cached_first,
+        })
+    }
+}
+
+/// Cuts `candidates` (sorted by descending weight) to at most [`MAX_ALTERNATIVES`] without
+/// shrinking the proposal's support (§6.1 point 1).
+///
+/// The product `interpretation.seats[s] ⊗ play_soft[s]` can have up to 64 entries. Dropping the
+/// tail outright would leave every hand covered only by dropped products with positive target
+/// likelihood but proposal density 0: never drawn, so the estimator is biased while ESS still
+/// looks perfect. Instead the `K - 1` heaviest are kept and the rest are replaced by one
+/// catch-all candidate, the seat's `hard` constraint carrying the dropped weight. Every hand the
+/// target accepts satisfies `hard`, so it stays proposable, and `log_prob` accounts for the
+/// catch-all through the ordinary component sum.
+fn truncate_keeping_support(candidates: &mut Vec<Candidate>, hard: &HandConstraint) {
+    if candidates.len() <= MAX_ALTERNATIVES {
+        return;
+    }
+    let dropped: f64 = candidates[MAX_ALTERNATIVES - 1..]
+        .iter()
+        .map(|c| c.weight)
+        .sum();
+    candidates.truncate(MAX_ALTERNATIVES - 1);
+    candidates.push(Candidate {
+        constraint: hard.clone(),
+        weight: dropped,
+    });
+}
+
+/// `interpretation.seats[s] ⊗ play_soft[s]`, each AND-ed with `hard` (§6.1 point 1). A seat with
+/// no calls at all is `[(ANY, 1.0)]` (Step B's convention, 07-bidding.md §4.4), matching so that
+/// an unconstrained seat with no soft information reduces to a single `ANY` candidate and is
+/// caught by [`is_unconstrained`].
+fn seat_candidates(ctx: &SampleContext<'_>, seat: Seat, hard: &HandConstraint) -> Vec<Candidate> {
+    let base = &ctx.interpretation.seats[seat.index() as usize];
+    let soft = ctx
+        .play_soft
+        .map(|soft| &soft[seat.index() as usize])
+        .filter(|soft| !soft.is_empty());
+
+    let mut out = Vec::new();
+    match soft {
+        None => {
+            if base.is_empty() {
+                out.push(Candidate {
+                    constraint: hard.clone(),
+                    weight: 1.0,
+                });
+            } else {
+                for (constraint, weight, _) in base {
+                    out.push(Candidate {
+                        constraint: and_opt(constraint.clone(), hard.clone()),
+                        weight: f64::from(*weight),
+                    });
+                }
+            }
+        }
+        Some(soft) => {
+            if base.is_empty() {
+                for (soft_constraint, soft_weight) in soft {
+                    out.push(Candidate {
+                        constraint: and_opt(soft_constraint.clone(), hard.clone()),
+                        weight: f64::from(*soft_weight),
+                    });
+                }
+            } else {
+                for (constraint, weight, _) in base {
+                    for (soft_constraint, soft_weight) in soft {
+                        let combined = and_opt(
+                            and_opt(constraint.clone(), soft_constraint.clone()),
+                            hard.clone(),
+                        );
+                        out.push(Candidate {
+                            constraint: combined,
+                            weight: f64::from(*weight) * f64::from(*soft_weight),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `a ∧ b`, skipping the conjunction (and the `And` wrapping it would otherwise introduce) when
+/// one side is literally the unconstrained atom, so that "unconstrained AND unconstrained" stays
+/// recognisable to [`is_unconstrained`] instead of becoming an `And` of two `ANY` atoms.
+fn and_opt(a: HandConstraint, b: HandConstraint) -> HandConstraint {
+    if is_unconstrained(&a) {
+        return b;
+    }
+    if is_unconstrained(&b) {
+        return a;
+    }
+    a.and(b)
+}
+
+/// Whether `constraint` is exactly the unconstrained atom (§6.1 point 5: "shapes = ALL, hcp =
+/// 0..=37, cards / eval empty"). Only a bare, literal `ANY` is recognised — a semantically
+/// unconstrained but structurally different tree (e.g. `Or` of every shape) still goes through
+/// the sampler, which handles it exactly at the cost of one `prepare` call.
+fn is_unconstrained(constraint: &HandConstraint) -> bool {
+    matches!(
+        constraint,
+        HandConstraint::Atom(Atom {
+            shapes,
+            hcp,
+            cards,
+            eval,
+        }) if *shapes == bridge_constraint::ShapeSet::ALL
+            && *hcp == (0..=37)
+            && cards.is_empty()
+            && eval.is_empty()
+    )
+}
+
+/// §6.4 (c): a "coarse" summary of `constraint`, keeping only its shape set and HCP range
+/// (`HandConstraint::shapes` / `HandConstraint::hcp_range`) and dropping any `cards` / `eval`
+/// detail. Always a superset of `constraint`'s own satisfying set (`Or` unions the branches'
+/// summaries, `And` intersects them; see those methods' doc comments), so it never turns a
+/// satisfiable candidate unsatisfiable — only ever wider, never narrower. Used only for seats
+/// re-prepared on every `propose` / `log_prob` call; see the module doc comment.
+fn coarsen(constraint: &HandConstraint) -> HandConstraint {
+    HandConstraint::Atom(Atom {
+        shapes: constraint.shapes(),
+        hcp: constraint.hcp_range(),
+        cards: Vec::new(),
+        eval: Vec::new(),
+    })
+}
+
+/// [`coarsen`] applied to every candidate, with identical summaries merged into one candidate
+/// whose weight is the sum of theirs (see [`SeatPlan::Sampled`]). First-occurrence order is kept,
+/// so the result is a deterministic function of `candidates`.
+fn coarsen_candidates(candidates: &[Candidate]) -> Vec<Candidate> {
+    let mut out: Vec<Candidate> = Vec::with_capacity(candidates.len());
+    for c in candidates {
+        let constraint = coarsen(&c.constraint);
+        match out
+            .iter_mut()
+            .find(|o| same_atom(&o.constraint, &constraint))
+        {
+            Some(existing) => existing.weight += c.weight,
+            None => out.push(Candidate {
+                constraint,
+                weight: c.weight,
+            }),
+        }
+    }
+    out
+}
+
+/// Whether `a` and `b` are both atoms and equal (every [`coarsen`] output is an atom).
+fn same_atom(a: &HandConstraint, b: &HandConstraint) -> bool {
+    match (a, b) {
+        (HandConstraint::Atom(a), HandConstraint::Atom(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Prepares one `Sampler` per candidate against `(pool, fixed)`, drops the ones with
+/// `count() == 0`, and normalises the survivors' weights into `v_i = w_i · cnt_i / Σ_j w_j ·
+/// cnt_j` (§6.1 point 4, §6.2 step 2 of `09-sample.md`). `None` when nothing survives
+/// (`propose`/`log_prob` treat that as "no deal is possible from here").
+///
+/// The `cnt_i` factor matters: without it, a component's *share of the draw* would not match its
+/// *share of the likelihood mass* `Interpretation::likelihood` actually scores against. That
+/// target sums `w_i` over every alternative a hand satisfies (07-bidding.md §4.4), so a component
+/// with a broader satisfying set contributes more total likelihood mass across the pool, not just
+/// more per-hand likelihood — an ε-mixture's defensive `ANY` branch, in particular, satisfies far
+/// more hands than the primary alternative it sits beside. Weighting by `w_i` alone would draw
+/// `ANY` only in proportion to its raw `ε`, far less often than the mass it actually accounts for;
+/// the few hands it then does produce would carry disproportionately large importance weights and
+/// ESS would collapse.
+///
+/// `dnfs`, when given, is each candidate's constraint already in DNF (same order), and is
+/// prepared through `Sampler::prepare_many_dnf` — identical samplers without the per-call
+/// conversion.
+fn prepare_components(
+    candidates: &[Candidate],
+    dnfs: Option<&[Dnf]>,
+    pool: Hand,
+    fixed: Hand,
+    opts: &bridge_constraint::SampleOptions,
+) -> Option<Vec<(Sampler, f64)>> {
+    // One `prepare_many` call rather than a `Sampler::prepare` per candidate: every candidate
+    // is prepared against the same `(pool, fixed)`, so terms with plain per-suit tables (all of
+    // a re-prepared seat's coarse shape + HCP summaries) share one table build and their pair
+    // convolutions (`Sampler::prepare_many`'s doc comment); the samplers are identical either way.
+    let samplers = match dnfs {
+        Some(dnfs) => Sampler::prepare_many_dnf(dnfs, pool, fixed, opts),
+        None => Sampler::prepare_many(candidates.iter().map(|c| &c.constraint), pool, fixed, opts),
+    }
+    .ok()?;
+    let mut survivors: Vec<(Sampler, f64)> = Vec::with_capacity(candidates.len());
+    for (candidate, sampler) in candidates.iter().zip(samplers) {
+        let count = sampler.count();
+        if count == 0 {
+            continue;
+        }
+        survivors.push((sampler, candidate.weight * count as f64));
+    }
+    let total: f64 = survivors.iter().map(|(_, w)| *w).sum();
+    if survivors.is_empty() || total <= 0.0 {
+        return None;
+    }
+    for (_, w) in &mut survivors {
+        *w /= total;
+    }
+    Some(survivors)
+}
+
+/// Draws a component index proportional to its weight (weights need not sum to 1: `total` is
+/// computed from what is passed in), using a 53-bit uniform double so the draw depends only on
+/// `rng.next_u64()`.
+fn choose_component(components: &[(Sampler, f64)], rng: &mut dyn rand_core::Rng) -> usize {
+    let total: f64 = components.iter().map(|(_, w)| *w).sum();
+    let u = (rng.next_u64() >> 11) as f64 * (1.0 / (1u64 << 53) as f64);
+    let target = u * total;
+    let mut acc = 0.0;
+    for (i, (_, w)) in components.iter().enumerate() {
+        acc += w;
+        if target < acc {
+            return i;
+        }
+    }
+    components.len() - 1
+}
+
+/// `Σ_{i: hand ∈ components[i]} v_i · exp(sampler_i.log_prob(hand))`, in the log domain;
+/// `−∞` when no component contains `hand` (§6.3).
+fn mixture_log_prob(components: &[(Sampler, f64)], hand: Hand) -> f64 {
+    let mut mix = 0.0f64;
+    for (sampler, v) in components {
+        let lp = sampler.log_prob(hand);
+        if lp.is_finite() {
+            mix += v * lp.exp();
+        }
+    }
+    if mix <= 0.0 {
+        f64::NEG_INFINITY
+    } else {
+        mix.ln()
+    }
+}
+
+/// Whether the seat at position `k` (not the residual last seat) is drawn as a uniform subset of
+/// the remaining pool: always for [`SeatPlan::Direct`], and for a re-prepared (`k != 0`)
+/// [`SeatPlan::Sampled`] seat whose coarse summary is exactly `ANY` (`coarse_direct`). The cached
+/// first seat keeps its fine candidates, so `coarse_direct` never applies there.
+fn draws_direct(entry: &SeatEntry, k: usize) -> bool {
+    match &entry.plan {
+        SeatPlan::Direct => true,
+        SeatPlan::Sampled { coarse_direct, .. } => k != 0 && *coarse_direct,
     }
 }
 
 struct PreparedConstraint<'c> {
+    /// Unique per `prepare_constraint` call; tags this proposal's `REPREPARE_CACHE` entries so
+    /// another proposal on the same thread never reads them.
+    id: u64,
     ctx: &'c SampleContext<'c>,
-    max_retries: u32,
+    sampler_opts: bridge_constraint::SampleOptions,
+    /// Seats needing cards, most constrained first (§6.1 point 3); the last entry is the
+    /// residual seat that receives whatever remains of the pool.
+    order: Vec<SeatEntry>,
+    /// `Some` when `order`'s first entry is `Sampled` (its pool is the full pool and never
+    /// shrinks before it is drawn, so it is prepared once here rather than in every `propose`).
+    cached_first: Option<CachedFirst>,
 }
 
 impl PreparedProposal for PreparedConstraint<'_> {
     fn propose(&self, rng: &mut dyn rand_core::Rng) -> Option<Deal> {
-        todo!("phase 5")
+        let known = &self.ctx.known;
+        let mut hands = known.known;
+        let mut pool = known.pool();
+        let m = self.order.len();
+
+        for (k, entry) in self.order.iter().enumerate() {
+            let seat = entry.seat;
+            let fixed = known.known[seat.index() as usize];
+
+            if k == m - 1 {
+                let hand = fixed.union(pool);
+                if !self.ctx.play_constraints[seat.index() as usize].satisfies(hand) {
+                    return None;
+                }
+                let satisfied = match &entry.plan {
+                    SeatPlan::Direct => true,
+                    SeatPlan::Sampled { candidates, .. } => {
+                        candidates.iter().any(|c| c.constraint.satisfies(hand))
+                    }
+                };
+                if !satisfied {
+                    return None;
+                }
+                hands[seat.index() as usize] = hand;
+                break;
+            }
+
+            let hand = match &entry.plan {
+                _ if draws_direct(entry, k) => {
+                    let needed = known.needed(seat);
+                    fixed.union(draw_subset(pool, needed, rng))
+                }
+                SeatPlan::Direct => unreachable!("draws_direct is true for every Direct seat"),
+                SeatPlan::Sampled {
+                    coarse,
+                    coarse_dnfs,
+                    ..
+                } if k != 0 => {
+                    // §6.4 (c): re-prepared every draw, so use the coarse candidates. The
+                    // resulting components are stashed in `REPREPARE_CACHE[k]` for the
+                    // `log_prob` call `sample_deals` makes on this same deal right after (see
+                    // the thread-local's doc comment above).
+                    let hand = REPREPARE_CACHE.with(|cache| -> Option<Hand> {
+                        let mut cache = cache.borrow_mut();
+                        if cache.len() != m {
+                            cache.clear();
+                            cache.resize_with(m, || None);
+                        }
+                        let components = prepare_components(
+                            coarse,
+                            Some(coarse_dnfs),
+                            pool,
+                            fixed,
+                            &self.sampler_opts,
+                        )?;
+                        let i = choose_component(&components, rng);
+                        let hand = components[i].0.sample(rng)?.hand;
+                        cache[k] = Some((self.id, pool, fixed, components));
+                        Some(hand)
+                    });
+                    hand?
+                }
+                SeatPlan::Sampled { .. } => {
+                    let components = self
+                        .cached_first
+                        .as_ref()
+                        .expect("order[0] is Sampled, so cached_first was built in prepare")
+                        .components
+                        .as_slice();
+                    let i = choose_component(components, rng);
+                    components[i].0.sample(rng)?.hand
+                }
+            };
+
+            let drawn = hand.difference(fixed);
+            pool = pool.difference(drawn);
+            hands[seat.index() as usize] = hand;
+        }
+
+        Some(Deal::new(hands).expect(
+            "the known cards partition disjointly and every seat's drawn cards come from the \
+             shrinking pool, so the four hands always partition the deck",
+        ))
     }
 
     fn log_prob(&self, deal: &Deal) -> f64 {
-        todo!("phase 5")
+        let known = &self.ctx.known;
+        for seat in Seat::ALL {
+            if !known.known[seat.index() as usize].is_subset(deal.hand(seat)) {
+                return f64::NEG_INFINITY;
+            }
+        }
+
+        let mut pool = known.pool();
+        let mut ln_pi = 0.0f64;
+        let m = self.order.len();
+
+        for (k, entry) in self.order.iter().enumerate() {
+            let seat = entry.seat;
+            let fixed = known.known[seat.index() as usize];
+            let hand = deal.hand(seat);
+
+            if k == m - 1 {
+                if !self.ctx.play_constraints[seat.index() as usize].satisfies(hand) {
+                    return f64::NEG_INFINITY;
+                }
+                let satisfied = match &entry.plan {
+                    SeatPlan::Direct => true,
+                    SeatPlan::Sampled { candidates, .. } => {
+                        candidates.iter().any(|c| c.constraint.satisfies(hand))
+                    }
+                };
+                if !satisfied {
+                    return f64::NEG_INFINITY;
+                }
+                break;
+            }
+
+            match &entry.plan {
+                _ if draws_direct(entry, k) => {
+                    let needed = known.needed(seat);
+                    ln_pi += -ln_choose(pool.len(), needed);
+                }
+                SeatPlan::Direct => unreachable!("draws_direct is true for every Direct seat"),
+                SeatPlan::Sampled {
+                    coarse,
+                    coarse_dnfs,
+                    ..
+                } if k != 0 => {
+                    // Sum over every component that could have produced `hand` (they overlap):
+                    // the mixture density is only correct when every one is counted (§6.3).
+                    // §6.4 (c): replay the same coarse candidates `propose` drew this seat from —
+                    // reusing `REPREPARE_CACHE[k]` when it was left by a `propose` call of this
+                    // same proposal on this thread for this exact `(pool, fixed)` (see the
+                    // thread-local's doc comment above), rebuilding otherwise.
+                    let ln_component = REPREPARE_CACHE.with(|cache| -> f64 {
+                        let cache = cache.borrow();
+                        if let Some(Some((cached_id, cached_pool, cached_fixed, components))) =
+                            cache.get(k)
+                        {
+                            if *cached_id == self.id
+                                && *cached_pool == pool
+                                && *cached_fixed == fixed
+                            {
+                                return mixture_log_prob(components, hand);
+                            }
+                        }
+                        drop(cache);
+                        match prepare_components(
+                            coarse,
+                            Some(coarse_dnfs),
+                            pool,
+                            fixed,
+                            &self.sampler_opts,
+                        ) {
+                            Some(components) => mixture_log_prob(&components, hand),
+                            None => f64::NEG_INFINITY,
+                        }
+                    });
+                    if !ln_component.is_finite() {
+                        return f64::NEG_INFINITY;
+                    }
+                    ln_pi += ln_component;
+                }
+                SeatPlan::Sampled { .. } => {
+                    let components = &self
+                        .cached_first
+                        .as_ref()
+                        .expect("order[0] is Sampled, so cached_first was built in prepare")
+                        .components;
+                    let ln_component = mixture_log_prob(components, hand);
+                    if !ln_component.is_finite() {
+                        return f64::NEG_INFINITY;
+                    }
+                    ln_pi += ln_component;
+                }
+            }
+
+            let drawn = hand.difference(fixed);
+            pool = pool.difference(drawn);
+        }
+
+        ln_pi
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bridge_bidding::{Explanation, Interpretation, ResolutionKind};
+    use bridge_constraint::{CardRequirement, KnownCards, ShapeSet};
+    use bridge_core::{Holding, Suit};
+
+    use super::*;
+
+    /// The pre-optimisation `log_prob`: every re-prepared seat's candidates coarsened one by one
+    /// (no merging of identical summaries, no `coarse_direct` shortcut) and prepared from
+    /// scratch (no `REPREPARE_CACHE`). The differential tests below hold the optimised
+    /// `PreparedConstraint::log_prob` to this reference.
+    fn reference_log_prob(prepared: &PreparedConstraint<'_>, deal: &Deal) -> f64 {
+        let known = &prepared.ctx.known;
+        for seat in Seat::ALL {
+            if !known.known[seat.index() as usize].is_subset(deal.hand(seat)) {
+                return f64::NEG_INFINITY;
+            }
+        }
+        let mut pool = known.pool();
+        let mut ln_pi = 0.0f64;
+        let m = prepared.order.len();
+        for (k, entry) in prepared.order.iter().enumerate() {
+            let seat = entry.seat;
+            let fixed = known.known[seat.index() as usize];
+            let hand = deal.hand(seat);
+            if k == m - 1 {
+                if !prepared.ctx.play_constraints[seat.index() as usize].satisfies(hand) {
+                    return f64::NEG_INFINITY;
+                }
+                let satisfied = match &entry.plan {
+                    SeatPlan::Direct => true,
+                    SeatPlan::Sampled { candidates, .. } => {
+                        candidates.iter().any(|c| c.constraint.satisfies(hand))
+                    }
+                };
+                if !satisfied {
+                    return f64::NEG_INFINITY;
+                }
+                break;
+            }
+            let ln_component = match &entry.plan {
+                SeatPlan::Direct => -ln_choose(pool.len(), known.needed(seat)),
+                SeatPlan::Sampled { candidates, .. } => {
+                    let used: Vec<Candidate> = if k == 0 {
+                        candidates.clone()
+                    } else {
+                        candidates
+                            .iter()
+                            .map(|c| Candidate {
+                                constraint: coarsen(&c.constraint),
+                                weight: c.weight,
+                            })
+                            .collect()
+                    };
+                    match prepare_components(&used, None, pool, fixed, &prepared.sampler_opts) {
+                        Some(components) => mixture_log_prob(&components, hand),
+                        None => f64::NEG_INFINITY,
+                    }
+                }
+            };
+            if !ln_component.is_finite() {
+                return f64::NEG_INFINITY;
+            }
+            ln_pi += ln_component;
+            pool = pool.difference(hand.difference(fixed));
+        }
+        ln_pi
+    }
+
+    fn explanation() -> Explanation {
+        Explanation {
+            text: String::new(),
+            node: None,
+            resolution: ResolutionKind::Exact,
+            parts: Vec::new(),
+        }
+    }
+
+    fn holds(suit: Suit, rank_index: u8) -> CardRequirement {
+        let ranks = Holding::from_bits(1 << rank_index).expect("rank_index < 13");
+        CardRequirement::in_suit(suit, ranks, 1..=1)
+    }
+
+    fn atom(
+        shapes: ShapeSet,
+        hcp: core::ops::RangeInclusive<u8>,
+        cards: Vec<CardRequirement>,
+    ) -> HandConstraint {
+        HandConstraint::Atom(Atom {
+            shapes,
+            hcp,
+            cards,
+            eval: Vec::new(),
+        })
+    }
+
+    /// A full-deck context shaped like the real SAYC interpretations (§10.1 of `09-sample.md`):
+    /// North is the tight opener (cached first seat); South has several alternatives, two pairs
+    /// of which coarsen to the same summary (they differ only in a `cards` literal); East's
+    /// alternatives all coarsen to `ANY` (`coarse_direct`); West is the residual seat.
+    fn sayc_like_interpretation() -> Interpretation {
+        let north = vec![
+            (
+                atom(ShapeSet::BALANCED, 15..=17, Vec::new()),
+                0.95,
+                explanation(),
+            ),
+            (HandConstraint::ANY, 0.05, explanation()),
+        ];
+        let east = vec![
+            (
+                atom(ShapeSet::ALL, 0..=37, vec![holds(Suit::Hearts, 12)]),
+                0.5,
+                explanation(),
+            ),
+            (
+                atom(ShapeSet::ALL, 0..=37, vec![holds(Suit::Clubs, 11)]),
+                0.3,
+                explanation(),
+            ),
+            (HandConstraint::ANY, 0.2, explanation()),
+        ];
+        let four_spades = ShapeSet::from_suit_len(Suit::Spades, 4, 13);
+        let south = vec![
+            (
+                atom(four_spades, 8..=37, vec![holds(Suit::Spades, 12)]),
+                0.35,
+                explanation(),
+            ),
+            (
+                atom(four_spades, 8..=37, vec![holds(Suit::Spades, 11)]),
+                0.25,
+                explanation(),
+            ),
+            (
+                atom(ShapeSet::BALANCED, 13..=15, vec![holds(Suit::Diamonds, 12)]),
+                0.2,
+                explanation(),
+            ),
+            (
+                atom(ShapeSet::BALANCED, 13..=15, Vec::new()),
+                0.1,
+                explanation(),
+            ),
+            (HandConstraint::ANY, 0.1, explanation()),
+        ];
+        let west = vec![
+            (atom(ShapeSet::ALL, 0..=9, Vec::new()), 0.8, explanation()),
+            (HandConstraint::ANY, 0.2, explanation()),
+        ];
+        Interpretation {
+            seats: [north, east, south, west],
+            per_call: Vec::new(),
+            divergence: None,
+        }
+    }
+
+    /// Differential test for the merged-summary and `coarse_direct` fast paths (and the
+    /// `REPREPARE_CACHE` reuse): on deals `propose` actually produces, and on uniformly random
+    /// deals (mostly outside the tight seats' support), `log_prob` must equal the unoptimised
+    /// reference to floating-point rounding.
+    #[test]
+    fn log_prob_matches_the_unmerged_reference() {
+        let interpretation = sayc_like_interpretation();
+        let play_constraints = [
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+        ];
+        let ctx = SampleContext {
+            known: KnownCards::EMPTY,
+            interpretation: &interpretation,
+            play_constraints: &play_constraints,
+            play_soft: None,
+            bidding: None,
+        };
+        let prepared = ConstraintProposal::default()
+            .prepare_constraint(&ctx)
+            .expect("every seat has support");
+
+        // The fixture must actually exercise both fast paths.
+        let mut merged = false;
+        let mut direct = false;
+        for (k, entry) in prepared.order.iter().enumerate() {
+            if let SeatPlan::Sampled {
+                candidates,
+                coarse,
+                coarse_direct,
+                ..
+            } = &entry.plan
+            {
+                if k != 0 && k + 1 != prepared.order.len() {
+                    merged |= coarse.len() < candidates.len() && !*coarse_direct;
+                    direct |= *coarse_direct;
+                }
+            }
+        }
+        assert!(merged, "no re-prepared seat merged identical summaries");
+        assert!(direct, "no re-prepared seat took the coarse_direct path");
+
+        let mut rng = crate::rng_for(0x5EED, 0);
+        let mut checked = 0;
+        for _ in 0..400 {
+            let Some(deal) = prepared.propose(&mut rng) else {
+                continue;
+            };
+            let fast = prepared.log_prob(&deal);
+            let reference = reference_log_prob(&prepared, &deal);
+            assert!(
+                fast.is_finite(),
+                "a proposed deal must have finite log_prob"
+            );
+            assert!(
+                (fast - reference).abs() < 1e-9,
+                "log_prob {fast} != reference {reference} for {deal:?}"
+            );
+            checked += 1;
+        }
+        assert!(checked > 100, "only {checked} proposals succeeded");
+
+        let uniform = crate::UniformProposal;
+        let uniform_prepared = uniform.prepare(&ctx).expect("uniform always prepares");
+        for _ in 0..400 {
+            let deal = uniform_prepared
+                .propose(&mut rng)
+                .expect("uniform proposals never fail");
+            let fast = prepared.log_prob(&deal);
+            let reference = reference_log_prob(&prepared, &deal);
+            if reference.is_finite() {
+                assert!(
+                    (fast - reference).abs() < 1e-9,
+                    "log_prob {fast} != reference {reference} for {deal:?}"
+                );
+            } else {
+                assert_eq!(fast, f64::NEG_INFINITY, "support differs for {deal:?}");
+            }
+        }
+    }
+
+    /// Regression: `REPREPARE_CACHE` used to be keyed only by seat position and `(pool, fixed)`,
+    /// so `b.log_prob(d)` right after `a.propose()` on the same thread read `a`'s mixture at the
+    /// re-prepared middle seat whenever both proposals had the same seat order. The two proposals
+    /// here differ only in South's (re-prepared) alternative weights.
+    #[test]
+    fn log_prob_ignores_another_proposals_cache_entries() {
+        let interpretation_a = sayc_like_interpretation();
+        let mut interpretation_b = sayc_like_interpretation();
+        let south = &mut interpretation_b.seats[Seat::South.index() as usize];
+        let n = south.len() as f32;
+        for (i, alt) in south.iter_mut().enumerate() {
+            // Reverse the weight ordering: the last alternatives now dominate.
+            alt.1 = (i as f32 + 1.0) / (n * (n + 1.0) / 2.0);
+        }
+        let play_constraints = [
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+        ];
+        let ctx_a = SampleContext {
+            known: KnownCards::EMPTY,
+            interpretation: &interpretation_a,
+            play_constraints: &play_constraints,
+            play_soft: None,
+            bidding: None,
+        };
+        let ctx_b = SampleContext {
+            interpretation: &interpretation_b,
+            ..ctx_a
+        };
+        let a = ConstraintProposal::default()
+            .prepare_constraint(&ctx_a)
+            .expect("every seat has support");
+        let b = ConstraintProposal::default()
+            .prepare_constraint(&ctx_b)
+            .expect("every seat has support");
+        let order = |p: &PreparedConstraint<'_>| p.order.iter().map(|e| e.seat).collect::<Vec<_>>();
+        assert_eq!(
+            order(&a),
+            order(&b),
+            "the fixture needs both proposals to share one seat order"
+        );
+
+        let mut rng = crate::rng_for(0xCAC4E, 0);
+        let mut checked = 0;
+        for _ in 0..200 {
+            let Some(deal) = a.propose(&mut rng) else {
+                continue;
+            };
+            let got = b.log_prob(&deal);
+            let reference = reference_log_prob(&b, &deal);
+            if reference.is_finite() {
+                assert!(
+                    (got - reference).abs() < 1e-9,
+                    "b.log_prob {got} != reference {reference} after a.propose for {deal:?}"
+                );
+            } else {
+                assert_eq!(got, f64::NEG_INFINITY, "support differs for {deal:?}");
+            }
+            // And `a` still reads its own entries correctly after `b` ran.
+            let own = a.log_prob(&deal);
+            assert!((own - reference_log_prob(&a, &deal)).abs() < 1e-9);
+            checked += 1;
+        }
+        assert!(checked > 50, "only {checked} proposals succeeded");
+    }
+
+    /// `ConstraintProposal::prepare` is public and can be called directly, without going through
+    /// `sample_deals`'s own §2.3 probe. A hard play constraint with no support against the full
+    /// pool must surface as `SampleError::EmptySupport`, not a misleading `SampleError::Prepare`
+    /// (the `alts.is_empty()` fallback used to mask a zero count with `count().max(1)`, claiming
+    /// a single fabricated hand of support that did not exist).
+    #[test]
+    fn direct_prepare_unsat_hard() {
+        // East, South and West are fully known and between them hold every club, diamond and
+        // heart; North (needed = 13) draws from what's left — only spades — but its own hard
+        // play constraint requires at least one club, which the pool cannot supply.
+        let clubs = Hand::EMPTY.with_holding(Suit::Clubs, bridge_core::Holding::FULL);
+        let diamonds = Hand::EMPTY.with_holding(Suit::Diamonds, bridge_core::Holding::FULL);
+        let hearts = Hand::EMPTY.with_holding(Suit::Hearts, bridge_core::Holding::FULL);
+        let known = KnownCards::new([Hand::EMPTY, clubs, diamonds, hearts])
+            .expect("the three fixed hands are pairwise disjoint by construction");
+        assert_eq!(known.needed(Seat::North), 13);
+        assert_eq!(
+            known.pool().holding(Suit::Clubs),
+            bridge_core::Holding::EMPTY
+        );
+
+        let requires_a_club = HandConstraint::Atom(Atom {
+            shapes: ShapeSet::ALL,
+            hcp: 0..=37,
+            cards: vec![CardRequirement {
+                mask: clubs,
+                count: 1..=13,
+            }],
+            eval: Vec::new(),
+        });
+        let play_constraints = [
+            requires_a_club,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+        ];
+        let interpretation = Interpretation {
+            seats: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            per_call: Vec::new(),
+            divergence: None,
+        };
+        let ctx = SampleContext {
+            known,
+            interpretation: &interpretation,
+            play_constraints: &play_constraints,
+            play_soft: None,
+            bidding: None,
+        };
+
+        let result = ConstraintProposal::default().prepare(&ctx);
+        assert!(
+            result.is_err(),
+            "expected an error, got a successfully prepared proposal"
+        );
+        assert!(
+            matches!(result.err(), Some(SampleError::EmptySupport)),
+            "expected SampleError::EmptySupport"
+        );
     }
 }

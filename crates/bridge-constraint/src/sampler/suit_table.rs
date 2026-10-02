@@ -26,6 +26,8 @@ pub(crate) const DENSE_NK_WITH_X: usize = (SUIT_HCP_MAX + 1) * (SUIT_X_MAX + 1);
 
 /// The largest combined HCP of a two-suit pair (`2 × 10`).
 pub(crate) const PAIR_HCP_MAX: u8 = 20;
+/// Rows of a pair convolution's HCP axis (`0..=PAIR_HCP_MAX`).
+pub(crate) const PAIR_HEIGHT: usize = PAIR_HCP_MAX as usize + 1;
 /// The largest combined additive-feature value of a two-suit pair (`2 × 13`, a generous bound
 /// that covers every additive feature: each is a per-suit popcount or a table value bounded by
 /// the suit's length).
@@ -69,25 +71,47 @@ pub(crate) struct SuitTable {
     /// The dense-key domain size this table was built with ([`DENSE_NK_NO_X`] or
     /// [`DENSE_NK_WITH_X`]); `bucket` must derive `d` the same way `build` did.
     nk: usize,
-    /// `counts[len]` = sparse `(key, n)` list with `n > 0`, sorted ascending by key.
-    pub(crate) counts: [SparseVec; 14],
+    /// Every length's sparse `(key, n)` list with `n > 0`, sorted ascending by key, stored back
+    /// to back (one allocation instead of 14); see [`SuitTable::counts`].
+    counts_data: Vec<(u16, u64)>,
+    /// `counts_data[counts_start[len]..counts_start[len + 1]]` is length `len`'s list.
+    counts_start: [u32; 15],
+    /// `counts` again as dense HCP rows, for a table without an additive feature (`nk ==
+    /// DENSE_NK_NO_X`, so every key is a bare HCP `0..=10`); all-empty rows otherwise. The pair
+    /// convolution of two such tables reads these directly.
+    pub(crate) hcp_rows: [HcpRow; 14],
 }
 
-/// A sparse count vector.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct SparseVec(pub(crate) Vec<(u16, u64)>);
+/// One length's count per HCP (`0..=SUIT_HCP_MAX`), with the range `lo..=hi` holding every
+/// nonzero entry (`lo > hi` when the row is empty).
+#[derive(Clone, Copy)]
+pub(crate) struct HcpRow {
+    pub(crate) counts: [u64; SUIT_HCP_MAX + 1],
+    pub(crate) lo: usize,
+    pub(crate) hi: usize,
+}
+
+impl HcpRow {
+    const EMPTY: HcpRow = HcpRow {
+        counts: [0; SUIT_HCP_MAX + 1],
+        lo: 1,
+        hi: 0,
+    };
+}
 
 /// The convolution of two suits' count vectors for one `(len_a, len_b)` pair, with prefix sums
 /// over the `(hcp, x)` axes so that any box (HCP window × feature window) is a four-lookup sum.
 ///
-/// Built in [`super::term`] (which knows how to combine two [`SuitTable`]s); the type itself is
-/// just data plus the box-sum query. `width` is the size of the `x` axis actually built: `1` when
-/// the term carries no additive feature (every entry's `x` is 0, so a K=1 term's convolution has
-/// nothing to convolve on that axis) instead of always the generous `PAIR_X_MAX + 1` upper bound
-/// a K=2 term (one additive feature) might need.
-pub(crate) struct PairConv {
-    pub(crate) p: SparseVec,
-    pub(crate) prefix: Box<[u64]>,
+/// A borrowed view into a [`PairMap`]'s flat storage (built by [`PairMap::get_or_build`]); the
+/// box-sum queries live in [`super::term`]. `p` is the sparse `(key, count)` list in ascending
+/// `(hcp, x)` order; `prefix` is the `height × width` 2-D prefix sum. `width` is the size of the
+/// `x` axis actually built: `1` when the term carries no additive feature (every entry's `x` is 0,
+/// so a K=1 term's convolution has nothing to convolve on that axis) instead of always the
+/// generous `PAIR_X_MAX + 1` upper bound a K=2 term (one additive feature) might need.
+#[derive(Clone, Copy)]
+pub(crate) struct PairConv<'a> {
+    pub(crate) p: &'a [(u16, u64)],
+    pub(crate) prefix: &'a [u64],
     pub(crate) width: usize,
 }
 
@@ -99,11 +123,14 @@ impl SuitTable {
     /// `nk` is the dense per-length index domain size ([`DENSE_NK_NO_X`] when the caller's `key`
     /// never produces a nonzero `x` component, [`DENSE_NK_WITH_X`] otherwise): every `key(h)` this
     /// call ever produces must map to a [`dense_index`] under `nk`.
+    ///
+    /// `filter` and `key` are generic (not `&dyn Fn`) so each call site's closures are inlined
+    /// into the two enumeration passes below, which run up to `2 × 2^13` times per table.
     pub(crate) fn build(
         pool: Holding,
         fixed: Holding,
-        filter: &dyn Fn(Holding) -> bool,
-        key: &dyn Fn(Holding) -> u16,
+        filter: impl Fn(Holding) -> bool,
+        key: impl Fn(Holding) -> u16,
         nk: usize,
     ) -> SuitTable {
         // Pass 1: histogram of (len, d) -> count, a dense `14 * nk` array. `nk` is `11` or `154`
@@ -119,7 +146,52 @@ impl SuitTable {
             let d = dense_index(key(h), nk);
             hist[len * nk + d] += 1;
         }
+        SuitTable::from_hist(pool, fixed, hist, filter, key, nk)
+    }
 
+    /// The table [`SuitTable::build`] returns for a trivial filter and the plain HCP key
+    /// (`pack_key(holding_hcp(h), 0)`, `nk = DENSE_NK_NO_X`), with the first enumeration pass
+    /// (the `(len, hcp)` histogram) replaced by a closed form: HCP depends only on which of the
+    /// pool's honours (A K Q J) are taken, so for each of the at most 16 honour subsets the
+    /// `C(spots, k)` ways to add `k` of the pool's spot cards all land in the same HCP column.
+    /// Only the placement pass still enumerates, in the same order as `build`, so the result is
+    /// identical to `build`'s (checked by a unit test).
+    pub(crate) fn build_plain(pool: Holding, fixed: Holding) -> SuitTable {
+        const HONOURS: u16 = 0b1_1110_0000_0000; // A K Q J (bits 12..=9).
+        let nk = DENSE_NK_NO_X;
+        let pool_honours = Holding::from_bits(pool.bits() & HONOURS).expect("subset of a holding");
+        let spots = u32::from(pool.len() - pool_honours.len());
+        let mut hist = vec![0u32; 14 * nk];
+        for honours in pool_honours.submasks() {
+            let base = honours.union(fixed);
+            let hcp = usize::from(bridge_eval::holding_hcp(base));
+            let base_len = usize::from(base.len());
+            let mut ways = 1u32; // C(spots, k), updated incrementally.
+            for k in 0..=spots {
+                hist[(base_len + k as usize) * nk + hcp] += ways;
+                ways = ways * (spots - k) / (k + 1);
+            }
+        }
+        SuitTable::from_hist(
+            pool,
+            fixed,
+            hist,
+            |_| true,
+            |h| pack_key(bridge_eval::holding_hcp(h), 0),
+            nk,
+        )
+    }
+
+    /// Everything [`SuitTable::build`] does after its histogram pass: offsets, the placement
+    /// pass (which must enumerate in `build`'s order), and the sparse per-length counts.
+    fn from_hist(
+        pool: Holding,
+        fixed: Holding,
+        mut hist: Vec<u32>,
+        filter: impl Fn(Holding) -> bool,
+        key: impl Fn(Holding) -> u16,
+        nk: usize,
+    ) -> SuitTable {
         // Prefix-sum each length's row into `start` (row width `nk + 1`, the trailing entry being
         // the row's total).
         let mut start = vec![0u32; 14 * (nk + 1)];
@@ -157,25 +229,55 @@ impl SuitTable {
         // `nk` is exactly `SUIT_HCP_MAX + 1` (no gap between consecutive `x` blocks), ascending
         // dense index implies ascending packed key too, so this matches the order a full
         // packed-key-domain scan would produce.
-        let counts: [SparseVec; 14] = core::array::from_fn(|len| {
-            let mut v = Vec::new();
+        let mut counts_data = Vec::new();
+        let mut counts_start = [0u32; 15];
+        let mut hcp_rows = [HcpRow::EMPTY; 14];
+        for len in 0..14 {
+            counts_start[len] = counts_data.len() as u32;
             for d in 0..nk {
                 let n = u64::from(start[len * (nk + 1) + d + 1] - start[len * (nk + 1) + d]);
                 if n > 0 {
                     let hcp = (d % (SUIT_HCP_MAX + 1)) as u8;
                     let x = (d / (SUIT_HCP_MAX + 1)) as u8;
-                    v.push((pack_key(hcp, x), n));
+                    counts_data.push((pack_key(hcp, x), n));
                 }
             }
-            SparseVec(v)
-        });
+        }
+        counts_start[14] = counts_data.len() as u32;
+
+        if nk == DENSE_NK_NO_X {
+            for (len, row) in hcp_rows.iter_mut().enumerate() {
+                let range = counts_start[len] as usize..counts_start[len + 1] as usize;
+                for &(key, n) in &counts_data[range] {
+                    let h = usize::from(key);
+                    row.counts[h] = n;
+                    if row.lo > row.hi {
+                        row.lo = h;
+                    }
+                    row.hi = h;
+                }
+            }
+        }
 
         SuitTable {
             holdings,
             start,
             nk,
-            counts,
+            counts_data,
+            counts_start,
+            hcp_rows,
         }
+    }
+
+    /// Length `len`'s sparse `(key, n)` list (`n > 0`, ascending by key).
+    pub(crate) fn counts(&self, len: usize) -> &[(u16, u64)] {
+        &self.counts_data[self.counts_start[len] as usize..self.counts_start[len + 1] as usize]
+    }
+
+    /// Every length's list, for comparisons in tests.
+    #[cfg(test)]
+    pub(crate) fn counts_by_len(&self) -> Vec<Vec<(u16, u64)>> {
+        (0..14).map(|len| self.counts(len).to_vec()).collect()
     }
 
     /// The bucket for `(len, key)`, or an empty slice when that key was never observed.
@@ -196,8 +298,8 @@ static FULL_SUIT: LazyLock<Arc<SuitTable>> = LazyLock::new(|| {
     Arc::new(SuitTable::build(
         Holding::FULL,
         Holding::EMPTY,
-        &|_| true,
-        &|h| u16::from(bridge_eval::holding_hcp(h)),
+        |_| true,
+        |h| u16::from(bridge_eval::holding_hcp(h)),
         DENSE_NK_NO_X,
     ))
 });
@@ -207,47 +309,177 @@ pub(crate) fn full_suit() -> Arc<SuitTable> {
     Arc::clone(&FULL_SUIT)
 }
 
-/// A flat, allocation-free index from a `(len_a, len_b)` pair (each `0..=13`) to a lazily-built
-/// [`PairConv`] (§10: replaces a `HashMap<(u8,u8), PairConv>`, whose default hasher is SipHash over
-/// a key space that is really just `14 * 14 = 196` slots).
+/// A flat index from a `(len_a, len_b)` pair (each `0..=13`) to a lazily-built [`PairConv`]
+/// (§10: replaces a `HashMap<(u8,u8), PairConv>`, whose default hasher is SipHash over a key space
+/// that is really just `14 * 14 = 196` slots).
+///
+/// Every convolution's data lives in two flat vectors owned by the map (`p_data`, `prefix_data`)
+/// rather than in per-pair allocations: a term over the full shape set needs up to 105 pairs per
+/// map, and per-pair `Vec`/`Box` allocations (and their frees when the term is dropped) were a
+/// measurable share of `Sampler::prepare` on re-prepared pools (09-sample.md §10.1). A finished
+/// map is shared by `Arc` between every term prepared against the same pool that uses it (see
+/// `term::SharedPlain`).
 pub(crate) struct PairMap {
-    /// `idx[len_a * 14 + len_b]` is the index into `convs`, or `u16::MAX` when not yet built.
+    /// `idx[len_a * 14 + len_b]` is the index into `slots`, or `u16::MAX` when not yet built.
     idx: [u16; 196],
-    convs: Vec<PairConv>,
+    slots: Vec<PairSlot>,
+    p_data: Vec<(u16, u64)>,
+    prefix_data: Vec<u64>,
+}
+
+/// Where one pair's convolution lives inside a [`PairMap`]'s flat storage.
+#[derive(Clone, Copy)]
+struct PairSlot {
+    p_start: u32,
+    p_len: u32,
+    prefix_start: u32,
+    width: u32,
 }
 
 impl PairMap {
     pub(crate) fn new() -> PairMap {
         PairMap {
             idx: [u16::MAX; 196],
-            convs: Vec::new(),
+            slots: Vec::new(),
+            p_data: Vec::new(),
+            prefix_data: Vec::new(),
         }
     }
 
-    /// The `PairConv` for `(len_a, len_b)`, building and caching it via `build` on first use.
+    fn view(&self, slot: PairSlot) -> PairConv<'_> {
+        let width = slot.width as usize;
+        let p_start = slot.p_start as usize;
+        let prefix_start = slot.prefix_start as usize;
+        PairConv {
+            p: &self.p_data[p_start..p_start + slot.p_len as usize],
+            prefix: &self.prefix_data[prefix_start..prefix_start + PAIR_HEIGHT * width],
+            width,
+        }
+    }
+
+    /// The convolution of `a`'s length-`len_a` counts with `b`'s length-`len_b` counts, built on
+    /// first use and cached: for every pair of entries, the combined `(hcp, x)` accumulates
+    /// `n_a * n_b`; the 2-D prefix sums used by the box-sum queries are built alongside.
+    ///
+    /// `with_x` is whether the term carries an additive feature at all (K=2); when it does not
+    /// (K=1), every entry's `x` is 0 (`SuitTable`'s key was packed with `x = 0` throughout), so
+    /// the `x` axis needs only 1 slot instead of the generous `PAIR_X_MAX + 1` upper bound, and
+    /// the loops below are `O(height)` instead of `O(height * (PAIR_X_MAX + 1))`. Every call for
+    /// one map must pass the same tables and `with_x` (a map belongs to one term, or to one set
+    /// of plain terms sharing the same tables).
     pub(crate) fn get_or_build(
         &mut self,
+        a: &SuitTable,
+        b: &SuitTable,
         len_a: u8,
         len_b: u8,
-        build: impl FnOnce() -> PairConv,
-    ) -> &PairConv {
-        let slot = len_a as usize * 14 + len_b as usize;
-        if self.idx[slot] == u16::MAX {
-            let i = self.convs.len();
+        with_x: bool,
+    ) -> PairConv<'_> {
+        let key = len_a as usize * 14 + len_b as usize;
+        if self.idx[key] == u16::MAX {
+            let i = self.slots.len();
             debug_assert!(i < usize::from(u16::MAX), "at most 196 distinct pairs");
-            self.convs.push(build());
-            self.idx[slot] = i as u16;
+            let slot = self.build(a, b, len_a, len_b, with_x);
+            self.slots.push(slot);
+            self.idx[key] = i as u16;
         }
-        &self.convs[self.idx[slot] as usize]
+        self.view(self.slots[self.idx[key] as usize])
+    }
+
+    fn build(
+        &mut self,
+        a: &SuitTable,
+        b: &SuitTable,
+        len_a: u8,
+        len_b: u8,
+        with_x: bool,
+    ) -> PairSlot {
+        let width = if with_x { PAIR_X_MAX as usize + 1 } else { 1 };
+        if self.slots.is_empty() {
+            // A term over many shapes builds dozens of pairs; reserve room for a typical map up
+            // front instead of growing (and copying) the flat vectors pair by pair.
+            self.prefix_data.reserve(PAIR_HEIGHT * width * 32);
+            self.p_data.reserve(PAIR_HEIGHT * 32);
+        }
+        let prefix_start = self.prefix_data.len();
+        self.prefix_data
+            .resize(prefix_start + PAIR_HEIGHT * width, 0);
+        let acc = &mut self.prefix_data[prefix_start..];
+        if with_x {
+            for &(key_a, n_a) in a.counts(len_a as usize) {
+                let (ha, xa) = unpack_key(key_a);
+                for &(key_b, n_b) in b.counts(len_b as usize) {
+                    let (hb, xb) = unpack_key(key_b);
+                    let h = ha as usize + hb as usize;
+                    let x = xa as usize + xb as usize;
+                    if h >= PAIR_HEIGHT || x >= width {
+                        // Both suits together cannot exceed the generous PAIR_HCP_MAX/PAIR_X_MAX
+                        // bounds in practice; skip defensively rather than panic.
+                        continue;
+                    }
+                    acc[h * width + x] += n_a * n_b;
+                }
+            }
+        } else {
+            // No additive feature: every key is a bare HCP (`x = 0`, at most `SUIT_HCP_MAX`), so
+            // convolve the two tables' dense HCP rows over their nonzero ranges instead of walking
+            // the sparse lists pairwise.
+            let ra = &a.hcp_rows[len_a as usize];
+            let rb = &b.hcp_rows[len_b as usize];
+            for i in ra.lo..ra.hi + 1 {
+                let n_a = ra.counts[i];
+                if n_a == 0 {
+                    continue;
+                }
+                for j in rb.lo..rb.hi + 1 {
+                    acc[i + j] += n_a * rb.counts[j];
+                }
+            }
+        }
+
+        let p_start = self.p_data.len();
+        for h in 0..PAIR_HEIGHT {
+            for x in 0..width {
+                let n = acc[h * width + x];
+                if n > 0 {
+                    self.p_data.push((pack_key(h as u8, x as u8), n));
+                }
+            }
+        }
+
+        // Turn the raw counts into their own 2-D prefix sum in place. Within row `h`,
+        // `acc[h*width+x]` still holds the raw count when it is read into `row` (only lower-`x`
+        // slots of this same row have been overwritten so far), and `acc[(h-1)*width+x]` was
+        // already turned into a prefix sum on the previous `h` iteration.
+        for h in 0..PAIR_HEIGHT {
+            let mut row = 0u64;
+            for x in 0..width {
+                row += acc[h * width + x];
+                let up = if h == 0 { 0 } else { acc[(h - 1) * width + x] };
+                acc[h * width + x] = up + row;
+            }
+        }
+
+        PairSlot {
+            p_start: p_start as u32,
+            p_len: (self.p_data.len() - p_start) as u32,
+            prefix_start: prefix_start as u32,
+            width: width as u32,
+        }
     }
 
     /// The `PairConv` for `(len_a, len_b)` if it was already built via `get_or_build`.
-    pub(crate) fn get(&self, len_a: u8, len_b: u8) -> Option<&PairConv> {
-        let slot = len_a as usize * 14 + len_b as usize;
-        match self.idx[slot] {
+    pub(crate) fn get(&self, len_a: u8, len_b: u8) -> Option<PairConv<'_>> {
+        match self.idx[len_a as usize * 14 + len_b as usize] {
             u16::MAX => None,
-            i => Some(&self.convs[i as usize]),
+            i => Some(self.view(self.slots[i as usize])),
         }
+    }
+
+    /// Number of pairs built so far.
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.slots.len()
     }
 }
 
@@ -276,7 +508,7 @@ mod tests {
         fixed: Holding,
         filter: &dyn Fn(Holding) -> bool,
         key: &dyn Fn(Holding) -> u16,
-    ) -> (Vec<u16>, [SparseVec; 14]) {
+    ) -> (Vec<u16>, Vec<Vec<(u16, u64)>>) {
         const KEYS: usize = 64 * 32;
         let mut hist = vec![0u32; 14 * KEYS];
         for sub in pool.submasks() {
@@ -315,16 +547,18 @@ mod tests {
             holdings[*slot as usize] = h.bits();
             *slot += 1;
         }
-        let counts: [SparseVec; 14] = core::array::from_fn(|len| {
-            let mut v = Vec::new();
-            for k in 0..KEYS {
-                let n = u64::from(hist[len * KEYS + k]);
-                if n > 0 {
-                    v.push((k as u16, n));
+        let counts: Vec<Vec<(u16, u64)>> = (0..14)
+            .map(|len| {
+                let mut v = Vec::new();
+                for k in 0..KEYS {
+                    let n = u64::from(hist[len * KEYS + k]);
+                    if n > 0 {
+                        v.push((k as u16, n));
+                    }
                 }
-            }
-            SparseVec(v)
-        });
+                v
+            })
+            .collect();
         (holdings, counts)
     }
 
@@ -401,7 +635,8 @@ mod tests {
                 "holdings differ for pool={pool:?} fixed={fixed:?}"
             );
             assert_eq!(
-                optimized.counts, dense_counts,
+                optimized.counts_by_len(),
+                dense_counts,
                 "counts differ for pool={pool:?} fixed={fixed:?}"
             );
             // `bucket` must be internally consistent with `holdings`/`counts`: every bucket's
@@ -409,7 +644,7 @@ mod tests {
             // reconstructs `holdings` exactly.
             let mut reconstructed = Vec::new();
             for len in 0..14u8 {
-                for &(k, n) in &optimized.counts[len as usize].0 {
+                for &(k, n) in optimized.counts(len as usize) {
                     let bucket = optimized.bucket(len, k);
                     assert_eq!(bucket.len() as u64, n);
                     reconstructed.extend_from_slice(bucket);
@@ -419,14 +654,73 @@ mod tests {
         }
     }
 
+    /// `build_plain`'s closed-form histogram must give exactly `build`'s table (holdings in the
+    /// same order, same offsets and counts) for the plain filter/key, over many pool/fixed splits
+    /// (including empty pools, pools without honours or without spots, and fixed honours).
+    #[test]
+    fn build_plain_matches_build() {
+        let mut state = 0x1234_5678_9ABC_DEF0u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state & 0x1FFF) as u16
+        };
+        let mut cases = vec![
+            (Holding::FULL, Holding::EMPTY),
+            (Holding::EMPTY, Holding::EMPTY),
+            (
+                Holding::EMPTY,
+                Holding::from_bits(0b1_0000_0000_0011).unwrap(),
+            ),
+            (
+                Holding::from_bits(0b0_0001_1111_1111).unwrap(),
+                Holding::EMPTY,
+            ),
+            (
+                Holding::from_bits(0b1_1110_0000_0000).unwrap(),
+                Holding::EMPTY,
+            ),
+        ];
+        for _ in 0..300 {
+            let a = next();
+            let b = next();
+            cases.push((
+                Holding::from_bits(a & !b).unwrap(),
+                Holding::from_bits(b & !a & next()).unwrap(),
+            ));
+        }
+        for (pool, fixed) in cases {
+            let plain = SuitTable::build_plain(pool, fixed);
+            let reference = SuitTable::build(
+                pool,
+                fixed,
+                |_| true,
+                |h| pack_key(bridge_eval::holding_hcp(h), 0),
+                DENSE_NK_NO_X,
+            );
+            assert_eq!(
+                plain.holdings, reference.holdings,
+                "pool={pool:?} fixed={fixed:?}"
+            );
+            assert_eq!(
+                plain.start, reference.start,
+                "pool={pool:?} fixed={fixed:?}"
+            );
+            assert_eq!(
+                plain.counts_by_len(),
+                reference.counts_by_len(),
+                "pool={pool:?} fixed={fixed:?}"
+            );
+        }
+    }
+
     #[test]
     fn full_suit_has_every_holding_bucketed_by_hcp() {
         let table = full_suit();
         // Every one of the 8192 holdings is present exactly once.
-        let total: u64 = table
-            .counts
-            .iter()
-            .flat_map(|c| c.0.iter())
+        let total: u64 = (0..14)
+            .flat_map(|len| table.counts(len).iter())
             .map(|&(_, n)| n)
             .sum();
         assert_eq!(total, 8192);
@@ -439,34 +733,24 @@ mod tests {
 
     #[test]
     fn pair_map_builds_once_and_caches() {
-        use core::cell::Cell;
-
+        let table = SuitTable::build_plain(Holding::FULL, Holding::EMPTY);
         let mut map = PairMap::new();
-        let builds = Cell::new(0u32);
-        {
-            let conv = map.get_or_build(3, 5, || {
-                builds.set(builds.get() + 1);
-                PairConv {
-                    p: SparseVec(vec![(pack_key(1, 0), 7)]),
-                    prefix: vec![7u64].into_boxed_slice(),
-                    width: 1,
-                }
-            });
-            assert_eq!(conv.p.0, vec![(pack_key(1, 0), 7)]);
-        }
-        assert_eq!(builds.get(), 1);
+        let first: Vec<(u16, u64)> = map.get_or_build(&table, &table, 3, 5, false).p.to_vec();
+        assert_eq!(map.len(), 1);
         assert!(map.get(3, 5).is_some());
         assert!(map.get(0, 0).is_none());
+        // Every (3-card, 5-card) pair of holdings is counted exactly once.
+        let total: u64 = first.iter().map(|&(_, n)| n).sum();
+        assert_eq!(total, 286 * 1287);
 
-        // A second `get_or_build` for the same pair reuses the cached entry.
-        map.get_or_build(3, 5, || {
-            builds.set(builds.get() + 1);
-            PairConv {
-                p: SparseVec(Vec::new()),
-                prefix: Box::new([]),
-                width: 1,
-            }
-        });
-        assert_eq!(builds.get(), 1);
+        // A second `get_or_build` for the same pair reuses the cached entry, and building other
+        // pairs afterwards (which grows the flat storage) leaves it intact.
+        assert_eq!(
+            map.get_or_build(&table, &table, 3, 5, false).p,
+            first.as_slice()
+        );
+        map.get_or_build(&table, &table, 4, 4, false);
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get(3, 5).expect("built").p, first.as_slice());
     }
 }

@@ -9,6 +9,21 @@ repository.workspace = true
 authors.workspace = true
 links = "dds"
 build = "build.rs"
+# R14 (docs/design/12-roadmap.md §10): `vendor/` is git-ignored (fetched by `cargo xtask dds
+# vendor`), so without an explicit `include` a `cargo publish` package would omit it entirely
+# and `build.rs` would compile with the FFI layer disabled for every downstream consumer. List
+# only what `build.rs` actually reads (the extracted sources, not `vendor/*.tar.gz` or
+# `SHA256SUMS`, which together are the other ~14 MB of `cargo xtask dds vendor`'s download and
+# are not needed to build); see VENDOR.md.
+include = [
+    "src/**",
+    "build.rs",
+    "Cargo.toml",
+    "VENDOR.md",
+    "vendor/dds-2.9.0/src/**",
+    "vendor/dds-2.9.0/include/**",
+    "vendor/dds-2.9.0/LICENSE",
+]
 
 [features]
 default = []
@@ -17,6 +32,7 @@ openmp = []
 [dependencies]
 bridge-core = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
+tracing = { workspace = true, features = ["std"] }
 
 [build-dependencies]
 cc = { workspace = true }

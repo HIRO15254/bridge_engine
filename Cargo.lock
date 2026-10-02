@@ -177,6 +177,7 @@ dependencies = [
  "bridge-core",
  "cc",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
@@ -208,6 +209,7 @@ dependencies = [
  "bridge-core",
  "serde",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
@@ -217,7 +219,9 @@ dependencies = [
  "bridge-bidding",
  "bridge-constraint",
  "bridge-core",
+ "bridge-format",
  "bridge-play",
+ "bridge-system",
  "criterion",
  "rand_core 0.10.1",
  "rand_xoshiro",
