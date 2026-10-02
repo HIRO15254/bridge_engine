@@ -1141,3 +1141,75 @@ P13. **Final phase-4 integration** (wip/p4int after merging lane D2 as 3c57c37;
       `PolicyParams::human()` still at its placeholder (0.01, 0.3) until the fit above is
       adopted before lane P's ESS freeze. Details and the full table: 12-roadmap.md,
       "フェーズ 4 の最終統合".
+
+P14. **Lane D3: strict [G] through the natural engine's later-round limits** (wip/p4-D3
+    from wip/p4int 9ac0b40; default sizing, release, `COVERAGE_OUT` and the new
+    `COVERAGE_DUMP` per batch). Criteria: strict [G] >= 0.80 with legitimate content;
+    strict [C] secondary. Strict [G] 0.745 -> **0.861** (met); strict [C] subset 0.491,
+    unchanged. No SAYC row and no BML extension changed: the five batches are fixes to
+    `crates/bridge-system/src/natural.rs` (06-system.md §8.6, "後の巡の制限").
+    - Survey. `COVERAGE_DUMP=<file>` (xtask authoring aid) writes each generated first
+      strict departure and stop swallow with the natural call and the natural rule behind
+      it. At the start 255 auctions departed (default-pass override 225, their pass not in
+      the trie 15, exhausted 8, their call not in the trie 7; 276 overrides in 228
+      auctions). Read by rule and checked by hand, the large classes were not SAYC
+      decisions missing from the file but natural rules applying a first action's range at
+      a later turn, where SAYC's pass is the bridge answer: entries at the four to six level
+      over the opponents' game after both had bid (`(1S)-P-(3S)-P-(4S)-P-(P)` 5H with 7 hcp,
+      `(3H)-P-(4NT)` 6C), bids past partner's game (the weak-two opener pulling 3NT,
+      `2S-P-2NT-P-3S-P-3NT-P-4S`), responder's later doubles read as negative doubles
+      (`2D-(P)-P-(2H)-P-(P)-X`), opener's notrump range rebid at later turns
+      (`1D-P-1S-P-1NT-P-2S-P-2NT`) and over their notrump, and a defender's second takeout
+      double with a minimum (`(1C)-1S-(X)-P-(2H)-X`, 12 hcp). P12 had left these as "the
+      natural engine's appetite". Writing SAYC passes there would only restate the pass
+      with rows that accept every hand (P12's class (iii)), so each class is a principled
+      limit on the natural rule instead, with regression tests
+      (`crates/bridge-system/tests/natural_later_rounds.rs`). Each limit either stops the
+      rule from firing (the natural policy passes) or raises its minimum; no first-action
+      constraint changed.
+    - Batches (coverage run's compile ms and loadavg; raw [G] 0.957 throughout):
+
+      | Batch (commit) | Class | strict / stop-audited [G] | overrides (auctions) | swallows | NoCandidate | compile ms (loadavg) |
+      | --- | --- | --- | --- | --- | --- | --- |
+      | start (9ac0b40) | -- | 0.745 / 0.521 | 276 (228) | 370 | 75 | 686 (3.8) |
+      | 1 (c936bfb) | first entry after their exchange: none over their game, 4-level needs 6 cards and opening values, weak jump overcall up to the 3 level | 0.798 / 0.567 | 188 (169) | 321 | 76 | 702 (4.0) |
+      | 2 (3d59aeb) | a bid past partner's game needs slam values (level floor at the 6 level) | 0.826 / 0.592 | 160 (141) | 321 | 76 | 701 (4.2) |
+      | 3 (d39f175) | negative double only on responder's first turn | 0.839 / 0.598 | 146 (128) | 319 | 76 | 781 (20.5) |
+      | 4 (7add2e5) | notrump range rebid only as opener's rebid proper | 0.852 / 0.619 | 128 (114) | 296 | 76 | 714 (17.4) |
+      | 5 (c3216ab) | a defender's second takeout double needs 3 hcp more | 0.861 / 0.625 | 115 (105) | 294 | 76 | 735 (17.5) |
+
+    - Unchanged by construction (the SAYC data did not change): corpus all-Exact 0.320 /
+      0.323 / 0.341 (all / eval / subset); system resolution 0.688 / 0.708 / 0.716; strict
+      0.472 / 0.479 / 0.491; `resolve_lenient` 61 of 8,169 calls; lints Error 0,
+      `ShadowedBranch` 18, `StopUnderForcing` 27, `DuplicatePath` warnings 23; postcard IR
+      3,462,232 bytes in this worktree before and after (P13's 3,462,271 is the same IR
+      built in another checkout); 4,070 groups, 9,524 index nodes.
+    - Changed through the natural engine: corpus natural agreement 0.541 -> 0.555; MLE on
+      the tune split epsilon 0.3436 -> 0.3404, delta 0.3267 -> 0.3953, ln L -7377.4 ->
+      -7285.9 (`PolicyParams::human()` untouched; the integration refit sees the new
+      natural engine). Generated positions with no candidate 75 -> 76 per 2x10^5. The
+      06-system.md §8.5 measurements: measurement 1 SAYC recall / precision 0.7262 / 0.7167
+      -> 0.7274 / 0.7213, vendor 0.5793 / 0.5966 -> 0.5831 / 0.5966; measurement 2 0.2812
+      -> 0.2737 (contextual 0.3357 -> 0.3286, 8,597 -> 8,474 candidates: the rules no longer
+      offer the calls above); measurement 3 0.7981 -> 0.8005. Level floor on 2000 generated
+      deals: six level or higher 6 -> 5, no seven-level contract.
+    - Held-out replay seeds (same sizing, start -> batch 5): `0x1234` 0.705 -> 0.819,
+      `0xBEEF0001` 0.688 -> 0.794, `0xD00D` 0.680 -> 0.787. The gain (+0.10 to +0.11) is
+      the same on every seed; the default seed sits about 0.05 above the others before and
+      after, so two of the three held-out seeds stay just under 0.80.
+    - Forward consistency (release, seed `0x5a1c0002`, 10^5): 0 non-gap violations, 4
+      gap-induced (3 before), `NoCandidate` 41 (42), 2.0 s at loadavg 15. Compile best of 3
+      (`sayc_exclusive_index_share`, back to back at loadavg 9-10): 738-742 ms before,
+      744-762 ms after, index 21-24 ms both; no growth beyond noise (P13's 674-680 ms was at
+      loadavg 2.3). The generated reproduction fixture did not change.
+    - Left: 105 departing auctions (115 overrides; their pass not in the trie 19, exhausted
+      8, their call not in the trie 7). By natural rule: responder `raise` 20 (later-turn
+      raises; some are sound sign-offs such as `1H-P-1S-P-2D-P-2H-P-2NT-P-3H`, some not,
+      such as `1C-(1D)-1H-(1NT)-2H-(P)-3C` with 7 hcp), opener `rebid_own` 14 (mostly sound
+      extras after a two-over-one or in competition: class (i), no rows), balancer
+      `overcall` 13 and `takeout_x` 8 (balancing after they stop low behind our pass: class
+      (iii)), opener `rebid_new_suit` 8, overcaller `takeout_x` 6 (15+ now), responder
+      `resp_nt` 6. Their pass not in the trie includes Blackwood responses (`3H-(P)-4NT`),
+      which still need an ace-count vocabulary. Strict [C] does not move for P12's reason:
+      604 of the subset's 989 default-pass calls are our passes after our own pass in their
+      auctions, which only a sink row would count.
