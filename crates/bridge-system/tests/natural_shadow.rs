@@ -5,9 +5,11 @@
 //! 07-bidding.md §4.1) is empty.
 //!
 //! Regression for the phase-4.6 retune that ranked `raise` (0.45) below the shape-free 1-level
-//! `resp_nt` (0.5), so after `1x P` the natural policy never raised. The only documented
-//! exception is `cue` / `penalty_x` behind the unbounded `pass_default` (all at 0.3; `Pass`
-//! wins the tie by call order, §8.6).
+//! `resp_nt` (0.5), so after `1x P` the natural policy never raised. The documented exceptions
+//! are `cue` / `penalty_x` behind the unbounded `pass_default` (all at 0.3; `Pass` wins the tie
+//! by call order, §8.6), and the single jump to the four level over a weak two (`(2S)-4H`),
+//! whose hands (6+ cards, opening values) are a subset of the cheaper overcall's and rank with
+//! it, so the cheaper call wins (§8.6, "後の巡の制限の見直し" (2)).
 
 mod common;
 
@@ -50,8 +52,12 @@ const POSITIONS: &[&str] = &[
     "1C P 1D P",
 ];
 
-/// Rules allowed to be fully shadowed (see the module doc).
+/// Rules allowed to be fully shadowed at every position (see the module doc).
 const ALLOWED: &[&str] = &["cue", "penalty_x"];
+
+/// `(position, rule)` pairs allowed to be fully shadowed at that position only (see the module
+/// doc): over `2S` every `jump_overcall` is a jump to the four level.
+const ALLOWED_AT: &[(&str, &str)] = &[("2S", "jump_overcall")];
 
 /// Hands sampled per candidate when the exclusive region cannot be counted exactly.
 const SAMPLES: usize = 4000;
@@ -140,7 +146,12 @@ fn no_natural_rule_is_fully_shadowed_at_canonical_positions() {
     let found = shadowed_rules(&NaturalInference::default());
     let unexpected: Vec<_> = found
         .iter()
-        .filter(|(_, rule)| !ALLOWED.contains(rule))
+        .filter(|(spec, rule)| {
+            !ALLOWED.contains(rule)
+                && !ALLOWED_AT
+                    .iter()
+                    .any(|&(at, r)| *spec == format!("[{at}]") && r == *rule)
+        })
         .collect();
     assert!(
         unexpected.is_empty(),

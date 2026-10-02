@@ -8,7 +8,7 @@ mod common;
 use std::ops::RangeInclusive;
 
 use bridge_constraint::{Atom, HandConstraint};
-use bridge_core::{Seat, Vulnerability};
+use bridge_core::{Hand, Seat, Suit, Vulnerability};
 use bridge_system::natural::{
     CallContext, CallKind, DoubleKind, Inference, NaturalInference, classify,
 };
@@ -50,42 +50,91 @@ fn min_hcp(inf: &Inference) -> u8 {
 // --- first entries after the opponents' exchange (MAX_ENTRY_LEVEL_AFTER_EXCHANGE) -------------
 
 #[test]
-fn no_natural_entry_over_their_game_after_their_exchange() {
+fn no_natural_entry_at_the_five_level_after_their_exchange() {
     for calls in [
         "1S P 3S P 4S P P 5H", // balancing over their game
         "1S P 4S 5H",          // direct, over their game raise
-        "1H P 3NT 4S",         // over their 3NT
-        "1H P 2H P P 5C",      // five-level first entry below their game
+        "1D P 4D 5C",          // five-level first entry below their game
+        "1D P 4D P P 5C",      // the same in the balancing seat
+        "1H P 2NT P 4H 5C",    // a single jump is not described either
     ] {
-        let (_, inf) = last(calls);
-        assert!(
-            !matches!(inf.rule, "overcall" | "jump_overcall"),
-            "{calls}: {}",
-            inf.rule
-        );
+        let (ctx, inf) = last(calls);
+        assert_eq!(ctx.level, 5, "{calls}");
+        assert!(ctx.their_bids >= 2, "{calls}");
+        assert_eq!(inf.rule, "fallback", "{calls}");
     }
 }
 
+/// A hand with `long` in `suit` and the other three holdings, in suit order, in the other
+/// suits.
+fn hand_with(suit: Suit, long: &str, others: [&str; 3]) -> Hand {
+    let mut others = others.into_iter();
+    let mut holding = |s: Suit| {
+        if s == suit {
+            long
+        } else {
+            others.next().unwrap()
+        }
+    };
+    hand(
+        holding(Suit::Clubs),
+        holding(Suit::Diamonds),
+        holding(Suit::Hearts),
+        holding(Suit::Spades),
+    )
+}
+
+/// Asserts that the last call of `calls` fires `rule` with the four-level entry's description
+/// (`four_level_entry`): 6+ cards in the bid suit and 12-16 HCP, or 9-16 when `balancing`.
+fn assert_four_level_entry(calls: &str, rule: &str, balancing: bool) {
+    let (ctx, inf) = last(calls);
+    let suit = ctx.call.bid().unwrap().strain().suit().unwrap();
+    assert_eq!(inf.rule, rule, "{calls}");
+    assert_eq!(inf.constraint.suit_len(suit), 6..=13, "{calls}");
+    let from = if balancing { 9 } else { 12 };
+    assert_eq!(inf.constraint.hcp_range(), from..=16, "{calls}");
+    // Six cards (8 hcp in the suit) with 12, 11, 9, 8, 16 and 17 hcp; five cards with 15.
+    let six = |others| hand_with(suit, "AKJ432", others);
+    let accepts = |h: Hand| inf.constraint.satisfies(h);
+    assert!(accepts(six(["432", "A32", "2"])), "{calls}: 12");
+    assert_eq!(accepts(six(["432", "Q32", "J"])), balancing, "{calls}: 11");
+    assert_eq!(accepts(six(["432", "J32", "2"])), balancing, "{calls}: 9");
+    assert!(!accepts(six(["432", "432", "2"])), "{calls}: 8");
+    assert!(accepts(six(["A32", "A32", "2"])), "{calls}: 16");
+    assert!(!accepts(six(["A32", "A32", "J"])), "{calls}: 17");
+    let five_15 = hand_with(suit, "AKJ32", ["K32", "A32", "32"]);
+    assert!(!accepts(five_15), "{calls}: five cards");
+}
+
 #[test]
-fn four_level_entry_below_their_game_needs_six_cards_and_opening_values() {
-    let six_12 = hand("432", "A32", "AKJ432", "2"); // 6 hearts, 12 hcp
-    let six_10 = hand("432", "Q32", "AKJ432", "2"); // 6 hearts, 10 hcp
-    let six_8 = hand("432", "432", "AKJ432", "2"); // 6 hearts, 8 hcp
-    let five_15 = hand("K32", "A32", "AKJ32", "32"); // 5 hearts, 15 hcp
+fn four_level_entry_after_their_exchange_needs_six_cards_and_opening_values() {
+    // Direct seat, below their game: over their limit raise, over their 2NT.
+    assert_four_level_entry("1S P 3S 4H", "overcall", false);
+    assert_four_level_entry("1H P 3H 4D", "overcall", false);
+    // Over their game: four of a major over four of a major, any suit over 3NT.
+    assert_four_level_entry("1H P 4H 4S", "overcall", false);
+    assert_four_level_entry("1H P 3NT 4S", "overcall", false);
+    assert_four_level_entry("1H P 3NT 4C", "overcall", false);
+    // A single jump to the four level after the exchange.
+    assert_four_level_entry("1H P 2NT 4C", "jump_overcall", false);
+    // The balancing seat below their game: a king less.
+    assert_four_level_entry("1S P 3S P P 4H", "overcall", true);
+    assert_four_level_entry("1H P 3H P P 4D", "overcall", true);
+    // The pass-out seat over their game is not a balance: opening values.
+    assert_four_level_entry("1H P 4H P P 4S", "overcall", false);
+    assert_four_level_entry("1NT P 2NT P 3NT P P 4H", "overcall", false);
+}
 
-    // Direct seat over their limit raise.
-    let (_, inf) = last("1S P 3S 4H");
-    assert_eq!(inf.rule, "overcall");
-    assert!(inf.constraint.satisfies(six_12));
-    assert!(!inf.constraint.satisfies(six_10));
-    assert!(!inf.constraint.satisfies(five_15));
-
-    // The balancing seat: a king less.
-    let (_, inf) = last("1S P 3S P P 4H");
-    assert_eq!(inf.rule, "overcall");
-    assert!(inf.constraint.satisfies(six_10));
-    assert!(!inf.constraint.satisfies(six_8));
-    assert!(!inf.constraint.satisfies(five_15));
+#[test]
+fn single_jump_to_the_four_level_shows_six_cards_and_opening_values() {
+    for calls in ["2S 4H", "3C 4H", "3D 4S", "2H 4C"] {
+        let (ctx, _) = last(calls);
+        assert_eq!(ctx.their_bids, 1, "{calls}");
+        assert_four_level_entry(calls, "jump_overcall", false);
+    }
+    assert_four_level_entry("2S P P 4H", "jump_overcall", true);
+    // A single jump to the five level is not described.
+    assert_eq!(last("3S 5C").1.rule, "fallback");
 }
 
 #[test]
@@ -96,16 +145,25 @@ fn ordinary_overcalls_are_unchanged() {
     let (_, inf) = last("1S P 2S 3H");
     assert_eq!(inf.rule, "overcall");
     assert!(inf.constraint.satisfies(hand("K32", "A32", "AKJ32", "32")));
-}
-
-#[test]
-fn weak_jump_overcall_stops_at_the_three_level() {
-    // A single jump to the four level (over a weak two, or over their 2NT) is not a weak-two
-    // hand.
-    for calls in ["2H 4C", "1H P 2NT 4C"] {
-        assert_ne!(last(calls).1.rule, "jump_overcall", "{calls}");
-    }
-    assert_eq!(last("2H P P 3S").1.rule, "jump_overcall");
+    // A non-jump four-level overcall of their single bid keeps the ordinary range.
+    let (ctx, inf) = last("3S 4H");
+    assert_eq!(ctx.their_bids, 1);
+    assert_eq!(inf.rule, "overcall");
+    assert_eq!(inf.constraint.hcp_range(), 10..=16);
+    assert_eq!(inf.constraint.suit_len(Suit::Hearts), 5..=13);
+    // After their exchange, a three-level entry (MAX_ENTRY_LEVEL_AFTER_EXCHANGE) keeps the
+    // ordinary range; the four level is the four-level entry's (tested above).
+    let (ctx, inf) = last("1H P 2H 3C");
+    assert_eq!(ctx.their_bids, 2);
+    assert_eq!(inf.rule, "overcall");
+    assert_eq!(inf.constraint.hcp_range(), 10..=16);
+    assert_eq!(inf.constraint.suit_len(Suit::Clubs), 5..=13);
+    // The weak jump overcall up to the three level, also in the balancing seat.
+    let (_, inf) = last("2H P P 3S");
+    assert_eq!(inf.rule, "jump_overcall");
+    assert_eq!(inf.constraint.suit_len(Suit::Spades), 6..=13);
+    let (_, inf) = last("1S 3H");
+    assert_eq!(inf.constraint.hcp_range(), 5..=10);
 }
 
 // --- bids past partner's game (SLAM_LEVEL, overrides_partners_game) ---------------------------

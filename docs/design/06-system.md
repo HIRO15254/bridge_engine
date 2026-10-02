@@ -1184,8 +1184,8 @@ impl Default for NaturalInference { /* NaturalParams::default() */ }
 | `open_2c` | `Opener`, `2C` | `hcp ≥ strong_two_c` (シェイプなし) | 0.5 |
 | `open_preempt` | `Opener`, `level 3..=5`, スート | `suit_len[s] ≥ preempt[L].1` ∧ `hcp = preempt[L].2` | 0.55 (旧 0.5) |
 | `open_pass` | `Opener` の席の `Pass` (パス済みでない、かつまだ誰もビッドしていない: `last_bid == None`。オープナーの後のパスはここに来ない) | `hcp ≤ opening_hcp.start − 1` | 0.45 (旧 0.5。`open_weak2` より下に置く。§8.6 の「レビュー後の修正」) |
-| `overcall` | `Overcaller` の最初のアクション (`!owner_acted`), `new_suit` (相手スートのキュービッドを除く), `jump == 0`。相手が 2 回以上ビッドした後 (`their_bids ≥ 2`) は、相手のゲーム未満で 4 レベル以下 (§8.6「後の巡の制限」(1)) | `suit_len[s] ≥ overcall[l].0` ∧ `hcp = overcall[l].1` (`l` = 0: 1 レベル、1: 2 レベル以上); `Balancer` は下限に `balancing_shift`。相手の交換後の 4 レベルは `suit_len[s] ≥ 6` ∧ `hcp ≥ opening_hcp.start` (`Balancer` はその後で `balancing_shift`) | 0.35 (旧 0.5) |
-| `jump_overcall` | `Overcaller` の最初のアクション, `new_suit`, `jump == 1`, 3 レベル以下。相手の交換後の制限は `overcall` と同じ | `suit_len[s] ≥ overcall[2].0` ∧ `hcp = overcall[2].1` | 0.5 (旧 0.4) |
+| `overcall` | `Overcaller` の最初のアクション (`!owner_acted`), `new_suit` (相手スートのキュービッドを除く), `jump == 0`。相手が 2 回以上ビッドした後 (`their_bids ≥ 2`) は 4 レベル以下 (相手のゲームの上の 4 レベルを含む。§8.6「後の巡の制限」(1) と「見直し」(2)) | `suit_len[s] ≥ overcall[l].0` ∧ `hcp = overcall[l].1` (`l` = 0: 1 レベル、1: 2 レベル以上); `Balancer` は下限に `balancing_shift`。相手の交換後の 4 レベルは `four_level_entry`: `suit_len[s] ≥ max(overcall[1].0, FOUR_LEVEL_ENTRY_MIN_LEN)` ∧ `hcp = max(overcall[1].1.start, opening_hcp.start)..=overcall[1].1.end` (既定値で 6 枚以上・12〜16)。`Balancer` は相手のゲーム未満ならその後で `balancing_shift` (9〜16)、相手のゲームの上ではずらさない | 0.35 (旧 0.5) |
+| `jump_overcall` | `Overcaller` の最初のアクション, `new_suit`, `jump == 1`, 4 レベル以下 (`MAX_JUMP_OVERCALL_LEVEL` = 3 の 1 つ上まで) | 3 レベル以下は `suit_len[s] ≥ overcall[2].0` ∧ `hcp = overcall[2].1` (ウィーク・ジャンプ)。4 レベルへのシングル・ジャンプは `overcall` の 4 レベルと同じ `four_level_entry` (既定値で 6 枚以上・12〜16、`Balancer` は 9〜16。§8.6「後の巡の制限の見直し」(2)) | 3 レベル以下は 0.5 (旧 0.4)、4 レベルは 0.35 (`overcall` と同じ) |
 | `nt_overcall` | `Overcaller` の最初のアクション, 最安の NT (`jump == 0`) で 2 レベル以下 (1 レベルのオープンに 1N、ウィーク・ツーに 2N) | `hcp = nt_overcall` ∧ `BALANCED` ∧ `Stopper(their suit)` | 0.6 |
 | `takeout_x` | `Double(Takeout)`: パートナー未ビッド、相手のスートが 2 レベル以下 | `hcp ≥ takeout_double.0` ∧ `suit_len[their] ≤ takeout_double.1` ∧ 未ビッドスート各 `≥ takeout_double.2` (未ビッドが 3 つ以上なら `Or` で 2 つ以上を要求)。既に非パスのコールをしたディフェンダー (`Overcaller`/`Advancer`/`Balancer`) は下限に `SECOND_TAKEOUT_DOUBLE_EXTRA` (3) を加える (§8.6「後の巡の制限」(5)) | 0.45 (旧 0.5) |
 | `penalty_x` | `Double(Penalty)`: パートナーの最後のビッドが NT、相手が NT または 4 レベル以上、または我々がスートを合意済み | `hcp ≥ 10` ∧ `suit_len[their] ≥ 4` | 0.3 |
@@ -1409,6 +1409,12 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
   - 訂正の記述: 自分のオープンしたメジャーは 6 枚以上・オープンの範囲 (`1H-P-3NT-P-4H` は 12〜21)、パートナーのスートへの選択は `raise` の範囲、5m はジャンプとして読まず、シングルトンかボイドを要求する (`1D-P-3NT-P-5D` は 6 枚以上・12〜21・NT に向かない手)。NT のオープナーはバランスなので 3NT を 5m に直さない。
   - 残るもの: スラムの動きと、パートナーが知らない情報を何も足さないゲームの引き戻し (`2S-P-2NT-P-3S-P-3NT-P-4S`: スペードは 3S で既に再ビッド済み)、3NT の上の 4 レベルのマイナー (`1D-P-3NT-P-4D`、スラムトライ)、誰もビッドしていないスートや相手のスート (キュービッド) でのゲーム (`1H-P-3NT-P-5C`)。
   - NT のオープナーの `rebid_own` (§8.3 の表) を、NT の範囲・バランス・3 枚以上にした。従来は 1 スートのオープンと同じ 6 枚以上・12〜21 で、バランスの NT オープンと矛盾していた (測定 1 の該当ノードの再現率は 0.04〜0.10)。`1NT-P-2H-P-2S-P-3NT-P-4S` の訂正は、これで 15〜17、バランス、スペード 3 枚以上になる。
+- (2) 4 レベルの参入。D3 の (1) は、相手の交換後に相手のゲームの上へ参入する規則をすべて外し、最初の巡でも 4 レベルへのシングル・ジャンプを外していた。しかし同じ 4 レベルでゲームの上に参入する `(1H)-P-(4H)-4S` (`(1H)-P-(3NT)-4S` も)、相手のオープンへの 4 レベルへのジャンプ `(2S)-4H`、`(3C)-4H`、`(3D)-4S` は、SAYC でもふつうのナチュラルなコールである (6 枚以上・オープニングの強さで、プレーするつもり)。どちらも、ゲーム未満の 4 レベルと同じ `four_level_entry` で記述する: 6 枚以上 (`FOUR_LEVEL_ENTRY_MIN_LEN`)、`max(overcall[1].1.start, opening_hcp.start)..=overcall[1].1.end` = 12〜16、バランシング席はゲーム未満で 9〜16。
+  - 相手のゲームの上のパスアウト席はバランスではない (争うパートスコアがなく、パートナーの値は閉じ込められていない) ので、12〜16 のままにする。ずらすと、`(1NT)-P-(2NT)-P-(3NT)-P-(P)-4H` の 9 HCP・6 枚が生成オークションの新しい上書きになった。
+  - 4 レベルへのジャンプの confidence は `overcall` と同じ 0.35 にする。その手は安い `overcall` (5 枚以上・10〜16) の範囲に含まれるので、ウィーク・ジャンプの 0.5 のままでは、`(2C)-P-(3C)-4S` (6 枚・13 HCP。実際は 3S) のように安いコールで足りる手でもジャンプが選ばれ、コーパスの 4 局面でナチュラルの選択が実際のコール (3S、3D、X、3C) から外れた。同点なら安いコールが勝つ。したがってナチュラル方策はこのジャンプを選ばない (`tests/natural_shadow.rs` の位置別の例外 `[2S] jump_overcall`)。この規則の役割は、相手やパートナーのジャンプの解釈 (`interpret`) に正しい範囲を与えることである。
+  - 5 レベル以上の参入とシングル・ジャンプ (相手のゲームの上のサクリファイス、相手の `4C`/`4D` の上、`(3S)-5C`) は、引き続き記述しない (`fallback`)。ウィーク・ジャンプの範囲 (`overcall[2]`) は 3 レベルまで。
+  - 境界のテスト: 12/11 HCP (直接)、9/8 (バランシング席)、16/17 (上限)、5 枚、`their_bids == 1` の 4 レベルの非ジャンプ (`(3S)-4H` は 5 枚以上・10〜16 のまま)、交換後の 3 レベル (`(1H)-P-(2H)-3C` は 10〜16 のまま)、jump 0 の 5 レベルの参入 (`1D-P-4D-5C`、`1D-P-4D-P-P-5C`) が `fallback` になること。D3 のテスト `1H-P-2H-P-P-5C` は jump 2 で、変更前からどの規則も当たらなかったので、この腕を確かめていなかった。
+  - 効果: [G]、コーパスの [C] と一致率、ln L は変わらない (このコールは、生成オークションでもコーパスでもナチュラルの選択にならない)。
 
 ---
 

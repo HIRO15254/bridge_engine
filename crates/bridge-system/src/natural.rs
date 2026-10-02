@@ -1417,28 +1417,46 @@ fn is_first_overcall(ctx: &CallContext) -> bool {
 /// generic ranges (five cards, 10-16 HCP, a king less in the balancing seat) are not a natural
 /// action any more:
 ///
-/// - over the opponents' game (3NT, four of a major, five of a minor, or higher) after both of
-///   them have bid, a first entry is a sacrifice or a lead-directing gamble, not a natural
-///   overcall: five hearts and 7-16 HCP over their `1S-3S-4S` do not bid `5H`. No overcall
-///   rule fires, so the natural policy passes;
-/// - one level higher (a four-level entry below their game, over a raise to the three level or
-///   to four of a minor) the entry needs what SAYC's own competitive tables ask for there
-///   (`systems/sayc/competing.bml`): opening values and a six-card suit, a king less in the
-///   balancing seat ([`FOUR_LEVEL_ENTRY_MIN_LEN`]);
-/// - a first entry at the five level or higher below their game (over `4C`/`4D`) is not
-///   natural either.
+/// - a four-level first entry (over a raise to the three level or to four of a minor, and
+///   also over their 3NT or four of a major: `(1H)-P-(4H)-4S`) needs what SAYC's own
+///   competitive tables ask for there (`systems/sayc/competing.bml`): a six-card suit and
+///   opening values ([`four_level_entry`]: 6+ cards and 12-16 HCP with the default
+///   parameters), a king less (9-16) in the balancing seat below their game. Over their game
+///   the pass-out seat is not a balance, so it keeps 12-16;
+/// - a first entry at the five level or higher (over their `4C`/`4D`, or over their game:
+///   five hearts and 7-16 HCP over their `1S-3S-4S` do not bid `5H`) is a sacrifice or a
+///   lead-directing gamble, not a natural overcall. No overcall rule fires, so the natural
+///   policy passes.
 ///
 /// docs/design/06-system.md §8.3 (`overcall`) and §8.6.
 pub const MAX_ENTRY_LEVEL_AFTER_EXCHANGE: u8 = 3;
 
-/// The minimum suit length of a four-level first entry after the opponents have exchanged
-/// bids (see [`MAX_ENTRY_LEVEL_AFTER_EXCHANGE`]).
+/// The minimum suit length of a four-level first entry (see [`MAX_ENTRY_LEVEL_AFTER_EXCHANGE`]
+/// and [`MAX_JUMP_OVERCALL_LEVEL`]).
 pub const FOUR_LEVEL_ENTRY_MIN_LEN: u8 = 6;
 
-/// The highest level of a natural jump overcall: the weak jump overcall is a two- or
-/// three-level preempt over their bid (`overcall[2]`: a weak-two hand). A jump to the four
-/// level or higher (`(1H)-P-(2NT)-4C`, `(3H)-P-(4NT)-6C`) is not a weak jump overcall.
+/// The highest level of a weak jump overcall: a two- or three-level preempt over their bid
+/// (`overcall[2]`: a weak-two hand).
+///
+/// A single jump to the four level (`(2S)-4H`, `(3C)-4H`, `(1H)-P-(2NT)-4C`) is not a weak-two
+/// hand: it shows the four-level entry's six cards and opening values ([`four_level_entry`]:
+/// 6+ cards, 12-16 HCP, 9-16 in the balancing seat with the default parameters). A single
+/// jump to the five level or higher (`(3S)-5C`, `(3H)-P-(4NT)-6C`) is not described.
 pub const MAX_JUMP_OVERCALL_LEVEL: u8 = 3;
+
+/// The suit length and HCP range of a four-level first entry (see
+/// [`MAX_ENTRY_LEVEL_AFTER_EXCHANGE`] and [`MAX_JUMP_OVERCALL_LEVEL`]): `max(overcall[1].len,
+/// FOUR_LEVEL_ENTRY_MIN_LEN)`+ cards and `max(overcall[1].start, opening.start)..=
+/// overcall[1].end` HCP (6+ cards and 12-16 with the default parameters). The balancing shift
+/// is applied by the caller.
+fn four_level_entry(p: &NaturalParams) -> (u8, RangeInclusive<u8>) {
+    let (min_len, hcp) = &p.overcall[1];
+    let from = (*hcp.start()).max(*p.opening_hcp.start());
+    (
+        (*min_len).max(FOUR_LEVEL_ENTRY_MIN_LEN),
+        from..=(*hcp.end()).max(from),
+    )
+}
 
 /// The game level of `strain`: 3 in notrump, 4 in a major, 5 in a minor.
 fn game_level(strain: Strain) -> u8 {
@@ -1455,15 +1473,13 @@ fn is_game_or_higher(bid: Bid) -> bool {
 }
 
 /// How the overcall rules apply to a first entry at `ctx.level` (see
-/// [`MAX_ENTRY_LEVEL_AFTER_EXCHANGE`]): `None` when no overcall rule applies, `Some(true)` for
-/// a four-level entry after the opponents' exchange (opening values and six cards), and
-/// `Some(false)` for the ordinary ranges.
+/// [`MAX_ENTRY_LEVEL_AFTER_EXCHANGE`]): `None` when no overcall rule applies (five level or
+/// higher after the opponents' exchange), `Some(true)` for a four-level entry after the
+/// exchange, also over their game ([`four_level_entry`]), and `Some(false)` for the ordinary
+/// ranges.
 fn entry_after_exchange(ctx: &CallContext) -> Option<bool> {
     if ctx.their_bids < 2 {
         return Some(false);
-    }
-    if ctx.last_bid.is_some_and(is_game_or_higher) {
-        return None;
     }
     match ctx.level {
         0..=MAX_ENTRY_LEVEL_AFTER_EXCHANGE => Some(false),
@@ -1489,26 +1505,22 @@ fn rule_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infer
     };
     let bid = ctx.call.bid()?;
     let suit = bid.strain().suit()?;
-    let (min_len, hcp) = if bid.level() == 1 {
-        &p.overcall[0]
-    } else {
-        &p.overcall[1]
-    };
     let (min_len, hcp) = if four_level {
-        let from = (*hcp.start()).max(*p.opening_hcp.start());
-        (
-            &(*min_len).max(FOUR_LEVEL_ENTRY_MIN_LEN),
-            &(from..=*hcp.end().max(&from)),
-        )
+        four_level_entry(p)
+    } else if bid.level() == 1 {
+        p.overcall[0].clone()
     } else {
-        (min_len, hcp)
+        p.overcall[1].clone()
     };
-    let hcp = opener_or_balancer_hcp(p, ctx.role, hcp.clone());
-    let constraint = HandConstraint::Atom(
-        Atom::ANY
-            .with_hcp(hcp.clone())
-            .with_len(suit, *min_len..=13),
-    );
+    // Over their game the pass-out seat is not a balance (there is no partscore to contest
+    // and partner's values are not trapped): opening values in every seat.
+    let hcp = if four_level && ctx.last_bid.is_some_and(is_game_or_higher) {
+        hcp
+    } else {
+        opener_or_balancer_hcp(p, ctx.role, hcp)
+    };
+    let constraint =
+        HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, min_len..=13));
     Some(Inference {
         constraint,
         confidence: 0.35,
@@ -1525,10 +1537,7 @@ fn rule_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infer
 }
 
 fn rule_jump_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
-    if !is_first_overcall(ctx)
-        || ctx.level > MAX_JUMP_OVERCALL_LEVEL
-        || entry_after_exchange(ctx).is_none()
-    {
+    if !is_first_overcall(ctx) {
         return None;
     }
     let CallKind::Bid {
@@ -1542,16 +1551,23 @@ fn rule_jump_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<
     };
     let bid = ctx.call.bid()?;
     let suit = bid.strain().suit()?;
-    let (min_len, hcp) = &p.overcall[2];
-    let hcp = opener_or_balancer_hcp(p, ctx.role, hcp.clone());
-    let constraint = HandConstraint::Atom(
-        Atom::ANY
-            .with_hcp(hcp.clone())
-            .with_len(suit, *min_len..=13),
-    );
+    // A weak jump overcall up to the three level; a single jump to the four level shows the
+    // four-level entry's values; higher jumps are not described (MAX_JUMP_OVERCALL_LEVEL).
+    // The four-level jump ranks like the overcall (0.35): its hands are a subset of the
+    // cheaper overcall's, which the natural policy prefers (the call index breaks the tie).
+    let ((min_len, hcp), confidence) = if ctx.level <= MAX_JUMP_OVERCALL_LEVEL {
+        (p.overcall[2].clone(), 0.5)
+    } else if ctx.level == MAX_JUMP_OVERCALL_LEVEL + 1 {
+        (four_level_entry(p), 0.35)
+    } else {
+        return None;
+    };
+    let hcp = opener_or_balancer_hcp(p, ctx.role, hcp);
+    let constraint =
+        HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, min_len..=13));
     Some(Inference {
         constraint,
-        confidence: 0.5,
+        confidence,
         rule: "jump_overcall",
         explanation: expl!(
             ex,
