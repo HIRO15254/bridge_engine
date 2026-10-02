@@ -481,15 +481,21 @@ fn bids_over_partners_3nt_that_are_not_corrections_keep_the_slam_floor() {
     assert_eq!(min_hcp(&inf), 21);
     // A weak two or a preempt pulling partner's to-play 3NT (SAYC: 15+ over a weak two, 14+
     // over a preempt) to the suit it opened: the opening promised the long suit already. The
-    // slam floor (31 - partner's minimum) is above the opening's range, so no hand bids it.
+    // slam floor (31 - partner's minimum) is above the opening's range, so no hand bids it. In a
+    // minor, five over 3NT is read as the cheapest game bid (the opening's range), not as a
+    // 16-18 jump rebid the slam floor would leave satisfiable.
     for (calls, partner_min) in [
         ("2S P 3NT P 4S", 15),
         ("2H P 3NT P 4H", 15),
         ("3H P 3NT P 4H", 14),
+        ("2D P 3NT P 5D", 15),
+        ("3C P 3NT P 5C", 14),
+        ("3D P 3NT P 5D", 14),
     ] {
         let inf = last_with_partner(calls, partner_min..=37);
         assert_eq!(inf.rule, "rebid_own", "{calls}");
         assert_eq!(min_hcp(&inf), 31 - partner_min, "{calls}");
+        assert!(*inf.constraint.hcp_range().end() <= 10, "{calls}");
         assert!(!inf.constraint.is_satisfiable(), "{calls}");
     }
 }

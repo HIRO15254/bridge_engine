@@ -1332,19 +1332,28 @@ fn overrides_partners_game(ctx: &CallContext) -> bool {
 /// already rebid (`2S-P-2NT-P-3S-P-3NT-P-4S`) and the suit of a weak two or a preempt
 /// (`2S-P-3NT-P-4S`: the opening already promised the six cards) are not corrections.
 fn corrects_partners_3nt(ctx: &CallContext) -> bool {
-    let (Some(Call::Bid(partner_bid)), Some(bid)) = (ctx.partner_last, ctx.call.bid()) else {
+    let Some(strain) = game_over_partners_3nt(ctx) else {
         return false;
     };
-    let strain = bid.strain();
-    partner_bid.level() == 3
-        && partner_bid.strain() == Strain::NoTrump
-        && ctx.rho_last == Some(Call::Pass)
-        && strain != Strain::NoTrump
-        && bid.level() == game_level(strain)
-        && ctx.our_suits.contains(strain)
+    ctx.our_suits.contains(strain)
         && !ctx.their_suits.contains(strain)
         && (!ctx.owner_repeated_strains.contains(strain) || rebid_opened_suit(ctx, strain))
         && !opened_preemptively_in(ctx, strain)
+}
+
+/// The strain of the bid when it is game in a suit (four of a major, five of a minor) over
+/// partner's 3NT, which the right-hand opponent passed; `None` otherwise.
+fn game_over_partners_3nt(ctx: &CallContext) -> Option<Strain> {
+    let (Some(Call::Bid(partner_bid)), Some(bid)) = (ctx.partner_last, ctx.call.bid()) else {
+        return None;
+    };
+    let strain = bid.strain();
+    (partner_bid.level() == 3
+        && partner_bid.strain() == Strain::NoTrump
+        && ctx.rho_last == Some(Call::Pass)
+        && strain != Strain::NoTrump
+        && bid.level() == game_level(strain))
+    .then_some(strain)
 }
 
 /// `true` when `owner` opened one of `strain` and has bid it again, and it is not a suit partner
@@ -1381,11 +1390,17 @@ fn unsuited_to_notrump() -> HandConstraint {
     })
 }
 
-/// The jump the natural rules read for a bid: [`CallKind::Bid::jump`], except that a correction
-/// of partner's 3NT ([`corrects_partners_3nt`]) is the cheapest game bid in its suit, not a jump
-/// (`1D-P-3NT-P-5D` skips four diamonds only because four is not game).
+/// The jump the natural rules read for a bid: [`CallKind::Bid::jump`], except that game in a
+/// suit over partner's 3NT ([`game_over_partners_3nt`]) is the cheapest game bid in the suit,
+/// not a jump (`1D-P-3NT-P-5D` skips four diamonds only because four is not game), when it is
+/// a correction ([`corrects_partners_3nt`]) or the suit of a weak two or a preempt
+/// ([`opened_preemptively_in`]: `2D-P-3NT-P-5D` is the weak two's own range, which the slam
+/// floor then empties, not a 16-18 jump rebid).
 fn effective_jump(ctx: &CallContext, jump: u8) -> u8 {
-    if corrects_partners_3nt(ctx) { 0 } else { jump }
+    match game_over_partners_3nt(ctx) {
+        Some(strain) if corrects_partners_3nt(ctx) || opened_preemptively_in(ctx, strain) => 0,
+        _ => jump,
+    }
 }
 
 /// `constraint`, with what a correction of partner's 3NT ([`corrects_partners_3nt`]) adds:
