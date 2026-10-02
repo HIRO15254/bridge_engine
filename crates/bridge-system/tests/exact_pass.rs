@@ -570,6 +570,16 @@ X = 6+ hcp, 4+!h
     let ir = compile("1C = 12--21 hcp\n\n1C-\n#EXACTPASS FILE\n1H = 6+ hcp\n");
     assert_eq!(count(&ir, LintCode::UnknownDirective), 1);
     assert_eq!(read(&ir, "1C 1S").0, 1);
+    // The file form after the first line of a `#SEAT` or `#VUL` paragraph is ignored too,
+    // with a warning, and the scope is not opened (the table's own `#SEAT` still applies).
+    for head in ["#SEAT 12", "#VUL NN"] {
+        let ir = compile(&format!(
+            "1C = 12--21 hcp\n\n{head}\n#EXACTPASS FILE\n\n1C-\n1H = 6+ hcp\n"
+        ));
+        assert_eq!(count(&ir, LintCode::UnknownDirective), 1, "{head}");
+        assert_eq!(count(&ir, LintCode::ExactPassWithoutPass), 0, "{head}");
+        assert_eq!(read(&ir, "1C 1S").0, 1, "{head}");
+    }
 }
 
 /// The three examples of `docs/design/16-extended-bml.md` §4.8, with what the text says of

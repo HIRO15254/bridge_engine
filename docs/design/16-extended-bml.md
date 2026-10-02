@@ -1,6 +1,6 @@
 # 16. 拡張 BML リファレンス (`bridge-system` が受理する方言)
 
-本書は、`crates/bridge-system` のコンパイラ (`COMPILE_REVISION` 11、`IR_FORMAT` 3) が受理する BML (Bridge Bidding Markup Language) の方言の、唯一の正本である。上流の BML (gpaulissen/bml の `bml.py` / `bss.py`) に、フェーズ 3〜4 で加えた拡張 (`#+KEY:` メタ、`{prio:N}` / `{w:X}` / `{stop}` 注釈、`X`/`XX`、`2S/3H`・`4D/H`、`n`・`c`・`j` のレベル、`(any)`/`(bid)`/`(suit)`、`#STOP`、`#ANYORDER`、`#EXACTPASS`、スート長の比較、…) を含めて、新しいシステムファイルをソースを読まずに書けるように、コードから書き起こした。
+本書は、`crates/bridge-system` のコンパイラ (`COMPILE_REVISION` 12、`IR_FORMAT` 3) が受理する BML (Bridge Bidding Markup Language) の方言の、唯一の正本である。上流の BML (gpaulissen/bml の `bml.py` / `bss.py`) に、フェーズ 3〜4 で加えた拡張 (`#+KEY:` メタ、`{prio:N}` / `{w:X}` / `{stop}` 注釈、`X`/`XX`、`2S/3H`・`4D/H`、`n`・`c`・`j` のレベル、`(any)`/`(bid)`/`(suit)`、`#STOP`、`#ANYORDER`、`#EXACTPASS`、スート長の比較、…) を含めて、新しいシステムファイルをソースを読まずに書けるように、コードから書き起こした。
 
 - 設計の経緯と内部構造は `06-system.md` にある。本書と `06-system.md` が食い違うときは、コードと本書が正である (既知の食い違いは付録 B)。
 - SAYC の実例は `systems/sayc/*.bml` (ルートは `sayc.bml`) にある。
@@ -191,7 +191,7 @@ seat = "#SEAT" , WS , ( "0" | "1" | "2" | "3" | "4" | "12" | "34" ) ;
 - 相手のオープニングの表 (`(1H)-` で始まる表) でも、条件は「その相手のオープナーの位置」である。
 - 読めない値は `UnknownDirective` (Warning) を出し `0` として扱う。
 - `#SEAT` は段落 (空行で区切った 1 行) として書く。表の中に書いても効かない (表の中の未知の指示子として `UnknownDirective`)。
-- **段落の種類は最初の行で決まる** ので、`#SEAT 34` の直後に空行を置かずに表を書くと、その表の行は `#SEAT` の段落の一部として **黙って捨てられる** (Lint は出ない)。`#VUL`、見出し (`*`)、箇条書き (`-`、`1.`) の直後も同じである。表の前には必ず空行を置く。
+- **段落の種類は最初の行で決まる** ので、`#SEAT 34` の直後に空行を置かずに表を書くと、その表の行は `#SEAT` の段落の一部として **黙って捨てられる** (Lint は出ない)。`#VUL`、見出し (`*`)、箇条書き (`-`、`1.`) の直後も同じである。表の前には必ず空行を置く。例外は `#EXACTPASS FILE` の行だけで、`#SEAT`/`#VUL` の段落の 2 行目以降にあると、範囲を開かずに `UnknownDirective` (Warning) を出して無視する (§2.10)。
 
 ### 2.7 `#VUL` (バルネラビリティ)
 
@@ -201,6 +201,7 @@ vul = "#VUL" , WS , TRI , TRI ;       TRI = "Y" | "N" | "0" ;
 
 - 1 文字目が我々、2 文字目が相手のバル。`Y` = バル、`N` = ノンバル、`0` = どちらでも。例: `#VUL YN` は我々だけバル、`#VUL 0Y` は相手がバル、`#VUL 00` で解除。
 - 以降の全ての表に付く (§2.6 と同じく粘着的)。読めない値は `UnknownDirective` (Warning) で `00`。
+- 段落の 2 行目以降は §2.6 と同じく読まない (`#EXACTPASS FILE` の行だけ `UnknownDirective`)。
 
 同じ位置に条件の違う定義があるときの選び方は §4.9 と §7.1。
 
@@ -224,7 +225,7 @@ vul = "#VUL" , WS , TRI , TRI ;       TRI = "Y" | "N" | "0" ;
 
 ### 2.8 メタ行
 
-`#+KEY: value` の段落。§6.5 で詳述する。1 つの段落に何行でも書け、`#+` で始まらない行や `:` の無い行は `UnknownDirective` (Warning)。
+`#+KEY: value` の段落。§6.5 で詳述する。1 つの段落に何行でも書け、`#+` で始まらない行や `:` の無い行は `UnknownDirective` (Warning)。`#EXACTPASS FILE` の行もその 1 つで、範囲は開かない (§2.10)。
 
 ### 2.9 クリップボード: `#COPY`、`#CUT`、`#PASTE`
 
@@ -277,7 +278,7 @@ vul = "#VUL" , WS , TRI , TRI ;       TRI = "Y" | "N" | "0" ;
 | その他の `#…` | `UnknownDirective` (Warning) を出して、その行を無視する | |
 
 - `#STOP`、`#ANYORDER`、`#EXACTPASS`、`#HIDE`、`#BIDTABLE` は、表と同じ段落に書く。空行で区切った独立の段落 (`#SEAT` のような書き方) に書くと表を名指さないので効かず、`UnknownDirective` (Warning) が出る。
-- 例外は `#EXACTPASS FILE` で、これは逆に **独立の段落** に書き、同じファイルの後の全ての表に `#EXACTPASS` を書いたのと同じになる (§4.8)。表の段落の中に書くと `UnknownDirective` (Warning) を出して無視する。正確には、`#` で始まる段落が (`#COPY`/`#CUT`/`#PASTE` を展開した後に) 行を持たなければ、`#EXACTPASS FILE` の行が段落のどこにあっても範囲を開く。同じ段落の `#CUT` はふつうに保存され、`#ANYORDER` などの表の指示子は上の項と同じく効かずに `UnknownDirective` になる (§9.1 の `exactpassfile`)。
+- 例外は `#EXACTPASS FILE` で、これは逆に **独立の段落** に書き、同じファイルの後の全ての表に `#EXACTPASS` を書いたのと同じになる (§4.8)。表の段落の中に書くと `UnknownDirective` (Warning) を出して無視する。正確には、行が範囲を開くのは、指示子つきの表と分類される段落 (§2.2 の規則 8: `#` で始まり、規則 3、4、7 に当たらない) が (`#COPY`/`#CUT`/`#PASTE` を展開した後に) 行を持たないときで、行は段落のどこにあってもよい。`#SEAT`/`#VUL` で始まる段落 (規則 3、4) の 2 行目以降では範囲を開かず、`UnknownDirective` (Warning) を出して無視する。`#+` のメタ段落 (規則 7) では不正なメタ行として `UnknownDirective` (Warning) になり、やはり範囲を開かない。同じ段落の `#CUT` はふつうに保存され、`#ANYORDER` などの表の指示子は上の項と同じく効かずに `UnknownDirective` になる (§9.1 の `exactpassfile`)。
 - 履歴の無い表の最上位の `#STOP` は位置を名指さないので、`UnknownDirective` (Warning) を出して無視する。
 
 ```bml
@@ -683,7 +684,7 @@ D = 10+ hcp, 0--2!s
 
 `#EXACTPASS FILE` より後の `1D-` と `1D-1H-` の表は守られる (`1D (1S)`、`1D (P) 1H (2C)` はシステム外)。前の `1C-` の表は守られず、`1C (1S)` は従来どおり `1C (P)` と読まれる。
 
-**置き場所の誤りと効果の無い指示子**。表の形を独立の段落に書くと表を名指さないので効かず、`UnknownDirective` (Warning、ファイルの形を示す)。ファイルの形を表の段落の中に書くと無視して `UnknownDirective` (Warning)。守るパスが無いと `ExactPassWithoutPass` (Info): 表の形では、表に「相手のパスの直後の我々の行」が無い (オープニングだけの表、相手のビッドの後の行だけの表)。ファイルの形では、範囲のどの表にもその行が無い。
+**置き場所の誤りと効果の無い指示子**。表の形を独立の段落に書くと表を名指さないので効かず、`UnknownDirective` (Warning、ファイルの形を示す)。ファイルの形を表の段落、`#SEAT`/`#VUL` の段落、`#+` のメタ段落の中に書くと、無視して `UnknownDirective` (Warning)。守るパスが無いと `ExactPassWithoutPass` (Info): 表の形では、表に「相手のパスの直後の我々の行」が無い (オープニングだけの表、相手のビッドの後の行だけの表)。ファイルの形では、範囲のどの表にもその行が無い。
 
 ```bml,should-lint
 // expect-lint: UnknownDirective
@@ -1445,7 +1446,7 @@ P = {prio:-100} {stop} 0--7 hcp
 | --- | --- | --- | --- |
 | `IncludeNotFound` | Warning | `#INCLUDE` のファイルが無い。その行は捨てる | パス (包含する側のファイルからの相対) を直す |
 | `IncludeCycle` | Error | `#INCLUDE` の循環、または 16 段を超える入れ子 | 循環を切る |
-| `UnknownDirective` | Warning | 未知の `#…` 指示子、`#SEAT`/`#VUL` の値の誤り、`#+KEY:` の値の誤り、`:` の無いメタ行、閉じていない `#CUT`/`#COPY`、16 段を超える `#PASTE`、`#PASTE` の読めない引数 (`=` が無い、置換の対象が空)、表の外の `#STOP`/`#ANYORDER`/`#EXACTPASS`/`#HIDE`/`#BIDTABLE`、表の中の `#EXACTPASS FILE`、履歴の無い表の最上位の `#STOP` | 綴りと置き場所を直す (§2、§4.8、§6) |
+| `UnknownDirective` | Warning | 未知の `#…` 指示子、`#SEAT`/`#VUL` の値の誤り、`#+KEY:` の値の誤り、`:` の無いメタ行、閉じていない `#CUT`/`#COPY`、16 段を超える `#PASTE`、`#PASTE` の読めない引数 (`=` が無い、置換の対象が空)、表の外の `#STOP`/`#ANYORDER`/`#EXACTPASS`/`#HIDE`/`#BIDTABLE`、表・`#SEAT`・`#VUL` の段落の中の `#EXACTPASS FILE`、履歴の無い表の最上位の `#STOP` | 綴りと置き場所を直す (§2、§4.8、§6) |
 | `PasteUnknownName` | Warning | `#PASTE` の名前のクリップボードが無い | 名前を直すか、`#CUT`/`#COPY` を先に書く |
 | `UnknownCallToken` | Warning | コールトークンとして読めない行 (その行と部分木を捨てる)。読めない履歴行 (表全体を捨てる)。相対レベルで始まり、`cS = …` の形か 2 行目以降に `=` のある行を持つ段落。打ち間違えた表の形の最初の行で始まる段落 (§2.2) | §4.1 の形に直す |
 | `SequenceNotFirst` | Error | 表の 2 行目以降の `-`/`;` を含むトークン (その行と部分木を捨てる) | 別の表 (段落) に分ける |
@@ -1763,8 +1764,8 @@ paragraph   = heading | list | vulpara | seatpara | enumeration
             | bidtable | metapara | directivetable | exactpassfile | prose ;
 heading     = WS0 , "*" , { CHAR } , { NL , line } ;
 list        = WS0 , "-" , { CHAR } , { NL , line } ;
-vulpara     = WS0 , "#VUL" , WS , TRI , TRI , WS0 , { NL , line } ;
-seatpara    = WS0 , "#SEAT" , WS , SEAT , WS0 , { NL , line } ;
+vulpara     = WS0 , "#VUL" , WS , TRI , TRI , WS0 , { NL , line } ;   (* the lines after the first are dropped; a filedirective among them: UnknownDirective *)
+seatpara    = WS0 , "#SEAT" , WS , SEAT , WS0 , { NL , line } ;   (* the lines after the first are dropped; a filedirective among them: UnknownDirective *)
 enumeration = WS0 , DIGIT , { DIGIT } , "." , ( SP | NL ) , { CHAR } , { NL , line } ;
 bidtable    = { directive , NL } , firstrow , { NL , ( row | directive | filedirective | contline ) } ;   (* filedirective here: recovery, UnknownDirective, ignored *)
 metapara    = metaline , { NL , metaline } ;
@@ -2219,7 +2220,7 @@ P = {prio:-100} {stop} any hand
 | `5-5 minors` が 6-5 の手に当てはまらない | 群の付いた数字はちょうどの枚数 (§5.4.4) | `5+5+ minors` と書く |
 | 変数の説明が置き換わらない | 説明文の変数は語の境界でだけ置換 (§5.2)。`5+Ms` は置換されない | `5+M` の後に空白か区切りを置く |
 | 相手の割り込みの後に 1 つ前の表の行が出る | 表の無い割り込みは相手のパスとして照合し直す (§7.1) | 割り込みの表 (`(any)` など) か停止を書く。割り込みの後をシステム外にしたいなら `#EXACTPASS` (§4.8) |
-| `#EXACTPASS` を書いたのに、割り込みの後もパスの後の行が出る | 指示子が独立の段落にある (`UnknownDirective`)、`#EXACTPASS FILE` が別のファイルか後の位置にある、または守られるのは表の我々の行の直前のパスだけで、履歴の途中のパスは守らない (§4.8) | 表の段落の中に書くか、そのファイルの表の前に `#EXACTPASS FILE` を置く。履歴の途中の位置は、そこに行を書く表で守る |
+| `#EXACTPASS` を書いたのに、割り込みの後もパスの後の行が出る | 指示子が独立の段落にある (`UnknownDirective`)、`#EXACTPASS FILE` が `#SEAT`/`#VUL` の段落の中にある (`UnknownDirective`)、`#EXACTPASS FILE` が別のファイルか後の位置にある、または守られるのは表の我々の行の直前のパスだけで、履歴の途中のパスは守らない (§4.8) | 表の段落の中に書くか、そのファイルの表の前に `#EXACTPASS FILE` を置く。履歴の途中の位置は、そこに行を書く表で守る |
 | `#EXACTPASS` の行に `SiblingSubset` (Warning) が出る | 守りの `(any)` (説明が空、どんな手でも) は、説明の無い相手の兄弟 (`1N-(P)-2C-(P)-` の 2 つ目の `(P)` など) に含まれる。手で `(any)` を書いたのと同じ (§4.8) | 相手の `(P)` に「どんな手でも」でない説明を書く (`1N-(P)-2C-(P)- = 0--11 hcp`。`SiblingOverlap` (Info) になる)。あるいは無視してよい (守りの `(any)` が受けるコールの解釈は変わらない) |
 | 停止の後にシステムの行が続かない | 停止の後の我々のパス以外のコールはシステム外 (§7.7) | その位置に表を書く |
 | パターン行の一部のコールが出ない | 先の Exact 行の兄弟と同じコールは捨てられる (`ShadowedByExact`) | 意図どおりか確かめる |

@@ -296,7 +296,7 @@ impl VulCond { pub const fn matches(self, we: bool, they: bool) -> bool; pub con
 | include の欠落 / 循環 | 行を落とす / include を無視 | `IncludeNotFound` (Warning) / `IncludeCycle` (Error) |
 | 不明な `#DIRECTIVE` | 行を除去し段落の残りを処理 | `UnknownDirective` (Warning) |
 | 表の指示子 (`#ANYORDER`、`#EXACTPASS`、`#STOP`) だけの段落 (空行の後に表) | 表を名指さないので効果なし | `UnknownDirective` (Warning) |
-| 表の段落の中の `#EXACTPASS FILE` (§4.8) | 無視 (ファイルの形は独立した段落に書く) | `UnknownDirective` (Warning) |
+| 表の段落の中、または `#SEAT`/`#VUL` の段落の 2 行目以降の `#EXACTPASS FILE` (§4.8) | 無視 (ファイルの形は独立した段落に書く。`#SEAT`/`#VUL` の段落は最初の行しか読まない) | `UnknownDirective` (Warning) |
 | `#EXACTPASS` (表の形) / `#EXACTPASS FILE` が、相手のパスの直後の我々の行の無い表 (ファイルの形では、範囲のどの表にもその行が無い) にかかる | 効果なし (守る位置が無い) | `ExactPassWithoutPass` (Info) |
 | `#PASTE` の未定義名 | 行を除去 | `PasteUnknownName` (Warning) |
 
@@ -576,13 +576,13 @@ P の守りは、**全ての表の展開と停止の接ぎ木 (§4.5) の後に*
 **Lint。**
 
 - `ExactPassWithoutPass` (Info): 表の形で、表の履歴と行に (a)/(b) の我々の行が構文の上で無い (オープニングだけの表、`1C-(1S)-` の行だけの表、`(any)` の後の行だけの表)。ファイルの形で、範囲のどの表にもその行が無い。位置は指示子の行。
-- `UnknownDirective` (Warning): 表の形だけの独立した段落 (表を名指さない。メッセージはファイルの形を示す)、表の段落の中の `#EXACTPASS FILE` (無視する)、`#EXACTPASS` の後の他の語 (`#EXACTPASS ALL`)。
+- `UnknownDirective` (Warning): 表の形だけの独立した段落 (表を名指さない。メッセージはファイルの形を示す)、表の段落の中と `#SEAT`/`#VUL` の段落の 2 行目以降の `#EXACTPASS FILE` (無視する。`#+` のメタ段落では不正なメタ行として同じ Lint)、`#EXACTPASS` の後の他の語 (`#EXACTPASS ALL`)。
 
 **可搬性 (D16 の補遺)。** `bml.py` はこの指示子を知らない。表の形は `#STOP`・`#ANYORDER` と同じく表の中の未知の行、ファイルの形は未知の指示子の段落である。どちらもトライの辺を加えるだけなので、無視するツールでは「割り込みをパスと読む」既定の動作になる。
 
 **SAYC (フェーズ 4 のレーン guard)。** `interference-guards.bml` を消し、それが守っていたレーン D2 の 3 ファイル (`competing.bml`、`continuations-p12.bml`、`later-rounds-extra.bml`) の表の前に `#EXACTPASS FILE` を置いた (`systems/sayc/NOTES.md` #P16)。`xtask coverage` (f37ccad との比較) の全ての指標 (`[G]`/`[C]` の strict・raw・停止の監査、all-Exact、`resolve_lenient` の呼び出しとエントリ、Partial、NoCandidate、MLE、位置、排他索引のグループとノード) は同一である。違いは構造だけである。守りのファイルの 6 つの展開 (`1Y-(P)-1Z-(P)-2X-(P)-2Y-(any)-` と `…-2Z-(any)-` の、停止のある我々の 2Y/2Z の後の位置: `1D-1H-2C-2D`/`2H`、`1D-1S-2C-2D`/`2S`、`1H-1S-2D-2H`/`2S`) は、旧版では停止より先に作られ、停止がその `(any)` を通っていた。新版では停止の `(any)` が受けるので守りを作らない (8 通りの席・バルで、その先の 2,960 位置の照合結果は同一)。そのためノード 10,494 → 10,488、トライ 11,122 → 11,116、排他索引のキー 65,216 → 65,120、行 7,518 → 7,400 (守りのファイルの 121 行が、3 ファイルの指示子の行 3 つになる)、postcard IR 3,553,923 → 3,537,665 バイト。Lint は、守りのファイルの行が出していたもの (`NonStandardToken` 122 (`(any)` 121 と `1D/H` 1)、束縛の候補が無い `VariableNoCandidate` 31、`IllegalCall` (Info) 1) が消え、上の 6 つの展開の `EmptyDescription` と `SiblingSubset` (Warning) が 6 ずつ減る。
 
-**実装。** `ast.rs::BidTable::exact_pass` (効いている指示子の位置); `parser/mod.rs::parse_table_paragraph` (`#EXACTPASS`、`is_exact_pass_file`)、`ExactPassFiles` (ファイルの形の範囲と Lint)、`has_row_after_their_pass` (Lint の判定); `compile/expand.rs::Frame::exact_pass`、`expand_children` (我々の行を展開した位置で、直前が我々のコールか書いた `(P)` なら `record_guard`)、`graft_exact_pass_guards` (`graft_stops` の後。辺の無いコールがあれば、行の無い `(any)` を `expand_row` で展開して親の子に加える。`record_guard` は位置と `#SEAT`/`#VUL` の条件の組ごとに 1 つ); `lint.rs::LintCode::ExactPassWithoutPass`。試験: `parser/mod.rs` の `exact_pass_*` と `a_row_of_ours_after_their_pass_is_found`、`tests/exact_pass.rs` (24 件)、`tests/sayc.rs` の構造の試験 (D2 の表が守られていること)。`COMPILE_REVISION` 10 (条件ごとのエントリは 11)。`IR_FORMAT` は 3 のまま (IR の形は変わらない)。
+**実装。** `ast.rs::BidTable::exact_pass` (効いている指示子の位置); `parser/mod.rs::parse_table_paragraph` (`#EXACTPASS`、`is_exact_pass_file`)、`ignored_exact_pass_file` (`#SEAT`/`#VUL` の段落の中の行の Lint)、`ExactPassFiles` (ファイルの形の範囲と Lint)、`has_row_after_their_pass` (Lint の判定); `compile/expand.rs::Frame::exact_pass`、`expand_children` (我々の行を展開した位置で、直前が我々のコールか書いた `(P)` なら `record_guard`)、`graft_exact_pass_guards` (`graft_stops` の後。辺の無いコールがあれば、行の無い `(any)` を `expand_row` で展開して親の子に加える。`record_guard` は位置と `#SEAT`/`#VUL` の条件の組ごとに 1 つ); `lint.rs::LintCode::ExactPassWithoutPass`。試験: `parser/mod.rs` の `exact_pass_*` と `a_row_of_ours_after_their_pass_is_found`、`exact_pass_file_in_a_seat_vul_or_meta_paragraph_opens_no_scope`、`tests/exact_pass.rs` (24 件)、`tests/sayc.rs` の構造の試験 (D2 の表が守られていること)。`COMPILE_REVISION` 10 (条件ごとのエントリは 11、`#SEAT`/`#VUL` の段落の中の行の Lint は 12)。`IR_FORMAT` は 3 のまま (IR の形は変わらない)。
 
 ## 5. IR (`ir.rs`)
 
@@ -1572,7 +1572,7 @@ impl SystemCache {
 }
 ```
 
-`compile_revision` は `COMPILE_REVISION` (フェーズ 3 が 1、フェーズ 4 が 2、システム停止 §4.5 が 3、条件の違う停止が共有する輪が 4、合成された停止のパスの説明文が 5、相対レベル §4.6 とスート長の比較 §7.4 が 6、`#ANYORDER` §4.7 が 7、レーン D2 のレビュー修正 (指示子だけの段落・相対レベルで始まる行・代替の相対レベルの Lint、`LevelWithoutAnchor` の重複除去、`!h>=!s+1` を比較と読まない、`StopUnderForcing`) が 8、ノードの説明文から注釈を除いて格納するのが 9 (統合線ではレーン D2 のマージ前に 6 だった)、`#EXACTPASS` (表と `FILE` の形) §4.8 と Lint `ExactPassWithoutPass` が 10、`#SEAT`/`#VUL` の違う表が同じ位置を守るとき、守りのノードに条件ごとのエントリを置く (10 は最初の表の条件だけを持った。§4.8) のが 11) である。11 は条件の違う `#EXACTPASS` の表が同じ位置を守るソースでだけ出力を変え、SAYC (`#SEAT`/`#VUL` を使わない) の IR は 10 と同一である。`compile()` の出力が形式を変えずに変わるとき (新しい Lint など) に上げる。クレートのバージョンと `IR_FORMAT` が同じでも、古いコンパイラが書いたエントリは別のキーになり、読まれずに再コンパイルされる (フェーズ 4 の排他索引の Lint を持たない IR が、温まったキャッシュから返るのを防ぐ。回帰テスト `an_entry_under_the_pre_revision_key_is_a_miss`)。
+`compile_revision` は `COMPILE_REVISION` (フェーズ 3 が 1、フェーズ 4 が 2、システム停止 §4.5 が 3、条件の違う停止が共有する輪が 4、合成された停止のパスの説明文が 5、相対レベル §4.6 とスート長の比較 §7.4 が 6、`#ANYORDER` §4.7 が 7、レーン D2 のレビュー修正 (指示子だけの段落・相対レベルで始まる行・代替の相対レベルの Lint、`LevelWithoutAnchor` の重複除去、`!h>=!s+1` を比較と読まない、`StopUnderForcing`) が 8、ノードの説明文から注釈を除いて格納するのが 9 (統合線ではレーン D2 のマージ前に 6 だった)、`#EXACTPASS` (表と `FILE` の形) §4.8 と Lint `ExactPassWithoutPass` が 10、`#SEAT`/`#VUL` の違う表が同じ位置を守るとき、守りのノードに条件ごとのエントリを置く (10 は最初の表の条件だけを持った。§4.8) のが 11、`#SEAT`/`#VUL` の段落の 2 行目以降の `#EXACTPASS FILE` に `UnknownDirective` (Warning) を出す (それまでは黙って捨てていた。§4.8) のが 12) である。11 は条件の違う `#EXACTPASS` の表が同じ位置を守るソースでだけ出力を変え、SAYC (`#SEAT`/`#VUL` を使わない) の IR は 10 と同一である。12 はその行を持つソースの Lint だけを変え、SAYC の Lint と IR は 11 と同一である。`compile()` の出力が形式を変えずに変わるとき (新しい Lint など) に上げる。クレートのバージョンと `IR_FORMAT` が同じでも、古いコンパイラが書いたエントリは別のキーになり、読まれずに再コンパイルされる (フェーズ 4 の排他索引の Lint を持たない IR が、温まったキャッシュから返るのを防ぐ。回帰テスト `an_entry_under_the_pre_revision_key_is_a_miss`)。
 
 手順: (1) `loader` で `path` を読み、`lexer::load` で include を解決して `resolved source` (全ファイルの連結、`Loaded.files` の順) を得る。(2) `key` を計算し `dir/<hex(key)>.ir` を探す。(3) あれば `postcard` でデコードする。ヘッダの `ir_format` が `IR_FORMAT` と違う、`compiler_version` が違う、デコードに失敗する、のいずれも「不一致」として再コンパイルし上書きする (エラーにはしない)。(4) 無ければ `compile` して書く。書き込みは一時ファイル + rename で原子的に行い、I/O の失敗だけが `Err`。`std` 無し (wasm) では `SystemCache` を提供せず、`compile` だけを使う。
 
