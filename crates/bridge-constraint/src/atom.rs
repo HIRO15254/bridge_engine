@@ -159,10 +159,11 @@ impl Atom {
         let shapes = self.shapes.intersect(other.shapes);
         let lo = (*self.hcp.start()).max(*other.hcp.start());
         let hi = (*self.hcp.end()).min(*other.hcp.end());
-        let mut cards = self.cards.clone();
-        cards.extend(other.cards.iter().cloned());
-        let mut eval = self.eval.clone();
-        eval.extend(other.eval.iter().cloned());
+        // Each list is allocated once at its final length (an empty list allocates nothing).
+        let mut cards = Vec::with_capacity(self.cards.len() + other.cards.len());
+        cards.extend(self.cards.iter().chain(&other.cards).cloned());
+        let mut eval = Vec::with_capacity(self.eval.len() + other.eval.len());
+        eval.extend(self.eval.iter().chain(&other.eval).cloned());
         let mut atom = Atom {
             shapes,
             hcp: lo..=hi,
@@ -317,8 +318,12 @@ impl Atom {
         if self.hcp.is_empty() {
             return true;
         }
-        let (shapes_min_hcp, shapes_max_hcp) = self.shapes.hcp_bounds();
-        if *self.hcp.start() > shapes_max_hcp || *self.hcp.end() < shapes_min_hcp {
+        // `hcp.start > shapes.max_hcp() || hcp.end < shapes.min_hcp()`, answered by two
+        // threshold masks instead of `ShapeSet::hcp_bounds`'s walk (the shape set is not empty).
+        if !self
+            .shapes
+            .hcp_range_reachable(*self.hcp.start(), *self.hcp.end())
+        {
             return true;
         }
         for req in &self.cards {
@@ -334,6 +339,29 @@ impl Atom {
         false
     }
 
+    /// `self.intersect(other).is_trivially_unsat()`, without building the intersection when
+    /// neither side has `eval` literals (the common case of the exclusive-region subtraction,
+    /// which tests every term against every subtracted atom).
+    ///
+    /// The checks are those of [`Atom::is_trivially_unsat`] on the normalized intersection:
+    /// `shapes ∩`, `hcp` intersected and clamped to `37`, and per card mask the merged count
+    /// range `max(lo)..=min(hi, |mask|)` of every requirement on that mask from both sides.
+    pub fn intersection_is_trivially_unsat(&self, other: &Atom) -> bool {
+        if !self.eval.is_empty() || !other.eval.is_empty() {
+            return self.intersect(other).is_trivially_unsat();
+        }
+        let shapes = self.shapes.intersect(other.shapes);
+        if shapes.is_empty() {
+            return true;
+        }
+        let lo = (*self.hcp.start()).max(*other.hcp.start());
+        let hi = (*self.hcp.end()).min(*other.hcp.end()).min(37);
+        if lo > hi || !shapes.hcp_range_reachable(lo, hi) {
+            return true;
+        }
+        cards_contradict(&self.cards, &other.cards)
+    }
+
     /// Sorts and merges the literal lists, clamps every range to its bounds, and drops any literal
     /// that clamping revealed to be always true (`count`/`range` covers every value the
     /// requirement's cards/metric can take). An always-true literal is a no-op for `satisfies`,
@@ -346,43 +374,41 @@ impl Atom {
         let hi = (*self.hcp.end()).min(37);
         self.hcp = *self.hcp.start()..=hi;
 
+        // In place: clamp every range, then merge each run of equal keys into its first entry
+        // (`dedup_by` hands the later entry first, the kept earlier one second).
         self.cards.sort_by_key(|req| req.mask.bits());
-        let mut cards: Vec<CardRequirement> = Vec::with_capacity(self.cards.len());
-        for req in self.cards.drain(..) {
+        for req in &mut self.cards {
             let hi = (*req.count.end()).min(req.mask.len());
-            match cards.last_mut() {
-                Some(last) if last.mask == req.mask => {
-                    let lo = (*last.count.start()).max(*req.count.start());
-                    let new_hi = (*last.count.end()).min(hi);
-                    last.count = lo..=new_hi;
-                }
-                _ => cards.push(CardRequirement {
-                    mask: req.mask,
-                    count: *req.count.start()..=hi,
-                }),
-            }
+            req.count = *req.count.start()..=hi;
         }
-        cards.retain(|req| !(*req.count.start() == 0 && *req.count.end() >= req.mask.len()));
-        self.cards = cards;
+        self.cards.dedup_by(|req, last| {
+            if last.mask != req.mask {
+                return false;
+            }
+            let lo = (*last.count.start()).max(*req.count.start());
+            let hi = (*last.count.end()).min(*req.count.end());
+            last.count = lo..=hi;
+            true
+        });
+        self.cards
+            .retain(|req| !(*req.count.start() == 0 && *req.count.end() >= req.mask.len()));
 
         self.eval.sort_by_key(|req| metric_key(req.metric));
-        let mut eval: Vec<EvalRequirement> = Vec::with_capacity(self.eval.len());
-        for req in self.eval.drain(..) {
+        for req in &mut self.eval {
             let hi = (*req.range.end()).min(req.metric.max());
-            match eval.last_mut() {
-                Some(last) if last.metric == req.metric => {
-                    let lo = (*last.range.start()).max(*req.range.start());
-                    let new_hi = (*last.range.end()).min(hi);
-                    last.range = lo..=new_hi;
-                }
-                _ => eval.push(EvalRequirement {
-                    metric: req.metric,
-                    range: *req.range.start()..=hi,
-                }),
-            }
+            req.range = *req.range.start()..=hi;
         }
-        eval.retain(|req| !(*req.range.start() == 0 && *req.range.end() >= req.metric.max()));
-        self.eval = eval;
+        self.eval.dedup_by(|req, last| {
+            if last.metric != req.metric {
+                return false;
+            }
+            let lo = (*last.range.start()).max(*req.range.start());
+            let hi = (*last.range.end()).min(*req.range.end());
+            last.range = lo..=hi;
+            true
+        });
+        self.eval
+            .retain(|req| !(*req.range.start() == 0 && *req.range.end() >= req.metric.max()));
     }
 
     /// The HCP range.
@@ -421,6 +447,34 @@ impl Atom {
     pub fn with_eval(mut self, req: EvalRequirement) -> Atom {
         self.eval.push(req);
         self
+    }
+}
+
+/// `true` when the card requirements `a ++ b`, merged per mask as [`Atom::normalize`] merges
+/// them (`max(lo)..=min(hi, |mask|)`), leave some mask with an empty count range.
+fn cards_contradict(a: &[CardRequirement], b: &[CardRequirement]) -> bool {
+    let merged = |req: &CardRequirement| {
+        let (mut lo, mut hi) = (*req.count.start(), (*req.count.end()).min(req.mask.len()));
+        for r in a.iter().chain(b) {
+            if r.mask == req.mask {
+                lo = lo.max(*r.count.start());
+                hi = hi.min(*r.count.end());
+            }
+        }
+        lo > hi
+    };
+    match (a.is_empty(), b.is_empty()) {
+        (true, true) => false,
+        // One side only: a requirement contradicts only its own side's.
+        (false, true) => a.iter().any(|req| {
+            *req.count.start() > (*req.count.end()).min(req.mask.len())
+                || (a.len() > 1 && merged(req))
+        }),
+        (true, false) => b.iter().any(|req| {
+            *req.count.start() > (*req.count.end()).min(req.mask.len())
+                || (b.len() > 1 && merged(req))
+        }),
+        (false, false) => a.iter().chain(b).any(merged),
     }
 }
 

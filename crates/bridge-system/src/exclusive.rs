@@ -29,17 +29,20 @@
 //! is *shadowed*: the policy never makes it at this position.
 //!
 //! Build: [`crate::compile()`] builds the index eagerly at the end of compilation (SAYC with its
-//! system stops: about 2.75k groups, 7.2k pieces, 3 tree fallbacks, about 13 ms release) and
+//! system stops: about 2.75k groups, 7.2k pieces, 3 tree fallbacks, about 8 ms release) and
 //! stores it in the cell; a deserialised or hand-built IR builds it on the first
 //! [`SystemIR::exclusive`] call. Per trie position the sibling list is computed once when no
 //! child entry carries a seat/vulnerability condition (the common case), and once per condition
 //! class otherwise; identical sibling lists share one group. One build converts each subtracted
-//! member to its DNF once (a member ranked above many others is subtracted once per lower
-//! piece), a subtraction that includes the any-hand atom of a stop's pass is empty without any
-//! DNF work, and a flat piece is proven empty atom by atom without building grids. [`ExclusiveIndex::stats`] reports the counts and
+//! member to its DNF once and negates each of its atoms at most once (a member ranked above many
+//! others is subtracted once per lower piece), a term the subtracted atom cannot meet is kept
+//! as is without building the intersection, a subtraction that includes the any-hand atom of a
+//! stop's pass is empty without any DNF work, and a flat piece is proven empty atom by atom
+//! without building grids. [`ExclusiveIndex::stats`] reports the counts and
 //! the lints `ShadowedBranch` / `OverlappingBranches` read the groups.
 
 use core::cmp::Ordering;
+use core::hash::{BuildHasherDefault, Hasher};
 use core::ops::RangeInclusive;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -150,7 +153,37 @@ pub fn is_empty_or(c: &HandConstraint) -> bool {
 }
 
 /// The DNF atoms of `c` when its DNF is exact (no residual, no custom literal, no truncation).
+///
+/// An atom and an `Or` of atoms take a shortcut with the same result as `HandConstraint::to_dnf`
+/// (one term per atom, normalized, trivially unsatisfiable ones dropped, repeated atoms kept
+/// once, in order) without building the NNF.
 fn exact_atoms(c: &HandConstraint) -> Option<Vec<Atom>> {
+    fn normalized(a: &Atom) -> Option<Atom> {
+        let mut a = a.clone();
+        a.normalize();
+        (!a.is_trivially_unsat()).then_some(a)
+    }
+    match c {
+        HandConstraint::Atom(a) => return Some(normalized(a).into_iter().collect()),
+        HandConstraint::Or(children)
+            if children
+                .iter()
+                .all(|x| matches!(x, HandConstraint::Atom(_))) =>
+        {
+            let mut out: Vec<Atom> = Vec::with_capacity(children.len());
+            for child in children {
+                if let HandConstraint::Atom(a) = child {
+                    if let Some(a) = normalized(a) {
+                        if !out.contains(&a) {
+                            out.push(a);
+                        }
+                    }
+                }
+            }
+            return Some(out);
+        }
+        _ => {}
+    }
     let dnf = c
         .to_dnf(&DnfOptions {
             max_terms: 256,
@@ -166,53 +199,124 @@ fn exact_atoms(c: &HandConstraint) -> Option<Vec<Atom>> {
 /// Merges atoms that differ only in their shape set (union) or only in adjacent/overlapping HCP
 /// ranges (hull). Both preserve the set union and the pairwise disjointness of the input.
 fn merge_atoms(mut atoms: Vec<Atom>) -> Vec<Atom> {
+    if atoms.len() < 2 {
+        return atoms;
+    }
+    // Two buffers swapped between passes (each pass drains one into the other).
+    let mut out: Vec<Atom> = Vec::with_capacity(atoms.len());
     loop {
         let mut changed = false;
-        let mut out: Vec<Atom> = Vec::with_capacity(atoms.len());
-        'next: for a in atoms {
+        'next: for a in atoms.drain(..) {
             for b in out.iter_mut() {
                 if b.hcp == a.hcp && b.cards == a.cards && b.eval == a.eval {
                     b.shapes = b.shapes.union(a.shapes);
                     changed = true;
                     continue 'next;
                 }
-                if b.shapes == a.shapes && b.cards == a.cards && b.eval == a.eval {
-                    let (alo, ahi) = (*a.hcp.start(), *a.hcp.end());
-                    let (blo, bhi) = (*b.hcp.start(), *b.hcp.end());
-                    if alo <= bhi.saturating_add(1) && blo <= ahi.saturating_add(1) {
-                        b.hcp = alo.min(blo)..=ahi.max(bhi);
-                        changed = true;
-                        continue 'next;
-                    }
+                // The same test as `shapes, cards, eval equal and HCP ranges adjacent or
+                // overlapping`, the cheap HCP comparison first.
+                let (alo, ahi) = (*a.hcp.start(), *a.hcp.end());
+                let (blo, bhi) = (*b.hcp.start(), *b.hcp.end());
+                if alo <= bhi.saturating_add(1)
+                    && blo <= ahi.saturating_add(1)
+                    && b.shapes == a.shapes
+                    && b.cards == a.cards
+                    && b.eval == a.eval
+                {
+                    b.hcp = alo.min(blo)..=ahi.max(bhi);
+                    changed = true;
+                    continue 'next;
                 }
             }
             out.push(a);
         }
-        atoms = out;
+        core::mem::swap(&mut atoms, &mut out);
         if !changed {
             return atoms;
         }
     }
 }
 
-/// `true` when `a ∧ b` is certainly empty by the shape/HCP summaries alone.
-fn summaries_disjoint(a: &HandConstraint, b: &HandConstraint) -> bool {
-    if a.shapes().intersect(b.shapes()).is_empty() {
+/// `true` when `c ∧ m` is certainly empty by the shape/HCP summaries alone, with `c`'s summary
+/// `(shapes, hcp)` given.
+fn summaries_disjoint(shapes: ShapeSet, hcp: &RangeInclusive<u8>, m: &HandConstraint) -> bool {
+    if shapes.intersect(m.shapes()).is_empty() {
         return true;
     }
-    let (ra, rb) = (a.hcp_range(), b.hcp_range());
-    ra.start().max(rb.start()) > ra.end().min(rb.end())
+    let rm = m.hcp_range();
+    hcp.start().max(rm.start()) > hcp.end().min(rm.end())
+}
+
+/// The exact DNF atoms of a subtracted constraint, with the disjoint negation chain
+/// (`Atom::negate`) of each atom computed on first use.
+struct MemberDnf {
+    atoms: Vec<Atom>,
+    negations: Vec<Option<Vec<Atom>>>,
+}
+
+impl MemberDnf {
+    /// `None` when `c` has no exact DNF ([`exact_atoms`]).
+    fn of(c: &HandConstraint) -> Option<MemberDnf> {
+        let atoms = exact_atoms(c)?;
+        Some(MemberDnf {
+            negations: vec![None; atoms.len()],
+            atoms,
+        })
+    }
+}
+
+/// `terms ∖ m` for pairwise-disjoint `terms`, one atom of `m` at a time through its disjoint
+/// negation chain, merging after each atom; `None` past [`MAX_EXCLUSIVE_ATOMS`] atoms. Stops as
+/// soon as nothing is left.
+fn subtract_member(mut terms: Vec<Atom>, m: &mut MemberDnf) -> Option<Vec<Atom>> {
+    let MemberDnf { atoms, negations } = m;
+    for (d, negated) in atoms.iter().zip(negations.iter_mut()) {
+        // A term that misses `d` passes through unchanged; when every term does, `terms` (a
+        // fixpoint of `merge_atoms` already) is left as it is.
+        let Some(first) = terms
+            .iter()
+            .position(|t| !t.intersection_is_trivially_unsat(d))
+        else {
+            continue;
+        };
+        let pieces = negated.get_or_insert_with(|| d.negate());
+        let mut next = Vec::with_capacity(terms.len() + pieces.len());
+        for (i, t) in terms.into_iter().enumerate() {
+            if i < first || (i > first && t.intersection_is_trivially_unsat(d)) {
+                next.push(t);
+                continue;
+            }
+            for piece in pieces.iter() {
+                if !t.intersection_is_trivially_unsat(piece) {
+                    next.push(t.intersect(piece));
+                }
+            }
+        }
+        terms = merge_atoms(next);
+        if terms.len() > MAX_EXCLUSIVE_ATOMS {
+            return None;
+        }
+        if terms.is_empty() {
+            return Some(terms);
+        }
+    }
+    Some(terms)
 }
 
 /// Exact atom-level subtraction `base ∖ (m1 ∪ … ∪ mk)` through the disjoint `Atom::negate`
 /// chain, or `None` when some constraint has no exact DNF or the result exceeds
-/// [`MAX_EXCLUSIVE_ATOMS`]. With `cache`, the members' DNFs are read from and stored in it.
+/// [`MAX_EXCLUSIVE_ATOMS`]. With `cache`, the members' DNFs (and, when `base_in_cache`, the
+/// base's) are read from and stored in it.
 fn subtract_exact(
     base: &HandConstraint,
     minus: &[&HandConstraint],
     mut cache: Option<&mut DnfCache>,
+    base_in_cache: bool,
 ) -> Option<Vec<Atom>> {
-    let mut terms = exact_atoms(base)?;
+    let mut terms = match cache.as_deref_mut() {
+        Some(cache) if base_in_cache => cache.member(base).as_ref()?.atoms.clone(),
+        _ => exact_atoms(base)?,
+    };
     // Disjointify the base's own DNF terms first, so the flat result is a disjoint `Or`.
     let mut disjoint: Vec<Atom> = Vec::with_capacity(terms.len());
     for t in terms.drain(..) {
@@ -221,14 +325,13 @@ fn subtract_exact(
             let negated = d.negate();
             let mut next = Vec::new();
             for p in pieces {
-                if p.intersect(d).is_trivially_unsat() {
+                if p.intersection_is_trivially_unsat(d) {
                     next.push(p);
                     continue;
                 }
                 for n in &negated {
-                    let x = p.intersect(n);
-                    if !x.is_trivially_unsat() {
-                        next.push(x);
+                    if !p.intersection_is_trivially_unsat(n) {
+                        next.push(p.intersect(n));
                     }
                 }
             }
@@ -241,41 +344,12 @@ fn subtract_exact(
     }
     terms = merge_atoms(disjoint);
     for m in minus {
-        let owned;
-        let m_atoms: &[Atom] = match cache.as_deref_mut() {
-            Some(cache) => cache
-                .0
-                .entry(core::ptr::from_ref(*m))
-                .or_insert_with(|| exact_atoms(m))
-                .as_deref()?,
-            None => {
-                owned = exact_atoms(m)?;
-                &owned
-            }
+        terms = match cache.as_deref_mut() {
+            Some(cache) => subtract_member(terms, cache.member(m).as_mut()?)?,
+            None => subtract_member(terms, &mut MemberDnf::of(m)?)?,
         };
-        for d in m_atoms {
-            let mut negated: Option<Vec<Atom>> = None;
-            let mut next = Vec::with_capacity(terms.len());
-            for t in terms {
-                if t.intersect(d).is_trivially_unsat() {
-                    next.push(t);
-                    continue;
-                }
-                let pieces = negated.get_or_insert_with(|| d.negate());
-                for piece in pieces.iter() {
-                    let x = t.intersect(piece);
-                    if !x.is_trivially_unsat() {
-                        next.push(x);
-                    }
-                }
-            }
-            terms = merge_atoms(next);
-            if terms.len() > MAX_EXCLUSIVE_ATOMS {
-                return None;
-            }
-            if terms.is_empty() {
-                return Some(terms);
-            }
+        if terms.is_empty() {
+            return Some(terms);
         }
     }
     Some(terms)
@@ -291,42 +365,119 @@ fn subtract_exact(
 /// is returned unchanged. When some member of `minus` is the literal any-hand atom (a system
 /// stop's pass), nothing is left and the empty `Or` is returned without any DNF work.
 pub fn subtract(base: &HandConstraint, minus: &[&HandConstraint]) -> HandConstraint {
-    subtract_with(base, minus, None)
+    subtract_with(base, minus, None, false)
 }
 
-/// [`subtract`], reading and storing the members' DNFs in `cache` when given.
+/// [`subtract`], reading and storing the members' DNFs (and, when `base_in_cache`, the base's)
+/// in `cache` when given. Every constraint read through the cache must be borrowed from the
+/// `SystemIR` the cache belongs to (see [`DnfCache`]).
 fn subtract_with(
     base: &HandConstraint,
     minus: &[&HandConstraint],
     cache: Option<&mut DnfCache>,
+    base_in_cache: bool,
 ) -> HandConstraint {
+    let (shapes, hcp) = (base.shapes(), base.hcp_range());
     let kept: Vec<&HandConstraint> = minus
         .iter()
         .copied()
-        .filter(|m| !summaries_disjoint(base, m))
+        .filter(|m| !summaries_disjoint(shapes, &hcp, m))
         .collect();
+    subtract_kept(base, &kept, cache, base_in_cache)
+}
+
+/// The rest of [`subtract_with`] once the members whose summaries are disjoint from `base` have
+/// been dropped (`kept`, in order).
+fn subtract_kept(
+    base: &HandConstraint,
+    kept: &[&HandConstraint],
+    cache: Option<&mut DnfCache>,
+    base_in_cache: bool,
+) -> HandConstraint {
     if kept.is_empty() {
         return base.clone();
     }
     if kept.iter().any(|m| is_any_atom(m)) {
         return HandConstraint::Or(Vec::new());
     }
-    match subtract_exact(base, &kept, cache) {
+    match subtract_exact(base, kept, cache, base_in_cache) {
         Some(atoms) if atoms.len() == 1 => {
             HandConstraint::Atom(atoms.into_iter().next().expect("one atom"))
         }
         Some(atoms) => HandConstraint::Or(atoms.into_iter().map(HandConstraint::Atom).collect()),
-        None => subtract_tree(base, &kept),
+        None => subtract_tree(base, kept),
     }
 }
 
+/// A multiplicative hasher for the build's internal maps (pointer keys and sibling lists).
+#[derive(Default, Clone, Copy)]
+struct FastHasher(u64);
+
+impl FastHasher {
+    fn add(&mut self, x: u64) {
+        self.0 = (self.0.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+}
+
+impl Hasher for FastHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.add(u64::from(b));
+        }
+    }
+
+    fn write_u8(&mut self, x: u8) {
+        self.add(u64::from(x));
+    }
+
+    fn write_u16(&mut self, x: u16) {
+        self.add(u64::from(x));
+    }
+
+    fn write_u32(&mut self, x: u32) {
+        self.add(u64::from(x));
+    }
+
+    fn write_u64(&mut self, x: u64) {
+        self.add(x);
+    }
+
+    fn write_usize(&mut self, x: usize) {
+        self.add(x as u64);
+    }
+}
+
+type FastMap<K, V> = HashMap<K, V, BuildHasherDefault<FastHasher>>;
+
 /// The exact DNF atoms ([`exact_atoms`]) of the constraints subtracted during one
-/// [`ExclusiveIndex::build`], keyed by address: every subtracted constraint there is a node's
-/// constraint (or one of its top-level branches) of the `SystemIR` the build borrows, so an
-/// address names one unchanging constraint for the cache's lifetime. A member ranked above many
-/// others is subtracted once per lower piece; this converts it once.
+/// [`ExclusiveIndex::build`], and the negation chains of those atoms, keyed by address: every
+/// constraint read through the cache there is a node's constraint (or one of its top-level
+/// branches) of the `SystemIR` the build borrows, so an address names one unchanging constraint
+/// for the cache's lifetime. A member ranked above many others is subtracted once per lower
+/// piece; this converts it (and negates each of its atoms) once. A branch's DNF computed as a
+/// piece's base is reused when the branch is subtracted.
 #[derive(Default)]
-struct DnfCache(HashMap<*const HandConstraint, Option<Vec<Atom>>>);
+struct DnfCache(FastMap<*const HandConstraint, Option<MemberDnf>>);
+
+impl DnfCache {
+    fn with_capacity(n: usize) -> DnfCache {
+        DnfCache(FastMap::with_capacity_and_hasher(
+            n,
+            BuildHasherDefault::default(),
+        ))
+    }
+
+    /// The cached DNF of `c` (computed on a miss).
+    fn member(&mut self, c: &HandConstraint) -> &mut Option<MemberDnf> {
+        self.0
+            .entry(core::ptr::from_ref(c))
+            .or_insert_with(|| MemberDnf::of(c))
+    }
+}
 
 /// `true` for the literal any-hand atom [`HandConstraint::ANY`] (every hand satisfies it).
 fn is_any_atom(c: &HandConstraint) -> bool {
@@ -338,10 +489,11 @@ fn is_any_atom(c: &HandConstraint) -> bool {
 /// Members of `minus` whose summaries are disjoint from `base` are dropped first; with nothing
 /// left, `base` is returned unchanged.
 pub fn subtract_tree(base: &HandConstraint, minus: &[&HandConstraint]) -> HandConstraint {
+    let (shapes, hcp) = (base.shapes(), base.hcp_range());
     let mut kept = minus
         .iter()
         .copied()
-        .filter(|m| !summaries_disjoint(base, m))
+        .filter(|m| !summaries_disjoint(shapes, &hcp, m))
         .cloned();
     let Some(first) = kept.next() else {
         return base.clone();
@@ -474,20 +626,63 @@ impl ExclusiveGroup {
         siblings: &[(Call, NodeId)],
         dnf: &mut DnfCache,
     ) -> ExclusiveGroup {
+        /// The shape/HCP summary a subtracted constraint is tested against (see
+        /// [`summaries_disjoint`]).
+        struct Summarised<'a> {
+            c: &'a HandConstraint,
+            shapes: ShapeSet,
+            hcp: RangeInclusive<u8>,
+        }
+        impl<'a> Summarised<'a> {
+            fn of(c: &'a HandConstraint) -> Summarised<'a> {
+                Summarised {
+                    c,
+                    shapes: c.shapes(),
+                    hcp: c.hcp_range(),
+                }
+            }
+            /// `!summaries_disjoint(self, m)`, from both precomputed summaries.
+            fn may_meet(&self, m: &Summarised<'_>) -> bool {
+                !self.shapes.intersect(m.shapes).is_empty()
+                    && self.hcp.start().max(m.hcp.start()) <= self.hcp.end().min(m.hcp.end())
+            }
+        }
+
         let mut members = siblings.to_vec();
         members.sort_by(|a, b| rank_cmp(sys, *a, *b));
+        // Every member's summary, computed once for the group (each member is tested against
+        // every lower-ranked piece).
+        let all: Vec<Summarised<'_>> = members
+            .iter()
+            .map(|&(_, id)| Summarised::of(&sys.node(id).constraint))
+            .collect();
+        let mut kept: Vec<&HandConstraint> = Vec::with_capacity(all.len());
         let mut per_call: Vec<(Call, Vec<ExclusivePiece>)> = Vec::new();
         for (i, &(call, node)) in members.iter().enumerate() {
-            let above: Vec<&HandConstraint> = members[..i]
-                .iter()
-                .map(|&(_, id)| &sys.node(id).constraint)
-                .collect();
-            let branches = branches_of(&sys.node(node).constraint);
+            let constraint = &sys.node(node).constraint;
+            let branches: Vec<Summarised<'_>> = match constraint {
+                HandConstraint::Or(branches) if !branches.is_empty() => {
+                    branches.iter().map(Summarised::of).collect()
+                }
+                _ => vec![Summarised {
+                    c: constraint,
+                    shapes: all[i].shapes,
+                    hcp: all[i].hcp.clone(),
+                }],
+            };
             let mut pieces = Vec::new();
             for (j, branch) in branches.iter().enumerate() {
-                let mut minus: Vec<&HandConstraint> = branches[..j].to_vec();
-                minus.extend(above.iter().copied());
-                let constraint = subtract_with(branch, &minus, Some(dnf));
+                // `subtract(branch_j, [branch_0..j, every higher-ranked member])`, the members
+                // whose summaries are disjoint from the branch dropped first.
+                kept.clear();
+                kept.extend(
+                    branches[..j]
+                        .iter()
+                        .chain(&all[..i])
+                        .filter(|m| branch.may_meet(m))
+                        .map(|m| m.c),
+                );
+                let constraint = subtract_kept(branch.c, &kept, Some(dnf), true);
                 if is_empty_or(&constraint) {
                     continue;
                 }
@@ -508,11 +703,11 @@ impl ExclusiveGroup {
                 None => per_call.push((call, pieces)),
             }
         }
-        let all: Vec<&HandConstraint> = members
-            .iter()
-            .map(|&(_, id)| &sys.node(id).constraint)
-            .collect();
-        let mut complement = subtract(&HandConstraint::ANY, &all);
+        let any_hand = HandConstraint::ANY;
+        let any = Summarised::of(&any_hand);
+        kept.clear();
+        kept.extend(all.iter().filter(|m| any.may_meet(m)).map(|m| m.c));
+        let mut complement = subtract_kept(&any_hand, &kept, Some(dnf), false);
         if grid_proves_empty(&complement) {
             complement = HandConstraint::Or(Vec::new());
         }
@@ -563,10 +758,14 @@ pub fn grid_proves_empty(c: &HandConstraint) -> bool {
 }
 
 /// `true` when the (shape, HCP) box of `a` contains a feasible cell (its `cards`/`eval`
-/// literals are ignored, as in the superset bound).
+/// literals are ignored, as in the superset bound): some shape of the box can hold an HCP total
+/// in its range, which is `HcpShapeGrid::of_atom_box(a).intersects(HcpShapeGrid::feasible())`
+/// without building the grids (a shape's feasible HCP values are the interval of its per-suit
+/// bounds).
 fn atom_box_is_feasible(a: &Atom) -> bool {
-    use bridge_constraint::grid::HcpShapeGrid;
-    HcpShapeGrid::of_atom_box(a).intersects(HcpShapeGrid::feasible())
+    !a.shapes
+        .holding_hcp_in(*a.hcp.start(), *a.hcp.end())
+        .is_empty()
 }
 
 /// `true` for an atom or an `Or` of atoms.
@@ -581,12 +780,26 @@ fn is_flat(c: &HandConstraint) -> bool {
 /// The derived index of exclusive regions of a [`SystemIR`]: one [`ExclusiveGroup`] per
 /// `(parent trie position, condition class)` with at least one candidate, groups with identical
 /// member lists shared.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct ExclusiveIndex {
     /// `(parent trie position, condition class, group)`, sorted by the first two.
     keys: Vec<(u32, u8, u32)>,
     /// Deduplicated groups.
     groups: Vec<ExclusiveGroup>,
+    /// `keys[starts[p]..starts[p + 1]]` are the keys of trie position `p` (one entry per trie
+    /// position, plus one): [`ExclusiveIndex::group`] reads a position's keys directly instead of
+    /// searching all of them.
+    starts: Vec<u32>,
+}
+
+impl core::fmt::Debug for ExclusiveIndex {
+    /// The keys and the groups (`starts` is a lookup table derived from the keys).
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ExclusiveIndex")
+            .field("keys", &self.keys)
+            .field("groups", &self.groups)
+            .finish()
+    }
 }
 
 /// Counts describing a built [`ExclusiveIndex`] (diagnostics, compile tracing and the lane-S
@@ -625,8 +838,8 @@ impl ExclusiveIndex {
     pub fn build(sys: &SystemIR) -> ExclusiveIndex {
         let mut keys = Vec::new();
         let mut groups: Vec<ExclusiveGroup> = Vec::new();
-        let mut seen: HashMap<Vec<(Call, NodeId)>, u32> = HashMap::new();
-        let mut dnf = DnfCache::default();
+        let mut seen: FastMap<Vec<(Call, NodeId)>, u32> = FastMap::default();
+        let mut dnf = DnfCache::with_capacity(2 * sys.nodes.len());
         let mut intern = |mut children: Vec<(Call, NodeId)>| -> u32 {
             children.sort_by(|a, b| rank_cmp(sys, *a, *b));
             match seen.get(&children) {
@@ -664,7 +877,18 @@ impl ExclusiveIndex {
             }
         }
         keys.sort_unstable();
-        ExclusiveIndex { keys, groups }
+        let mut starts = vec![0u32; sys.index.len() + 1];
+        for &(p, _, _) in &keys {
+            starts[p as usize + 1] += 1;
+        }
+        for p in 1..starts.len() {
+            starts[p] += starts[p - 1];
+        }
+        ExclusiveIndex {
+            keys,
+            groups,
+            starts,
+        }
     }
 
     /// Every key: `(parent trie position, condition class, group)`, sorted by position then
@@ -722,10 +946,17 @@ impl ExclusiveIndex {
     /// The group at trie position `parent` for condition class `class` (see
     /// [`condition_class`]), `None` when that position has no candidate under the class.
     pub fn group(&self, parent: TrieId, class: u8) -> Option<&ExclusiveGroup> {
-        self.keys
-            .binary_search_by(|&(p, c, _)| (p, c).cmp(&(parent.0, class)))
-            .ok()
-            .map(|i| &self.groups[self.keys[i].2 as usize])
+        let p = parent.0 as usize;
+        let (&lo, &hi) = (self.starts.get(p)?, self.starts.get(p + 1)?);
+        let keys = &self.keys[lo as usize..hi as usize];
+        // A position keyed under all 16 classes (the common, unconditioned case) holds them in
+        // class order.
+        let at = if keys.len() == 16 && class < 16 {
+            usize::from(class)
+        } else {
+            keys.binary_search_by_key(&class, |&(_, c, _)| c).ok()?
+        };
+        Some(&self.groups[keys[at].2 as usize])
     }
 
     /// [`ExclusiveIndex::group`] for `(opener_pos, vul)`.
@@ -905,6 +1136,35 @@ mod tests {
         for class in 0u8..16 {
             let (pos, vul) = class_conditions(class);
             assert_eq!(condition_class(pos, vul), class);
+        }
+    }
+
+    /// The mask test of `atom_box_is_feasible` is the grid test it replaces.
+    #[test]
+    fn atom_box_feasibility_matches_the_grid() {
+        use bridge_constraint::grid::HcpShapeGrid;
+        use bridge_core::Suit;
+        let sets = [
+            ShapeSet::ALL,
+            ShapeSet::BALANCED,
+            ShapeSet::EMPTY,
+            ShapeSet::from_suit_len(Suit::Spades, 13, 13),
+            ShapeSet::from_suit_len(Suit::Hearts, 8, 13),
+            ShapeSet::from_suit_len(Suit::Clubs, 0, 0),
+        ];
+        for shapes in sets {
+            for lo in 0..=40u8 {
+                for hi in 0..=40u8 {
+                    let a = Atom {
+                        shapes,
+                        hcp: lo..=hi,
+                        cards: Vec::new(),
+                        eval: Vec::new(),
+                    };
+                    let grid = HcpShapeGrid::of_atom_box(&a).intersects(HcpShapeGrid::feasible());
+                    assert_eq!(atom_box_is_feasible(&a), grid, "{lo}..={hi}");
+                }
+            }
         }
     }
 
