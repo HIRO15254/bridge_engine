@@ -304,6 +304,32 @@ fn negative_double_is_responders_first_turn_only() {
     }
 }
 
+#[test]
+fn responders_later_double_after_own_call_shows_extra_values() {
+    // After responder's own call (a negative double, a new suit): a king more than a negative
+    // double at that level (6 + 2 x (level - 1)).
+    for (calls, min) in [
+        ("1C 1H X 2D P P X", 11),  // a second double, over a two-level bid
+        ("1D 1H 1S 2H P P X", 11), // after a one-level response
+        ("1C P 1H 1S P P X", 9),   // over a one-level bid
+    ] {
+        let (ctx, inf) = last(calls);
+        assert_eq!(ctx.kind, CallKind::Double(DoubleKind::Negative), "{calls}");
+        assert!(ctx.owner_acted, "{calls}");
+        assert_eq!(inf.rule, "competitive_x", "{calls}");
+        assert_eq!(inf.constraint.hcp_range(), min..=37, "{calls}");
+    }
+    let (_, inf) = last("1C 1H X 2D P P X");
+    assert!(inf.constraint.satisfies(hand("K32", "A32", "Q432", "Q32"))); // 11 hcp
+    assert!(!inf.constraint.satisfies(hand("K32", "A32", "J432", "Q32"))); // 10 hcp
+    // After responder's first pass no rule describes the double.
+    for calls in ["1H 1S P 2S P P X", "2D P P 2H P P X"] {
+        let (ctx, inf) = last(calls);
+        assert!(!ctx.owner_acted, "{calls}");
+        assert_eq!(inf.rule, "fallback", "{calls}");
+    }
+}
+
 // --- a defender's second takeout double (SECOND_TAKEOUT_DOUBLE_EXTRA) --------------------------
 
 #[test]

@@ -911,6 +911,7 @@ impl NaturalInference {
             .or_else(|| rule_takeout_x(p, ctx, ex))
             .or_else(|| rule_penalty_x(p, ctx, ex))
             .or_else(|| rule_negative_x(p, ctx, ex))
+            .or_else(|| rule_competitive_x(p, ctx, ex))
             .or_else(|| rule_raise(p, ctx, ex))
             .or_else(|| rule_new_suit_resp_1(p, ctx, ex))
             .or_else(|| rule_new_suit_resp_2(p, ctx, ex))
@@ -1420,7 +1421,7 @@ fn is_first_overcall(ctx: &CallContext) -> bool {
 /// - a four-level first entry (over a raise to the three level or to four of a minor, and
 ///   also over their 3NT or four of a major: `(1H)-P-(4H)-4S`) needs what SAYC's own
 ///   competitive tables ask for there (`systems/sayc/competing.bml`): a six-card suit and
-///   opening values ([`four_level_entry`]: 6+ cards and 12-16 HCP with the default
+///   opening values (`four_level_entry`: 6+ cards and 12-16 HCP with the default
 ///   parameters), a king less (9-16) in the balancing seat below their game. Over their game
 ///   the pass-out seat is not a balance, so it keeps 12-16;
 /// - a first entry at the five level or higher (over their `4C`/`4D`, or over their game:
@@ -1439,7 +1440,7 @@ pub const FOUR_LEVEL_ENTRY_MIN_LEN: u8 = 6;
 /// (`overcall[2]`: a weak-two hand).
 ///
 /// A single jump to the four level (`(2S)-4H`, `(3C)-4H`, `(1H)-P-(2NT)-4C`) is not a weak-two
-/// hand: it shows the four-level entry's six cards and opening values ([`four_level_entry`]:
+/// hand: it shows the four-level entry's six cards and opening values (`four_level_entry`:
 /// 6+ cards, 12-16 HCP, 9-16 in the balancing seat with the default parameters). A single
 /// jump to the five level or higher (`(3S)-5C`, `(3H)-P-(4NT)-6C`) is not described.
 pub const MAX_JUMP_OVERCALL_LEVEL: u8 = 3;
@@ -1703,15 +1704,64 @@ fn rule_penalty_x(_p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inf
 /// The negative double is that call. A later double by responder (after a first response, a
 /// first negative double, or a first pass: `1C (1H) X (2D) P (P) X`, `1H (1S) P (2S) P (P) X`,
 /// `2D (P) P (2H) P (P) X`) is classified `Negative` by the §8.2 order but is not a negative
-/// double: responder has already described the hand, so the double shows the extra values or
-/// the trumps that the first call could not, which `negative_x`'s range does not say. No rule
-/// fires there, so the natural policy passes (docs/design/06-system.md §8.3).
+/// double, whose range (6+, an unbid major) it does not have:
+///
+/// - after responder's own non-pass call, it is `competitive_x` ([`rule_competitive_x`]):
+///   the first call showed a minimum, so the double shows [`LATER_RESPONDER_DOUBLE_EXTRA`]
+///   points more than a negative double at that level;
+/// - after responder's first pass (a weak hand, a trap pass, or a pass of partner's weak two)
+///   it can be a balancing takeout double or a penalty double with the hand the pass hid; no
+///   rule describes it, so the natural policy passes (docs/design/06-system.md §8.3).
 fn responders_first_turn_over_overcall(ctx: &CallContext) -> bool {
     ctx.role == Role::Responder
         && ctx.partner_actions == 1
         && matches!(ctx.partner_last, Some(Call::Bid(_)))
         && ctx.partner_last == ctx.partner_first_action
         && matches!(ctx.rho_last, Some(Call::Bid(_)))
+}
+
+/// The minimum HCP of a negative double of a bid at the level of `ctx.last_bid`:
+/// `response.new_suit_1.1 + 2 × (level − 1)` (6 at the one level, 8 at the two level).
+fn negative_double_min_hcp(p: &NaturalParams, ctx: &CallContext) -> u8 {
+    let their_level = ctx.last_bid.map(|b| b.level()).unwrap_or(1);
+    p.response
+        .new_suit_1
+        .1
+        .saturating_add(2u8.saturating_mul(their_level.saturating_sub(1)))
+}
+
+/// Extra HCP over the negative double's minimum at the same level
+/// (`response.new_suit_1.1 + 2 × (level − 1)`) that responder's later double shows after
+/// responder's own non-pass call (rule `competitive_x`): a king more, like
+/// [`SECOND_TAKEOUT_DOUBLE_EXTRA`] for a defender. docs/design/06-system.md §8.3.
+pub const LATER_RESPONDER_DOUBLE_EXTRA: u8 = 3;
+
+/// Responder's later double after responder's own non-pass call (a first response or a first
+/// negative double): `1C (1H) X (2D) P (P) X`, `1D (1H) 1S (2H) P (P) X`. The §8.2 order
+/// classifies it `Negative`, but it is not a negative double
+/// ([`responders_first_turn_over_overcall`]). Responder has shown a minimum already, and with
+/// no more than that passes or bids again; the double is competitive and shows the values
+/// the first call could not: [`LATER_RESPONDER_DOUBLE_EXTRA`] more than a negative double at
+/// that level (9+ over a one-level bid, 11+ over a two-level bid). Strength only: the double
+/// may be for takeout or for penalty, which the auction alone does not tell.
+fn rule_competitive_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
+    if ctx.call != Call::Double
+        || ctx.role != Role::Responder
+        || !ctx.owner_acted
+        || responders_first_turn_over_overcall(ctx)
+    {
+        return None;
+    }
+    let CallKind::Double(DoubleKind::Negative) = ctx.kind else {
+        return None;
+    };
+    let min_hcp = negative_double_min_hcp(p, ctx).saturating_add(LATER_RESPONDER_DOUBLE_EXTRA);
+    Some(Inference {
+        constraint: HandConstraint::Atom(Atom::ANY.with_hcp(min_hcp..=37)),
+        confidence: 0.4,
+        rule: "competitive_x",
+        explanation: expl!(ex, "responder's competitive double: {min_hcp}+ hcp"),
+    })
 }
 
 fn rule_negative_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
@@ -1724,12 +1774,7 @@ fn rule_negative_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inf
     if !responders_first_turn_over_overcall(ctx) {
         return None;
     }
-    let their_level = ctx.last_bid.map(|b| b.level()).unwrap_or(1);
-    let min_hcp = p
-        .response
-        .new_suit_1
-        .1
-        .saturating_add(2u8.saturating_mul(their_level.saturating_sub(1)));
+    let min_hcp = negative_double_min_hcp(p, ctx);
     // Only the major(s) neither side has bid yet count: holding length in the suit the
     // opponents just showed (their overcall) says nothing about an unbid major. Where the new
     // suits are still available at the 1 level the double is what they are not (SAYC):
@@ -2061,7 +2106,7 @@ fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
 }
 
 /// The minimum length a notrump opener shows by bidding again a suit it bid after the opening
-/// ([`rule_rebid_own_after_notrump`]).
+/// (rule `rebid_own`, docs/design/06-system.md §8.3).
 pub const NT_OPENER_SUIT_MIN_LEN: u8 = 3;
 
 /// The HCP range of `owner`'s notrump opening (`nt[L]` for the opening's level `L`), or `None`
