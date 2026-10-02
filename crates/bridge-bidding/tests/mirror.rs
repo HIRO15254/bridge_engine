@@ -4,7 +4,8 @@
 //!   `exp(log_scale) · Σ_i w_i · 1[h ∈ C_i]` equals `call_distribution(h)[c]`. Pieces with
 //!   `cards`/`eval` literals may over-cover (the density is then an upper bound); under-cover is
 //!   never allowed.
-//!   Besides the four main cells (SAYC-generated and corpus positions, `δ ∈ {0, 0.3}`), the
+//!   Besides the main cells (SAYC-generated and corpus positions at the fixed test points
+//!   `δ ∈ {0, 0.3}`, and at the fitted `PolicyParams::human()`, whose `ε` is large), the
 //!   variant cells cover `ImplicitPass::Never` (the `N_sys` piece and the natural region without
 //!   the natural implicit pass), positions whose prefix has calls substituted by random legal
 //!   calls (lenient `Partial` resolutions and the run-time recompute of `X_c`), and a
@@ -248,6 +249,7 @@ fn run_mirror(positions: u64, hands: usize, seed: u64) -> Vec<(String, Stats)> {
     for (name, policy) in [
         ("delta=0", PolicyParams::system_players()),
         ("delta=0.3", HUMAN_LIKE),
+        ("human", PolicyParams::human()),
     ] {
         let ctx = policy_ctx(&table, policy);
         run_cells(
@@ -349,7 +351,7 @@ fn assert_mirror(results: &[(String, Stats)], min_exact: f64) {
     }
 }
 
-/// Default suite: 150 positions × 40 hands per (source, δ).
+/// Default suite: 150 positions × 40 hands per (source, preset).
 #[test]
 fn policy_mirror() {
     assert_mirror(&run_mirror(150, 40, 0x4D1_2202), 0.99);
@@ -363,7 +365,7 @@ fn policy_mirror_variants() {
     assert_mirror(&run_mirror_variants(60, 20, 0x4D1_2204), 0.97);
 }
 
-/// The large run: 2000 positions × 100 hands per (source, δ), then the variant cells at 500
+/// The large run: 2000 positions × 100 hands per (source, preset), then the variant cells at 500
 /// positions × 50 hands.
 #[test]
 #[ignore = "2000 positions x 100 hands; run with `cargo test --release -- --ignored`"]

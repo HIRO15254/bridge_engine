@@ -1295,7 +1295,10 @@ fn headline_counts_an_auction_that_many_deals_reproduce() {
 /// deal by `exp(ln L - max)` of `AuctionPolicy`, so the weights vary (ESS < kept) and the rate
 /// is the likelihood-weighted one; unit weights keep the same deals but overcount the deviation
 /// pieces, whose deals the policy mostly bids differently. On the passed-out auction the
-/// weighted rate is well above the unweighted one (about 0.83 against 0.55 at 1000 kept deals).
+/// weighted rate is above the unweighted one: 0.931 against 0.835 at the 200 kept deals here
+/// under the fitted preset (`ε = 0.3404`, `δ = 0.3959`). The margin is preset-dependent: the
+/// phase-4 placeholder (`ε = 0.01`, `δ = 0.3`) weighted a deviation call about 2.3 times below
+/// a system call and gave 0.948, the fitted preset about 1.5 times, so 0.05 is asserted.
 #[test]
 fn policy_weighted_rejection_follows_the_likelihood() {
     let table = common::compile_sayc("sayc.bml");
@@ -1349,7 +1352,7 @@ fn policy_weighted_rejection_follows_the_likelihood() {
         weighted.rate.expect("deals kept"),
         unit.rate.expect("deals kept"),
     );
-    assert!(w > u + 0.1, "weighted rate {w} vs unweighted {u}");
+    assert!(w > u + 0.05, "weighted rate {w} vs unweighted {u}");
 }
 
 /// Every generated fixture auction's true deal lies in the strict mirror support at every seat

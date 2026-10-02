@@ -2008,6 +2008,9 @@ fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path, files: &[Strin
         .collect();
     let human = PolicyParams::human();
     let sp = PolicyParams::system_players();
+    // The phase-4 placeholder `human()` (before the integration set it to the fit), kept so
+    // that `tune_log_likelihood_at_placeholder_human` stays comparable across reports.
+    let (placeholder_eps, placeholder_delta) = (0.01, 0.3);
 
     json!({
         "files": n_files,
@@ -2040,7 +2043,13 @@ fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path, files: &[Strin
             "log_likelihood_per_call": ll / n_tune.max(1) as f64,
             "eval_calls": n_eval,
             "eval_log_likelihood_at_mle": log_lik(&obs_eval, eps_hat, delta_hat),
-            "tune_log_likelihood_at_placeholder_human": log_lik(&obs_tune, f64::from(human.epsilon), f64::from(human.deviation)),
+            "human": {
+                "epsilon": f64::from(human.epsilon),
+                "deviation": f64::from(human.deviation),
+            },
+            "tune_log_likelihood_at_human": log_lik(&obs_tune, f64::from(human.epsilon), f64::from(human.deviation)),
+            "eval_log_likelihood_at_human": log_lik(&obs_eval, f64::from(human.epsilon), f64::from(human.deviation)),
+            "tune_log_likelihood_at_placeholder_human": log_lik(&obs_tune, placeholder_eps, placeholder_delta),
             "tune_log_likelihood_at_system_players": log_lik(&obs_tune, f64::from(sp.epsilon), f64::from(sp.deviation)),
             "curve_delta_at_eps_hat": delta_curve,
             "curve_eps_at_delta_hat": eps_curve,
