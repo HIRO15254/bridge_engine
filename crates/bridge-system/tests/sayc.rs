@@ -653,3 +653,213 @@ fn sayc_stops_under_forcing_calls_are_only_the_known_rebid_sinks() {
         "StopUnderForcing positions changed: new {new:#?}, fixed (remove from KNOWN) {gone:#?}"
     );
 }
+
+/// `systems/sayc/NOTES.md` #C4 and #P7, and phase 4's `resolve_lenient` investigation
+/// (`docs/design/12-roadmap.md`): a table of ours that follows an opponents' pass needs a trie
+/// edge for every other call they can make at that point -- an `(any)` history line
+/// (`interference-guards.bml`), a table of its own, or the `(any)` step a system stop grafts --
+/// or `resolve_lenient` reads their bid or double "as if they had passed" and applies the table
+/// to an auction it was not written for (lane D2's tables took the corpus lenient count from 1
+/// to 61 this way). No file may leave such a position unguarded, except the files that predate
+/// phase 4's lane D2: their positions are reached rarely (one corpus call, `1NT-(P)-3C-(X)`),
+/// and each keeps at most the number it has now.
+#[test]
+fn sayc_tables_after_their_pass_have_an_edge_for_their_other_calls() {
+    const OLDER_FILE_CEILINGS: &[(&str, usize)] = &[
+        ("competitive-later.bml", 36),
+        ("defense.bml", 3),
+        ("later-rounds.bml", 136),
+        ("notrump.bml", 113),
+        ("preempts.bml", 12),
+        ("rebids.bml", 2),
+        ("strong-2c.bml", 53),
+        ("weak-twos.bml", 12),
+    ];
+    let (ir, _) = compile_sayc("sayc.bml");
+    let names = included_file_names("sayc.bml");
+    let mut by_file: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for (file, position) in unguarded_positions_after_their_pass(ir) {
+        let name = names.get(file).map_or("?", String::as_str);
+        by_file.entry(name).or_default().push(position);
+    }
+    let mut failures = Vec::new();
+    for (file, positions) in &mut by_file {
+        let ceiling = OLDER_FILE_CEILINGS
+            .iter()
+            .find(|(name, _)| name == file)
+            .map_or(0, |&(_, n)| n);
+        if positions.len() > ceiling {
+            positions.sort();
+            failures.push(format!(
+                "{file}: {} positions, at most {ceiling}:\n    {}",
+                positions.len(),
+                positions.join("\n    ")
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "tables of ours after an opponents' pass with no edge for some other call of theirs \
+         (add an `(any)` line for the position, NOTES.md #C4):\n{}",
+        failures.join("\n")
+    );
+}
+
+/// Every position where one of our tables follows an opponents' pass and some other legal call
+/// of theirs has no trie edge, once per position (the opponents' trie node before the pass), as
+/// `(index of the table's file, "<auction> (P) at line N: no edge for <calls>")`.
+///
+/// A node's [`bridge_system::Node::calls`] stores an opponents' wildcard step as a `Pass`
+/// filler, so each candidate node is first given a concrete auction that resolves to it
+/// ([`concrete_calls`]); the probe then tries every legal non-pass call in place of the pass.
+fn unguarded_positions_after_their_pass(ir: &SystemIR) -> Vec<(usize, String)> {
+    use std::collections::{HashMap, HashSet};
+    let combos: Vec<(u8, RelVul)> = (1..=4u8)
+        .flat_map(|pos| {
+            [(false, false), (true, false), (false, true), (true, true)]
+                .map(|(we, they)| (pos, RelVul { we, they }))
+        })
+        .collect();
+    let mut tables_seen = HashSet::new();
+    let mut positions: HashMap<bridge_system::trie::TrieId, Option<(usize, String)>> =
+        HashMap::new();
+    for n in &ir.nodes {
+        let k = n.calls.len();
+        if n.side != Side::Us || n.is_synthesised() || k < 3 || n.calls[k - 2] != Call::Pass {
+            continue;
+        }
+        // The rows of one table share everything but their own call: probe the table once.
+        let table = (
+            n.path[..n.path.len().saturating_sub(1)].to_vec(),
+            n.binding,
+            n.calls[..k - 1].to_vec(),
+        );
+        if !tables_seen.insert(table) {
+            continue;
+        }
+        let we_opened = (k - 1) % 2 == 0;
+        let Some((calls, opener_pos, vul)) = combos.iter().find_map(|&(pos, vul)| {
+            concrete_calls(ir, n, we_opened, pos, vul).map(|calls| (calls, pos, vul))
+        }) else {
+            panic!("node {:?} ({:?}) is unreachable", n.id, n.calls);
+        };
+        if calls[k - 2] != Call::Pass {
+            continue; // reached through a wildcard of theirs, not through their pass
+        }
+        let before = &calls[..k - 2];
+        let resolve = |calls: &[Call]| {
+            ir.index.resolve(&LookupKey {
+                we_opened,
+                calls,
+                opener_pos,
+                vul,
+            })
+        };
+        let at = resolve(before).end;
+        if positions.contains_key(&at) {
+            continue;
+        }
+        let auction = Auction::from_calls(Seat::North, Vulnerability::None, before.iter().copied())
+            .expect("a resolved auction is legal");
+        let missing: Vec<String> = auction
+            .legal_calls()
+            .filter(|&c| c != Call::Pass)
+            .filter(|&c| {
+                let mut probe = before.to_vec();
+                probe.push(c);
+                resolve(&probe).matched_depth < probe.len()
+            })
+            .map(|c| c.to_string())
+            .collect();
+        let found = (!missing.is_empty()).then(|| {
+            let shown: Vec<String> = before
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    if (i % 2 == 0) == we_opened {
+                        c.to_string()
+                    } else {
+                        format!("({c})")
+                    }
+                })
+                .collect();
+            let span = &ir.row(n.row).span;
+            (
+                span.file.0 as usize,
+                format!(
+                    "{}-(P) at line {}: no edge for {}",
+                    shown.join("-"),
+                    span.line,
+                    missing.join(" ")
+                ),
+            )
+        });
+        positions.insert(at, found);
+    }
+    positions.into_values().flatten().collect()
+}
+
+/// A concrete auction (leading passes stripped) that resolves exactly to `n` for
+/// `(opener_pos, vul)`: `n.calls` with each opponents' `Pass` filler tried as a pass first and
+/// then as every other legal call, depth first. Alternatives that reach the same trie node with
+/// the same kind of call lead to the same subtree, so only the first of them is followed.
+fn concrete_calls(
+    ir: &SystemIR,
+    n: &bridge_system::Node,
+    we_opened: bool,
+    opener_pos: u8,
+    vul: RelVul,
+) -> Option<Vec<Call>> {
+    fn kind(c: Call) -> u8 {
+        match c {
+            Call::Pass => 0,
+            Call::Bid(_) => 1,
+            Call::Double => 2,
+            Call::Redouble => 3,
+        }
+    }
+    fn walk(
+        n: &bridge_system::Node,
+        key: &dyn Fn(&[Call]) -> bridge_system::Lookup,
+        auction: &Auction,
+        calls: &mut Vec<Call>,
+        we_opened: bool,
+    ) -> bool {
+        let i = calls.len();
+        if i == n.calls.len() {
+            return key(calls).by_depth[i - 1] == Some(n.id);
+        }
+        let theirs = (i % 2 == 0) != we_opened;
+        let mut candidates = vec![n.calls[i]];
+        if theirs && n.calls[i] == Call::Pass {
+            candidates.extend(auction.legal_calls().filter(|&c| c != Call::Pass));
+        }
+        let mut tried = std::collections::HashSet::new();
+        for c in candidates {
+            let Ok(next) = auction.with(c) else {
+                continue;
+            };
+            calls.push(c);
+            let lookup = key(calls);
+            if lookup.matched_depth == i + 1
+                && tried.insert((lookup.end, kind(c)))
+                && walk(n, key, &next, calls, we_opened)
+            {
+                return true;
+            }
+            calls.pop();
+        }
+        false
+    }
+    let key = |calls: &[Call]| {
+        ir.index.resolve(&LookupKey {
+            we_opened,
+            calls,
+            opener_pos,
+            vul,
+        })
+    };
+    let mut calls = Vec::with_capacity(n.calls.len());
+    let auction = Auction::new(Seat::North, Vulnerability::None);
+    walk(n, &key, &auction, &mut calls, we_opened).then_some(calls)
+}
