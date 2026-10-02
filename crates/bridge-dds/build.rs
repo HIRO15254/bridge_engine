@@ -4,11 +4,14 @@
 //! `vendor/dds-2.9.0/`. When they are absent the crate still builds, with the FFI layer
 //! compiled out (`cfg(dds_vendored)` unset) so that the workspace checks on every machine.
 //!
-//! Threading backend: the vendored sources pick their concurrency implementation from one of
-//! the `DDS_THREADS_*` macros (`ThreadMgr.h` / `System.cpp`); with none defined DDS runs
-//! single-threaded. This crate always defines exactly one: `DDS_THREADS_STL` (`std::thread`,
-//! no extra library, works with MSVC/clang/gcc alike) by default, or `DDS_THREADS_OPENMP` when
-//! the `openmp` feature is enabled (CI only exercises this on Linux/gcc; see `VENDOR.md`).
+//! Threading backend: the vendored sources pick their concurrency implementation from the
+//! `DDS_THREADS_*` macros (`System.cpp`); with none defined DDS runs single-threaded. This crate
+//! always defines `DDS_THREADS_STL` (`std::thread`, no extra library, works with MSVC/clang/gcc
+//! alike). With the `openmp` feature it additionally defines `DDS_THREADS_OPENMP`, once a probe
+//! has found a usable OpenMP runtime (CI only exercises this on Linux/gcc; see `VENDOR.md`).
+//! `System::Reset` then takes the defined backend with the lowest index (`DDS_SYSTEM_THREAD_*`
+//! in `System.cpp`: OpenMP is 2, STL is 5), so OpenMP wins and the STL code stays compiled in
+//! but unused.
 //!
 //! Platform notes (see `docs/design/10-dds.md` D10 and R6/R14):
 //! - The vendored `include/portab.h` (pulled in by every `.cpp` through `dds.h`) is what
