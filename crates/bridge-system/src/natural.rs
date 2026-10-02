@@ -325,6 +325,8 @@ pub struct CallContext {
     /// How many bids (not passes, doubles or redoubles) the opponents have made so far. Two or
     /// more on a first entry means the opponents have exchanged bids (opener and responder).
     pub their_bids: u8,
+    /// The right-hand opponent's call just before this one, if any.
+    pub rho_last: Option<Call>,
 }
 
 /// Classifies call `index` of `auction` from the point of view of its caller.
@@ -363,6 +365,7 @@ struct HistoryContext {
     partner_first: Option<(usize, Call)>,
     partner_first_jump: u8,
     their_bids: u8,
+    rho_last: Option<Call>,
 }
 
 impl HistoryContext {
@@ -453,6 +456,7 @@ impl HistoryContext {
             partner_first,
             partner_first_jump,
             their_bids,
+            rho_last: history.last().copied(),
         }
     }
 
@@ -513,6 +517,7 @@ impl HistoryContext {
             partner_first_action: self.partner_first.map(|(_, c)| c),
             partner_first_jump: self.partner_first_jump,
             their_bids: self.their_bids,
+            rho_last: self.rho_last,
         }
     }
 }
@@ -999,9 +1004,24 @@ impl NaturalInference {
     }
 }
 
+/// The level whose combined target ([`LevelFloor::combined`]) a bid past partner's game needs:
+/// the six level, slam.
+pub const SLAM_LEVEL: u8 = 6;
+
+/// `true` when partner's last call placed the contract at game or higher (3NT, four of a major,
+/// five of a minor, or above) and the right-hand opponent passed it: a natural bid now goes past
+/// partner's game. It is a slam move (or, over 3NT, a correction that overrides partner's
+/// choice), which the natural rules describe only with slam values: [`apply_level_floor`] raises
+/// its combined target to the six level's.
+fn past_partners_game(ctx: &CallContext) -> bool {
+    matches!(ctx.partner_last, Some(Call::Bid(b)) if is_game_or_higher(b))
+        && ctx.rho_last == Some(Call::Pass)
+}
+
 /// Applies `floor` to a natural bid's inference (see [`LevelFloor`]): a continuation bid (the
 /// caller or partner has acted) at a level with a non-zero combined target, with a known
-/// `partner_constraint`, also requires `own HCP >= combined - partner's minimum HCP`.
+/// `partner_constraint`, also requires `own HCP >= combined - partner's minimum HCP`. A bid past
+/// partner's game ([`past_partners_game`]) uses at least the six level's target.
 fn apply_level_floor(
     floor: &LevelFloor,
     ctx: &CallContext,
@@ -1014,7 +1034,11 @@ fn apply_level_floor(
     if !ctx.owner_acted && ctx.partner_actions == 0 {
         return inf;
     }
-    let combined = floor.combined(bid.level(), bid.strain() == Strain::NoTrump);
+    let nt = bid.strain() == Strain::NoTrump;
+    let mut combined = floor.combined(bid.level(), nt);
+    if past_partners_game(ctx) {
+        combined = combined.max(floor.combined(SLAM_LEVEL, nt));
+    }
     if combined == 0 {
         return inf;
     }

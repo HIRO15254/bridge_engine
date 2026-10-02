@@ -1094,6 +1094,7 @@ pub struct CallContext {
     pub partner_first_action: Option<Call>,     // partner's first non-pass call
     pub partner_first_jump: u8,                 // levels skipped by that call when it is a bid (0 otherwise)
     pub their_bids: u8,                         // bids (not P/X/XX) the opponents have made so far
+    pub rho_last: Option<Call>,                 // the right-hand opponent's call just before this one
 }
 
 /// System-independent classification of auction[index] as made by `owner`; unit-testable.
@@ -1210,6 +1211,7 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
   - NT: 3 → 24、4 → 28、5 → 30、6 → 32、7 → 36
 - 表の値 0 は「下限なし」を意味する。`LevelFloor::NONE` はフェーズ 3 の挙動に戻す。
 - オープニング、パートナーが無言のまま自分が初めて行動する場合、`partner_constraint` が無い場合 (素の `classify`) は、下限を課さない。したがって §8.5 の測定 1 と 3 (素の `classify` + `infer`) は、下限の影響を受けない。
+- パートナーの最後のコールがゲーム以上 (3NT、4M、5m 以上) で、RHO がパスした後のビッド (パートナーのゲームを越えるビッド) は、combined を少なくとも 6 レベルの値 (スート 31、NT 32) にする (`SLAM_LEVEL`。下の「後の巡の制限」(2))。
 - `level_floor` は `#[serde(skip)]` である。直列化形式と `IR_FORMAT` は変わらず、復元した IR は既定の表を持つ。
 - 検証 (`natural_metrics.rs` の `level_floor_limits_replay_escalation_2000`): 固定シードの生成配牌 2000 を SAYC + ナチュラル補完で `replay` した。最終コントラクトのレベル分布は次のとおり。
 
@@ -1327,6 +1329,9 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
   - 相手のゲーム (3NT、4M、5m 以上) の上では、どちらの規則も当たらない。例: `1S-P-3S-P-4S-P-P` の 5H (5 枚、7〜16 HCP) はナチュラルなオーバーコールではなく、サクリファイスかリード指示の賭けである。
   - ゲーム未満の 4 レベルは、`systems/sayc/competing.bml` の競り合いの表と同じく、6 枚以上とオープニングの強さが要る (バランシング席では 3 少ない。`FOUR_LEVEL_ENTRY_MIN_LEN`)。ゲーム未満の 5 レベル以上 (`4C`/`4D` の上) は当たらない。
   - `jump_overcall` は 3 レベルまで (`MAX_JUMP_OVERCALL_LEVEL`)。制約 `overcall[2]` はウィーク・ツーの手であり、4 レベルへのシングル・ジャンプ (`(2H)-4C`、`(1H)-P-(2NT)-4C`) はその手ではない。
+- (2) パートナーのゲームを越えるビッド (`SLAM_LEVEL = 6`)。パートナーの最後のコールがゲーム以上で、RHO がパスした後のビッドは、スラムの動きである (3NT の上なら、パートナーの選択を覆す訂正)。レベル下限の combined を少なくとも 6 レベルの値にする (上の「レベル下限」)。
+  - 例: ウィーク・ツーのオープナーがパートナーの 3NT を 4S に直す `2S-P-2NT-P-3S-P-3NT-P-4S`、パートナーのゲーム・レイズの上の `1H-P-1S-P-2S-P-4S-P-5C`。
+  - RHO がビッドかダブルした後は競り合いなので、通常の下限のままにする。
 
 ---
 

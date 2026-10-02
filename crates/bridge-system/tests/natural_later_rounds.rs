@@ -5,6 +5,9 @@
 
 mod common;
 
+use std::ops::RangeInclusive;
+
+use bridge_constraint::{Atom, HandConstraint};
 use bridge_core::{Seat, Vulnerability};
 use bridge_system::natural::{CallContext, Inference, NaturalInference, classify};
 use common::{auction, hand};
@@ -16,6 +19,20 @@ fn last(calls: &str) -> (CallContext, Inference) {
     let ctx = classify(&a, index, a.seat_at(index));
     let inf = NaturalInference::default().infer(&ctx);
     (ctx, inf)
+}
+
+/// Like [`last`], with partner's constraint filled in the way `interpret` does, so the level
+/// floor (§8.6) applies.
+fn last_with_partner(calls: &str, partner_hcp: RangeInclusive<u8>) -> Inference {
+    let a = auction(Seat::North, Vulnerability::None, calls);
+    let index = a.len() - 1;
+    let mut ctx = classify(&a, index, a.seat_at(index));
+    ctx.partner_constraint = Some(HandConstraint::Atom(Atom::ANY.with_hcp(partner_hcp)));
+    NaturalInference::default().infer(&ctx)
+}
+
+fn min_hcp(inf: &Inference) -> u8 {
+    *inf.constraint.hcp_range().start()
 }
 
 // --- first entries after the opponents' exchange (MAX_ENTRY_LEVEL_AFTER_EXCHANGE) -------------
@@ -77,4 +94,25 @@ fn weak_jump_overcall_stops_at_the_three_level() {
         assert_ne!(last(calls).1.rule, "jump_overcall", "{calls}");
     }
     assert_eq!(last("2H P P 3S").1.rule, "jump_overcall");
+}
+
+// --- bids past partner's game (SLAM_LEVEL) -----------------------------------------------------
+
+#[test]
+fn a_bid_past_partners_game_needs_slam_values() {
+    // The weak-two opener pulling partner's 3NT, and opener bidding on over partner's game
+    // raise: the six level's combined target (31) less partner's minimum (12).
+    for calls in ["2S P 2NT P 3S P 3NT P 4S", "1H P 1S P 2S P 4S P 5C"] {
+        let inf = last_with_partner(calls, 12..=37);
+        assert!(
+            min_hcp(&inf) >= 19,
+            "{calls}: {} {}",
+            inf.rule,
+            min_hcp(&inf)
+        );
+    }
+    // Once the right-hand opponent has bid or doubled, the same bid is competitive: the
+    // ordinary level floor (five level: 26 - 12).
+    let inf = last_with_partner("1H P 1S P 2S P 4S X 5C", 12..=37);
+    assert_eq!(min_hcp(&inf), 14, "{}", inf.rule);
 }
