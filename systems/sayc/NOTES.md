@@ -1213,6 +1213,16 @@ P14. **Lane D3: strict [G] through the natural engine's later-round limits** (wi
       which still need an ace-count vocabulary. Strict [C] does not move for P12's reason:
       604 of the subset's 989 default-pass calls are our passes after our own pass in their
       auctions, which only a sink row would count.
+    - Addendum (lane N, 2026-10-02; the entry above is kept as written). Two statements
+      above are wrong. (1) The survey bullet's "no first-action constraint changed":
+      `overcall` and `jump_overcall` apply only to the overcaller's and balancer's first
+      action (`!owner_acted`), so batch 1 changed first-action constraints throughout. The
+      four-level entry after their exchange went from 5 cards and 10-16 hcp to 6 cards and
+      12-16, and first entries over their game and first-round single jumps to the four
+      level or higher lost their rule (lane N describes the four-level ones again, P17).
+      (2) "Left: 105 departing auctions" counts only the default-pass-override category:
+      strict [G] 0.861 means 139 departing auctions (default-pass override 105 with 115
+      overrides; their pass not in the trie 19, exhausted 8, their call not in the trie 7).
 
 P15. **Phase-4 integration after lanes D3, len and perf** (wip/p4int 8669ffd; default
     sizing, release). The merged head passes the six-step gate (debug tests: 818 passed,
@@ -1263,3 +1273,58 @@ P16. **Lane guard: `#EXACTPASS FILE` replaces `interference-guards.bml`** (wip/p
       warning each with them (2,767 -> 2,761, 3,588 -> 3,582). The guards that remain still
       report `SiblingSubset` against an undescribed `(P)` of theirs, at the directive's line,
       exactly as the `(any)` lines did.
+P17. **Lane N: the natural engine's later-round limits revisited** (wip/p4-fixN from wip/p4int
+    441a4e4; default sizing, release). The integration review of lane D3 (natural-1 to
+    natural-9) ruled that the natural choice is both the strict [G] hole detector and the M of
+    `human()`'s mixture, so a call with a sound natural meaning is re-described with the right
+    range rather than silenced. No SAYC row and no BML changed; the fixes are in
+    `crates/bridge-system/src/natural.rs` (06-system.md §8.6, "後の巡の制限の見直し").
+    - Slam floor only for real overrides of partner's final game choice
+      (`overrides_partners_game`): answers to and follow-ups of 4NT/5NT, bids over a forcing
+      game call, and ordinary corrections of partner's 3NT (four of a major, five of a minor
+      in a suit our side bid; five of a minor needs a singleton or void) keep the ordinary
+      floor. A correction to a raise, a notrump opener's suit or the agreed suit needs an
+      eight-card fit with the length partner has shown, so `1NT-P-2H-P-2S-P-3NT-P-4S` is
+      15-17 with three spades while the same pull after Stayman describes no hand. The
+      notrump opener's `rebid_own` is now balanced, its notrump range, 3+ cards.
+    - Four-level entries: `(1H)-P-(4H)-4S` (also over their 3NT) and first-round single
+      jumps to the four level (`(2S)-4H`, `(3C)-4H`, `(3D)-4S`) are described like the
+      four-level entry below game: 6+ cards, 12-16 hcp, 9-16 in the balancing seat below
+      their game. The jump ranks with the overcall (0.35), so the cheaper overcall wins for
+      the same hand. Five-level entries and jumps stay undescribed.
+    - Responder's later double after its own call is `competitive_x` (negative double's
+      minimum + 3: 9+ over a one-level bid, 11+ over a two-level bid); after a first pass it
+      stays undescribed, as does the reopening 1NT (old range 12-14).
+    - The advancer's second takeout double keeps the ordinary 12+ (the +3 is for the
+      overcaller and the balancer: 15+, 12+ in the balancing seat). Corpus check of the +3:
+      8 such doubles, 3 satisfy +3 and 6 would satisfy +0, but +0 is worse on the whole corpus
+      (agreement 1136 -> 1135, ln L -7299.4 -> -7300.7) and on strict [G] (0.848 -> 0.839).
+    - Tests pin every new threshold (`tests/natural_later_rounds.rs`); the natural shadow
+      test allows `[2S] jump_overcall` (every four-level jump there ranks behind the cheaper
+      overcall).
+    - Numbers (441a4e4 -> lane head): strict / raw / stop-audited [G] 0.857 / 0.953 /
+      0.621 -> 0.848 / 0.953 / 0.614 (overrides 115 -> 124: the 3NT-correction exemptions
+      -0.004, the new `competitive_x` -0.005, which finds responders with 11-13 hcp at SAYC
+      default passes); strict [C] 0.487 / 0.469 / 0.475 and raw [C] unchanged. Corpus natural
+      agreement 1136 unchanged; MLE on the tune split epsilon 0.3404 -> 0.3420, delta 0.3959
+      -> 0.3943 (both under 0.01; `PolicyParams::human()` untouched), ln L -7295.9 ->
+      -7299.4. Generated `NoCandidate` 58 -> 59. The 06-system.md §8.5 measurements:
+      measurement 1 SAYC recall / precision 0.7212 / 0.7255 -> 0.7224 / 0.7266, vendor
+      0.5827 / 0.5966 -> 0.5825 / 0.5921; measurement 2 0.2858 -> 0.2835 (contextual 0.3448
+      -> 0.3421, 8,589 -> 8,656 candidates; 9ac0b40 had 0.2812 / 0.3357); measurement 3
+      0.8005 -> 0.8003 (`competitive_x` satisfies 6 of its 10 corpus calls). Level floor on
+      2000 deals: six level or higher 5 -> 6 (0.3%), no seven-level contract. Forward
+      consistency (release, seed `0x5a1c0002`, 10^5): 0 non-gap violations, 4 gap-induced
+      (4 before), 2.0 s at loadavg 9-10. The reproduction fixture did not change.
+    - Held-out seeds (strict [G]): `0x1234` 0.812 -> 0.810, `0xBEEF0001` 0.789 -> 0.786,
+      `0xD00D` 0.782 -> 0.775 (two of three stay under 0.80, as after lane D3).
+    - How much of the limits' strict [G] gain is removed candidates (scratch toggles on the
+      lane head, not committed): all limits off 0.742 (gain +0.106). Restoring only the removed
+      candidates gives 0.791 (-0.057: five-level-and-higher single jumps 0.030, five-level
+      entries after their exchange 0.014, notrump rebids other than opener's rebid 0.013,
+      responder's double after a first pass 0.005; corpus ln L -18.5, agreement +1).
+      Restoring only the re-described ranges gives 0.787 (-0.061: four-level entries 0.030,
+      slam floor 0.022, the second takeout double's +3 0.009, `competitive_x` 0.003; corpus
+      ln L -78.6, agreement -31). So about half the gain comes from removed candidates, all
+      of them either wrong as bridge (a "weak jump" to the five or six level) or without a
+      range that can be fixed; most of the corpus gain comes from the re-described ranges.
