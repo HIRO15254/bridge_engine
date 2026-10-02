@@ -1112,7 +1112,8 @@ P12. **Lane D2: thickening SAYC and extending BML** (wip/p4-D2; default sizing, 
 
 P13. **Final phase-4 integration** (wip/p4int after merging lane D2 as 3c57c37;
     `COMPILE_REVISION` 9, `IR_FORMAT` 3; default sizing, release, 2.9 s at loadavg 6.1 ->
-    5.8). These are the current numbers for this file; P0-P12 record the earlier stages.
+    5.8). These were the current numbers at 3c57c37; P0-P12 record the earlier stages and
+    P14-P17 the later ones.
     - The SAYC data is lane D2's after its review fixes, so the coverage numbers equal
       P12's review-fix numbers: strict [G] 0.745 (745/1000), raw [G] 0.957, stop-audited
       [G] 0.521, 370 swallows in 307 auctions (suit 278, notrump 68, double 24; tops: the
@@ -1141,6 +1142,11 @@ P13. **Final phase-4 integration** (wip/p4int after merging lane D2 as 3c57c37;
       `PolicyParams::human()` still at its placeholder (0.01, 0.3) until the fit above is
       adopted before lane P's ESS freeze. Details and the full table: 12-roadmap.md,
       "フェーズ 4 の最終統合".
+    - Since closed (open as of 3c57c37 only): strict [G] by lane D3 (P14, then P17 for
+      lane N's revision), the index-build budget by the phase-4 performance lane (about
+      8.4 ms; 12-roadmap.md, "フェーズ 4 の性能レーン"), and `PolicyParams::human()` by the
+      fit in P15. Strict [C] subset stays open. The phase-4 closing numbers are in
+      12-roadmap.md, "フェーズ 4 の完了".
 
 P14. **Lane D3: strict [G] through the natural engine's later-round limits** (wip/p4-D3
     from wip/p4int 9ac0b40; default sizing, release, `COVERAGE_OUT` and the new
