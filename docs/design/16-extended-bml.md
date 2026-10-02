@@ -277,7 +277,7 @@ vul = "#VUL" , WS , TRI , TRI ;       TRI = "Y" | "N" | "0" ;
 | その他の `#…` | `UnknownDirective` (Warning) を出して、その行を無視する | |
 
 - `#STOP`、`#ANYORDER`、`#EXACTPASS`、`#HIDE`、`#BIDTABLE` は、表と同じ段落に書く。空行で区切った独立の段落 (`#SEAT` のような書き方) に書くと表を名指さないので効かず、`UnknownDirective` (Warning) が出る。
-- 例外は `#EXACTPASS FILE` で、これは逆に **独立の段落** に書き、同じファイルの後の全ての表に `#EXACTPASS` を書いたのと同じになる (§4.8)。表の段落の中に書くと `UnknownDirective` (Warning) を出して無視する。
+- 例外は `#EXACTPASS FILE` で、これは逆に **独立の段落** に書き、同じファイルの後の全ての表に `#EXACTPASS` を書いたのと同じになる (§4.8)。表の段落の中に書くと `UnknownDirective` (Warning) を出して無視する。正確には、`#` で始まる段落が (`#COPY`/`#CUT`/`#PASTE` を展開した後に) 行を持たなければ、`#EXACTPASS FILE` の行が段落のどこにあっても範囲を開く。同じ段落の `#CUT` はふつうに保存され、`#ANYORDER` などの表の指示子は上の項と同じく効かずに `UnknownDirective` になる (§9.1 の `exactpassfile`)。
 - 履歴の無い表の最上位の `#STOP` は位置を名指さないので、`UnknownDirective` (Warning) を出して無視する。
 
 ```bml
@@ -1756,19 +1756,22 @@ comment     = "//" , { CHAR } ;                     (* only at column 0; the lin
 include     = WS0 , "#" , WS0 , "INCLUDE" , WS0 , PATH , [ WS , { CHAR } ] ;   (* prefix match: "#INCLUDED x" includes "D" *)
 PATH        = CHAR - SP , { CHAR - SP } ;           (* relative to the including file; "/" and "\" both separate *)
 
-(* a paragraph's kind is decided by its first line, in this order *)
+(* a paragraph's kind is decided by its first line, in this order; a first line starting with
+   "#" (none of the above) gives a directivetable or an exactpassfile, told apart by whether the
+   paragraph has a row once its #COPY/#CUT/#PASTE are expanded *)
 paragraph   = heading | list | vulpara | seatpara | enumeration
-            | bidtable | metapara | exactpassfile | directivetable | prose ;
+            | bidtable | metapara | directivetable | exactpassfile | prose ;
 heading     = WS0 , "*" , { CHAR } , { NL , line } ;
 list        = WS0 , "-" , { CHAR } , { NL , line } ;
 vulpara     = WS0 , "#VUL" , WS , TRI , TRI , WS0 , { NL , line } ;
 seatpara    = WS0 , "#SEAT" , WS , SEAT , WS0 , { NL , line } ;
 enumeration = WS0 , DIGIT , { DIGIT } , "." , ( SP | NL ) , { CHAR } , { NL , line } ;
-bidtable    = { directive , NL } , firstrow , { NL , ( row | directive | contline ) } ;
+bidtable    = { directive , NL } , firstrow , { NL , ( row | directive | filedirective | contline ) } ;   (* filedirective here: recovery, UnknownDirective, ignored *)
 metapara    = metaline , { NL , metaline } ;
-directivetable = directive , { NL , ( directive | row | contline ) } ;   (* a table starting with "#..." *)
-exactpassfile  = filedirective , { NL , ( directive | filedirective ) } ;   (* no row: a directivetable without rows; other directives in it: UnknownDirective *)
-filedirective  = WS0 , "#EXACTPASS" , WS , "FILE" , WS0 ;   (* every later table of the same file (one #INCLUDE instance) gets "#EXACTPASS"; inside a bidtable: UnknownDirective, ignored *)
+directivetable = dirline , { NL , ( dirline | row | contline ) } ;   (* a table starting with "#...": at least one row once the clipboard is expanded; filedirective here: recovery, UnknownDirective, ignored. With no row (directives alone) it names no table: #ANYORDER/#EXACTPASS/#STOP/#HIDE/#BIDTABLE in it give one UnknownDirective *)
+exactpassfile  = dirline , { NL , dirline } ;   (* no row once the clipboard is expanded, and a filedirective anywhere in it (not only first): opens the scope. #COPY/#CUT/#PASTE in it are processed as anywhere else (a #CUT is stored without a lint; a #PASTE that brings rows makes the paragraph a directivetable). #ANYORDER/#EXACTPASS/#STOP/#HIDE/#BIDTABLE in it have no effect (one UnknownDirective, as for a directivetable without rows) *)
+dirline        = directive | filedirective ;
+filedirective  = WS0 , "#EXACTPASS" , WS , "FILE" , WS0 ;   (* every later table of the same file (one #INCLUDE instance) gets "#EXACTPASS"; a second one in the same file changes nothing *)
 prose       = line , { NL , line } ;
 
 TRI         = "Y" | "N" | "0" ;

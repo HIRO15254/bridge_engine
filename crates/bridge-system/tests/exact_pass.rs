@@ -780,3 +780,34 @@ fn a_written_pass_after_their_own_call_is_guarded_from_the_call_before_it() {
     assert_eq!(read(&ir, "1C 1S P 2S"), off_system());
     assert_eq!(guards(&ir, 3), 1);
 }
+
+/// The `exactpassfile` paragraph of `docs/design/16-extended-bml.md` §9.1: a `#...` paragraph
+/// with no row once its clipboard directives are expanded opens the scope wherever the line
+/// is; table directives in it have no effect (one `UnknownDirective`); a `#PASTE` that brings
+/// rows makes it a table, where the file form is ignored.
+#[test]
+fn the_file_form_paragraph_follows_the_grammar() {
+    let tables = "\n\n1C-\n1H = 6+ hcp, 4+!h\n";
+    let compile_with = |paragraph: &str| {
+        compile(&format!(
+            "1C = 12--21 hcp, 3+!c\n\n#CUT rows\n1H = 6+ hcp, 4+!h\n#ENDCUT\n\n{paragraph}{tables}"
+        ))
+    };
+    // Not first in the paragraph: still opens the scope; `#ANYORDER` is the orphan.
+    let ir = compile_with("#ANYORDER\n#EXACTPASS FILE");
+    assert_eq!(read(&ir, "1C 1S"), off_system());
+    assert_eq!(count(&ir, LintCode::UnknownDirective), 1);
+    // A `#CUT` block in the paragraph is stored with no lint, before or after the line.
+    for paragraph in [
+        "#CUT more\n1N = 6--10 hcp\n#ENDCUT\n#EXACTPASS FILE",
+        "#EXACTPASS FILE\n#CUT more\n1N = 6--10 hcp\n#ENDCUT",
+    ] {
+        let ir = compile_with(paragraph);
+        assert_eq!(read(&ir, "1C 1S"), off_system(), "{paragraph}");
+        assert_eq!(count(&ir, LintCode::UnknownDirective), 0, "{paragraph}");
+    }
+    // A `#PASTE` that brings rows makes the paragraph a table: the file form is ignored.
+    let ir = compile_with("#EXACTPASS FILE\n#PASTE rows");
+    assert_eq!(count(&ir, LintCode::UnknownDirective), 1);
+    assert_eq!(read(&ir, "1C 1S").0, 1);
+}

@@ -1798,7 +1798,7 @@ mod d2_review {
 }
 
 /// Phase 4's `resolve_lenient` investigation (`docs/design/12-roadmap.md`; the guards are now
-/// `#EXACTPASS FILE` in lane D2's files, `systems/sayc/NOTES.md` #P15): lane D2's tables
+/// `#EXACTPASS FILE` in lane D2's files, `systems/sayc/NOTES.md` #P16): lane D2's tables
 /// describe our call after an opponents' pass, and had no edge for their other calls there, so
 /// `resolve_lenient` read an opponent's bid or double "as if they had passed" and the next call
 /// of ours came out `Partial` against a table written for the uncontested auction (61 corpus
