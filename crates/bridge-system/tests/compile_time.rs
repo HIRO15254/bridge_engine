@@ -110,13 +110,14 @@ fn compiling_sayc_is_fast() {
     );
 }
 
-/// A coarse release-only guard on SAYC's exclusive-index build (the lane-S criterion was
-/// <= 15 ms, met at 12-15 ms by the stop-default SAYC; lane D2's thickened SAYC after its
-/// review fixes, about 9,500 index nodes, measures 19.8-20.0 ms best of 3 at loadavg ~3.9; the
-/// pasted-chain SAYC took 45 ms): best of
-/// 3 must stay under 30 ms, which catches an order-of-magnitude regression without flaking on a
-/// loaded machine. A debug build builds the index once and asserts nothing. Holds the SAYC
-/// timing lock so that its own compile never overlaps `compiling_sayc_is_fast`.
+/// A coarse release-only guard on SAYC's exclusive-index build (the criterion is <= 15 ms;
+/// lane D2's thickened SAYC, about 9,500 index nodes, measured 19.8-20.0 ms best of 3 at
+/// loadavg ~3.9 before the phase-4 performance lane, and 7.8-8.6 ms after it at loadavg 3,
+/// still 8.9-9.8 ms at loadavg 22-24; the pasted-chain SAYC took 45 ms): best of 3 must stay
+/// under 20 ms, about twice the current time: tight enough to flag a return towards the
+/// pre-lane 18-20 ms, loose enough not to flake on a loaded machine. A debug build builds the
+/// index once and asserts nothing. Holds the SAYC timing lock so that its own compile never overlaps
+/// `compiling_sayc_is_fast`.
 #[test]
 fn sayc_exclusive_index_build_is_bounded() {
     let _serial = sayc_timing_lock();
@@ -134,8 +135,8 @@ fn sayc_exclusive_index_build_is_bounded() {
     eprintln!("sayc: exclusive index build {best:?} (best of {rounds})");
     if !cfg!(debug_assertions) {
         assert!(
-            best < Duration::from_millis(30),
-            "SAYC exclusive-index build {best:?} (best of 3) >= 30 ms"
+            best < Duration::from_millis(20),
+            "SAYC exclusive-index build {best:?} (best of 3) >= 20 ms"
         );
     }
 }
