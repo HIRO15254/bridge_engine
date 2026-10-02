@@ -74,4 +74,6 @@ pub const IR_FORMAT: u32 = 3;
 /// row of ours), and the lint `ExactPassWithoutPass`. 11: a position that `#EXACTPASS` tables
 /// under different `#SEAT`/`#VUL` conditions guard gets one guard entry per condition, as a
 /// hand-written `(any)` in each table would (revision 10 kept the first table's condition only).
-pub const COMPILE_REVISION: u32 = 11;
+/// 12: a `#EXACTPASS FILE` line after the first line of a `#SEAT` / `#VUL` paragraph is reported
+/// as `UnknownDirective` (it was dropped silently).
+pub const COMPILE_REVISION: u32 = 12;

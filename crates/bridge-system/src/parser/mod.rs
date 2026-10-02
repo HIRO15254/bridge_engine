@@ -35,6 +35,7 @@ pub fn parse(loaded: Loaded) -> BmlFile {
             ParagraphKind::Enumeration => blocks.push(parse_list(&paragraph, true)),
             ParagraphKind::Seat => {
                 seat = parse_seat(&paragraph, &mut lints);
+                ignored_exact_pass_file(&paragraph, "#SEAT", &mut lints);
                 blocks.push(Block::Seat {
                     cond: seat,
                     span: paragraph[0].span.clone(),
@@ -42,6 +43,7 @@ pub fn parse(loaded: Loaded) -> BmlFile {
             }
             ParagraphKind::Vul => {
                 vul = parse_vul(&paragraph, &mut lints);
+                ignored_exact_pass_file(&paragraph, "#VUL", &mut lints);
                 blocks.push(Block::Vul {
                     cond: vul,
                     span: paragraph[0].span.clone(),
@@ -338,6 +340,27 @@ fn has_row_after_their_pass(history: &[CallToken], rows: &[BmlNode]) -> bool {
 fn is_exact_pass_file(trimmed: &str) -> bool {
     let mut words = trimmed.split_whitespace();
     words.next() == Some("#EXACTPASS") && words.next() == Some("FILE") && words.next().is_none()
+}
+
+/// Reports a `#EXACTPASS FILE` line after the first line of a `#SEAT` / `#VUL` paragraph
+/// (`head` names the directive). Those paragraphs read only their first line, so the line has
+/// no effect; it opens a scope only in a directive or table paragraph (a `#+` meta paragraph
+/// already reports every line that is not `#+KEY: value`).
+fn ignored_exact_pass_file(paragraph: &[RawLine], head: &str, lints: &mut Vec<Lint>) {
+    for line in paragraph.iter().skip(1) {
+        if is_exact_pass_file(line.text.trim_start()) {
+            lints.push(
+                Lint::warning(
+                    LintCode::UnknownDirective,
+                    format!(
+                        "#EXACTPASS FILE inside a {head} paragraph: write it as a paragraph of \
+                         its own before the tables it covers; ignored"
+                    ),
+                )
+                .with_span(line.span.clone()),
+            );
+        }
+    }
 }
 
 /// Whether `pattern` (or one of its alternatives) uses a relative level (`c`, `j`).
@@ -1252,6 +1275,49 @@ mod tests {
             codes("1C-\n#EXACTPASS ALL\n1H  x\n"),
             [LintCode::UnknownDirective]
         );
+    }
+
+    #[test]
+    fn exact_pass_file_in_a_seat_vul_or_meta_paragraph_opens_no_scope() {
+        let table = "\n\n1C-\n1H  x\n";
+        for (paragraph, head) in [
+            ("#SEAT 3\n#EXACTPASS FILE", "#SEAT"),
+            ("#SEAT 3\n  #EXACTPASS   FILE  ", "#SEAT"),
+            ("#VUL YN\n#EXACTPASS FILE", "#VUL"),
+        ] {
+            let file = parse_str(&format!("{paragraph}{table}"));
+            let lints: Vec<(LintCode, u32)> = file
+                .lints
+                .iter()
+                .map(|l| (l.code, l.span.as_ref().map_or(0, |s| s.line)))
+                .collect();
+            assert_eq!(lints, [(LintCode::UnknownDirective, 2)], "{paragraph:?}");
+            assert!(file.lints[0].message.contains(head), "{paragraph:?}");
+            assert_eq!(exact_pass_lines(&file), [0], "{paragraph:?}");
+        }
+        // The first line still sets the condition, and a `#SEAT` / `#VUL` paragraph without
+        // the line, or with other lines (dropped silently), has no lint.
+        let file = parse_str("#SEAT 3\n1C-\n1H  x\n\n1D-\n1H  x\n");
+        assert!(file.lints.is_empty(), "{:?}", file.lints);
+        let file = parse_str("#SEAT 3\n#EXACTPASS FILE\n\n1C-\n1H  x\n");
+        assert!(matches!(
+            file.blocks[0],
+            Block::Seat {
+                cond: SeatCond::Third,
+                ..
+            }
+        ));
+        // A meta paragraph reports every line that is not `#+KEY: value`, this one included.
+        let file = parse_str(&format!("#+TITLE: x\n#EXACTPASS FILE{table}"));
+        assert_eq!(
+            file.lints.iter().map(|l| l.code).collect::<Vec<_>>(),
+            [LintCode::UnknownDirective]
+        );
+        assert!(file.lints[0].message.contains("malformed meta line"));
+        assert_eq!(exact_pass_lines(&file), [0]);
+        // In a directive paragraph of its own, anywhere in it, the line opens the scope.
+        let file = parse_str(&format!("#HIDE\n#EXACTPASS FILE{table}"));
+        assert_eq!(exact_pass_lines(&file), [2]);
     }
 
     #[test]
