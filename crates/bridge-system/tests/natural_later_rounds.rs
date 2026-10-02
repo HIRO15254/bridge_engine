@@ -33,6 +33,15 @@ fn last_with_partner(calls: &str, partner_hcp: RangeInclusive<u8>) -> Inference 
     NaturalInference::default().infer(&ctx)
 }
 
+/// Like [`last_with_partner`], with partner's whole constraint given.
+fn last_with_partner_constraint(calls: &str, partner: Atom) -> Inference {
+    let a = auction(Seat::North, Vulnerability::None, calls);
+    let index = a.len() - 1;
+    let mut ctx = classify(&a, index, a.seat_at(index));
+    ctx.partner_constraint = Some(HandConstraint::Atom(partner));
+    NaturalInference::default().infer(&ctx)
+}
+
 /// Like [`last_with_partner`], with partner's last call forcing (`forcing_situation`).
 fn last_with_partner_forcing(calls: &str, partner_hcp: RangeInclusive<u8>) -> Inference {
     let a = auction(Seat::North, Vulnerability::None, calls);
@@ -209,16 +218,41 @@ fn corrections_of_partners_3nt_keep_the_ordinary_floor() {
     assert!(inf.constraint.satisfies(six_12));
     assert!(!inf.constraint.satisfies(five_12));
     // A 1NT opener choosing the suit after a transfer and partner's 3NT: the notrump range and
-    // three spades (it was 21-21 with six spades under the slam floor).
-    let inf = last_with_partner("1NT P 2H P 2S P 3NT P 4S", 10..=15);
+    // an eight-card fit with partner's five spades (it was 21-21 with six spades under the slam
+    // floor).
+    let five_spades = Atom::ANY
+        .with_hcp(10..=15)
+        .with_suit_len(Suit::Spades, 5..=13);
+    let inf = last_with_partner_constraint("1NT P 2H P 2S P 3NT P 4S", five_spades);
     assert_eq!(inf.rule, "rebid_own");
     assert_eq!(inf.constraint.hcp_range(), 15..=17);
+    assert_eq!(inf.constraint.suit_len(Suit::Spades), 3..=5); // balanced
     assert!(inf.constraint.satisfies(hand("K32", "AQ2", "KJ32", "Q32"))); // 15, three spades
     assert!(!inf.constraint.satisfies(hand("K432", "AQ2", "KJ32", "Q2"))); // two spades
-    // Preference to partner's suit: opener's raise, with the ordinary floor (22 - 10).
-    let inf = last_with_partner("1S P 2H P 2NT P 3NT P 4H", 10..=37);
+    // After Stayman partner's 3NT denies opener's major: no eight-card fit, no hand.
+    let no_spades = Atom::ANY
+        .with_hcp(10..=15)
+        .with_suit_len(Suit::Spades, 0..=3);
+    let inf = last_with_partner_constraint("1NT P 2C P 2S P 3NT P 4S", no_spades);
+    assert_eq!(inf.rule, "rebid_own");
+    assert!(!inf.constraint.is_satisfiable());
+    // Preference to partner's suit: opener's raise, with the ordinary floor (22 - 10) and an
+    // eight-card fit with partner's five hearts.
+    let five_hearts = Atom::ANY
+        .with_hcp(10..=37)
+        .with_suit_len(Suit::Hearts, 5..=13);
+    let inf = last_with_partner_constraint("1S P 2H P 2NT P 3NT P 4H", five_hearts);
     assert_eq!(inf.rule, "raise");
     assert_eq!(inf.constraint.hcp_range(), 12..=15);
+    assert_eq!(inf.constraint.suit_len(Suit::Hearts), 3..=13);
+    // Partner's one-level response showed four spades: a raise needs four.
+    let four_spades = Atom::ANY
+        .with_hcp(13..=37)
+        .with_suit_len(Suit::Spades, 4..=13);
+    let inf = last_with_partner_constraint("1C P 1S P 1NT P 3NT P 4S", four_spades);
+    assert_eq!(inf.rule, "raise");
+    assert_eq!(inf.constraint.suit_len(Suit::Spades), 4..=13);
+    assert!(!inf.constraint.satisfies(hand("AQ32", "QJ2", "A72", "Q93"))); // three spades
     // Five of a minor is the cheapest game bid in the suit, not a jump rebid: the opening's
     // range with the ordinary five-level floor (26 - 13; the slam floor would have made it 18),
     // six diamonds, and a hand unsuited to notrump (a singleton or a void).

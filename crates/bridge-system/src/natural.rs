@@ -1126,15 +1126,44 @@ fn effective_jump(ctx: &CallContext, jump: u8) -> u8 {
     if corrects_partners_3nt(ctx) { 0 } else { jump }
 }
 
-/// `constraint`, and a hand unsuited to notrump when the bid corrects partner's 3NT to five of
-/// a minor ([`corrects_partners_3nt`], [`unsuited_to_notrump`]).
-fn with_correction_shape(ctx: &CallContext, constraint: HandConstraint) -> HandConstraint {
-    let minor = ctx.call.bid().is_some_and(|b| b.strain().is_minor());
-    if minor && corrects_partners_3nt(ctx) {
-        constraint.and(unsuited_to_notrump())
-    } else {
-        constraint
+/// `constraint`, with what a correction of partner's 3NT ([`corrects_partners_3nt`]) adds:
+///
+/// - in a minor, a hand unsuited to notrump ([`unsuited_to_notrump`]);
+/// - with `fit` (a correction to a suit whose length the rule does not by itself make a fit:
+///   a raise, a notrump opener's suit, the agreed suit), an eight-card fit with the length
+///   partner has shown ([`eight_card_fit_len`]). After `1NT-P-2H-P-2S-P-3NT` partner has
+///   shown five spades, so three make the fit; after Stayman (`1NT-P-2C-P-2S-P-3NT`) partner
+///   has shown none, and no notrump opener has eight, so the call describes no hand.
+///
+/// The one-suit opener's own six-card suit (`1H-P-3NT-P-4H`) is a correction on its own.
+fn with_correction_shape(
+    ctx: &CallContext,
+    constraint: HandConstraint,
+    fit: bool,
+) -> HandConstraint {
+    let Some(bid) = ctx.call.bid() else {
+        return constraint;
+    };
+    if !corrects_partners_3nt(ctx) {
+        return constraint;
     }
+    let mut constraint = constraint;
+    if bid.strain().is_minor() {
+        constraint = constraint.and(unsuited_to_notrump());
+    }
+    if let (true, Some(suit), Some(len)) = (fit, bid.strain().suit(), eight_card_fit_len(ctx)) {
+        constraint = constraint.and(HandConstraint::Atom(Atom::ANY.with_len(suit, len..=13)));
+    }
+    constraint
+}
+
+/// The fewest cards in the bid suit that make an eight-card fit with partner's shown length
+/// (the minimum of [`CallContext::partner_constraint`] in that suit), or `None` when partner's
+/// constraint is not known or the call is not a suit bid.
+fn eight_card_fit_len(ctx: &CallContext) -> Option<u8> {
+    let suit = ctx.call.bid()?.strain().suit()?;
+    let shown = *ctx.partner_constraint.as_ref()?.suit_len(suit).start();
+    Some(8u8.saturating_sub(shown))
 }
 
 /// Applies `floor` to a natural bid's inference (see [`LevelFloor`]): a continuation bid (the
@@ -1850,6 +1879,7 @@ fn rule_raise(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inferenc
     let constraint = with_correction_shape(
         ctx,
         HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, min_len..=13)),
+        true,
     );
     Some(Inference {
         constraint,
@@ -2094,6 +2124,7 @@ fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
     let constraint = with_correction_shape(
         ctx,
         HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, 6..=13)),
+        false,
     );
     Some(Inference {
         constraint,
@@ -2149,6 +2180,7 @@ fn rule_rebid_own_after_notrump(
                 .with_hcp(hcp.clone())
                 .with_len(suit, NT_OPENER_SUIT_MIN_LEN..=13),
             ),
+            true,
         ),
         confidence: 0.5,
         rule: "rebid_own",
@@ -2207,6 +2239,7 @@ fn rule_reraise_agreed(
         constraint: with_correction_shape(
             ctx,
             HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, min_len..=13)),
+            true,
         ),
         confidence: 0.5,
         rule: "rebid_own",
