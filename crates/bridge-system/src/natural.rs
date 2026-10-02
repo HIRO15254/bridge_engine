@@ -322,6 +322,11 @@ pub struct CallContext {
     /// Levels skipped by `partner_first_action` when it is a bid (0 otherwise), measured like
     /// [`CallKind::Bid::jump`] against the last bid before it.
     pub partner_first_jump: u8,
+    /// `owner`'s own first non-pass call, if any.
+    pub owner_first_action: Option<Call>,
+    /// Levels skipped by `owner_first_action` when it is a bid (0 otherwise), like
+    /// `partner_first_jump`.
+    pub owner_first_jump: u8,
     /// How many bids (not passes, doubles or redoubles) the opponents have made so far. Two or
     /// more on a first entry means the opponents have exchanged bids (opener and responder).
     pub their_bids: u8,
@@ -376,6 +381,8 @@ struct HistoryContext {
     partner_actions: u8,
     partner_first: Option<(usize, Call)>,
     partner_first_jump: u8,
+    owner_first: Option<(usize, Call)>,
+    owner_first_jump: u8,
     their_bids: u8,
     rho_last: Option<Call>,
     owner_last: Option<Call>,
@@ -434,12 +441,18 @@ impl HistoryContext {
             .any(|(i, c)| auction.seat_at(i) == owner && *c != Call::Pass);
         let mut partner_actions = 0u8;
         let mut partner_first: Option<(usize, Call)> = None;
+        let mut owner_first: Option<(usize, Call)> = None;
         for (i, c) in history.iter().enumerate() {
-            if auction.seat_at(i) == owner.partner() && *c != Call::Pass {
+            if *c == Call::Pass {
+                continue;
+            }
+            if auction.seat_at(i) == owner.partner() {
                 partner_actions = partner_actions.saturating_add(1);
                 if partner_first.is_none() {
                     partner_first = Some((i, *c));
                 }
+            } else if auction.seat_at(i) == owner && owner_first.is_none() {
+                owner_first = Some((i, *c));
             }
         }
         let their_bids = history
@@ -475,13 +488,15 @@ impl HistoryContext {
             }
             previous_bid = Some(*b);
         }
-        let partner_first_jump = match partner_first {
+        let first_jump = |first: Option<(usize, Call)>| match first {
             Some((i, Call::Bid(b))) => {
                 let before = history[..i].iter().rev().find_map(|c| c.bid());
                 b.level().saturating_sub(minimal_level(before, b.strain()))
             }
             _ => 0,
         };
+        let partner_first_jump = first_jump(partner_first);
+        let owner_first_jump = first_jump(owner_first);
 
         HistoryContext {
             index,
@@ -504,6 +519,8 @@ impl HistoryContext {
             partner_actions,
             partner_first,
             partner_first_jump,
+            owner_first,
+            owner_first_jump,
             their_bids,
             rho_last: history.last().copied(),
             owner_last,
@@ -569,6 +586,8 @@ impl HistoryContext {
             partner_actions: self.partner_actions,
             partner_first_action: self.partner_first.map(|(_, c)| c),
             partner_first_jump: self.partner_first_jump,
+            owner_first_action: self.owner_first.map(|(_, c)| c),
+            owner_first_jump: self.owner_first_jump,
             their_bids: self.their_bids,
             rho_last: self.rho_last,
             owner_last: self.owner_last,
@@ -1909,6 +1928,10 @@ fn rule_raise(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inferenc
     let suit = bid.strain().suit()?;
     let jump = effective_jump(ctx, jump);
     let (min_len, hcp) = match ctx.role {
+        // A choice of game over opener's 3NT, not a game raise.
+        Role::Responder if corrects_partners_3nt(ctx) => {
+            (p.response.raise.0, responders_first_call_hcp(p, ctx))
+        }
         Role::Responder if bid.level() >= 4 => (p.response.raise.0, 13..=37),
         Role::Responder if jump >= 1 => (p.response.jump_raise.0, p.response.jump_raise.1.clone()),
         Role::Responder => (p.response.raise.0, p.response.raise.1.clone()),
@@ -1934,6 +1957,78 @@ fn rule_raise(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inferenc
             hcp.end()
         ),
     })
+}
+
+/// The HCP range responder's first non-pass call showed, as the natural rules read it, for a
+/// later bid that only chooses the game (a correction of opener's 3NT, [`corrects_partners_3nt`]):
+///
+/// - a one-level new suit: `response.new_suit_1.1`+; a two-level one: `response.new_suit_2.1`+;
+///   a jump shift: `response.jump_shift`+;
+/// - notrump: `response.nt[L]`;
+/// - a raise of partner's opening: `response.raise.1`, a jump raise `response.jump_raise.1`; a
+///   cue bid of the opponents' suit: `response.jump_raise.1.start`+ (a limit raise or better);
+/// - anything else (a negative double, no rule): the simple raise's `response.raise.1`.
+fn responders_first_call_hcp(p: &NaturalParams, ctx: &CallContext) -> RangeInclusive<u8> {
+    let simple = p.response.raise.1.clone();
+    let Some(Call::Bid(first)) = ctx.owner_first_action else {
+        return simple;
+    };
+    let jump = ctx.owner_first_jump;
+    if first.strain() == Strain::NoTrump {
+        return p
+            .response
+            .nt
+            .iter()
+            .find(|(level, _)| *level == first.level())
+            .map_or(simple, |(_, hcp)| hcp.clone());
+    }
+    let opening = ctx.partner_first_action.and_then(|c| c.bid());
+    if opening.is_some_and(|o| o.strain() == first.strain()) {
+        return if jump >= 1 {
+            p.response.jump_raise.1.clone()
+        } else {
+            simple
+        };
+    }
+    if ctx.their_suits.contains(first.strain()) {
+        return *p.response.jump_raise.1.start()..=37;
+    }
+    match (first.level(), jump) {
+        (1, _) => p.response.new_suit_1.1..=37,
+        (2, 0) => p.response.new_suit_2.1..=37,
+        (_, 1..) => p.response.jump_shift..=37,
+        _ => simple,
+    }
+}
+
+/// Responder's own suit over opener's 3NT, a correction ([`corrects_partners_3nt`]):
+/// `1C-P-1S-P-3NT-P-4S`. Six cards or more (the first call showed four or five), the range of
+/// responder's first call ([`responders_first_call_hcp`]) and, in a minor, a hand unsuited to
+/// notrump ([`with_correction_shape`]); the ordinary level floor.
+fn rule_responder_corrects_to_own_suit(
+    p: &NaturalParams,
+    ctx: &CallContext,
+    suit: Suit,
+    ex: bool,
+) -> Inference {
+    let hcp = responders_first_call_hcp(p, ctx);
+    let constraint = with_correction_shape(
+        ctx,
+        HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, 6..=13)),
+        false,
+    );
+    Inference {
+        constraint,
+        confidence: 0.5,
+        rule: "rebid_own",
+        explanation: expl!(
+            ex,
+            "corrects 3NT to own suit {}: 6+ cards, {}-{} hcp",
+            ctx.call,
+            hcp.start(),
+            hcp.end()
+        ),
+    }
 }
 
 fn rule_new_suit_resp_1(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
@@ -2136,9 +2231,6 @@ fn opening_level_hcp(p: &NaturalParams, opener_first_bid: Option<Bid>) -> RangeI
 }
 
 fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
-    if ctx.role != Role::Opener {
-        return None;
-    }
     let CallKind::Bid {
         rebid_own: true,
         jump,
@@ -2149,6 +2241,12 @@ fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
     };
     let bid = ctx.call.bid()?;
     let suit = bid.strain().suit()?;
+    if ctx.role == Role::Responder && ctx.agreed_suit != Some(suit) && corrects_partners_3nt(ctx) {
+        return Some(rule_responder_corrects_to_own_suit(p, ctx, suit, ex));
+    }
+    if ctx.role != Role::Opener {
+        return None;
+    }
     if ctx.agreed_suit == Some(suit) && opened_one_of_a_suit(ctx) {
         return Some(rule_reraise_agreed(p, ctx, suit, jump, ex));
     }

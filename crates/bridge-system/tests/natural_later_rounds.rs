@@ -310,6 +310,35 @@ fn inf_suit(calls: &str) -> Suit {
 }
 
 #[test]
+fn responders_corrections_of_openers_3nt_keep_responders_range() {
+    // Responder's preference to opener's suit over opener's 3NT is a choice of game, not a game
+    // raise (13+): the range of responder's first call and an eight-card fit with opener's five.
+    // After `1H-1S` that is the one-level response's 6+.
+    let opener = |suit, hcp| Atom::ANY.with_hcp(hcp).with_suit_len(suit, 5..=13);
+    let inf = last_with_partner_constraint("1H P 1S P 3NT P 4H", opener(Suit::Hearts, 19..=21));
+    assert_eq!(inf.rule, "raise");
+    assert_eq!(inf.constraint.hcp_range(), 6..=37);
+    assert_eq!(inf.constraint.suit_len(Suit::Hearts), 3..=13);
+    for (spades, hearts, hcp) in [("KJ32", "K32", 9), ("Q432", "Q32", 6), ("KJ32", "A32", 10)] {
+        let h = hand("432", "Q32", hearts, spades);
+        assert!(inf.constraint.satisfies(h), "{hcp} hcp, three hearts");
+    }
+    assert!(!inf.constraint.satisfies(hand("5432", "Q32", "K2", "KJ32"))); // two hearts
+    // After a two-level response (SAYC 3NT: 18-19 balanced) the two-level response's 10+.
+    let inf = last_with_partner_constraint("1S P 2C P 3NT P 4S", opener(Suit::Spades, 18..=19));
+    assert_eq!(inf.rule, "raise");
+    assert_eq!(inf.constraint.hcp_range(), 10..=37);
+    assert!(inf.constraint.satisfies(hand("AQJ32", "K32", "J2", "432"))); // 11, three spades
+    assert!(!inf.constraint.satisfies(hand("AQJ32", "K432", "J2", "32"))); // two spades
+    // Responder's own suit, six cards or more, in the first call's range.
+    let inf = last_with_partner("1C P 1S P 3NT P 4S", 19..=21);
+    assert_eq!(inf.rule, "rebid_own");
+    assert_eq!(inf.constraint.hcp_range(), 6..=37);
+    assert!(inf.constraint.satisfies(hand("32", "432", "Q2", "KJ5432"))); // 6 spades, 6 hcp
+    assert!(!inf.constraint.satisfies(hand("32", "5432", "Q2", "KJ432"))); // five spades
+}
+
+#[test]
 fn bids_over_partners_3nt_that_are_not_corrections_keep_the_slam_floor() {
     // The opponents' suit (partner's cue bid, which the natural rules read as a suit partner
     // bid first) is not a correction: the slam floor (31 - 12).
