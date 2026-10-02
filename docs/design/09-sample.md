@@ -129,7 +129,7 @@ ln L(d) = ln P(auction | d)                         // ビディング尤度
 | --- | --- | --- |
 | `ln P(auction | d)` | `AuctionPolicy::new(table, auction, bid_ctx).log_likelihood(d)`（07-bidding.md §6、D18。`AuctionPolicy` は `sample_deals` の冒頭で 1 回だけ作り、局面ごとの候補を前計算するので、配牌あたりは各局面の選択の再評価だけ） | `Σ_s ln interpretation.likelihood(s, h_s)`（集合所属質量） |
 
-`Some` のときは解釈の制約は提案分布の構築にだけ使われ、尤度は D18 の方策 `p(c|h) = (1 − ε)·[(1 − δ)·S + δ·M] + ε/n` から得る（`S` は `choose_bid` の決定的な選択、`M` はナチュラル方策の選択、`n` は合法コール数）。ε 床があるので支持集合は全合法コールに広がる。`(ε, δ)` は `BidContext::policy` のプリセットで、SAYC で生成したオークションには `PolicyParams::system_players()`（ε = 1e-3、δ = 0）、人間のオークション（コーパス、リード助言）には `PolicyParams::human()`（D20 のチューニング分割での最尤推定値、統合までは仮値 ε = 0.01、δ = 0.3）を使う。解釈は `InterpretOptions::for_context(&bid_ctx)` で同じ方策の鏡像として作る（D19）。各片の重みが方策の密度に較正されているので、件数比例の成分抽選（§6.1 点 4）がそのまま `q ∝ L` に近い提案になる。旧来の `priority / τ` のソフトマックスは `PolicyParams::legacy(τ)` として比較用にだけ残る。`None` のときは ε-混合の防御枝が `likelihood` に ε の質量を残し、制約外の手にも正の尤度を与える。
+`Some` のときは解釈の制約は提案分布の構築にだけ使われ、尤度は D18 の方策 `p(c|h) = (1 − ε)·[(1 − δ)·S + δ·M] + ε/n` から得る（`S` は `choose_bid` の決定的な選択、`M` はナチュラル方策の選択、`n` は合法コール数）。ε 床があるので支持集合は全合法コールに広がる。`(ε, δ)` は `BidContext::policy` のプリセットで、SAYC で生成したオークションには `PolicyParams::system_players()`（ε = 1e-3、δ = 0）、人間のオークション（コーパス、リード助言）には `PolicyParams::human()`（D20 のチューニング分割での最尤推定値、統合までは仮値 ε = 0.01、δ = 0.3）を使う。解釈は `InterpretOptions::for_context(&bid_ctx)` で同じ方策の鏡像として作る（D19）。各片の重みが方策の密度に較正されているので、件数比例の成分抽選（§6.1 点 4）がそのまま `q ∝ L` に近い提案になる。旧来の `priority / τ` のソフトマックスは D18 で廃止し、比較用に残していた `PolicyParams::legacy(τ)` もフェーズ 6 のリード評価の後に削除した（13-decisions D18）。`None` のときは ε-混合の防御枝が `likelihood` に ε の質量を残し、制約外の手にも正の尤度を与える。
 
 ### 3.2 重み・ESS・自己正規化
 

@@ -23,7 +23,7 @@
 | D15 | 解釈の低信頼度 | ε-混合（フェーズ 4 で方策の床 ε/n に一本化） |
 | D16 | BML 拡張 | `#+KEY:` メタと `{prio:N}` / `{w:X}` 注釈 |
 | D17 | 席の条件 | `#SEAT` はオープナーの席位置、先頭パスは経路に含めない |
-| D18 | ビディング方策 | 決定的なシステム選択 + ナチュラル逸脱 δ + 一様床 ε。priority ソフトマックスは廃止 |
+| D18 | ビディング方策 | 決定的なシステム選択 + ナチュラル逸脱 δ + 一様床 ε。priority ソフトマックスは廃止し、比較用の `legacy_temperature` もフェーズ 6 の評価の後に削除した |
 | D19 | 解釈 | 方策の鏡像。システムの排他領域は派生索引 `ExclusiveIndex` に前計算 |
 | D20 | 評価手順 | 固定フィクスチャ、コーパスの調整用 / 評価用分割、ESS では調整しない |
 
@@ -226,11 +226,13 @@ p(c | h) = (1 − ε) · [(1 − δ) · S(c | h) + δ · M(c | h)] + ε / n
 - S はシステムの決定的な選択 (`choose_bid`)。候補が無ければ一様 1/n。
 - M はナチュラルの決定的な選択 (順位順のナチュラル候補で最初に満たしたもの、無ければナチュラルの暗黙 Pass)。
 - システム外の位置では π = M (δ に依らない)。
-- `PolicyParams { epsilon, deviation, legacy_temperature }`。プリセットは 2 つを事前に固定する。
+- `PolicyParams { epsilon, deviation }`。プリセットは 2 つを事前に固定する (フェーズ 6 の評価までは、第 3 のフィールド `legacy_temperature` があった。下の「決定済み」を参照)。
   - `system_players()` (ε = 1e-3、δ = 0) は SAYC の生成オークション用。
   - `human()` はコーパスの調整用分割で最尤推定した (ε, δ) で、コーパスとリードアドバイザ用。値は 12-roadmap に記録する。フェーズ 4 の統合 (D3・len・perf のマージ後) で、その SAYC の最尤推定値 ε 0.3404、δ 0.3959 に設定した (それまでは仮置き ε = 0.01、δ = 0.3)。フェーズ 4 の完了時の最尤推定値は ε 0.3420、δ 0.3943 で、調整用 ln L の差が 0.02 しかないので据え置いた (12-roadmap「フェーズ 4 の完了」)。
-- 温度付き priority ソフトマックスは `legacy_temperature = Some(τ)` としてだけ残し、フェーズ 6 のリード評価で比較した後に削除する。
-  - フェーズ 6 の比較結果 (14-lead.md §4.3、評価分割 100 ボード、seed 0): hard は τ = 1 のソフトマックスと上位 1 / 3 の命中率が同じ (0.78 / 0.93 対 0.78 / 0.92)、ESS 中央値は 78.1 対 26.1、ESS < 5 のボードは 1 対 13。再検討条件 (hard が上位 1 で 0.02 を超えて悪い) には当たらず、D18 は維持する。`legacy_temperature` と `InterpretMode::Legacy` (D19) の削除を推奨するが、**削除の決定は未了** (削除はしていない。`07-bidding.md` §9 の 8)。
+- 温度付き priority ソフトマックスは `legacy_temperature = Some(τ)` (`PolicyParams::legacy(τ)`) としてだけ残し、フェーズ 6 のリード評価で比較した後に削除する、としていた。**決定済み (フェーズ 6 の評価の後、2026-10-02): 削除した** (コード 377c93c)。
+  - 根拠 (14-lead.md §4.3、評価分割 100 ボード、seed 0。`#1` の hard と `#3` の `LEAD_POLICY=legacy1`): hard は τ = 1 のソフトマックスと上位 1 / 3 の命中率が同じ (0.78 / 0.93 対 0.78 / 0.92)、上位 1 の実測損失は 0.28 対 0.27、ESS 中央値は 78.1 対 26.1、ESS < 5 のボードは 1 対 13。再検討条件 (hard が上位 1 で 0.02 を超えて悪い) には当たらず (差 0.00)、D18 を維持する。ただし命中率の差は 100 ボード 1 セットの雑音の範囲なので、「hard のほうが命中率が高い」ではなく「同等で ESS が大幅に良い」ことが削除の根拠である。
+  - 削除したもの: `PolicyParams::legacy_temperature` と `PolicyParams::legacy(τ)`、`call_distribution` のソフトマックスの経路 (`legacy_distribution`、`logsumexp`)、`AuctionPolicy` の参照実装への委譲、`InterpretCache` のキーの `legacy_temperature` の枠、リード評価ハーネスの `LEAD_POLICY=legacy1` (と、鏡像が無いので `human` の鏡像で代用していた分岐)、試験 `legacy_temperature_restores_the_priority_softmax`。`PolicyParams` のほかの部分と、hard の経路は変えていない (残る試験の結果は一致)。
+  - 残したもの: `InterpretMode::Legacy` / `InterpretOptions::legacy()` (D19、フェーズ 3 の解釈)。再現 (iii) (フェーズ 3 の継続指標。11-testing.md §3) と `review_regressions.rs`、`unit.rs`、リード評価の `LEAD_INTERPRET=legacy` (フェーズ 3 の解釈との比較) が今もこれで読むので、(iii) を退役させるまで残す (07-bidding.md §9 の 8)。方策の形 (D18) とは独立なので、この決定では動かさない。
 - 同じコールを持つ候補が複数あっても (Exact 辺と Class 辺など)、選択は「最初に満たした候補のコール」であり、質量は足さない。
 
 **理由**:

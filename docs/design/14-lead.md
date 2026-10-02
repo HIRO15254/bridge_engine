@@ -113,13 +113,13 @@ pub fn lead_proposal() -> ConstraintProposal;
 
 - **単体テスト** (`tests/`、非 `#[ignore]`、本レーンで実行できるもの): 契約/リーダー導出、エラー系 (未完了、パスアウト、手の枚数違い)、集計の数式 (手計算値との一致)、同値グループ化、決定性 (同じ seed で同一の `LeadAdvice`、`parallel` feature 有無で同一)。DDS を使わないダミーの `DoubleDummy` 実装 (`tests/common/mod.rs` の `FakeDd`: リーダーの手だけから決まる決定的なルールで守備トリック数を返す。配牌の残り 39 枚に依存しないので、期待値が厳密に手計算できる) を使う。オークションとシステムは `bridge-system` を dev-dependency にして `bridge-bidding/tests/common/mod.rs` と同じ手法 (`SystemBuilder` 相当) で手組みする (単体テストは特定システムの入札表に依存させないため。実システムは下のコーパス評価で使う)。
 - **DDS smoke テスト** (`--features dds`、非 `#[ignore]`、少数サンプル): 固定の配牌とオークションで `bridge::dd::dds()` を呼び、実際に解ける (`None` ならスキップ、ベンダリング済みなら solve する) ことを確認する。
-- **コーパス評価ハーネス** (`tests/corpus_eval.rs`、`#[ignore]`、`--features dds`): `corpus/data/pbn` 以下を再帰的に探索したファイルをパス順にソートし、その順で「完了したオークション・完全な配牌・パスアウトでない契約」を持つボードを先頭から 100 件選ぶ (決定的だがシードは使わない)。フェーズ 4 からは既定で D20 の評価分割 (11-testing.md §13: `corpus_auctions` の列挙で奇数番目) から選ぶ (`LEAD_SPLIT=eval`)。`LEAD_SPLIT=all` はフェーズ 3 までと同じ選び方 (分割なし、§4.1 の 100 ボード。現状のコーパスでは `OptimumPlayTable.pbn` の 1 件と Bermuda Bowl 2019 決勝の 4 ファイル) で、比較の連続性のために残す。複数イベントにまたがる層化抽出は未決事項に残す。設定は環境変数で選ぶ: `LEAD_POLICY` (`human` 既定、`system`、`legacy1` = 退役したソフトマックス `PolicyParams::legacy(1.0)`)、`LEAD_INTERPRET` (`mirror` 既定: 尤度の方策の鏡像、`legacy1` では鏡像が無いので `human` の鏡像を提案に使う。`legacy`: フェーズ 3 の解釈 `InterpretOptions::legacy()`)、`LEAD_RESIDUAL` (既定 `1`: 提案は `lead_proposal()`、`0` で残差棄却なし)。解釈が尤度の方策の鏡像なら `advise` そのものを、そうでなければ同じパイプラインを `advise_with_context` で呼ぶ。各ボードで:
+- **コーパス評価ハーネス** (`tests/corpus_eval.rs`、`#[ignore]`、`--features dds`): `corpus/data/pbn` 以下を再帰的に探索したファイルをパス順にソートし、その順で「完了したオークション・完全な配牌・パスアウトでない契約」を持つボードを先頭から 100 件選ぶ (決定的だがシードは使わない)。フェーズ 4 からは既定で D20 の評価分割 (11-testing.md §13: `corpus_auctions` の列挙で奇数番目) から選ぶ (`LEAD_SPLIT=eval`)。`LEAD_SPLIT=all` はフェーズ 3 までと同じ選び方 (分割なし、§4.1 の 100 ボード。現状のコーパスでは `OptimumPlayTable.pbn` の 1 件と Bermuda Bowl 2019 決勝の 4 ファイル) で、比較の連続性のために残す。複数イベントにまたがる層化抽出は未決事項に残す。設定は環境変数で選ぶ: `LEAD_POLICY` (`human` 既定、`system`。以前あった `legacy1` = 退役したソフトマックス `PolicyParams::legacy(1.0)` は §4.3 の比較の後に削除した)、`LEAD_INTERPRET` (`mirror` 既定: 尤度の方策の鏡像。`legacy`: フェーズ 3 の解釈 `InterpretOptions::legacy()`)、`LEAD_RESIDUAL` (既定 `1`: 提案は `lead_proposal()`、`0` で残差棄却なし)。解釈が尤度の方策の鏡像なら `advise` そのものを、そうでなければ同じパイプラインを `advise_with_context` で呼ぶ。各ボードで:
   - `truth`: 実際の配牌に対する `dd.lead_scores` の全 13 枚のスコアと、その最大値を達成するカード集合。
   - `advice`: `systems/sayc/sayc.bml` (`BRIDGE_SYSTEMS_DIR` 環境変数、既定はワークスペース直下の `systems/`) を `bridge_system::compile` (facade 経由 `bridge::system::compile`) でコンパイルし、`lead_proposal()` を使った `advise(...)` (サンプル数は環境変数 `LEAD_SAMPLES`、既定 100)。release で数分かかるため `#[ignore]` (実行方法は §4.1)。環境変数 `LEAD_UNIFORM=1` は本評価 (`advice`) のサンプリングだけを `ConstraintProposal` から `UniformProposal` に差し替える (ビディング尤度による重み付けはそのまま残る)。ベースライン (a) はこのフラグと無関係に、`advise` と同じ集計パイプライン (`advise_with_context`、`#[doc(hidden)]`) を `UniformProposal` かつ `bidding: None` (解釈は空、`ANY` 相当) で呼んで計算する。方策・解釈・提案に依存しないので、ボードごとの結果を `target/lead_eval/baseline_a-n{samples}-seed{seed}-{split}-boards{N}/` にキャッシュし、設定をまたいで共有する。
   - `hit` (主指標): 上位 k (k = 1, 3) のグループの**代表カード** (実際にリードするカード) に `truth` の要素が 1 つでも入っているか。同じ判定関数 (`hits_truth`) をベースライン (a) にも使う。ベースライン (b) も k 枚の単独カードを選ぶので同じ土俵で比較できる。
   - `group_hit` (副指標): グループの `equivalents` まで含めて数えた命中 (`hits_truth_group`)。上位 k のグループは k 枚より多くのカードを覆う (このコーパスでは上位 3 で平均 5.4 枚、上位 1 で 2.0 枚) ので、(b) と比べるときは k ではなく覆った枚数で (b) を評価した `baseline_random_covered_*` と比べる。各ボードの記録に `top{1,3}_cards_covered` を残す。
   - `tricks_lost`: 上位 1 のカードが**実際の配牌**で達成する守備トリック数 (`truth.all_scores` から引く) と `truth.max` の差。サンプルにわたる推定平均 (`mean_defence_tricks`) ではなく、選んだカードの実測値を使う (推定バイアスではなく選択の結果を測るため)。`mean_estimation_error_top1` として `|mean_defence_tricks − 実測値|` も別途報告する。
-  - ボードごとの結果は設定ごとのディレクトリ `target/lead_eval/n{samples}-{proposal}-{policy}-{interpret}-{residual|plain}-{split}-seed{seed}-boards{N}/board_NNN.json` に書き、実行のたびにそのディレクトリの記録のうち同じ設定 (サンプル数・提案・方策・解釈・残差棄却と下限・分割・seed・選択ボード数・記録形式の版 `record_version`、現在 3) のものすべてから、その設定のレポートを作り直す。レポート名は既定設定 (n = 100、`ConstraintProposal`、`human`、鏡像、残差棄却あり、評価分割、seed 0、100 ボード) なら `target/lead_report.json`、それ以外は既定と異なる項目を並べた `target/lead_report_<suffix>.json` (例: `lead_report_n500.json`、`lead_report_legacy1.json`、`lead_report_all.json`)。記録には受理率、試行あたり ESS、予算切れも残す。設定の違う実行が互いの記録やレポートを上書きしない。`LEAD_BOARDS=a..b` (選択ボードの半開区間) で分割実行でき、`boards_with_records == boards_selected` になれば完全。実配牌の DD 解析や `advise` がエラー (`NoSamples` など) になったボードはパニックせず、理由付きで `skipped` に記録して命中率の分母から外す。
+  - ボードごとの結果は設定ごとのディレクトリ `target/lead_eval/n{samples}-{proposal}-{policy}-{interpret}-{residual|plain}-{split}-seed{seed}-boards{N}/board_NNN.json` に書き、実行のたびにそのディレクトリの記録のうち同じ設定 (サンプル数・提案・方策・解釈・残差棄却と下限・分割・seed・選択ボード数・記録形式の版 `record_version`、現在 3) のものすべてから、その設定のレポートを作り直す。レポート名は既定設定 (n = 100、`ConstraintProposal`、`human`、鏡像、残差棄却あり、評価分割、seed 0、100 ボード) なら `target/lead_report.json`、それ以外は既定と異なる項目を並べた `target/lead_report_<suffix>.json` (例: `lead_report_n500.json`、`lead_report_system.json`、`lead_report_all.json`)。記録には受理率、試行あたり ESS、予算切れも残す。設定の違う実行が互いの記録やレポートを上書きしない。`LEAD_BOARDS=a..b` (選択ボードの半開区間) で分割実行でき、`boards_with_records == boards_selected` になれば完全。実配牌の DD 解析や `advise` がエラー (`NoSamples` など) になったボードはパニックせず、理由付きで `skipped` に記録して命中率の分母から外す。
   - 出力 `target/lead_report.json` (ワークスペース直下の `target/`、`CARGO_MANIFEST_DIR` からの相対ではない): 上位 1/3 命中率 (主指標と副指標 `group_hit_rate_*`、それぞれ全ボードと、DD 同値クラスが 2 つ以上ある「非自明」ボードに絞った版の両方)、上位 1/3 が覆う平均カード枚数、上位 1 の選択が最適から失う実測の平均 DD トリック数、平均推定誤差、ESS の統計 (平均・中央値・最小・最大、ESS/n ≥ 0.5 のボード数、ESS < 5 のボード数)、ボードあたりの時間、スキップしたボードと理由、ベースライン (a) 無ビディング情報 (`UniformProposal`、解釈なし、`advise` と同じグループ化と命中判定) と (b) ランダム選択 (リーダーの**カード**13 枚から `k` 枚を無作為に選んだときに最適カードを 1 枚以上含む超幾何確率 `1 − C(13−m, k) / C(13, k)`、`m` は `truth` の最適カード枚数。DD 同値クラスの個数ではない — このコーパスは 1 ボードあたり最大 3 クラスしかなく、クラス単位で 3 つ選べば常に 1.0 になってしまうため。副指標との比較用に `k` を覆った枚数にした版も出す) の 2 つ。
 
 ### 4.1 測定結果 (2026-09-27、`wip/p6int`、フェーズ 3 の方策と解釈)
@@ -180,7 +180,7 @@ B の最新のマージ前の値 (評価分割で `human` 0.78 / 0.94・ESS 85.7
 所見:
 
 - **判定 (計画の P、リード助言)**: 既定の設定で上位 3 = 0.94 ≥ 0.90、上位 1 = 0.80 ≥ 同じボードのベースライン (a) 0.74 (フェーズ 3 のボードでは 0.85 ≥ 0.81、計画に書かれた 0.808 も上回る)、ESS 中央値 85.6 ≥ 20 (フェーズ 3 は 4.0)、予算切れ 0 件。§4.1 で上位 1 が (a) を下回っていた原因 (ESS の低さ) は解消した。**注意**: 計画 (15-phase4-plan.md) の条件は「上位 1 ≥ ベースライン (a) (0.808)」で、0.808 はフェーズ 3 のボードでの (a) の値。ここではベースライン (a) をボード集合ごとに測り直して同じボードで比べており、評価分割の上位 1 = 0.80 は数字としての 0.808 を下回る。評価分割は (a) 自体が 0.74 と難しいボードの集合なので同じボードでの比較が妥当と考えるが、閾値の読み替えなので統合時に計画の持ち主が確認すること。
-- **hard (D18) と τ = 1 のソフトマックスの比較**: 同じ提案 (`human` の鏡像) で比べると、上位 1 は hard が 0.80 対 0.78 (評価分割)、0.85 対 0.85 (フェーズ 3 のボード) で、hard が悪くなることはない。計画の再検討条件 (hard が上位 1 で 0.02 を超えて悪い) には当たらないので D18 は維持する。τ = 1 は重みの裾が重く、ESS 中央値が 53〜55 と hard の 84〜86 より低い。`legacy_temperature` はこの比較の役目を終えたので、統合後に削除してよい (15-phase4-plan.md の未決事項 3)。最終ラインで取り直した比較と、削除の決定が未了であることは §4.3 末尾。
+- **hard (D18) と τ = 1 のソフトマックスの比較**: 同じ提案 (`human` の鏡像) で比べると、上位 1 は hard が 0.80 対 0.78 (評価分割)、0.85 対 0.85 (フェーズ 3 のボード) で、hard が悪くなることはない。計画の再検討条件 (hard が上位 1 で 0.02 を超えて悪い) には当たらないので D18 は維持する。τ = 1 は重みの裾が重く、ESS 中央値が 53〜55 と hard の 84〜86 より低い。`legacy_temperature` はこの比較の役目を終えたので、統合後に削除してよい (15-phase4-plan.md の未決事項 3)。最終ラインで取り直した比較と、削除の決定 (削除した) は §4.3 末尾。
 - 残差棄却は ESS 中央値を 53 → 86 に上げ、ESS < 5 のボードを 4 → 3 に減らし、上位 3 を 0.02 上げる (上位 1 は同じ)。受理率 0.62 で試行は約 1.6 倍になるが、時間の大半は DD 解析なので 1 ボードあたりの時間はほぼ変わらない (0.5〜1.4 s、負荷による)。
 - `system` プリセットと `human` の仮値の差は 0.01〜0.02 で、どちらが良いとは言えない (上位 1 は `human` 0.80 対 0.78、上位 3 は `system` 0.95 対 0.94)。`human()` の値がレーン D の最尤推定に置き換わったら再測定する。
 - フェーズ 3 の解釈 (`InterpretOptions::legacy()`) のままでは、同じ τ = 1 の尤度でも ESS 中央値 9.8 (ESS < 5 が 31 ボード) で上位 3 が 0.89 に落ちる。改善は鏡像の解釈 (D19) によるもので、方策の形 (D18) の寄与は上位 1 の差の分。
@@ -188,6 +188,8 @@ B の最新のマージ前の値 (評価分割で `human` 0.78 / 0.94・ESS 85.7
 ### 4.3 最終ラインでの測定 (2026-10-02、`wip/p6final`)
 
 フェーズ 6 の完了基準の判定に使う値は本節のものである (§4.1 はフェーズ 3 の方策、§4.2 はフェーズ 4 の途中の仮値 `human()` のときの履歴)。
+
+> **`legacy1` の行は履歴である。** `LEAD_POLICY=legacy1` (τ = 1 のソフトマックス) は、この比較の結果を受けて、コミット 377c93c で `PolicyParams::legacy_temperature` ごと削除した。§4.2 と本節の `legacy1` の行は、削除前のコード (b3023f7 まで) で測った値で、今のコードでは再測定できない (再測定するなら b3023f7 を取り出す)。
 
 実行: ヘッド b6afd7d (`wip/p5final` 832e1e6 のマージ後。フェーズ 4 の最終 SAYC、`human()` = ε 0.3404 / δ 0.3959、フェーズ 5 のサンプラー)。測定の途中で `wip/p5final` の先端が 832e1e6 から 8abe651 (ESS 固定ケースの再生成) に動いたので、そのマージ (bae2ad1) も取り込んだ。変わったのは `bridge-sample` の ESS スイートの試験とデータだけで、リードの経路には触れない。`#1` を bae2ad1 で取り直し、同じ値になった (上位 1 / 3、ESS 中央値、受理率、実測損失、(a))。release、`--features dds,parallel`、`BRIDGE_CORPUS_DIR` はコーパスのディレクトリ。10 コアの macOS で、別ワークツリーの release テストと同時に、設定ごとに 1 つずつ順に走らせた。時間は完了基準ではなく参考値で、`#1`、`#2`、`#6` はベースライン (a) の計算を含み (他はキャッシュを読む)、開始時の loadavg は 9〜41 と幅がある。n = 100 (`#6` だけ 500)、seed 0、100 ボード、スキップは全設定で 0、提案は `lead_proposal()` (残差棄却、下限 0.125。`#5` と `#7` は別)、解釈は尤度の方策の鏡像 (D19、`#4` は別)。`#1` 以外の設定は 1 回ずつの実行である。
 
@@ -238,7 +240,7 @@ B の最新のマージ前の値 (評価分割で `human` 0.78 / 0.94・ESS 85.7
 | --- | --- | --- |
 | 1 | `cargo test -p bridge-lead --release --features dds,parallel --test corpus_eval -- --ignored --nocapture` | 完了基準の主測定: 評価分割の 100 ボード、n = 100、`human` の鏡像、`lead_proposal()`。`target/lead_report.json` |
 | 2 | 同上 + `LEAD_SPLIT=all` | フェーズ 3 と同じ 100 ボードでの比較 (連続性、0.808 の読み)。`target/lead_report_all.json` |
-| 3 | 同上 + `LEAD_POLICY=system` / `LEAD_POLICY=legacy1` | 方策の比較。D18 の維持と `legacy_temperature` の判断材料 |
+| 3 | 同上 + `LEAD_POLICY=system` (測定時は `LEAD_POLICY=legacy1` も走らせた。削除済みで、今は走らない) | 方策の比較。D18 の維持と `legacy_temperature` の削除の判断材料 |
 | 4 | 同上 + `LEAD_INTERPRET=legacy` | フェーズ 3 の解釈との比較 (D19 の寄与) |
 | 5 | 同上 + `LEAD_RESIDUAL=0` | 残差棄却なし (サンプラーの既定) との比較 |
 | 6 | 同上 + `LEAD_SAMPLES=500` | n の影響 |
@@ -247,9 +249,13 @@ B の最新のマージ前の値 (評価分割で `human` 0.78 / 0.94・ESS 85.7
 
 ESS スイート (`bridge-sample` の `ess_suite`。リード問題と同じ状況、すなわちオープニングリーダーの手が既知の 3 席サンプリングを含む) は `11-testing.md` §11 の別コマンドで、この測定の対象ではない。
 
-#### `legacy_temperature` の削除についての比較結果と推奨 (決定は別途)
+#### `legacy_temperature` の削除 (決定済み: 削除した)
 
-リードアドバイザから見て、hard 方策 (D18) は退役したソフトマックス (`PolicyParams::legacy(1.0)`、`legacy_temperature = Some(1.0)`) と同じ命中率で、ESS は大幅に良い (上の `#1` 対 `#3`、`#4`)。したがって D18 を維持し、`legacy_temperature` と `InterpretMode::Legacy` は比較の役目を終えたと推奨する: `#3` の `legacy1` は上位 1 / 3 で hard と同等 (0.78 / 0.92 対 0.78 / 0.93、食い違いは各 2〜4 本)、ESS 中央値は 3 分の 1 (26.1 対 78.1)、`#4` のフェーズ 3 の解釈は ESS が 5 分の 1 で上位 3 が 0.04 低い。ただし、根拠はコーパスの評価分割 100 ボード 1 セット (seed 0) で、命中率の差は数ボードの雑音の範囲であり、「hard のほうが命中率が高い」とまでは言えない。**削除そのものは行っていない**。決定 (13-decisions.md D18、07-bidding.md §9 の 8、15-phase4-plan.md の未決 3) は別に取る。削除する場合に触るのは、`bridge-bidding` の `policy.rs` / `auction_policy.rs` / `cache.rs` / `interpret.rs` と、それを使う `tests/policy_formula.rs`、`reproduction.rs`、`unit.rs`、`review_regressions.rs`、`xtask/src/coverage.rs`、本クレートの `corpus_eval.rs` (`LEAD_POLICY=legacy1`、`LEAD_INTERPRET=legacy`) と関連文書である。
+リードアドバイザから見て、hard 方策 (D18) は退役したソフトマックス (`PolicyParams::legacy(1.0)`、`legacy_temperature = Some(1.0)`) と同じ命中率で、ESS は大幅に良い (上の `#1` 対 `#3`、`#4`): `#3` の `legacy1` は上位 1 / 3 で hard と同等 (0.78 / 0.92 対 0.78 / 0.93、食い違いは各 2〜4 本)、ESS 中央値は 3 分の 1 (26.1 対 78.1)、`#4` のフェーズ 3 の解釈は ESS が 5 分の 1 で上位 3 が 0.04 低い。ただし、根拠はコーパスの評価分割 100 ボード 1 セット (seed 0) で、命中率の差は数ボードの雑音の範囲であり、「hard のほうが命中率が高い」とまでは言えない。「同等で ESS が大幅に良い」ことが根拠で、計画の再検討条件 (hard が上位 1 で 0.02 を超えて悪い) には当たらない (差 0.00)。
+
+**決定 (2026-10-02): D18 を維持し、`legacy_temperature` を削除した** (コード 377c93c。13-decisions.md D18、07-bidding.md §9 の 8、15-phase4-plan.md の未決 3)。触ったのは、`bridge-bidding` の `policy.rs` (フィールド、`legacy(τ)`、ソフトマックスの経路)、`auction_policy.rs` (参照実装への委譲)、`cache.rs` (キーの枠)、それを使う試験 (`tests/policy_formula.rs` の `legacy_temperature_restores_the_priority_softmax` を削除)、`xtask/src/coverage.rs` (構造体リテラル)、本クレートの `corpus_eval.rs` (`LEAD_POLICY=legacy1` と `human` の鏡像の代用) である。hard の経路は変えていない。
+
+**`InterpretMode::Legacy` は残す。** フェーズ 3 の解釈 (`InterpretOptions::legacy()`、`LEAD_INTERPRET=legacy` の `#4`) は、再現 (iii) (フェーズ 3 の継続指標。`bridge-bidding/tests/reproduction.rs`)、`review_regressions.rs`、`unit.rs` が今も読むので、再現 (iii) を退役させるまで残す (07-bidding.md §9 の 8)。リード評価の側では `LEAD_INTERPRET=legacy` は D19 の寄与を測る比較として使える。
 
 ## 5. 未決事項
 
@@ -260,5 +266,5 @@ ESS スイート (`bridge-sample` の `ess_suite`。リード問題と同じ状�
 | 2 | `LeadScoring::Score` の得点表を `bridge-core` に上げて共有するか | 現状は `bridge-lead` 内に複製 (非公開)。他クレートが得点計算を必要にした時点で `bridge-core` へ移す |
 | 3 | 真の IMP/Matchpoints (他契約との比較) | 対象外。他契約の DD 値の総当たりが要り、フェーズ 6 の範囲を超える |
 | 4 | `LeadOptions.sample.seed` を無視して `opts.seed` で上書きする API は分かりにくいという指摘 | 現状の決定。単一の `seed` を露出したいという設計上の理由を doc コメントに明記する |
-| 6 | `legacy_temperature` と `InterpretMode::Legacy` の削除 | 比較は済んだ (§4.3 末尾): hard (D18) は τ = 1 のソフトマックスと命中率が同等で ESS が大幅に良い。削除を推奨するが、決定は未了で、削除してはいない (13-decisions.md D18、07-bidding.md §9 の 8) |
+| 6 | `legacy_temperature` と `InterpretMode::Legacy` の削除 | 解決済み (`legacy_temperature` は削除した): 比較 (§4.3 末尾) で hard (D18) は τ = 1 のソフトマックスと命中率が同等で ESS が大幅に良く、コミット 377c93c で `legacy_temperature` と `LEAD_POLICY=legacy1` を削除した。`InterpretMode::Legacy` は再現 (iii) が読むので残す (13-decisions.md D18、07-bidding.md §9 の 8) |
 | 7 | 測定の標準誤差 | 100 ボード 1 セット (seed 0) で、(a) との差も設定間の差も数ボード。複数 seed、別のボード集合 (別のイベントの層化抽出) での確認は未実施 |

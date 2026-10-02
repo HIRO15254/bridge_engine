@@ -4,7 +4,7 @@
 
 フェーズ 4 で、方策と解釈を次のように改めた（D18、D19）。
 
-- 方策 `call_distribution` は「システムの決定的選択 + ナチュラルへの逸脱 δ + 一様床 ε」にした。温度付きソフトマックスは廃止した。
+- 方策 `call_distribution` は「システムの決定的選択 + ナチュラルへの逸脱 δ + 一様床 ε」にした。温度付きソフトマックスは廃止し、比較用に残していた `legacy_temperature` もフェーズ 6 のリード評価の後に削除した（§9 の 8、D18）。
 - `interpret` はこの方策を写したもの（方策鏡像）にした。コール c の解釈の密度 Σ_i w_i·1[h ∈ C_i] は、その位置での p(c | h) にコールごとの定数倍で一致する。
 - システムコールの排他領域は、`bridge-system` の `ExclusiveIndex` に派生データとして前計算する。直列化はしないので、`IR_FORMAT` は変えない。
 - 以下で「ε-混合」「`eps_*`」と書いた箇所は、特に断らない限り旧経路 `InterpretMode::Legacy` の説明である（§4.2）。
@@ -191,7 +191,7 @@ pub struct Interpretation {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub enum InterpretMode { #[default] Mirror /* 方策鏡像（D19） */, Legacy /* フェーズ 3 の ε-混合。1 フェーズだけ残す */ }
+pub enum InterpretMode { #[default] Mirror /* 方策鏡像（D19） */, Legacy /* フェーズ 3 の ε-混合。再現 (iii) を退役させるまで残す */ }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct InterpretOptions {
@@ -305,7 +305,7 @@ impl InterpretOptions {
 - 読みは遅延計算で、ナチュラルの計算が実際に必要とするパートナーのコールの連鎖だけを読む。
 - ナチュラル排他は要約を変えないので、この経路では計算しない。
 
-#### 4.1.1 旧 Step A（`InterpretMode::Legacy`、1 フェーズだけ残す）
+#### 4.1.1 旧 Step A（`InterpretMode::Legacy`、再現 (iii) を退役させるまで残す）
 
 フェーズ 3 の手順である。`InterpretOptions::legacy()` で選ぶ。各 `j in 0..auction.calls().len()` について次を行い、`per_call[j]` を作る。`log_scale` は 0、`shadowed` は false になる。
 
@@ -326,7 +326,7 @@ impl InterpretOptions {
 
 **フェーズ 4 の改訂**：ε-混合は、方策の一様床 ε/n として定義し直した。
 
-- `eps_exact` / `eps_partial` / `eps_natural` / `lenient_decay` は既定の経路から外し、`InterpretOptions::legacy()` として 1 フェーズだけ残す（ESS の前後比較用）。
+- `eps_exact` / `eps_partial` / `eps_natural` / `lenient_decay` は既定の経路から外し、`InterpretOptions::legacy()` として残す。当初は ESS の前後比較のために 1 フェーズだけ残す予定だったが、フェーズ 6 の評価の後も、再現 (iii)（フェーズ 3 の継続指標）、`review_regressions.rs`、`unit.rs`、リード評価の `LEAD_INTERPRET=legacy` がこれで読むので、再現 (iii) を退役させるまで残す（§9 の 8）。
 - 「信頼度が低いほど ε を大きくする」という役割は、δ（システム外への逸脱）と、方策上選ばれないコールの床に移る。
 - `InterpretOptions` は `InterpretOptions::for_context(&BidContext)` で作る。`PolicyParams` と `implicit_pass` を尤度と同じ値から取るので、解釈と尤度がずれることは構造上起きない。
 - 方策のナチュラル推定器は常に定まる：`call_distribution`・`sequence_log_likelihood`・`AuctionPolicy` はいずれも `ctx.natural`、それが `None` なら `table.natural` を使う（レビュー修正で `call_distribution` もこの補完をするようにした。以前は `None` のとき M が一様になり、δ > 0 では鏡像とずれていた）。鏡像は `table.natural` で読むので、両者が一致するのは `ctx.natural` が `None` か `Some(&*table.natural)` のときである。別の推定器を鏡像にしたいときは、その推定器を持つ `Table` で解釈する。`choose_bid` にとっての `None`（システム外で `NoCandidate`）は変わらない。
@@ -543,12 +543,12 @@ impl BidChoice { pub fn call(&self) -> Option<Call>; pub fn is_chosen(&self) -> 
 pub struct PolicyParams {
     pub epsilon: f32,                    // 一様床 ε。既定 1e-3
     pub deviation: f32,                  // システム外（ナチュラル）への逸脱 δ。既定 0.0。1/2 未満に保つ
-    pub legacy_temperature: Option<f32>, // Some(τ) で旧 priority ソフトマックス（比較用、フェーズ 6 評価後に削除）。鏡像の保証は無い
 }
+// フェーズ 6 の評価までは、第 3 のフィールド legacy_temperature: Option<f32>（旧 priority ソフトマックス、比較用）と
+// コンストラクタ legacy(τ) があった。評価の後に削除した（§9 の 8、13-decisions D18）
 impl PolicyParams {
     pub const fn system_players() -> Self; // = Default（ε = 1e-3、δ = 0）。システムどおりに競る前提（生成オークション）
     pub const fn human() -> Self;          // コーパス調整用分割で最尤推定した (ε, δ) = (0.3404, 0.3959)。フェーズ 4 の統合（wip/p4int 8669ffd の SAYC、調整用 ln L −7295.9）で設定し、フェーズ 4 の完了時（5aa82e6、MLE 0.3420 / 0.3943）も据え置いた。経緯は 12-roadmap
-    pub const fn legacy(temperature: f32) -> Self; // 旧方策（ε = 1e-3、legacy_temperature = Some(τ)）
 }
 pub struct BidContext<'a> {
     pub scoring: Scoring,                        // v1 では素通し（L2 の条件に scoring がない。「未決」: #+SCORING 条件）
@@ -608,7 +608,7 @@ pub fn call_distribution(table: &Table, hand: Hand, auction: &Auction, ctx: &Bid
 1. δ < 1/2 なら、argmax_c p は `choose_bid` の選択に一致する。これは τ に依存しない構造的な等式である。`tests/policy.rs` の 10^5 局面テストは、両プリセットで 100% になる。
 2. 同じ優先度どうしでの質量の分け合い（旧 shared 25〜48%）は起きない。
 3. δ = 0 のときは、システム内の位置で m_P を評価しない（計算不要）。
-4. `legacy_temperature = Some(τ)` のときは旧式を返す。旧式は、priority/τ の logsumexp → softmax → ε 床の順に計算する。これは比較評価専用で、`interpret` の鏡像はこの場合を保証しない。
+4. 旧式（priority/τ の logsumexp → softmax → ε 床。`legacy_temperature = Some(τ)` で選ぶ比較評価専用の経路で、`interpret` の鏡像は保証しなかった）は、フェーズ 6 のリード評価の後に削除した（§9 の 8）。`call_distribution` の経路は上の式だけである。
 5. 全合法コールが正の確率（≥ ε/n）を持つ。したがって、重みが 0 になるサンプルは出ない。
 
 旧定義（τ = 1 の priority ソフトマックス）を捨てる理由は D18 に書いた。要点は 2 つある。
@@ -644,7 +644,6 @@ impl AuctionPolicy {
 - `log_likelihood(deal) = Σ_j ln(floor_j + Σ_i raw_{j,i}·1[h_{s_j} ∈ C_{j,i}])` を、配牌ごとに評価する。
   - システムコールは X_c の所属判定で済み、兄弟候補を全部評価する必要はない。
   - δ > 0 では、手がシステム片とナチュラル片の両方に入り得るので、全片を判定する。
-- `legacy_temperature` のときは、参照実装に委ねる（鏡像が無いため）。
 - `bridge-sample` の `BiddingLikelihood` は、この高速経路を使う。
 - `tests/policy.rs` の `fast_likelihood_matches_reference` で、参照実装との |Δ ln L| ≤ 1e-5 を保証する。
 
@@ -695,7 +694,7 @@ impl InterpretCache {
 | `exclusion.rs`（フェーズ 4） | 鏡像の片の組み立て（`mirror_call`）、システム片の実行時再計算、ナチュラル排他領域（グリッド、2 形）、`NaturalPos`（位置ごとのナチュラル候補・片・説明文）、`Reader` / `partner_context` |
 | `auction_policy.rs`（フェーズ 4） | `AuctionPolicy` |
 | `memo.rs`（フェーズ 4） | 位置ごとの手に依らないデータの、スレッドごと・有界のメモ（§4.6） |
-| `policy.rs` | `PolicyParams`、`call_distribution`（D18 と旧式）、`sequence_log_likelihood`、`logsumexp` |
+| `policy.rs` | `PolicyParams`、`call_distribution`（D18。旧式のソフトマックスと `logsumexp` はフェーズ 6 の評価の後に削除した）、`sequence_log_likelihood` |
 | `replay.rs` | `Replay`、`replay` |
 | `cache.rs` | `InterpretCache`（`get_or_interpret`、`get_or_policy`） |
 | `benches/interpret.rs` | criterion（§4.6 の全ベンチ） |
@@ -771,7 +770,7 @@ impl InterpretCache {
 | 5 | seat / vul 条件で弾かれた兄弟を `Tried { NotApplicable }` に載せるための L2 API | 未追加 |
 | 6 | リテラルを持つ上位候補の差し引き（フェーズ 4） | sub による上側近似。over-cover は生成位置で約 0.2%、δ = 0.3 で約 0.4%。厳密な DNF への切り替えは保留 |
 | 7 | δ を相手と味方で分けるか、位置の種類（競り合い・オープニング）で分けるか | 分けない（単一の δ） |
-| 8 | `legacy_temperature` と `InterpretMode::Legacy` を削除する時期 | 比較は済んだ (フェーズ 6、`14-lead.md` §4.3): 評価分割 100 ボードのリード評価で、hard 方策 (D18) は τ = 1 のソフトマックス (`PolicyParams::legacy(1.0)`) と命中率が同じ (上位 1 / 3 = 0.78 / 0.93 対 0.78 / 0.92) で、ESS 中央値は 78.1 対 26.1 (ESS < 5 のボードは 1 対 13)。フェーズ 3 の解釈 (`InterpretMode::Legacy`) は ESS 中央値 15.9、上位 3 が 0.89。削除を推奨するが、**決定は未了で、削除はしていない** |
+| 8 | `legacy_temperature` と `InterpretMode::Legacy` を削除する時期 | **`legacy_temperature` は解消 (削除した、コード 377c93c)**。フェーズ 6 の比較 (`14-lead.md` §4.3): 評価分割 100 ボードのリード評価で、hard 方策 (D18) は τ = 1 のソフトマックス (旧 `PolicyParams::legacy(1.0)`) と命中率が同じ (上位 1 / 3 = 0.78 / 0.93 対 0.78 / 0.92) で、ESS 中央値は 78.1 対 26.1 (ESS < 5 のボードは 1 対 13)。再検討条件 (hard が上位 1 で 0.02 を超えて悪い) に当たらないので、`PolicyParams` から `legacy_temperature` と `legacy(τ)` を、`policy.rs` のソフトマックスの経路と `AuctionPolicy` の参照実装への委譲と共に削除した (13-decisions D18)。**`InterpretMode::Legacy` (`InterpretOptions::legacy()`) は残す**: 再現 (iii) (フェーズ 3 の継続指標、`tests/reproduction.rs`、`11-testing.md` §3) と `review_regressions.rs`、`unit.rs`、リード評価の `LEAD_INTERPRET=legacy` が、フェーズ 3 の解釈で読むからである。再現 (iii) を退役させる時に、これらと一緒に削除する (未決)。フェーズ 3 の解釈は ESS 中央値 15.9、上位 3 が 0.89 (鏡像は 78.1、0.93) で、リードの本番では使わない |
 | 9 | 方策上選ばれない枝（`ShadowedBranch` lint）を SAYC の側で消すか残すか | 残す（解釈は shadowed として Fallback だけで読む） |
 | 10 | `human()` の (ε, δ) | フェーズ 4 の統合で解消。D3・len・perf のマージ後のヘッド（8669ffd）で当てはめた ε 0.3404、δ 0.3959（調整用 ln L −7295.9、評価用 −6663.2）に設定した。その後のレーン N・N2・N3 (ナチュラル推定の修正) で、最終ヘッド 5aa82e6 (`COMPILE_REVISION` はレーン X2 の後の 12) の最尤推定値は ε 0.3420、δ 0.3943 (調整用 ln L −7307.07) に動いた。値は意図して据え置いた。`human()` での ln L は調整用 −7307.09 で最大値との差は 0.02 (`human()` の ε は新しい格子の最尤推定値のちょうど 1 目盛り (約 0.0016) 下で、差のほぼ全てはこの ε のずれによる。尤度比の 1.92 の区間 (δ 0.35〜0.44) の十分内側)、評価用は −6675.07 で最尤推定値の −6675.70 より高い。SAYC かナチュラル推定を変えて当てはめがこれより大きく動いたら `cargo xtask coverage` の `corpus.mle` で当てはめ直す（12-roadmap「フェーズ 4 の統合 (D3・len・perf のマージ後)」と「フェーズ 4 の完了」） |
 | 11 | `interpret/sayc-12-call-auction` < 10 μs（中央値） | フェーズ 4 の性能レーンで解消。fc2d6e1 で中央値 8.68 μs、最良 8.17 μs（criterion 3 回、負荷平均 3.7〜18）。公開 API は変えていない（`ExclusiveIndex::group` を位置ごとのキー範囲から引く、`MirrorPiece::exact` を `Box` にする、ナチュラル領域のグリッドをその場で作るなど。12-roadmap「フェーズ 4 の性能レーン」）。それまでは中央値 9.90〜10.75 μs で境界線上だった。Step B の実体化の共有化（`CallExplanation.text` と片。公開 API の変更）は要らなくなった。フェーズ 4 の最終ヘッド 5aa82e6 で測り直し、中央値 8.09 μs、最良 8.06 μs（criterion 3 回、負荷平均は 1 回目の開始時 53.2、各回の終了時 4.9〜7.6。12-roadmap「フェーズ 4 の完了」） |
