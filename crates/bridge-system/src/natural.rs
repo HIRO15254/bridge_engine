@@ -329,8 +329,12 @@ pub struct CallContext {
     pub our_suits: StrainSet,
     /// Strains bid by their side.
     pub their_suits: StrainSet,
-    /// Agreed suit.
+    /// Agreed suit: the lowest-ranking suit both `owner` and partner have bid (see
+    /// `agreed_suits` for all of them).
     pub agreed_suit: Option<Suit>,
+    /// Every suit both `owner` and partner have bid (as a [`Call::Bid`]): clubs and hearts after
+    /// `1C-P-1H-P-2H-P-3C`.
+    pub agreed_suits: StrainSet,
     /// Last bid in the auction.
     pub last_bid: Option<Bid>,
     /// Partner's last call was forcing.
@@ -425,6 +429,7 @@ struct HistoryContext {
     competitive: bool,
     partner_last: Option<Call>,
     agreed_suit: Option<Suit>,
+    agreed_suits: StrainSet,
     last_bid: Option<Bid>,
     owner_acted: bool,
     partner_actions: u8,
@@ -493,10 +498,13 @@ impl HistoryContext {
             .rev()
             .find(|(i, _)| auction.seat_at(*i) == owner)
             .map(|(_, c)| *c);
-        let agreed_suit = Suit::ALL.into_iter().find(|&s| {
-            let strain = Strain::from_suit(s);
-            owner_suits.contains(strain) && partner_suits.contains(strain)
-        });
+        let agreed_suits = StrainSet(owner_suits.0 & partner_suits.0)
+            .iter()
+            .filter(|s| *s != Strain::NoTrump)
+            .fold(StrainSet::EMPTY, StrainSet::with);
+        let agreed_suit = Suit::ALL
+            .into_iter()
+            .find(|&s| agreed_suits.contains(Strain::from_suit(s)));
         let last_bid = history.iter().rev().find_map(|c| c.bid());
         let owner_acted = history
             .iter()
@@ -602,6 +610,7 @@ impl HistoryContext {
             competitive,
             partner_last,
             agreed_suit,
+            agreed_suits,
             last_bid,
             owner_acted,
             partner_actions,
@@ -670,6 +679,7 @@ impl HistoryContext {
             our_suits: self.our_suits,
             their_suits: self.their_suits,
             agreed_suit: self.agreed_suit,
+            agreed_suits: self.agreed_suits,
             last_bid: self.last_bid,
             forcing_situation: false,
             opener_first_suit: self.opener_first_suit,
@@ -1315,8 +1325,9 @@ fn overrides_partners_game(ctx: &CallContext) -> bool {
 /// `true` when the bid corrects partner's 3NT (the right-hand opponent passed it) to game in a
 /// suit our side has bid and the opponents have not: four of a major or five of a minor, in a
 /// strain `owner` has not bid twice already ([`CallContext::owner_repeated_strains`]) unless it
-/// is the suit `owner` opened at the one level ([`rebid_opened_suit`]), and did not open with
-/// a weak two or a preempt ([`opened_preemptively_in`]).
+/// is the suit `owner` opened at the one level ([`rebid_opened_suit`]) or a suit both partners
+/// bid that a one-level opener has bid twice ([`repeated_agreed_suit`]), and did not open with a
+/// weak two or a preempt ([`opened_preemptively_in`]).
 ///
 /// Such a bid tells partner something partner did not know when choosing 3NT: a sixth card in
 /// the suit opened (`1H-P-3NT-P-4H`; SAYC's 3NT response promises only two hearts), or support
@@ -1327,17 +1338,21 @@ fn overrides_partners_game(ctx: &CallContext) -> bool {
 /// (`1S-P-2C-P-2S-P-3NT-P-4S`) corrects too: the pull shows a seventh card, with the minimum the
 /// rebid showed while the rebid limited the hand, or the range of opener's strongest other call
 /// (a reverse, a jump shift, a 2NT rebid) when it did not
-/// ([`rule_rebid_opened_suit_over_3nt`]). A suit nobody on our
-/// side has bid (`1H-P-3NT-P-5C`), the opponents' suit (a cue bid), any other suit `owner` has
-/// already rebid (`2S-P-2NT-P-3S-P-3NT-P-4S`) and the suit of a weak two or a preempt
-/// (`2S-P-3NT-P-4S`: the opening already promised the six cards) are not corrections.
+/// ([`rule_rebid_opened_suit_over_3nt`]). So does a one-level opener that re-raised the agreed
+/// suit as a game try (`1S-P-2S-P-3S-P-3NT-P-4S`): partner's 3NT accepted and offered a choice
+/// of game, which the pull makes (`rule_reraise_agreed`'s choice-of-game branch). A suit nobody
+/// on our side has bid (`1H-P-3NT-P-5C`), the opponents' suit (a cue bid), any other suit
+/// `owner` has already rebid (`2S-P-2NT-P-3S-P-3NT-P-4S`) and the suit of a weak two or a
+/// preempt (`2S-P-3NT-P-4S`: the opening already promised the six cards) are not corrections.
 fn corrects_partners_3nt(ctx: &CallContext) -> bool {
     let Some(strain) = game_over_partners_3nt(ctx) else {
         return false;
     };
     ctx.our_suits.contains(strain)
         && !ctx.their_suits.contains(strain)
-        && (!ctx.owner_repeated_strains.contains(strain) || rebid_opened_suit(ctx, strain))
+        && (!ctx.owner_repeated_strains.contains(strain)
+            || rebid_opened_suit(ctx, strain)
+            || repeated_agreed_suit(ctx, strain))
         && !opened_preemptively_in(ctx, strain)
 }
 
@@ -1357,14 +1372,25 @@ fn game_over_partners_3nt(ctx: &CallContext) -> Option<Strain> {
 }
 
 /// `true` when `owner` opened one of `strain` and has bid it again, and it is not a suit partner
-/// supported ([`CallContext::agreed_suit`]): `1S-P-2C-P-2S`, `1H-P-1S-P-2H`, `1S-P-1NT-P-3S`.
+/// supported (one of [`CallContext::agreed_suits`]): `1S-P-2C-P-2S`, `1H-P-1S-P-2H`,
+/// `1S-P-1NT-P-3S`.
 fn rebid_opened_suit(ctx: &CallContext, strain: Strain) -> bool {
     ctx.role == Role::Opener
         && ctx.owner_repeated_strains.contains(strain)
         && ctx
             .opener_first_bid
             .is_some_and(|b| b.level() == 1 && b.strain() == strain)
-        && ctx.agreed_suit.map(Strain::from_suit) != Some(strain)
+        && !ctx.agreed_suits.contains(strain)
+}
+
+/// `true` when `owner` opened one of a suit and bids again `strain`, a suit both partners have
+/// bid ([`CallContext::agreed_suits`]) that `owner` has already bid twice: after the re-raise
+/// `1S-P-2S-P-3S` (a game try), or the rebid `1D-P-1H-P-2D` that partner then raised.
+fn repeated_agreed_suit(ctx: &CallContext, strain: Strain) -> bool {
+    ctx.role == Role::Opener
+        && opened_one_of_a_suit(ctx)
+        && ctx.owner_repeated_strains.contains(strain)
+        && ctx.agreed_suits.contains(strain)
 }
 
 /// `true` when `owner` opened a weak two or a preempt in `strain` (two or more of a suit, but
@@ -2527,13 +2553,14 @@ fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
     };
     let bid = ctx.call.bid()?;
     let suit = bid.strain().suit()?;
-    if ctx.role == Role::Responder && ctx.agreed_suit != Some(suit) && corrects_partners_3nt(ctx) {
+    let agreed = ctx.agreed_suits.contains(bid.strain());
+    if ctx.role == Role::Responder && !agreed && corrects_partners_3nt(ctx) {
         return rule_responder_corrects_to_own_suit(p, ctx, suit, ex);
     }
     if ctx.role != Role::Opener {
         return None;
     }
-    if ctx.agreed_suit == Some(suit) && opened_one_of_a_suit(ctx) {
+    if agreed && opened_one_of_a_suit(ctx) {
         return Some(rule_reraise_agreed(p, ctx, suit, jump, ex));
     }
     if let Some(hcp) = notrump_opening_hcp(p, ctx.opener_first_bid) {
@@ -2728,9 +2755,11 @@ fn opened_one_of_a_suit(ctx: &CallContext) -> bool {
 /// raise of partner's suit, and not the 6-card rebid of an unsupported suit either. A non-jump
 /// re-raise without competition is a game try (`rebid.jump_rebid`); in competition it is
 /// merely competitive (`opening_hcp`); a jump (to game) shows `rebid.jump_rebid`'s minimum or
-/// more; a correction of partner's 3NT to game in the suit ([`corrects_partners_3nt`]) is a
-/// choice of game, any opening (`opening_hcp`). Length is the opening's own minimum for the
-/// opened suit, 4 for a second suit.
+/// more; a correction of partner's 3NT to game in the suit ([`corrects_partners_3nt`]), also
+/// after the game try (`1S-P-2S-P-3S-P-3NT-P-4S`), is a choice of game, any opening
+/// (`opening_hcp`). Length is the opening's own minimum for the opened suit, 4 for a second
+/// suit. Every suit both partners bid takes this branch ([`CallContext::agreed_suits`]), not
+/// only the lowest-ranking one.
 fn rule_reraise_agreed(
     p: &NaturalParams,
     ctx: &CallContext,

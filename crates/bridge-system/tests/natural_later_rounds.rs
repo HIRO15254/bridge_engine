@@ -8,7 +8,7 @@ mod common;
 use std::ops::RangeInclusive;
 
 use bridge_constraint::{Atom, HandConstraint};
-use bridge_core::{Hand, Seat, Suit, Vulnerability};
+use bridge_core::{Hand, Seat, Strain, Suit, Vulnerability};
 use bridge_system::natural::{
     CallContext, CallKind, DoubleKind, Inference, NaturalInference, Role, classify,
 };
@@ -391,6 +391,75 @@ fn a_pull_after_an_unlimited_call_shows_openers_strongest_range() {
     ] {
         assert!(last(calls).0.opener_other_calls.is_empty(), "{calls}");
     }
+}
+
+#[test]
+fn every_suit_both_partners_bid_is_agreed() {
+    // Responder bid hearts and clubs, opener clubs and hearts: both are agreed, not only the
+    // lowest-ranking one. Responder's 4H over opener's 3NT bids a suit opener raised, so it is
+    // not the correction of an unsupported suit (it was 6+ hearts, 7+ hcp), the same as when
+    // hearts are the only agreed suit.
+    let (ctx, _) = last("1C P 1H P 2H P 3C P 3NT P 4H");
+    assert!(ctx.agreed_suits.contains(Strain::Clubs));
+    assert!(ctx.agreed_suits.contains(Strain::Hearts));
+    assert_eq!(ctx.agreed_suit, Some(Suit::Clubs));
+    for calls in [
+        "1C P 1H P 2H P 3C P 3NT P 4H",
+        "1D P 1H P 2H P 3C P 3NT P 4H",
+    ] {
+        let inf = last_with_partner(calls, 15..=37);
+        assert_eq!(inf.rule, "fallback", "{calls}");
+    }
+    // Opener: diamonds, clubs and hearts are all agreed. The pull of 3NT to 5D re-raises an
+    // agreed suit (opening values, the ordinary floor 26 - 10) rather than rebidding an
+    // unsupported opened suit (it was 16-15, unsatisfiable).
+    let calls = "1D P 2C P 2D P 2H P 3C P 3D P 3H P 3NT P 5D";
+    let (ctx, _) = last(calls);
+    for strain in [Strain::Clubs, Strain::Diamonds, Strain::Hearts] {
+        assert!(ctx.agreed_suits.contains(strain), "{strain:?}");
+    }
+    let partner = Atom::ANY
+        .with_hcp(10..=37)
+        .with_suit_len(Suit::Diamonds, 3..=13);
+    let inf = last_with_partner_constraint(calls, partner);
+    assert_eq!(inf.rule, "rebid_own");
+    assert_eq!(inf.constraint.hcp_range(), 16..=21);
+    assert_eq!(inf.constraint.suit_len(Suit::Diamonds), 5..=13);
+    // 17 hcp, five diamonds (an eight-card fit) and a singleton.
+    assert!(inf.constraint.satisfies(hand("K32", "AKJ54", "AQ32", "2")));
+}
+
+#[test]
+fn a_pull_after_a_reraise_game_try_is_a_choice_of_game() {
+    // 1S-P-2S-P-3S invites (16-18); partner's 3NT accepts and offers a choice of game, which
+    // the pull to four of the major makes: an opening with the ordinary floor (22 - 8) and an
+    // eight-card fit, not a slam move (it was 23-18, unsatisfiable).
+    assert_eq!(
+        last("1S P 2S P 3S").1.constraint.hcp_range(),
+        16..=18,
+        "the game try itself"
+    );
+    for (calls, suit) in [
+        ("1S P 2S P 3S P 3NT P 4S", Suit::Spades),
+        ("1H P 2H P 3H P 3NT P 4H", Suit::Hearts),
+    ] {
+        let partner = Atom::ANY.with_hcp(8..=37).with_suit_len(suit, 3..=13);
+        let inf = last_with_partner_constraint(calls, partner);
+        assert_eq!(inf.rule, "rebid_own", "{calls}");
+        assert_eq!(inf.constraint.hcp_range(), 14..=21, "{calls}");
+        assert_eq!(inf.constraint.suit_len(suit), 5..=13, "{calls}");
+        assert!(inf.constraint.is_satisfiable(), "{calls}");
+    }
+    // In a minor: five of it with the ordinary floor (26 - 6) and a hand unsuited to notrump
+    // (it was 25-21).
+    let partner = Atom::ANY
+        .with_hcp(6..=37)
+        .with_suit_len(Suit::Diamonds, 4..=13);
+    let inf = last_with_partner_constraint("1D P 2D P 3D P 3NT P 5D", partner);
+    assert_eq!(inf.rule, "rebid_own");
+    assert_eq!(inf.constraint.hcp_range(), 20..=21);
+    assert!(inf.constraint.satisfies(hand("A2", "AKQ5432", "AK2", "2")));
+    assert!(!inf.constraint.satisfies(hand("A2", "AKQ54", "AK2", "432")));
 }
 
 /// The suit of the last bid of `calls`.
