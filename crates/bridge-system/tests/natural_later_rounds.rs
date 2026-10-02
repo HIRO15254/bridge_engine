@@ -144,19 +144,30 @@ fn four_level_entry_after_their_exchange_needs_six_cards_and_opening_values() {
 }
 
 #[test]
-fn pass_out_seat_entry_over_their_game_is_not_described() {
-    // The pass-out seat over their game passed earlier, after their opening, where an overcall
-    // of the same suit was available (1S over 1H, 3H over 2NT): six cards and opening values
-    // are what that pass denied. No rule describes the entry.
-    for calls in [
-        "1H P 4H P P 4S",
-        "1NT P 2NT P 3NT P P 4H",
-        "1H P 3NT P P 4S",
+fn entry_over_their_game_after_a_pass_is_not_described() {
+    // A player who passed earlier, after their opening, where an overcall of the same suit was
+    // available (1S over 1H, 3H over 2NT), enters over their game: six cards and opening values
+    // are what that pass denied. No rule describes the entry, in the pass-out seat or in the
+    // direct seat.
+    for (calls, role) in [
+        ("1H P 4H P P 4S", Role::Balancer),
+        ("1NT P 2NT P 3NT P P 4H", Role::Balancer),
+        ("1H P 3NT P P 4S", Role::Balancer),
+        ("1H P 2H P 4H 4S", Role::Overcaller),
+        ("1H P 2H P 3H P 4H 4S", Role::Overcaller),
+        ("1NT P 2C P 2H P 3NT 4S", Role::Overcaller),
     ] {
         let (ctx, inf) = last(calls);
-        assert_eq!(ctx.role, Role::Balancer, "{calls}");
-        assert!(ctx.passed_hand, "{calls}");
+        assert_eq!(ctx.role, role, "{calls}");
+        assert!(ctx.passed_after_opening, "{calls}");
         assert_eq!(inf.rule, "fallback", "{calls}");
+    }
+    // A first chance over their game keeps the four-level entry (tested above): no pass after
+    // their opening. A pass before it (`P-(1H)-P-(4H)-4S`) is not keyed (a known limit).
+    for calls in ["1H P 4H 4S", "1NT P 3NT 4H", "P 1H P 4H 4S"] {
+        let (ctx, inf) = last(calls);
+        assert!(!ctx.passed_after_opening, "{calls}");
+        assert_eq!(inf.rule, "overcall", "{calls}");
     }
 }
 

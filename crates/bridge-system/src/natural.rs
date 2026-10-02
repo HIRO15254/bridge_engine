@@ -314,6 +314,9 @@ pub struct CallContext {
     pub position: u8,
     /// The caller passed earlier.
     pub passed_hand: bool,
+    /// The caller passed at an earlier turn after the auction's opening bid (the first non-pass
+    /// call): East after `1H-P-2H-P-4H`, not North after `P-1H-P-4H` (a pass before it).
+    pub passed_after_opening: bool,
     /// We / they vulnerable.
     pub vul: (bool, bool),
     /// Both sides have bid.
@@ -417,6 +420,7 @@ struct HistoryContext {
     opener_first_bid: Option<Bid>,
     position: u8,
     passed_hand: bool,
+    passed_after_opening: bool,
     vul: (bool, bool),
     competitive: bool,
     partner_last: Option<Call>,
@@ -459,6 +463,17 @@ impl HistoryContext {
             .iter()
             .enumerate()
             .any(|(i, c)| auction.seat_at(i) == owner && *c == Call::Pass);
+        let passed_after_opening =
+            history
+                .iter()
+                .position(|c| *c != Call::Pass)
+                .is_some_and(|opening| {
+                    history
+                        .iter()
+                        .enumerate()
+                        .skip(opening + 1)
+                        .any(|(i, c)| auction.seat_at(i) == owner && *c == Call::Pass)
+                });
         let vul = (
             auction.vulnerability().is_vulnerable_side(owner.side()),
             auction
@@ -582,6 +597,7 @@ impl HistoryContext {
             opener_first_bid,
             position,
             passed_hand,
+            passed_after_opening,
             vul,
             competitive,
             partner_last,
@@ -646,6 +662,7 @@ impl HistoryContext {
             level,
             position: self.position,
             passed_hand: self.passed_hand,
+            passed_after_opening: self.passed_after_opening,
             vul: self.vul,
             competitive: self.competitive,
             partner_last: self.partner_last,
@@ -1697,9 +1714,10 @@ fn is_first_overcall(ctx: &CallContext) -> bool {
 ///   competitive tables ask for there (`systems/sayc/competing.bml`): a six-card suit and
 ///   opening values (`four_level_entry`: 6+ cards and 12-16 HCP with the default
 ///   parameters), a king less (9-16) in the balancing seat below their game. Over their game
-///   the pass-out seat is not described: that player passed at an earlier turn where an
-///   overcall of the same suit was available, so a six-card suit with opening values is
-///   what the pass denied;
+///   only a first chance is described: a player who passed at an earlier turn after their
+///   opening, in the direct seat (`(1H)-P-(2H)-P-(4H)-4S`) or the pass-out seat, could have
+///   overcalled the same suit then, so a six-card suit with opening values is what the pass
+///   denied ([`CallContext::passed_after_opening`]);
 /// - a first entry at the five level or higher (over their `4C`/`4D`, or over their game:
 ///   five hearts and 7-16 HCP over their `1S-3S-4S` do not bid `5H`) is a sacrifice or a
 ///   lead-directing gamble, not a natural overcall. No overcall rule fires, so the natural
@@ -1789,13 +1807,15 @@ fn rule_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infer
     } else {
         p.overcall[1].clone()
     };
-    // Over their game the pass-out seat is not a balance (there is no partscore to contest
-    // and partner's values are not trapped), and it is not a first chance either: that player
-    // passed at an earlier turn, after their opening, where an overcall in the same suit was
-    // available, so the six cards and opening values a direct entry shows are what the pass
-    // denied. No rule describes it (MAX_ENTRY_LEVEL_AFTER_EXCHANGE).
+    // Over their game an entry by a player who passed at an earlier turn after their opening,
+    // in any seat (`(1H)-P-(2H)-P-(4H)-4S` in the direct seat, `(1H)-P-(4H)-P-(P)-4S` in the
+    // pass-out seat), is not a first chance: an overcall in the same suit was available then,
+    // so the six cards and opening values a first entry shows are what the pass denied. The
+    // pass-out seat over their game is not a balance either (there is no partscore to contest
+    // and partner's values are not trapped), and always passed earlier. No rule describes the
+    // entry (MAX_ENTRY_LEVEL_AFTER_EXCHANGE).
     let over_their_game = four_level && ctx.last_bid.is_some_and(is_game_or_higher);
-    if over_their_game && ctx.role == Role::Balancer {
+    if over_their_game && ctx.passed_after_opening {
         return None;
     }
     let hcp = if over_their_game {
