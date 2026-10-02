@@ -1458,16 +1458,18 @@ P17. **Lane N: the natural engine's later-round limits revisited** (wip/p4-fixN 
       - Held-out seeds (strict [G]) unchanged: `0x1234` 0.807 (overrides 148), `0xBEEF0001`
         0.785 (146), `0xD00D` 0.772 (177).
 
-P18. **Phase 4 closed** (wip/p4int 5aa82e6, then 026ad30 and 67c48d2, which change a test and
-    docs only; docs/design/12-roadmap.md 「フェーズ 4 の完了」 has the full table).
+P18. **Phase 4 closed** (wip/p4int 5aa82e6, then 026ad30 and 67c48d2, which change tests and
+    docs and add a doc-hidden wrapper, `bridge_bidding::natural_partner_context`, with no change
+    in behaviour; docs/design/12-roadmap.md 「フェーズ 4 の完了」 has the full table).
     - The final numbers are P17's round-3 numbers (unchanged by N3): strict / raw /
       stop-audited [G] 0.847 / 0.953 / 0.613, held-out 0.807 / 0.785 / 0.772, strict [C]
       0.487 / 0.469 / 0.475 (subset-eval 0.500), raw [C] 0.709 / 0.681 / 0.699, all-call Exact
       0.320 / 0.323 / 0.341, `resolve_lenient` 1 / 8,169, `NoCandidate` 59, corpus natural
       agreement 1131 / 2033.
     - `PolicyParams::human()` stays (0.3404, 0.3959): the head's MLE (0.3420, 0.3943) is only
-      0.02 higher in tune ln L (-7307.07 vs -7307.09), and `human()` is higher on the eval
-      split (-6675.07 vs -6675.70).
+      0.02 higher in tune ln L (-7307.07 vs -7307.09; the epsilon is one fine-grid step below
+      the new MLE, well inside the 1.92 interval), and `human()` is higher on the eval split
+      (-6675.07 vs -6675.70).
     - `natural_tuning` had failed under the STANDARD floor since at least 3c57c37: it predicted
       `choose_bid` with the legacy partner context. It now uses the function `choose_bid` uses
       (`bridge_bidding::natural_partner_context`, doc-hidden) and passes; nothing in the SAYC or

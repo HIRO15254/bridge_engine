@@ -68,12 +68,14 @@ impl PolicyParams {
     /// placeholder (`ε = 0.01`, `δ = 0.3`) gives −10973.3 on the same tune split. Lane guard's
     /// `#EXACTPASS` rewrite of the same SAYC (`COMPILE_REVISION` 10) left every coverage
     /// metric, this fit included, unchanged, and revision 11 compiles that SAYC to the same IR.
-    /// The natural-inference fix lanes N, N2 and N3 (revision 12, the phase-4 head wip/p4int
-    /// 5aa82e6) moved the grid MLE to `ε = 0.3420`, `δ = 0.3943` (ln L −7307.07 on the tune
-    /// split). These values were kept on purpose: they give −7307.09 there, 0.02 below the
-    /// MLE (inside the `ε` resolution above and far inside the 1.92 interval, `δ` 0.35..=0.44),
-    /// and −6675.07 on the eval split, above the MLE's −6675.70. Refit when the SAYC data or
-    /// the natural engine moves the fit by more than that; the fits are recorded in
+    /// The natural-inference fix lanes N, N2 and N3 moved the grid MLE at the phase-4 head
+    /// (wip/p4int 5aa82e6, revision 12 after lane X2) to `ε = 0.3420`, `δ = 0.3943` (ln L
+    /// −7307.07 on the tune split). These values were kept on purpose: they give −7307.09
+    /// there, 0.02 below the MLE. This `ε` is one fine-grid step (about 0.0016) below the new
+    /// grid MLE, which accounts for almost all of the gap; the point is far inside the 1.92
+    /// likelihood-ratio interval (`δ` 0.35..=0.44 at the MLE's `ε`). On the eval split they
+    /// give −6675.07, above the MLE's −6675.70. Refit when the SAYC data or the natural
+    /// engine moves the fit by more than that; the fits are recorded in
     /// docs/design/12-roadmap.md (the phase-4 integration after lanes D3, len and perf, and
     /// the phase-4 completion).
     pub const fn human() -> PolicyParams {

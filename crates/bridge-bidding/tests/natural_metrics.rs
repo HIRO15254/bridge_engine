@@ -602,8 +602,8 @@ struct ReproductionReport {
     n_candidates_tested: usize,
     overall_agreement_rate: f64,
     /// The same agreement with each candidate's hands drawn from the constraint `choose_bid`
-    /// itself ranks (partner context from the prefix's interpretation, so the natural level
-    /// floor included; phase 4.6), over the same decision points with their own seeds. With
+    /// itself ranks (under its own partner context, `natural_partner_context`, so the natural
+    /// level floor included; phase 4.6), over the same decision points with their own seeds. With
     /// `LevelFloor::NONE` the two definitions sample the same constraints.
     contextual_agreement_rate: f64,
     by_rule: Vec<RuleAgreement>,
@@ -622,10 +622,10 @@ fn run_reproduction(sources: &[CompiledSource]) -> ReproductionReport {
         policy: PolicyParams::default(),
     };
 
-    // Non-opening decision points only (`choose_bid`'s empty-prefix root always resolves
-    // "exact, zero children" rather than falling through to `ctx.natural`, so the very first
-    // call of the auction cannot exercise this path -- see the module doc's measurement-2 note
-    // and `crates/bridge-bidding/src/choose.rs`'s `gather`).
+    // Non-opening decision points only, by choice: the phase-3 definition of measurement 2
+    // leaves the opening out. (On the empty system the root has no children, so `choose_bid`
+    // would answer an opening from `ctx.natural` too; the corpus rates of `natural_tuning`
+    // include openings.)
     let points: Vec<DecisionPoint> = collect_decision_points(sources)
         .into_iter()
         .filter(|dp| dp.index > 0)

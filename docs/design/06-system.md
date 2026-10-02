@@ -1231,7 +1231,7 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
 
 ### 8.6 フェーズ 4 の追加 (順位、一括推定、レベル下限、暗黙パス、4.6 の調整)
 
-**順位 (`ranked_candidates`)。** ナチュラル候補は、合法コールのうち `fallback` でないものを、`exclusive::natural_rank_cmp` の順に並べたものである。順は priority `round(confidence × 100)` 降順 → `tie_break` (`LowestCall` / `HighestCall` のときだけ効く) → コール index 昇順。ナチュラル方策は、手が最初に満たす候補を選ぶ。`choose_bid` のナチュラル分岐と `interpret` のナチュラル排他は、どちらもこの順を使う。`partner` (`PartnerContext`) は、`classify` がオークションだけからは作れない `partner_constraint` / `forcing_situation` を与える。`choose_bid` は、プレフィックスの解釈からこれを埋める (`07-bidding.md` §2.2)。
+**順位 (`ranked_candidates`)。** ナチュラル候補は、合法コールのうち `fallback` でないものを、`exclusive::natural_rank_cmp` の順に並べたものである。順は priority `round(confidence × 100)` 降順 → `tie_break` (`LowestCall` / `HighestCall` のときだけ効く) → コール index 昇順。ナチュラル方策は、手が最初に満たす候補を選ぶ。`choose_bid` のナチュラル分岐と `interpret` のナチュラル排他は、どちらもこの順を使う。`partner` (`PartnerContext`) は、`classify` がオークションだけからは作れない `partner_constraint` / `forcing_situation` を与える。`choose_bid` と既定の `interpret` は、パートナーの直前のコールの読みの要約 (`exclusion.rs` の `Reader`) からこれを埋める (`07-bidding.md` §2.2、§4.1「パートナー文脈」)。
 
 **一括推定 (`infer_batch`)。** 同じ履歴に対する複数のコールの推定を 1 回の呼び出しで行う。
 
@@ -1296,9 +1296,9 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
 - `natural_tuning` (`#[ignore]`) は次の 2 点を確かめる。
   - 予測が `choose_bid` と一致すること (旧定義の全手、既定の priority で、下限なしと STANDARD の両方)。
   - 部分的に戻したときの目的関数 (環境変数 `TUNE_FIX`)。
-  - 予測が使うパートナー文脈は、`choose_bid` のナチュラルの枝と同じ関数で求める (`bridge_bidding::natural_partner_context`、`#[doc(hidden)]`)。測定 2 は `choose_bid` と同じ `ImplicitPass::Never`、コーパスは「どの候補も満たさなければパス」の数え方に合わせて `ImplicitPass::Complement` で求める。
+- 予測が使うパートナー文脈は、`choose_bid` のナチュラルの枝と同じ関数で求める (`bridge_bidding::natural_partner_context`、`#[doc(hidden)]`)。測定 2 は `choose_bid` と同じ `ImplicitPass::Never`、コーパスは「どの候補も満たさなければパス」の数え方に合わせて `ImplicitPass::Complement` で求める。
 
-**予測モデルの修正 (フェーズ 4 の完了時)。** 上の一致の検査は、少なくともレーン D2 のマージ (3c57c37) から、STANDARD の下限で落ちていた (最初の不一致は `1H-(2H)-P` の後の 3H)。`choose_bid` のパートナー文脈は、方策鏡像の導入で `exclusion::Reader` の読み (パートナーの最後のコールの片の要約) に変わった。一方、試験は旧来の求め方 (strict な解釈で Fallback 以外の最も重い代替) のままだった。レベル下限はパートナー文脈に依るので、下限なしでは一致し、STANDARD でだけ食い違う。試験を本体と同じ関数に揃え、下限なしと STANDARD の両方で一致の検査が通るようになった。既定の確信度、STANDARD で、最終ヘッド (5aa82e6 に修正を足したもの) の値は次のとおり。
+**予測モデルの修正 (フェーズ 4 の完了時)。** 上の一致の検査は、少なくともレーン D2 のマージ (3c57c37) から、STANDARD の下限で落ちていた (最初の不一致は 3c57c37 では `1H-(2H)-P` の後の 3H、5aa82e6 では `1S-(2S)-P` の後の 3S)。`choose_bid` のパートナー文脈は、方策鏡像の導入で `exclusion::Reader` の読み (パートナーの最後のコールの片の要約) に変わった。一方、試験は旧来の求め方 (strict な解釈で Fallback 以外の最も重い代替) のままだった。レベル下限はパートナー文脈に依るので、下限なしでは一致し、STANDARD でだけ食い違う。試験を本体と同じ関数に揃え、下限なしと STANDARD の両方で一致の検査が通るようになった。既定の確信度、STANDARD で、最終ヘッド (5aa82e6 に修正を足したもの) の値は次のとおり。
 
 - 測定 2 は旧定義 0.2839、文脈付き 0.3424 (調整用 / 評価用 0.3408 / 0.3441)。`natural_inference_metrics` 本体の値 (0.284、文脈付き 0.342、8,651 候補) と同じである。
 - 実配牌一致率は調整用 0.6119、評価用 0.6324。

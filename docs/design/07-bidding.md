@@ -121,7 +121,7 @@ impl NaturalInference {
 
 ### 2.2 `classify` と解釈済み文脈
 
-計画 §5.7 の `classify(.., prior: Option<&Interpretation>)` は L2 が L3 の型に依存することになり循環する（`bridge-bidding → bridge-system` の一方向依存に反する）ので、`classify(auction, index, owner)` はオークションだけから `CallContext` を作る。`CallContext.partner_constraint: Option<HandConstraint>` と `forcing_situation: bool` は `classify` では `None` / `false` で、L3 が Step A の途中結果（`per_call[..j]`）からパートナーの最終コールの最大重み代替とそのノードの `flags.forcing` を詰めてから `infer` に渡す（`CallContext` は公開フィールドの平易な構造体なので分類後に埋められる）。
+計画 §5.7 の `classify(.., prior: Option<&Interpretation>)` は L2 が L3 の型に依存することになり循環する（`bridge-bidding → bridge-system` の一方向依存に反する）ので、`classify(auction, index, owner)` はオークションだけから `CallContext` を作る。`CallContext.partner_constraint: Option<HandConstraint>` と `forcing_situation: bool` は `classify` では `None` / `false` で、L3 が詰めてから `infer` に渡す（`CallContext` は公開フィールドの平易な構造体なので分類後に埋められる）。`choose_bid` と既定の `interpret`（方策鏡像）は `partner_context(prefix)`（`exclusion.rs` の `Reader`）を使い、パートナーの直前のコールの読みの要約（非 Fallback 片の和のシェイプと HCP の包）と、そのコールがフォーシングなシステムのコールで以後に相手の行動が無いか、を詰める（§4.1「パートナー文脈」）。Step A の途中結果（`per_call[..j]`）から最大重み代替を取る旧来の求め方は `InterpretMode::Legacy` だけに残る（§4.1.1）。
 
 ### 2.3 双方向一致の契約
 
@@ -773,8 +773,8 @@ impl InterpretCache {
 | 7 | δ を相手と味方で分けるか、位置の種類（競り合い・オープニング）で分けるか | 分けない（単一の δ） |
 | 8 | `legacy_temperature` と `InterpretMode::Legacy` を削除する時期 | フェーズ 6 のリード評価で hard 方策と比較した後 |
 | 9 | 方策上選ばれない枝（`ShadowedBranch` lint）を SAYC の側で消すか残すか | 残す（解釈は shadowed として Fallback だけで読む） |
-| 10 | `human()` の (ε, δ) | フェーズ 4 の統合で解消。D3・len・perf のマージ後のヘッド（8669ffd）で当てはめた ε 0.3404、δ 0.3959（調整用 ln L −7295.9、評価用 −6663.2）に設定した。その後のレーン N・N2・N3 (ナチュラル推定の修正、`COMPILE_REVISION` 12) で、最終ヘッド 5aa82e6 の最尤推定値は ε 0.3420、δ 0.3943 (調整用 ln L −7307.07) に動いた。値は意図して据え置いた。`human()` での ln L は調整用 −7307.09 で最大値との差は 0.02 (ε の格子の分解能の内、1.92 の区間 δ 0.35〜0.44 の十分内側)、評価用は −6675.07 で最尤推定値の −6675.70 より高い。SAYC かナチュラル推定を変えて当てはめがこれより大きく動いたら `cargo xtask coverage` の `corpus.mle` で当てはめ直す（12-roadmap「フェーズ 4 の統合 (D3・len・perf のマージ後)」と「フェーズ 4 の完了」） |
-| 11 | `interpret/sayc-12-call-auction` < 10 μs（中央値） | フェーズ 4 の性能レーンで解消。fc2d6e1 で中央値 8.68 μs、最良 8.17 μs（criterion 3 回、負荷平均 3.7〜18）。公開 API は変えていない（`ExclusiveIndex::group` を位置ごとのキー範囲から引く、`MirrorPiece::exact` を `Box` にする、ナチュラル領域のグリッドをその場で作るなど。12-roadmap「フェーズ 4 の性能レーン」）。それまでは中央値 9.90〜10.75 μs で境界線上だった。Step B の実体化の共有化（`CallExplanation.text` と片。公開 API の変更）は要らなくなった。フェーズ 4 の最終ヘッド 5aa82e6 で測り直し、中央値 8.09 μs（criterion 3 回の中央、負荷平均 4.9〜7.6。12-roadmap「フェーズ 4 の完了」） |
+| 10 | `human()` の (ε, δ) | フェーズ 4 の統合で解消。D3・len・perf のマージ後のヘッド（8669ffd）で当てはめた ε 0.3404、δ 0.3959（調整用 ln L −7295.9、評価用 −6663.2）に設定した。その後のレーン N・N2・N3 (ナチュラル推定の修正) で、最終ヘッド 5aa82e6 (`COMPILE_REVISION` はレーン X2 の後の 12) の最尤推定値は ε 0.3420、δ 0.3943 (調整用 ln L −7307.07) に動いた。値は意図して据え置いた。`human()` での ln L は調整用 −7307.09 で最大値との差は 0.02 (`human()` の ε は新しい格子の最尤推定値のちょうど 1 目盛り (約 0.0016) 下で、差のほぼ全てはこの ε のずれによる。尤度比の 1.92 の区間 (δ 0.35〜0.44) の十分内側)、評価用は −6675.07 で最尤推定値の −6675.70 より高い。SAYC かナチュラル推定を変えて当てはめがこれより大きく動いたら `cargo xtask coverage` の `corpus.mle` で当てはめ直す（12-roadmap「フェーズ 4 の統合 (D3・len・perf のマージ後)」と「フェーズ 4 の完了」） |
+| 11 | `interpret/sayc-12-call-auction` < 10 μs（中央値） | フェーズ 4 の性能レーンで解消。fc2d6e1 で中央値 8.68 μs、最良 8.17 μs（criterion 3 回、負荷平均 3.7〜18）。公開 API は変えていない（`ExclusiveIndex::group` を位置ごとのキー範囲から引く、`MirrorPiece::exact` を `Box` にする、ナチュラル領域のグリッドをその場で作るなど。12-roadmap「フェーズ 4 の性能レーン」）。それまでは中央値 9.90〜10.75 μs で境界線上だった。Step B の実体化の共有化（`CallExplanation.text` と片。公開 API の変更）は要らなくなった。フェーズ 4 の最終ヘッド 5aa82e6 で測り直し、中央値 8.09 μs、最良 8.06 μs（criterion 3 回、負荷平均は 1 回目の開始時 53.2、各回の終了時 4.9〜7.6。12-roadmap「フェーズ 4 の完了」） |
 | 12 | `1C-1H-1S-2NT` の後の 3NT（ベンチ `sayc-12-call-auction` の最後の実質コール） | システム外の位置で、ナチュラル規則にも 3NT 候補が無いため shadowed。上位のナチュラル候補に覆われているのではない。レーン S（`rule_rebid_nt` がこの位置で発火しない。レベル下限が 6C などの充足不能な候補 `And([hcp 16..=18, hcp 20..=37])` を残す）とレーン D（SAYC に 1m-1M-1S-2NT の続きを足す）に回す |
 
 `classify` に解釈済み文脈を渡す方法は §2.2 のとおり `CallContext.partner_constraint` / `forcing_situation` を L3 が後から埋める形で確定した。
