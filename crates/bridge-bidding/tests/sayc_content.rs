@@ -1796,3 +1796,70 @@ mod d2_review {
         ]);
     }
 }
+
+/// Phase 4's `resolve_lenient` investigation (`docs/design/12-roadmap.md`,
+/// `systems/sayc/interference-guards.bml`): lane D2's tables describe our call after an
+/// opponents' pass, and had no edge for their other calls there, so `resolve_lenient` read an
+/// opponent's bid or double "as if they had passed" and the next call of ours came out `Partial`
+/// against a table written for the uncontested auction (61 corpus calls). Each auction below is
+/// one of those corpus calls, one per table; with the `(any)` lines the call is off-system,
+/// read by natural inference.
+mod lenient_guards {
+    use super::*;
+    use bridge_bidding::{InterpretOptions, ResolutionKind, interpret_per_call};
+    use bridge_core::{Auction, Call};
+
+    #[test]
+    fn their_call_after_a_lane_d2_table_is_not_read_as_a_pass() {
+        // (auction from the dealer, index of our call that was `Partial`, the guarded table)
+        const CASES: &[(&str, usize, &str)] = &[
+            ("P 1D X 1H 2S 3H 3S P 4S P P P", 5, "1X-(D)-1Y-(P)-"),
+            ("1H X 1NT 2S P P P", 4, "1X-(D)-1N-(P)-"),
+            ("1D X 1H P 1S P 1NT P P P", 5, "(1X)-D-(1Y)-P-(P)-"),
+            ("P P 1S X 2S P 4S X P P P", 7, "(1X)-D-(2X)-P-(P)-"),
+            ("1S 2H 2NT X 3S P P P", 4, "1Y-(2X)-2N-(P)-"),
+            (
+                "P 1S P 1NT P 2C X 2D P 3C P 3D P 4D P 5D P P P",
+                7,
+                "1M-1N-2m-",
+            ),
+            ("1H 1S 2D 2S 3D P 4H P P P", 4, "1H-(1S)-2D-(P)-"),
+            ("1S X 2H 3NT P P P", 4, "1S-(D)-2H-(P)-"),
+            ("1S X 2S X P 3D P 3NT P P P", 4, "1M-(D)-2M-(P)-"),
+            ("P 1NT 2S X XX P P 2NT 3S P P P", 5, "1N-(2M)-D-(P)-"),
+            ("1H P 3C X 3H P P P", 4, "1X-(P)-jY-(P)-"),
+            (
+                "P 1H P 2C 2D 3H P 4C P 4D P 4NT P 5S P 6H P P P",
+                6,
+                "(1Z)-P-(2X)-2Y-(P)-",
+            ),
+            ("P 2D 3D X 5D P P 5H P 6H P P P", 5, "2D-(bid)-D-(P)-"),
+        ];
+        let table = sayc();
+        let opts = InterpretOptions::for_context(&ctx(table));
+        let mut failures = Vec::new();
+        for &(calls, index, guarded) in CASES {
+            let mut a = Auction::new(Seat::North, Vulnerability::None);
+            for c in calls.split_whitespace() {
+                a = a
+                    .with(c.parse::<Call>().expect("valid call"))
+                    .expect("legal call");
+            }
+            let per_call = interpret_per_call(table, &a, &opts);
+            let kind = per_call
+                .iter()
+                .find(|pc| pc.call_index == index)
+                .map(|pc| pc.kind);
+            if kind != Some(ResolutionKind::Natural) {
+                failures.push(format!(
+                    "  [{calls}] call {index} after {guarded}: {kind:?}"
+                ));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "their call read as a pass (expected Natural):\n{}",
+            failures.join("\n")
+        );
+    }
+}

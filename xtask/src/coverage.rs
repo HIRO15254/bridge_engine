@@ -40,7 +40,14 @@
 //!   the SAYC-compatible-opening subset (the true opener's hand lies in the exclusive region X of
 //!   the recorded opening, from `SystemIR::exclusive`), seats with empty strict support, seats
 //!   whose default-mode support is empty (what the sampler would report as `EmptySupport`), the
-//!   `resolve_lenient` usage rate, the system-resolution rate raw and *strict*
+//!   `resolve_lenient` usage rate (`resolve_lenient_calls`, task 4.4), with two counts in the
+//!   baseline's units: `resolve_lenient_entries`, the lenient calls of a partnership that made
+//!   no earlier lenient call in the auction (once a lenient match reaches a system stop, every
+//!   later pass of that partnership also resolves through the stop loop and is counted by
+//!   `resolve_lenient_calls`; the baseline had no stops, so there every lenient call was an
+//!   entry), and `resolve_lenient_eligible_calls`, the calls whose exact resolve stops at an
+//!   opponents' non-pass call (the only calls a substitution can help), and the
+//!   system-resolution rate raw and *strict*
 //!   (`system_resolution_strict_rate`, the phase-4 `[C]` criterion: an Exact or Partial call
 //!   where the caller's system offers nothing but default passes is not counted as resolved,
 //!   `resolved_at_default_pass`; the `[C]` counterpart of strict `[G]`), the true-deal policy
@@ -51,6 +58,10 @@
 //!   reason: `call_not_a_row` when the position is on the system but the recorded call is not
 //!   one of its rows, `call_not_a_row_default_pass_only` when the position's only rows are
 //!   default passes, otherwise why the position itself is off the system).
+//!   `resolve_lenient_top50` lists where corpus calls resolve through `resolve_lenient`, by the
+//!   exact resolve's position and the opponents' call it stopped at (the call the lenient
+//!   match reads as a pass), with entries and follow-ons counted apart and the rows the calls
+//!   resolved to (`file:line`, or `stop pass` for the synthesised stop pass).
 //! - **lints / exclusive**: lint counts by severity and code, our own non-pass calls with no
 //!   requirement at all (`unconstrained_own_calls`: a table header naming a call no row
 //!   defines), and the members/branches the
@@ -65,10 +76,12 @@
 //! `first_strict_departure_top_n`, `stop_swallow_top_n`), and
 //! `COVERAGE_PRINT_LINTS=<code substring>` prints the matching lints to stderr; both are
 //! authoring aids. `COVERAGE_PRINT_LENIENT` prints each corpus call resolved through
-//! `resolve_lenient` and each seat with empty default-mode support. `COVERAGE_DUMP=<file>`
-//! writes one tab-separated line per generated first strict departure and stop swallow
-//! (category, role, matched trie path, auction, hand, HCP, the natural choice and the natural
-//! rule behind it), the raw material for surveying the strict `[G]` departures by class.
+//! `resolve_lenient` (its auction index, the caller's path, how far the exact resolve got, the
+//! substituted opponents' calls and the row the call resolved to) and each seat with empty
+//! default-mode support. `COVERAGE_DUMP=<file>` writes one tab-separated line per generated
+//! first strict departure and stop swallow (category, role, matched trie path, auction, hand,
+//! HCP, the natural choice and the natural rule behind it), the raw material for surveying the
+//! strict `[G]` departures by class.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -169,6 +182,17 @@ pub fn run(args: &[&str]) -> Result<std::process::ExitCode> {
         &bridge_system::CompileOptions::default(),
     );
     let compile_ms = t0.elapsed().as_secs_f64() * 1e3;
+    // The file name per `FileId` (the root, then every `#INCLUDE` in load order), to name the
+    // rows a lenient reading resolves to.
+    let files: Vec<String> = bridge_system::lexer::load(
+        &path.to_string_lossy(),
+        &text,
+        &bridge_system::lexer::FsLoader,
+    )
+    .files
+    .iter()
+    .map(|(p, _)| p.rsplit('/').next().unwrap_or(p).to_string())
+    .collect();
     let ir = Arc::new(ir);
     let table = Table::uniform(
         ir.clone(),
@@ -215,7 +239,7 @@ pub fn run(args: &[&str]) -> Result<std::process::ExitCode> {
 
     let t = Instant::now();
     let corpus = match corpus_dir(&root) {
-        Some(dir) => corpus_report(&table, &ctx, &dir),
+        Some(dir) => corpus_report(&table, &ctx, &dir, &files),
         None => json!(null),
     };
     let corpus_s = t.elapsed().as_secs_f64();
@@ -1361,6 +1385,10 @@ struct KindStats {
     empty_strict_seats: u64,
     empty_default_seats: u64,
     lenient_calls: u64,
+    /// Lenient calls of a partnership that made no earlier lenient call in the auction.
+    lenient_entries: u64,
+    /// Calls whose exact resolve stops at an opponents' non-pass call.
+    lenient_eligible: u64,
     /// Exact or Partial calls made where the caller's system offers nothing but default passes
     /// ([`default_pass_only`]: a `{stop}` row or the synthesised stop pass): the system "resolves"
     /// them with any hand, so the strict rate does not count them as resolved (the `[C]`
@@ -1389,6 +1417,8 @@ impl KindStats {
             "sampler_empty_support_seats": self.empty_default_seats,
             "resolve_lenient_calls": self.lenient_calls,
             "resolve_lenient_rate": self.lenient_calls as f64 / c,
+            "resolve_lenient_entries": self.lenient_entries,
+            "resolve_lenient_eligible_calls": self.lenient_eligible,
         })
     }
 }
@@ -1574,32 +1604,184 @@ fn sayc_compatible_opening(table: &Table, auction: &Auction, deal: &Deal) -> Opt
     Some(pieces.is_some_and(|ps| ps.iter().any(|p| p.constraint.satisfies(hand))))
 }
 
-/// Whether call `index` of `auction` needed `resolve_lenient` in its caller's system: the
-/// exact resolve of the prefix including the call stops short, and a full lenient match exists.
-fn used_lenient(table: &Table, auction: &Auction, index: usize) -> bool {
+/// How call `index` of `auction` resolves in its caller's system as far as `resolve_lenient` is
+/// concerned (the lookup key includes the call itself, leading passes stripped).
+struct LenientUse {
+    /// The caller, whose system resolves the call.
+    seat: Seat,
+    /// The key's calls, `we_opened`, opener position and relative vulnerability.
+    key_calls: Vec<Call>,
+    we_opened: bool,
+    opener_pos: u8,
+    vul: RelVul,
+    /// Calls the exact resolve matched.
+    exact_depth: usize,
+    /// The exact resolve stops at an opponents' non-pass call, the only kind of call
+    /// `resolve_lenient` substitutes.
+    eligible: bool,
+    /// The first full lenient match (the fewest substitutions): its substitution count and the
+    /// node the call resolved to. `Some` exactly when the exact resolve stops short and some
+    /// lenient attempt matches every call (the `resolve_lenient_calls` test).
+    lenient: Option<(u8, Option<bridge_system::NodeId>)>,
+}
+
+impl LenientUse {
+    /// Whether call `i` of the key is the key owner's side's.
+    fn is_ours(&self, i: usize) -> bool {
+        (i % 2 == 0) == self.we_opened
+    }
+
+    /// The lookup key with the given calls.
+    fn key<'a>(&self, calls: &'a [Call]) -> LookupKey<'a> {
+        LookupKey {
+            we_opened: self.we_opened,
+            calls,
+            opener_pos: self.opener_pos,
+            vul: self.vul,
+        }
+    }
+
+    /// The key's calls that the first full lenient match reads as a pass, as `(index, call)`:
+    /// `resolve_lenient`'s rule replayed (the first unmatched opponents' non-pass call at or
+    /// after where the walk stops, once per substitution).
+    fn substituted(&self, system: &SystemIR) -> Vec<(usize, Call)> {
+        let Some((subst, _)) = self.lenient else {
+            return Vec::new();
+        };
+        let mut calls = self.key_calls.clone();
+        let mut out = Vec::new();
+        for _ in 0..subst {
+            let stalled = system.index.resolve(&self.key(&calls)).matched_depth;
+            let Some(i) =
+                (stalled..calls.len()).find(|&i| !self.is_ours(i) && calls[i] != Call::Pass)
+            else {
+                break;
+            };
+            out.push((i, calls[i]));
+            calls[i] = Call::Pass;
+        }
+        out
+    }
+}
+
+/// [`LenientUse`] of call `index` of `auction` (`None` for a leading pass).
+fn lenient_use(table: &Table, auction: &Auction, index: usize) -> Option<LenientUse> {
     let seat = auction.seat_at(index);
-    let Ok(prefix) = Auction::from_calls(
+    let prefix = Auction::from_calls(
         auction.dealer(),
         auction.vulnerability(),
         auction.calls()[..=index].iter().copied(),
-    ) else {
-        return false;
-    };
-    let Some(key) = LookupKey::for_auction(&prefix, seat) else {
-        return false;
-    };
+    )
+    .ok()?;
+    let key = LookupKey::for_auction(&prefix, seat)?;
     let system = &table.systems[seat.index() as usize];
-    if system.index.resolve(&key).matched_depth == key.calls.len() {
-        return false;
+    let exact_depth = system.index.resolve(&key).matched_depth;
+    let mut out = LenientUse {
+        seat,
+        key_calls: key.calls.to_vec(),
+        we_opened: key.we_opened,
+        opener_pos: key.opener_pos,
+        vul: key.vul,
+        exact_depth,
+        eligible: false,
+        lenient: None,
+    };
+    if exact_depth == key.calls.len() {
+        return Some(out);
     }
-    system
+    out.eligible = !out.is_ours(exact_depth) && key.calls[exact_depth] != Call::Pass;
+    out.lenient = system
         .index
         .resolve_lenient(&key, LENIENT_MAX_SUBST)
-        .iter()
-        .any(|(lk, _)| lk.matched_depth == key.calls.len())
+        .into_iter()
+        .find(|(lk, _)| lk.matched_depth == key.calls.len())
+        .map(|(lk, subst)| (subst, lk.by_depth[key.calls.len() - 1]));
+    Some(out)
 }
 
-fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path) -> Value {
+/// Where a lenient reading's call resolved: `file:line` of its row, or `stop pass` for the
+/// synthesised stop pass.
+fn row_source(system: &SystemIR, node: Option<bridge_system::NodeId>, files: &[String]) -> String {
+    let Some(node) = node else {
+        return "-".to_string();
+    };
+    let node = system.node(node);
+    if node.is_synthesised() {
+        return "stop pass".to_string();
+    }
+    let span = &system.row(node.row).span;
+    let file = files
+        .get(usize::from(span.file.0))
+        .map_or("?", String::as_str);
+    format!("{file}:{}", span.line)
+}
+
+/// One line of `COVERAGE_PRINT_LENIENT` for a lenient corpus call.
+fn describe_lenient(
+    table: &Table,
+    auction: &Auction,
+    index: usize,
+    use_: &LenientUse,
+    files: &[String],
+) -> String {
+    let system = &table.systems[use_.seat.index() as usize];
+    let path: Vec<String> = (0..use_.key_calls.len())
+        .map(|i| {
+            let s = call_str(use_.key_calls[i]);
+            if use_.is_ours(i) { s } else { format!("({s})") }
+        })
+        .collect();
+    let substituted: Vec<String> = use_
+        .substituted(system)
+        .into_iter()
+        .map(|(i, c)| format!("({}) at {i}", call_str(c)))
+        .collect();
+    let (subst, node) = use_.lenient.unwrap_or((0, None));
+    let row = row_source(system, node, files);
+    let (prio, text) = node.map_or((0, String::new()), |n| {
+        let n = system.node(n);
+        (n.priority, n.description.clone())
+    });
+    format!(
+        "{auction} call {index}: {} | exact {}/{} | as a pass: {} (subst {subst}) | {row} prio {prio} '{text}'",
+        path.join("-"),
+        use_.exact_depth,
+        use_.key_calls.len(),
+        substituted.join(", "),
+    )
+}
+
+/// `resolve_lenient_top50` aggregation: per position, entries and follow-ons, one sample path,
+/// and the rows the lenient calls resolved to.
+#[derive(Default)]
+struct LenientAgg {
+    entries: u64,
+    follow_ons: u64,
+    sample_path: String,
+    rows: std::collections::BTreeSet<String>,
+}
+
+fn lenient_top(map: &HashMap<PosKey, LenientAgg>, n: usize) -> Vec<Value> {
+    let mut rows: Vec<(&PosKey, &LenientAgg)> = map.iter().collect();
+    let count = |a: &LenientAgg| a.entries + a.follow_ons;
+    rows.sort_by(|a, b| count(b.1).cmp(&count(a.1)).then_with(|| a.0.cmp(b.0)));
+    rows.truncate(n);
+    rows.into_iter()
+        .map(|(k, a)| {
+            json!({
+                "matched": k.matched,
+                "unmatched": k.unmatched,
+                "role": k.role,
+                "count": count(a),
+                "by_kind": { "entry": a.entries, "follow_on": a.follow_ons },
+                "sample_path": a.sample_path,
+                "rows": a.rows,
+            })
+        })
+        .collect()
+}
+
+fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path, files: &[String]) -> Value {
     let (n_files, mut games) = corpus_games(dir);
     let limit = env_usize("COVERAGE_CORPUS_LIMIT", usize::MAX);
     games.truncate(limit);
@@ -1624,6 +1806,7 @@ fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path) -> Value {
     let print_lenient = std::env::var_os("COVERAGE_PRINT_LENIENT").is_some();
     let mut subset_natural: HashMap<PosKey, Agg> = HashMap::new();
     let mut subset_first_natural: HashMap<PosKey, Agg> = HashMap::new();
+    let mut lenient_positions: HashMap<PosKey, LenientAgg> = HashMap::new();
 
     for (i, (auction, deal)) in games.iter().enumerate() {
         let interp = interpret(table, auction, &opts);
@@ -1633,6 +1816,8 @@ fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path) -> Value {
             ..KindStats::default()
         };
         let mut every_exact = true;
+        // Whether each partnership (index 0: North-South) already made a lenient call here.
+        let mut lenient_seen = [false; 2];
         for pc in &interp.per_call {
             st.calls += 1;
             match pc.kind {
@@ -1662,10 +1847,42 @@ fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path) -> Value {
             if pc.shadowed {
                 st.shadowed += 1;
             }
-            if used_lenient(table, auction, pc.call_index) {
-                st.lenient_calls += 1;
-                if print_lenient {
-                    eprintln!("lenient: {auction} call {}", pc.call_index);
+            if let Some(use_) = lenient_use(table, auction, pc.call_index) {
+                st.lenient_eligible += u64::from(use_.eligible);
+                if use_.lenient.is_some() {
+                    st.lenient_calls += 1;
+                    let side = usize::from(use_.seat.side() != Seat::North.side());
+                    let entry = !lenient_seen[side];
+                    lenient_seen[side] = true;
+                    st.lenient_entries += u64::from(entry);
+                    if print_lenient {
+                        eprintln!(
+                            "lenient: #{i} {} {}",
+                            if entry { "entry" } else { "follow-on" },
+                            describe_lenient(table, auction, pc.call_index, &use_, files)
+                        );
+                    }
+                    if let Ok(prefix) = Auction::from_calls(
+                        auction.dealer(),
+                        auction.vulnerability(),
+                        auction.calls()[..pc.call_index].iter().copied(),
+                    ) {
+                        let depth = use_.exact_depth;
+                        let e = lenient_positions
+                            .entry(pos_key(&prefix, depth))
+                            .or_default();
+                        if entry {
+                            e.entries += 1;
+                        } else {
+                            e.follow_ons += 1;
+                        }
+                        if e.sample_path.is_empty() {
+                            e.sample_path = format!("{auction} (call {})", pc.call_index);
+                        }
+                        let system = &table.systems[use_.seat.index() as usize];
+                        e.rows
+                            .insert(row_source(system, use_.lenient.and_then(|l| l.1), files));
+                    }
                 }
             }
         }
@@ -1808,6 +2025,7 @@ fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path) -> Value {
         "sayc_compatible_opening_first_natural_top50": top(&subset_first_natural, 50, 1.0),
         "sayc_compatible_opening_first_natural_by_kind": by_kind_totals(&subset_first_natural),
         "sayc_compatible_opening_natural_by_kind": by_kind_totals(&subset_natural),
+        "resolve_lenient_top50": lenient_top(&lenient_positions, 50),
         "agreement": {
             "all": agree_all.to_json(),
             "tune": agree_tune.to_json(),
@@ -1844,5 +2062,7 @@ fn add_stats(into: &mut KindStats, st: &KindStats) {
     into.empty_strict_seats += st.empty_strict_seats;
     into.empty_default_seats += st.empty_default_seats;
     into.lenient_calls += st.lenient_calls;
+    into.lenient_entries += st.lenient_entries;
+    into.lenient_eligible += st.lenient_eligible;
     into.resolved_at_default_pass += st.resolved_at_default_pass;
 }
