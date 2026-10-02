@@ -10,7 +10,7 @@ use std::ops::RangeInclusive;
 use bridge_constraint::{Atom, HandConstraint};
 use bridge_core::{Hand, Seat, Suit, Vulnerability};
 use bridge_system::natural::{
-    CallContext, CallKind, DoubleKind, Inference, NaturalInference, classify,
+    CallContext, CallKind, DoubleKind, Inference, NaturalInference, Role, classify,
 };
 use common::{auction, hand};
 
@@ -350,4 +350,14 @@ fn defenders_second_takeout_double_shows_extra_values() {
     let (_, inf) = last("1D 1S P P X");
     assert_eq!(inf.rule, "takeout_x");
     assert_eq!(min_hcp(&inf), 12);
+    // Nor is the advancer's after a forced answer to partner's takeout double: the ordinary
+    // minimum.
+    for calls in ["1H X P 1S P P 2H X", "1C X P 1H P P 2C X"] {
+        let (ctx, inf) = last(calls);
+        assert_eq!(ctx.role, Role::Advancer, "{calls}");
+        assert!(ctx.owner_acted, "{calls}");
+        assert_eq!(ctx.kind, CallKind::Double(DoubleKind::Takeout), "{calls}");
+        assert_eq!(inf.rule, "takeout_x", "{calls}");
+        assert_eq!(min_hcp(&inf), 12, "{calls}");
+    }
 }

@@ -1622,20 +1622,26 @@ fn rule_nt_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<In
 }
 
 /// Extra HCP over `takeout_double`'s minimum that a defender's second takeout double shows (a
-/// takeout double by an overcaller, advancer or balancer who has already made a non-pass call):
-/// a king more, the booklet's "extra values".
+/// takeout double by an overcaller or balancer who has already made a non-pass call): a king
+/// more, the booklet's "extra values".
 pub const SECOND_TAKEOUT_DOUBLE_EXTRA: u8 = 3;
 
-/// `true` when a defender (overcaller, advancer or balancer) makes a takeout double after an
-/// earlier non-pass call of their own: `(1C)-1S-(X)-P-(2H)-X`, `(1S)-P-(P)-X-(2S)-P-(P)-X`.
+/// `true` when an overcaller or a balancer makes a takeout double after an earlier non-pass
+/// call of their own: `(1C)-1S-(X)-P-(2H)-X`, `(1S)-P-(P)-X-(2S)-P-(P)-X`.
 ///
 /// The first action (the overcall, the takeout double, the balancing call) already showed a
 /// minimum; with no more than that the defender passes or bids the suit again, so the second
-/// double shows [`SECOND_TAKEOUT_DOUBLE_EXTRA`] points more than a takeout double (12+, or 15+
-/// before the balancing-seat shift). Opener is not a defender: a reopening double with a
-/// minimum opening (`1D-(1S)-P-(P)-X`) is standard (docs/design/06-system.md §8.3).
+/// double shows [`SECOND_TAKEOUT_DOUBLE_EXTRA`] points more than a takeout double: 15+, 12+ in
+/// the balancing seat (with the default parameters).
+///
+/// Not covered, so their takeout doubles keep the ordinary minimum:
+///
+/// - the advancer: its earlier call is usually a forced answer to partner's takeout double
+///   (`(1H)-X-(P)-1S-(P)-P-(2H)-X`), which showed nothing, not a minimum;
+/// - opener: a reopening double with a minimum opening (`1D-(1S)-P-(P)-X`) is standard
+///   (docs/design/06-system.md §8.3).
 fn is_defenders_second_action(ctx: &CallContext) -> bool {
-    matches!(ctx.role, Role::Overcaller | Role::Advancer | Role::Balancer) && ctx.owner_acted
+    matches!(ctx.role, Role::Overcaller | Role::Balancer) && ctx.owner_acted
 }
 
 fn rule_takeout_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
