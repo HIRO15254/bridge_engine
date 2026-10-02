@@ -186,10 +186,6 @@ fn overriding_partners_game_needs_slam_values() {
         let inf = last_with_partner(calls, 12..=37);
         assert_eq!(min_hcp(&inf), 19, "{calls}: {}", inf.rule);
     }
-    // Opener pulling 3NT to four of the suit already rebid: nothing partner did not know.
-    let inf = last_with_partner("1H P 1S P 2H P 3NT P 4H", 10..=37);
-    assert_eq!(inf.rule, "rebid_own");
-    assert_eq!(min_hcp(&inf), 21);
     // Below game over partner's 3NT (a slam try, not a correction): the slam floor too.
     let inf = last_with_partner("1D P 3NT P 4D", 13..=15);
     assert_eq!(inf.rule, "rebid_own");
@@ -265,6 +261,52 @@ fn corrections_of_partners_3nt_keep_the_ordinary_floor() {
     let inf = last_with_partner("1NT P 3C P 3D P 3NT P 5D", 10..=37);
     assert_eq!(inf.rule, "rebid_own");
     assert!(!inf.constraint.is_satisfiable());
+}
+
+#[test]
+fn a_one_level_opener_pulling_3nt_to_its_rebid_suit_corrects() {
+    // After a minimum rebid of the opened suit (SAYC: 12-15), the pull of partner's 3NT is a
+    // choice of game: a seventh card, in the minimum's range. The ordinary floor (22 - 10,
+    // 22 - 13) is below it (it was 21+ and 18+ under the slam floor).
+    for (calls, partner_min) in [
+        ("1H P 1S P 2H P 3NT P 4H", 10),
+        ("1S P 2C P 2S P 3NT P 4S", 13),
+    ] {
+        let inf = last_with_partner(calls, partner_min..=37);
+        let suit = inf_suit(calls);
+        assert_eq!(inf.rule, "rebid_own", "{calls}");
+        assert_eq!(inf.constraint.hcp_range(), 12..=15, "{calls}");
+        let accepts = |long, others| inf.constraint.satisfies(hand_with(suit, long, others));
+        assert!(
+            accepts("AKJ5432", ["32", "K2", "Q2"]),
+            "{calls}: seven, 13 hcp"
+        );
+        assert!(
+            !accepts("AKJ543", ["2", "K32", "Q32"]),
+            "{calls}: six and a singleton"
+        );
+        assert!(
+            !accepts("AKJ543", ["32", "K32", "Q2"]),
+            "{calls}: six, 6-3-2-2"
+        );
+        assert!(
+            !accepts("AKQ5432", ["32", "K2", "A2"]),
+            "{calls}: seven, 16 hcp"
+        );
+    }
+    // After a jump rebid the pull shows the jump rebid's range (16-18).
+    let inf = last_with_partner("1S P 1NT P 3S P 3NT P 4S", 8..=37);
+    assert_eq!(inf.rule, "rebid_own");
+    assert_eq!(inf.constraint.hcp_range(), 16..=18);
+    // A weak two's rebid suit is not corrected this way: the slam floor (above).
+    let inf = last_with_partner("2S P 2NT P 3S P 3NT P 4S", 12..=37);
+    assert!(!inf.constraint.is_satisfiable());
+}
+
+/// The suit of the last bid of `calls`.
+fn inf_suit(calls: &str) -> Suit {
+    let (ctx, _) = last(calls);
+    ctx.call.bid().unwrap().strain().suit().unwrap()
 }
 
 #[test]

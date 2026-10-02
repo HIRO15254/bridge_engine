@@ -332,6 +332,10 @@ pub struct CallContext {
     /// Strains `owner` has bid (as a [`Call::Bid`]) two or more times so far: `S` after
     /// `2S-P-2NT-P-3S`, nothing after `1H-P-3NT`.
     pub owner_repeated_strains: StrainSet,
+    /// The strains of [`CallContext::owner_repeated_strains`] that `owner` bid again with a
+    /// jump (measured like [`CallKind::Bid::jump`]): `S` after `1S-P-1NT-P-3S`, nothing after
+    /// `1S-P-2C-P-2S`.
+    pub owner_jump_rebid_strains: StrainSet,
     /// `owner` or partner has bid 4NT or 5NT earlier in the auction (a Blackwood-style ask or a
     /// quantitative 4NT): later bids past game answer or follow up the ask.
     pub our_slam_ask: bool,
@@ -376,6 +380,7 @@ struct HistoryContext {
     rho_last: Option<Call>,
     owner_last: Option<Call>,
     owner_repeated_strains: StrainSet,
+    owner_jump_rebid_strains: StrainSet,
     our_slam_ask: bool,
 }
 
@@ -445,7 +450,9 @@ impl HistoryContext {
             .min(u8::MAX as usize) as u8;
         let mut owner_strains = StrainSet::EMPTY;
         let mut owner_repeated_strains = StrainSet::EMPTY;
+        let mut owner_jump_rebid_strains = StrainSet::EMPTY;
         let mut our_slam_ask = false;
+        let mut previous_bid: Option<Bid> = None;
         for (i, c) in history.iter().enumerate() {
             let seat = auction.seat_at(i);
             let Call::Bid(b) = c else {
@@ -454,6 +461,9 @@ impl HistoryContext {
             if seat == owner {
                 if owner_strains.contains(b.strain()) {
                     owner_repeated_strains = owner_repeated_strains.with(b.strain());
+                    if b.level() > minimal_level(previous_bid, b.strain()) {
+                        owner_jump_rebid_strains = owner_jump_rebid_strains.with(b.strain());
+                    }
                 }
                 owner_strains = owner_strains.with(b.strain());
             }
@@ -463,6 +473,7 @@ impl HistoryContext {
             {
                 our_slam_ask = true;
             }
+            previous_bid = Some(*b);
         }
         let partner_first_jump = match partner_first {
             Some((i, Call::Bid(b))) => {
@@ -497,6 +508,7 @@ impl HistoryContext {
             rho_last: history.last().copied(),
             owner_last,
             owner_repeated_strains,
+            owner_jump_rebid_strains,
             our_slam_ask,
         }
     }
@@ -561,6 +573,7 @@ impl HistoryContext {
             rho_last: self.rho_last,
             owner_last: self.owner_last,
             owner_repeated_strains: self.owner_repeated_strains,
+            owner_jump_rebid_strains: self.owner_jump_rebid_strains,
             our_slam_ask: self.our_slam_ask,
         }
     }
@@ -1081,18 +1094,21 @@ fn overrides_partners_game(ctx: &CallContext) -> bool {
 
 /// `true` when the bid corrects partner's 3NT (the right-hand opponent passed it) to game in a
 /// suit our side has bid and the opponents have not: four of a major or five of a minor, in a
-/// strain `owner` has not bid twice already ([`CallContext::owner_repeated_strains`]) and did
-/// not open with a weak two or a preempt ([`opened_preemptively_in`]).
+/// strain `owner` has not bid twice already ([`CallContext::owner_repeated_strains`]) unless it
+/// is the suit `owner` opened at the one level ([`rebid_opened_suit`]), and did not open with
+/// a weak two or a preempt ([`opened_preemptively_in`]).
 ///
 /// Such a bid tells partner something partner did not know when choosing 3NT: a sixth card in
 /// the suit opened (`1H-P-3NT-P-4H`; SAYC's 3NT response promises only two hearts), or support
 /// for the suit partner offered (`1NT-P-2H-P-2S-P-3NT-P-4S`, `1S-P-2H-P-2NT-P-3NT-P-4H`). The
 /// ordinary rule describes it with the ordinary level floor, read as the cheapest game bid in
 /// the suit (five of a minor is not a jump rebid or a jump raise) and, in a minor, with a hand
-/// unsuited to notrump ([`unsuited_to_notrump`]). A suit nobody on our side has bid
-/// (`1H-P-3NT-P-5C`), the opponents' suit (a cue bid), a suit `owner` has already rebid and the
-/// suit of a weak two or a preempt (`2S-P-3NT-P-4S`: the opening already promised the six
-/// cards) are not corrections.
+/// unsuited to notrump ([`unsuited_to_notrump`]). A one-level opener that has rebid its suit
+/// (`1S-P-2C-P-2S-P-3NT-P-4S`) corrects too: the rebid limited the hand, and the pull shows a
+/// seventh card ([`rule_rebid_opened_suit_over_3nt`]). A suit nobody on our
+/// side has bid (`1H-P-3NT-P-5C`), the opponents' suit (a cue bid), any other suit `owner` has
+/// already rebid (`2S-P-2NT-P-3S-P-3NT-P-4S`) and the suit of a weak two or a preempt
+/// (`2S-P-3NT-P-4S`: the opening already promised the six cards) are not corrections.
 fn corrects_partners_3nt(ctx: &CallContext) -> bool {
     let (Some(Call::Bid(partner_bid)), Some(bid)) = (ctx.partner_last, ctx.call.bid()) else {
         return false;
@@ -1105,8 +1121,19 @@ fn corrects_partners_3nt(ctx: &CallContext) -> bool {
         && bid.level() == game_level(strain)
         && ctx.our_suits.contains(strain)
         && !ctx.their_suits.contains(strain)
-        && !ctx.owner_repeated_strains.contains(strain)
+        && (!ctx.owner_repeated_strains.contains(strain) || rebid_opened_suit(ctx, strain))
         && !opened_preemptively_in(ctx, strain)
+}
+
+/// `true` when `owner` opened one of `strain` and has bid it again, and it is not a suit partner
+/// supported ([`CallContext::agreed_suit`]): `1S-P-2C-P-2S`, `1H-P-1S-P-2H`, `1S-P-1NT-P-3S`.
+fn rebid_opened_suit(ctx: &CallContext, strain: Strain) -> bool {
+    ctx.role == Role::Opener
+        && ctx.owner_repeated_strains.contains(strain)
+        && ctx
+            .opener_first_bid
+            .is_some_and(|b| b.level() == 1 && b.strain() == strain)
+        && ctx.agreed_suit.map(Strain::from_suit) != Some(strain)
 }
 
 /// `true` when `owner` opened a weak two or a preempt in `strain` (two or more of a suit, but
@@ -2128,6 +2155,9 @@ fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
     if let Some(hcp) = notrump_opening_hcp(p, ctx.opener_first_bid) {
         return Some(rule_rebid_own_after_notrump(ctx, suit, hcp, ex));
     }
+    if rebid_opened_suit(ctx, bid.strain()) && corrects_partners_3nt(ctx) {
+        return Some(rule_rebid_opened_suit_over_3nt(p, ctx, suit, ex));
+    }
     let jump = effective_jump(ctx, jump);
     let hcp = if jump >= 1 {
         p.rebid.jump_rebid.clone()
@@ -2153,6 +2183,56 @@ fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
             hcp.end()
         ),
     })
+}
+
+/// The suit length a one-level opener shows by pulling partner's 3NT to its suit after rebidding
+/// it ([`rule_rebid_opened_suit_over_3nt`]): a seventh card.
+pub const REBID_SUIT_PULL_LEN: u8 = 7;
+
+/// A one-level opener that has rebid its suit pulls partner's 3NT to game in it
+/// (`1S-P-2C-P-2S-P-3NT-P-4S`, `1H-P-1S-P-2H-P-3NT-P-4H`): a choice of game, not a slam move
+/// (partner's 3NT chose the contract, and opener's rebid limited the hand).
+///
+/// The rebid showed six cards (rule `rebid_own`), so partner chose 3NT knowing them, and the
+/// news is a seventh: [`REBID_SUIT_PULL_LEN`]+ cards (in a minor also a singleton or a void,
+/// [`with_correction_shape`]). Six cards with a short suit are not enough (the corpus check is
+/// in docs/design/06-system.md §8.6). The strength is what the rebid showed: after a non-jump
+/// rebid a minimum (`opening_hcp.start..rebid.jump_rebid.start`, 12-15 with the default
+/// parameters), after a jump rebid ([`CallContext::owner_jump_rebid_strains`])
+/// `rebid.jump_rebid` (16-18). The ordinary level floor applies ([`corrects_partners_3nt`]).
+fn rule_rebid_opened_suit_over_3nt(
+    p: &NaturalParams,
+    ctx: &CallContext,
+    suit: Suit,
+    ex: bool,
+) -> Inference {
+    let hcp = if ctx
+        .owner_jump_rebid_strains
+        .contains(Strain::from_suit(suit))
+    {
+        p.rebid.jump_rebid.clone()
+    } else {
+        let top = p.rebid.jump_rebid.start().saturating_sub(1);
+        *p.opening_hcp.start()..=top.max(*p.opening_hcp.start())
+    };
+    let constraint = HandConstraint::Atom(
+        Atom::ANY
+            .with_hcp(hcp.clone())
+            .with_len(suit, REBID_SUIT_PULL_LEN..=13),
+    );
+    Inference {
+        constraint: with_correction_shape(ctx, constraint, false),
+        confidence: 0.5,
+        rule: "rebid_own",
+        explanation: expl!(
+            ex,
+            "pulls 3NT to the rebid suit {}: {}+ cards, {}-{} hcp",
+            ctx.call,
+            REBID_SUIT_PULL_LEN,
+            hcp.start(),
+            hcp.end()
+        ),
+    }
 }
 
 /// The minimum length a notrump opener shows by bidding again a suit it bid after the opening
