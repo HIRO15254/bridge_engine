@@ -9,7 +9,9 @@ use std::ops::RangeInclusive;
 
 use bridge_constraint::{Atom, HandConstraint};
 use bridge_core::{Seat, Vulnerability};
-use bridge_system::natural::{CallContext, Inference, NaturalInference, classify};
+use bridge_system::natural::{
+    CallContext, CallKind, DoubleKind, Inference, NaturalInference, classify,
+};
 use common::{auction, hand};
 
 /// Classifies and infers the *last* call of `calls` (dealer North) for the seat that made it.
@@ -115,4 +117,26 @@ fn a_bid_past_partners_game_needs_slam_values() {
     // ordinary level floor (five level: 26 - 12).
     let inf = last_with_partner("1H P 1S P 2S P 4S X 5C", 12..=37);
     assert_eq!(min_hcp(&inf), 14, "{}", inf.rule);
+}
+
+// --- responder's negative double (responders_first_turn_over_overcall) ------------------------
+
+#[test]
+fn negative_double_is_responders_first_turn_only() {
+    for calls in ["1C 1H X", "P P 1D 2C X", "1H 2H X"] {
+        let (ctx, inf) = last(calls);
+        assert_eq!(ctx.kind, CallKind::Double(DoubleKind::Negative), "{calls}");
+        assert_eq!(inf.rule, "negative_x", "{calls}");
+    }
+    // Responder's later doubles are classified the same way but are not negative doubles.
+    for calls in [
+        "1C 1H X 2D P P X", // a second double
+        "1H 1S P 2S P P X", // after a first pass
+        "2D P P 2H P P X",  // after passing a weak two
+        "1D 1H 1S 2H P P X",
+    ] {
+        let (ctx, inf) = last(calls);
+        assert_eq!(ctx.kind, CallKind::Double(DoubleKind::Negative), "{calls}");
+        assert_ne!(inf.rule, "negative_x", "{calls}");
+    }
 }

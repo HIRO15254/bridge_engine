@@ -1143,7 +1143,7 @@ impl Default for NaturalInference { /* NaturalParams::default() */ }
 | `nt_overcall` | `Overcaller` の最初のアクション, 最安の NT (`jump == 0`) で 2 レベル以下 (1 レベルのオープンに 1N、ウィーク・ツーに 2N) | `hcp = nt_overcall` ∧ `BALANCED` ∧ `Stopper(their suit)` | 0.6 |
 | `takeout_x` | `Double(Takeout)`: パートナー未ビッド、相手のスートが 2 レベル以下 | `hcp ≥ takeout_double.0` ∧ `suit_len[their] ≤ takeout_double.1` ∧ 未ビッドスート各 `≥ takeout_double.2` (未ビッドが 3 つ以上なら `Or` で 2 つ以上を要求) | 0.45 (旧 0.5) |
 | `penalty_x` | `Double(Penalty)`: パートナーの最後のビッドが NT、相手が NT または 4 レベル以上、または我々がスートを合意済み | `hcp ≥ 10` ∧ `suit_len[their] ≥ 4` | 0.3 |
-| `negative_x` | `Double(Negative)`: パートナーがスートを開き RHO が 2 レベル以下でオーバーコール | `hcp ≥ response.new_suit_1.1 + 2 × (level − 1)` ∧ 未ビッドメジャーの条件: 両メジャーが未ビッドで 1 レベルで言える (`1C (1D) X`) なら両方 `≥ 4`; 1 つだけ未ビッドで 1 レベルで言える (`1C (1H) X`) ならちょうど 4 枚; それ以外 (2 レベルのオーバーコール) は未ビッドメジャー `≥ 4` (`Or`) | 両メジャーの場合 0.5、それ以外 0.4 (旧 0.5) |
+| `negative_x` | `Double(Negative)`: パートナーがスートを開き RHO が 2 レベル以下でオーバーコール。レスポンダーの最初のターン (パートナーのオープンがパートナーの唯一の非パスで最後のコール、RHO の最後のコールがビッド) に限る (§8.6「後の巡の制限」(3)) | `hcp ≥ response.new_suit_1.1 + 2 × (level − 1)` ∧ 未ビッドメジャーの条件: 両メジャーが未ビッドで 1 レベルで言える (`1C (1D) X`) なら両方 `≥ 4`; 1 つだけ未ビッドで 1 レベルで言える (`1C (1H) X`) ならちょうど 4 枚; それ以外 (2 レベルのオーバーコール) は未ビッドメジャー `≥ 4` (`Or`) | 両メジャーの場合 0.5、それ以外 0.4 (旧 0.5) |
 | `raise` | パートナーが先にビッドしたスート `s` を我々がビッド | `suit_len[s] ≥ raise.0` ∧ 役割/レベル別の `hcp` (`Responder`: `response.raise.1` 単純、`response.jump_raise.1` ジャンプ、ゲームレイズ `13+`; `Advancer`: `advance.raise`; `Opener`: `rebid.raise` / `rebid.jump_raise`) | 0.45 (旧 0.6) |
 | `new_suit_resp_1` | `Responder`, `new_suit`, `level 1` | `suit_len[s] ≥ response.new_suit_1.0` ∧ `hcp ≥ response.new_suit_1.1`。相手がメジャーでオーバーコールした後 (`1C (1H) 1S`) は長さ `≥ 5` (4 枚はネガティブ・ダブル) | 0.5 |
 | `new_suit_resp_2` | `Responder`, `new_suit`, `level 2`, `jump == 0` | `suit_len[s] ≥ response.new_suit_2.0` (5) ∧ `hcp ≥ response.new_suit_2.1` (10); `jump == 1` は `hcp ≥ response.jump_shift` | 0.6 (旧 0.5) |
@@ -1332,6 +1332,9 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
 - (2) パートナーのゲームを越えるビッド (`SLAM_LEVEL = 6`)。パートナーの最後のコールがゲーム以上で、RHO がパスした後のビッドは、スラムの動きである (3NT の上なら、パートナーの選択を覆す訂正)。レベル下限の combined を少なくとも 6 レベルの値にする (上の「レベル下限」)。
   - 例: ウィーク・ツーのオープナーがパートナーの 3NT を 4S に直す `2S-P-2NT-P-3S-P-3NT-P-4S`、パートナーのゲーム・レイズの上の `1H-P-1S-P-2S-P-4S-P-5C`。
   - RHO がビッドかダブルした後は競り合いなので、通常の下限のままにする。
+- (3) `negative_x` はレスポンダーの最初のターンだけ。条件は、パートナーのオープンがパートナーの唯一の非パスで、かつ最後のコールであり、RHO の最後のコールがビッドであること。
+  - §8.2 の順では、レスポンダーの後のダブル (`1C (1H) X (2D) P (P) X`、`1H (1S) P (2S) P (P) X`、`2D (P) P (2H) P (P) X`) も `Negative` に分類される。
+  - しかしレスポンダーは既に手を示しているので、このダブルは最初のコールで示せなかった余分の強さかトランプを示す。`negative_x` の範囲 (6+、未ビッドのメジャー) はその意味を持たないので、当たらない。
 
 ---
 

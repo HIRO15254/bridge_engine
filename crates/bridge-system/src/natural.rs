@@ -1536,6 +1536,24 @@ fn rule_penalty_x(_p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inf
     })
 }
 
+/// `true` when responder doubles a bid of the right-hand opponent while partner's opening is
+/// still partner's only non-pass call and partner's last call (`1C (1H) X`, `P P 1D (2C) X`):
+/// responder's turn over the overcall of the opening.
+///
+/// The negative double is that call. A later double by responder (after a first response, a
+/// first negative double, or a first pass: `1C (1H) X (2D) P (P) X`, `1H (1S) P (2S) P (P) X`,
+/// `2D (P) P (2H) P (P) X`) is classified `Negative` by the §8.2 order but is not a negative
+/// double: responder has already described the hand, so the double shows the extra values or
+/// the trumps that the first call could not, which `negative_x`'s range does not say. No rule
+/// fires there, so the natural policy passes (docs/design/06-system.md §8.3).
+fn responders_first_turn_over_overcall(ctx: &CallContext) -> bool {
+    ctx.role == Role::Responder
+        && ctx.partner_actions == 1
+        && matches!(ctx.partner_last, Some(Call::Bid(_)))
+        && ctx.partner_last == ctx.partner_first_action
+        && matches!(ctx.rho_last, Some(Call::Bid(_)))
+}
+
 fn rule_negative_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.call != Call::Double {
         return None;
@@ -1543,6 +1561,9 @@ fn rule_negative_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inf
     let CallKind::Double(DoubleKind::Negative) = ctx.kind else {
         return None;
     };
+    if !responders_first_turn_over_overcall(ctx) {
+        return None;
+    }
     let their_level = ctx.last_bid.map(|b| b.level()).unwrap_or(1);
     let min_hcp = p
         .response
