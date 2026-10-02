@@ -440,6 +440,18 @@ fn responders_later_double_after_own_call_shows_extra_values() {
     let (_, inf) = last("1C 1H X 2D P P X");
     assert!(inf.constraint.satisfies(hand("K32", "A32", "Q432", "Q32"))); // 11 hcp
     assert!(!inf.constraint.satisfies(hand("K32", "A32", "J432", "Q32"))); // 10 hcp
+    // After a limited first response (a raise, notrump) the double is competitive within that
+    // response's range (a maximum raise): no rule describes it.
+    for calls in [
+        "1H 1S 2H 2S P P X",
+        "1D 1S 1NT 2S P P X",
+        "1H P 2H 2S P P X",
+    ] {
+        let (ctx, inf) = last(calls);
+        assert_eq!(ctx.kind, CallKind::Double(DoubleKind::Negative), "{calls}");
+        assert!(ctx.owner_acted, "{calls}");
+        assert_eq!(inf.rule, "fallback", "{calls}");
+    }
     // After responder's first pass no rule describes the double.
     for calls in ["1H 1S P 2S P P X", "2D P P 2H P P X"] {
         let (ctx, inf) = last(calls);

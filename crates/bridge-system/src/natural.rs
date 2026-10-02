@@ -1800,9 +1800,12 @@ fn rule_penalty_x(_p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inf
 /// `2D (P) P (2H) P (P) X`) is classified `Negative` by the §8.2 order but is not a negative
 /// double, whose range (6+, an unbid major) it does not have:
 ///
-/// - after responder's own non-pass call, it is `competitive_x` ([`rule_competitive_x`]):
-///   the first call showed a minimum, so the double shows [`LATER_RESPONDER_DOUBLE_EXTRA`]
-///   points more than a negative double at that level;
+/// - after responder's own unlimited first call (a negative double or a new suit), it is
+///   `competitive_x` ([`rule_competitive_x`]): the first call showed a minimum, so the double
+///   shows [`LATER_RESPONDER_DOUBLE_EXTRA`] points more than a negative double at that level;
+/// - after a limited first response (a raise of partner's suit or notrump,
+///   [`responders_first_call_limited`]) it is competitive within that response's range; no rule
+///   describes it;
 /// - after responder's first pass (a weak hand, a trap pass, or a pass of partner's weak two)
 ///   it can be a balancing takeout double or a penalty double with the hand the pass hid; no
 ///   rule describes it, so the natural policy passes (docs/design/06-system.md §8.3).
@@ -1812,6 +1815,20 @@ fn responders_first_turn_over_overcall(ctx: &CallContext) -> bool {
         && matches!(ctx.partner_last, Some(Call::Bid(_)))
         && ctx.partner_last == ctx.partner_first_action
         && matches!(ctx.rho_last, Some(Call::Bid(_)))
+}
+
+/// `true` when `owner`'s first non-pass call was a limited response: notrump, or a bid of the
+/// strain of partner's first call (a raise of the opening, a jump raise included). A new suit,
+/// a cue bid of the opponents' suit and a negative double are not limited.
+fn responders_first_call_limited(ctx: &CallContext) -> bool {
+    let Some(Call::Bid(first)) = ctx.owner_first_action else {
+        return false;
+    };
+    first.strain() == Strain::NoTrump
+        || ctx
+            .partner_first_action
+            .and_then(|c| c.bid())
+            .is_some_and(|opening| opening.strain() == first.strain())
 }
 
 /// The minimum HCP of a negative double of a bid at the level of `ctx.last_bid`:
@@ -1830,19 +1847,27 @@ fn negative_double_min_hcp(p: &NaturalParams, ctx: &CallContext) -> u8 {
 /// [`SECOND_TAKEOUT_DOUBLE_EXTRA`] for a defender. docs/design/06-system.md §8.3.
 pub const LATER_RESPONDER_DOUBLE_EXTRA: u8 = 3;
 
-/// Responder's later double after responder's own non-pass call (a first response or a first
-/// negative double): `1C (1H) X (2D) P (P) X`, `1D (1H) 1S (2H) P (P) X`. The §8.2 order
+/// Responder's later double after responder's own unlimited first call (a first negative
+/// double or a new suit): `1C (1H) X (2D) P (P) X`, `1D (1H) 1S (2H) P (P) X`. The §8.2 order
 /// classifies it `Negative`, but it is not a negative double
 /// ([`responders_first_turn_over_overcall`]). Responder has shown a minimum already, and with
 /// no more than that passes or bids again; the double is competitive and shows the values
 /// the first call could not: [`LATER_RESPONDER_DOUBLE_EXTRA`] more than a negative double at
 /// that level (9+ over a one-level bid, 11+ over a two-level bid). Strength only: the double
 /// may be for takeout or for penalty, which the auction alone does not tell.
+///
+/// After a limited first response ([`responders_first_call_limited`]: `1H (1S) 2H (2S) P (P)
+/// X`, `1D (1S) 1NT (2S) P (P) X`) the rule does not apply: with more than that response's
+/// range responder would have bid differently, so the double is competitive within the range
+/// (a maximum). No rule describes it: the top of the range was measured and dropped
+/// (docs/design/06-system.md §8.6; for a raise, the natural rules rank the competitive raise
+/// to the three level above the double for the same hands anyway).
 fn rule_competitive_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.call != Call::Double
         || ctx.role != Role::Responder
         || !ctx.owner_acted
         || responders_first_turn_over_overcall(ctx)
+        || responders_first_call_limited(ctx)
     {
         return None;
     }
