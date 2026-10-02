@@ -364,6 +364,10 @@ pub struct CallContext {
     /// `owner`'s only non-pass call so far is a bid made right after partner's double (partner's
     /// last call before it): the answer to partner's takeout double, `1H-X-P-1S`.
     pub owner_answered_partners_double: bool,
+    /// When `owner`'s first non-pass call was a negative double (the double rule `negative_x`
+    /// reads: responder's first turn over the overcall of partner's opening, `1C (1H) X`), the
+    /// level of the bid it doubled. `None` otherwise.
+    pub owner_first_negative_double: Option<u8>,
     /// How many bids (not passes, doubles or redoubles) the opponents have made so far. Two or
     /// more on a first entry means the opponents have exchanged bids (opener and responder).
     pub their_bids: u8,
@@ -425,6 +429,7 @@ struct HistoryContext {
     owner_first: Option<(usize, Call)>,
     owner_first_jump: u8,
     owner_answered_partners_double: bool,
+    owner_first_negative_double: Option<u8>,
     their_bids: u8,
     rho_last: Option<Call>,
     owner_last: Option<Call>,
@@ -547,6 +552,17 @@ impl HistoryContext {
             .count();
         let owner_answered_partners_double = owner_actions == 1
             && matches!(owner_first, Some((i, Call::Bid(_))) if i >= 2 && history[i - 2] == Call::Double);
+        let owner_first_negative_double = match owner_first {
+            Some((i, Call::Double)) if role == Role::Responder => {
+                // `owner` has made no non-pass call before `i`, so this nests only once.
+                let first =
+                    HistoryContext::new(auction, i, owner).classify_call(auction, Call::Double);
+                (first.kind == CallKind::Double(DoubleKind::Negative)
+                    && responders_first_turn_over_overcall(&first))
+                .then(|| first.last_bid.map_or(1, |b| b.level()))
+            }
+            _ => None,
+        };
         let opener_other_calls = match opener_first_bid {
             Some(opening) if role == Role::Opener => {
                 opener_other_calls(auction, history, owner, opening)
@@ -578,6 +594,7 @@ impl HistoryContext {
             owner_first,
             owner_first_jump,
             owner_answered_partners_double,
+            owner_first_negative_double,
             their_bids,
             rho_last: history.last().copied(),
             owner_last,
@@ -647,6 +664,7 @@ impl HistoryContext {
             owner_first_action: self.owner_first.map(|(_, c)| c),
             owner_first_jump: self.owner_first_jump,
             owner_answered_partners_double: self.owner_answered_partners_double,
+            owner_first_negative_double: self.owner_first_negative_double,
             their_bids: self.their_bids,
             rho_last: self.rho_last,
             owner_last: self.owner_last,
@@ -2017,10 +2035,15 @@ fn responders_first_call_limited(ctx: &CallContext) -> bool {
             .is_some_and(|opening| opening.strain() == first.strain())
 }
 
-/// The minimum HCP of a negative double of a bid at the level of `ctx.last_bid`:
-/// `response.new_suit_1.1 + 2 × (level − 1)` (6 at the one level, 8 at the two level).
+/// The minimum HCP of a negative double of a bid at the level of `ctx.last_bid`
+/// ([`negative_double_min_at`]).
 fn negative_double_min_hcp(p: &NaturalParams, ctx: &CallContext) -> u8 {
-    let their_level = ctx.last_bid.map(|b| b.level()).unwrap_or(1);
+    negative_double_min_at(p, ctx.last_bid.map(|b| b.level()).unwrap_or(1))
+}
+
+/// The minimum HCP of a negative double of a bid at `their_level`:
+/// `response.new_suit_1.1 + 2 × (level − 1)` (6 at the one level, 8 at the two level).
+fn negative_double_min_at(p: &NaturalParams, their_level: u8) -> u8 {
     p.response
         .new_suit_1
         .1
@@ -2139,9 +2162,10 @@ fn rule_raise(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inferenc
     let suit = bid.strain().suit()?;
     let jump = effective_jump(ctx, jump);
     let (min_len, hcp) = match ctx.role {
-        // A choice of game over opener's 3NT, not a game raise.
+        // A choice of game over opener's 3NT, not a game raise; no rule when responder's
+        // first call has no range (`responders_first_call_hcp`).
         Role::Responder if corrects_partners_3nt(ctx) => {
-            (p.response.raise.0, responders_first_call_hcp(p, ctx))
+            (p.response.raise.0, responders_first_call_hcp(p, ctx)?)
         }
         Role::Responder if bid.level() >= 4 => (p.response.raise.0, 13..=37),
         Role::Responder if jump >= 1 => (p.response.jump_raise.0, p.response.jump_raise.1.clone()),
@@ -2170,19 +2194,36 @@ fn rule_raise(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inferenc
     })
 }
 
-/// The HCP range responder's first non-pass call showed, as the natural rules read it, for a
-/// later bid that only chooses the game (a correction of opener's 3NT, [`corrects_partners_3nt`]):
+/// The minimum HCP of responder's redouble after partner's opening was doubled (`1H (X) XX`):
+/// SAYC's 10+.
+const RESPONDER_REDOUBLE_MIN_HCP: u8 = 10;
+
+/// The HCP range responder's first non-pass call showed, for a later bid that only chooses the
+/// game (a correction of opener's 3NT, [`corrects_partners_3nt`]). Each limited call keeps its
+/// range and each unlimited one its minimum, open-ended:
 ///
-/// - a one-level new suit: `response.new_suit_1.1`+; a two-level one: `response.new_suit_2.1`+;
-///   a jump shift: `response.jump_shift`+;
+/// - a one-level new suit: `response.new_suit_1.1`+; a non-jump new suit at the two or three
+///   level: `response.new_suit_2.1`+ (the natural rules describe only the two-level one, and the
+///   forcing three-level new suit in competition, `1S (2H) 3C`, is no weaker); a jump shift:
+///   `response.jump_shift`+;
 /// - notrump: `response.nt[L]`;
 /// - a raise of partner's opening: `response.raise.1`, a jump raise `response.jump_raise.1`; a
 ///   cue bid of the opponents' suit: `response.jump_raise.1.start`+ (a limit raise or better);
-/// - anything else (a negative double, no rule): the simple raise's `response.raise.1`.
-fn responders_first_call_hcp(p: &NaturalParams, ctx: &CallContext) -> RangeInclusive<u8> {
-    let simple = p.response.raise.1.clone();
-    let Some(Call::Bid(first)) = ctx.owner_first_action else {
-        return simple;
+/// - a negative double ([`CallContext::owner_first_negative_double`]): its own minimum at the
+///   level it doubled (`response.new_suit_1.1 + 2 × (level − 1)`)+; a redouble: 10+.
+///
+/// `None` for anything else (another double, a notrump level with no range, or no non-pass call
+/// before the correction): no rule describes the correction.
+fn responders_first_call_hcp(p: &NaturalParams, ctx: &CallContext) -> Option<RangeInclusive<u8>> {
+    let first = match ctx.owner_first_action {
+        Some(Call::Bid(first)) => first,
+        Some(Call::Redouble) => return Some(RESPONDER_REDOUBLE_MIN_HCP..=37),
+        Some(Call::Double) => {
+            return ctx
+                .owner_first_negative_double
+                .map(|level| negative_double_min_at(p, level)..=37);
+        }
+        _ => return None,
     };
     let jump = ctx.owner_first_jump;
     if first.strain() == Strain::NoTrump {
@@ -2191,44 +2232,43 @@ fn responders_first_call_hcp(p: &NaturalParams, ctx: &CallContext) -> RangeInclu
             .nt
             .iter()
             .find(|(level, _)| *level == first.level())
-            .map_or(simple, |(_, hcp)| hcp.clone());
+            .map(|(_, hcp)| hcp.clone());
     }
     let opening = ctx.partner_first_action.and_then(|c| c.bid());
     if opening.is_some_and(|o| o.strain() == first.strain()) {
-        return if jump >= 1 {
+        return Some(if jump >= 1 {
             p.response.jump_raise.1.clone()
         } else {
-            simple
-        };
+            p.response.raise.1.clone()
+        });
     }
     if ctx.their_suits.contains(first.strain()) {
-        return *p.response.jump_raise.1.start()..=37;
+        return Some(*p.response.jump_raise.1.start()..=37);
     }
-    match (first.level(), jump) {
+    Some(match (first.level(), jump) {
         (1, _) => p.response.new_suit_1.1..=37,
-        (2, 0) => p.response.new_suit_2.1..=37,
-        (_, 1..) => p.response.jump_shift..=37,
-        _ => simple,
-    }
+        (_, 0) => p.response.new_suit_2.1..=37,
+        _ => p.response.jump_shift..=37,
+    })
 }
 
 /// Responder's own suit over opener's 3NT, a correction ([`corrects_partners_3nt`]):
 /// `1C-P-1S-P-3NT-P-4S`. Six cards or more (the first call showed four or five), the range of
-/// responder's first call ([`responders_first_call_hcp`]) and, in a minor, a hand unsuited to
-/// notrump ([`with_correction_shape`]); the ordinary level floor.
+/// responder's first call ([`responders_first_call_hcp`]; no rule when it has none) and, in a
+/// minor, a hand unsuited to notrump ([`with_correction_shape`]); the ordinary level floor.
 fn rule_responder_corrects_to_own_suit(
     p: &NaturalParams,
     ctx: &CallContext,
     suit: Suit,
     ex: bool,
-) -> Inference {
-    let hcp = responders_first_call_hcp(p, ctx);
+) -> Option<Inference> {
+    let hcp = responders_first_call_hcp(p, ctx)?;
     let constraint = with_correction_shape(
         ctx,
         HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, 6..=13)),
         false,
     );
-    Inference {
+    Some(Inference {
         constraint,
         confidence: 0.5,
         rule: "rebid_own",
@@ -2239,7 +2279,7 @@ fn rule_responder_corrects_to_own_suit(
             hcp.start(),
             hcp.end()
         ),
-    }
+    })
 }
 
 fn rule_new_suit_resp_1(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
@@ -2453,7 +2493,7 @@ fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
     let bid = ctx.call.bid()?;
     let suit = bid.strain().suit()?;
     if ctx.role == Role::Responder && ctx.agreed_suit != Some(suit) && corrects_partners_3nt(ctx) {
-        return Some(rule_responder_corrects_to_own_suit(p, ctx, suit, ex));
+        return rule_responder_corrects_to_own_suit(p, ctx, suit, ex);
     }
     if ctx.role != Role::Opener {
         return None;

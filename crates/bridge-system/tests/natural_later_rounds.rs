@@ -418,6 +418,46 @@ fn responders_corrections_of_openers_3nt_keep_responders_range() {
 }
 
 #[test]
+fn responders_unlimited_first_calls_keep_their_open_ended_minimum() {
+    let opener = |suit, hcp| Atom::ANY.with_hcp(hcp).with_suit_len(suit, 5..=13);
+    // A non-jump new suit at the three level in competition (SAYC: forcing, 11+) is no weaker
+    // than the two-level one: 10+, open-ended (it was the simple raise's 6-9, so the minor
+    // correction described no hand). The floor (22 - 15, 26 - 15) is below or at it.
+    let inf = last_with_partner_constraint("1S 2H 3C P 3NT P 4S", opener(Suit::Spades, 15..=19));
+    assert_eq!(inf.rule, "raise");
+    assert_eq!(inf.constraint.hcp_range(), 10..=37);
+    assert!(inf.constraint.satisfies(hand("AQJ32", "K32", "32", "Q32"))); // 12, three spades
+    let inf = last_with_partner("1S 2H 3C P 3NT P 5C", 15..=37);
+    assert_eq!(inf.rule, "rebid_own");
+    assert_eq!(inf.constraint.hcp_range(), 11..=37);
+    assert_eq!(inf.constraint.suit_len(Suit::Clubs), 6..=13);
+    assert!(inf.constraint.satisfies(hand("AKJ432", "K32", "2", "Q32"))); // 13, singleton
+    // A negative double: its own minimum at the level it doubled, open-ended (8+ over 2H).
+    let inf = last_with_partner_constraint("1S 2H X P 3NT P 4S", opener(Suit::Spades, 15..=19));
+    assert_eq!(inf.rule, "raise");
+    assert_eq!(inf.constraint.hcp_range(), 8..=37);
+    let (ctx, _) = last("1S 2H X P 3NT P 4S");
+    assert_eq!(ctx.owner_first_negative_double, Some(2));
+    // A redouble: 10+ (it was 6-9 against the redouble's 10+ and responder's own 2NT 11-12).
+    let inf = last_with_partner_constraint(
+        "1H X XX 1S P P 2NT P 3NT P 4H",
+        opener(Suit::Hearts, 15..=21),
+    );
+    assert_eq!(inf.rule, "raise");
+    assert_eq!(inf.constraint.hcp_range(), 10..=37);
+    // A first call no rule ranges (a penalty double of their 1NT), and no non-pass call before
+    // the correction (responder passed 1H): no rule describes the correction.
+    for calls in ["1H 1NT X 2C 3NT P 4H", "1H 1S P 2S 3NT P 4H"] {
+        let inf = last_with_partner_constraint(calls, opener(Suit::Hearts, 15..=21));
+        assert_eq!(inf.rule, "fallback", "{calls}");
+    }
+    assert_eq!(
+        last("1H 1NT X 2C 3NT P 4H").0.owner_first_negative_double,
+        None
+    );
+}
+
+#[test]
 fn bids_over_partners_3nt_that_are_not_corrections_keep_the_slam_floor() {
     // The opponents' suit (partner's cue bid, which the natural rules read as a suit partner
     // bid first) is not a correction: the slam floor (31 - 12).
