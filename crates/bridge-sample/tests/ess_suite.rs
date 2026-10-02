@@ -27,11 +27,12 @@
 //! **Fixture.** In the default (eval) mode the cases are read from the fixture
 //! `tests/data/ess_cases.txt` (auction and true deal per case), so changing the policy or the
 //! system never changes the case set. `ESS_SUITE_WRITE_FIXTURE=1` regenerates the fixture from
-//! the generator and the corpus eval split (and then runs on it); it is frozen once, at the
-//! phase-4 integration. Without a fixture file the cases are generated on the fly. The
-//! non-ignored `ess_fixture_generated_cases_are_on_policy` fails when a change to SAYC or the
-//! policy has made a frozen generated case off-policy (so it no longer belongs to the
-//! well-specified set) and the fixture has to be regenerated.
+//! the generator and the corpus eval split (and then runs on it); it was last frozen against the
+//! final phase-4 line (`wip/p4int` 4e0f30d; an earlier freeze, against lane P's state, went
+//! stale when SAYC and the policy changed afterwards). Without a fixture file the cases are
+//! generated on the fly. The non-ignored `ess_fixture_generated_cases_are_on_policy` fails when a
+//! change to SAYC or the policy has made a frozen generated case off-policy (so it no longer
+//! belongs to the well-specified set) and the fixture has to be regenerated.
 //!
 //! **Tuning mode.** `ESS_SUITE_MODE=tune` uses a disjoint seed set (other random deals, another
 //! sampling seed) and the corpus tune split (even positions), never the fixture, and asserts
@@ -1162,13 +1163,7 @@ fn ess_fixture_parses() {
 /// hands. A change to SAYC, the natural fallback or the policy that makes any of them off-policy
 /// (`p < 0.01`) leaves the frozen cases stale; regenerate them with `ESS_SUITE_WRITE_FIXTURE=1`
 /// (see the module docs).
-///
-/// Ignored on the phase-5 integration branch: the fixture was regenerated against the phase-4
-/// state lane P integrated, and the final phase-4 line has changed SAYC and the policy since, so
-/// 13 of the 25 generated cases are off-policy. Remove the `#[ignore]` when the fixture is
-/// regenerated against the final phase-4 line (`ESS_SUITE_WRITE_FIXTURE=1`).
 #[test]
-#[ignore = "fixture is stale against the final phase-4 line; regenerate it, then remove this"]
 fn ess_fixture_generated_cases_are_on_policy() {
     let path = fixture_path();
     let cases = read_fixture(&path).unwrap_or_else(|| panic!("{} is missing", path.display()));
