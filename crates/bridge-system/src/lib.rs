@@ -69,5 +69,7 @@ pub const IR_FORMAT: u32 = 3;
 /// reported once per row, `!h>=!s+1` is not read as a comparison, and the lint
 /// `StopUnderForcing`. 9: every node's description is stored without its `{prio:N}` /
 /// `{w:X}` / `{stop}` annotations (`Row::description_raw` keeps them); this was revision 6 on
-/// the integration line before lane D2 merged.
-pub const COMPILE_REVISION: u32 = 9;
+/// the integration line before lane D2 merged. 10: the `#EXACTPASS` table directive and its
+/// file form `#EXACTPASS FILE` (an empty `(any)` sibling after a row of ours that follows an
+/// opponents' pass), and the lint `ExactPassWithoutPass`.
+pub const COMPILE_REVISION: u32 = 10;

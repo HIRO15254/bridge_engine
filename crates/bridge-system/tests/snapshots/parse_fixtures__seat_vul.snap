@@ -92,6 +92,7 @@ expression: "(& file.blocks, & file.lints)"
                 ],
                 stop: false,
                 any_order: false,
+                exact_pass: None,
                 span: Span {
                     file: FileId(
                         0,
@@ -164,6 +165,7 @@ expression: "(& file.blocks, & file.lints)"
                 ],
                 stop: false,
                 any_order: false,
+                exact_pass: None,
                 span: Span {
                     file: FileId(
                         0,
@@ -250,6 +252,7 @@ expression: "(& file.blocks, & file.lints)"
                 ],
                 stop: false,
                 any_order: false,
+                exact_pass: None,
                 span: Span {
                     file: FileId(
                         0,
