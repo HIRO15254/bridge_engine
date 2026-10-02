@@ -1093,6 +1093,9 @@ pub struct CallContext {
     pub partner_actions: u8,                    // number of partner's non-pass calls so far
     pub partner_first_action: Option<Call>,     // partner's first non-pass call
     pub partner_first_jump: u8,                 // levels skipped by that call when it is a bid (0 otherwise)
+    pub their_bids: u8,                         // bids (not P/X/XX) the opponents have made so far
+    pub rho_last: Option<Call>,                 // the right-hand opponent's call just before this one
+    pub owner_last: Option<Call>,               // owner's own last call so far (a pass included)
 }
 
 /// System-independent classification of auction[index] as made by `owner`; unit-testable.
@@ -1136,19 +1139,19 @@ impl Default for NaturalInference { /* NaturalParams::default() */ }
 | `open_2c` | `Opener`, `2C` | `hcp ≥ strong_two_c` (シェイプなし) | 0.5 |
 | `open_preempt` | `Opener`, `level 3..=5`, スート | `suit_len[s] ≥ preempt[L].1` ∧ `hcp = preempt[L].2` | 0.55 (旧 0.5) |
 | `open_pass` | `Opener` の席の `Pass` (パス済みでない、かつまだ誰もビッドしていない: `last_bid == None`。オープナーの後のパスはここに来ない) | `hcp ≤ opening_hcp.start − 1` | 0.45 (旧 0.5。`open_weak2` より下に置く。§8.6 の「レビュー後の修正」) |
-| `overcall` | `Overcaller` の最初のアクション (`!owner_acted`), `new_suit` (相手スートのキュービッドを除く), `jump == 0` | `suit_len[s] ≥ overcall[l].0` ∧ `hcp = overcall[l].1` (`l` = 0: 1 レベル、1: 2 レベル以上); `Balancer` は下限に `balancing_shift` | 0.35 (旧 0.5) |
-| `jump_overcall` | `Overcaller` の最初のアクション, `new_suit`, `jump == 1` | `suit_len[s] ≥ overcall[2].0` ∧ `hcp = overcall[2].1` | 0.5 (旧 0.4) |
+| `overcall` | `Overcaller` の最初のアクション (`!owner_acted`), `new_suit` (相手スートのキュービッドを除く), `jump == 0`。相手が 2 回以上ビッドした後 (`their_bids ≥ 2`) は、相手のゲーム未満で 4 レベル以下 (§8.6「後の巡の制限」(1)) | `suit_len[s] ≥ overcall[l].0` ∧ `hcp = overcall[l].1` (`l` = 0: 1 レベル、1: 2 レベル以上); `Balancer` は下限に `balancing_shift`。相手の交換後の 4 レベルは `suit_len[s] ≥ 6` ∧ `hcp ≥ opening_hcp.start` (`Balancer` はその後で `balancing_shift`) | 0.35 (旧 0.5) |
+| `jump_overcall` | `Overcaller` の最初のアクション, `new_suit`, `jump == 1`, 3 レベル以下。相手の交換後の制限は `overcall` と同じ | `suit_len[s] ≥ overcall[2].0` ∧ `hcp = overcall[2].1` | 0.5 (旧 0.4) |
 | `nt_overcall` | `Overcaller` の最初のアクション, 最安の NT (`jump == 0`) で 2 レベル以下 (1 レベルのオープンに 1N、ウィーク・ツーに 2N) | `hcp = nt_overcall` ∧ `BALANCED` ∧ `Stopper(their suit)` | 0.6 |
-| `takeout_x` | `Double(Takeout)`: パートナー未ビッド、相手のスートが 2 レベル以下 | `hcp ≥ takeout_double.0` ∧ `suit_len[their] ≤ takeout_double.1` ∧ 未ビッドスート各 `≥ takeout_double.2` (未ビッドが 3 つ以上なら `Or` で 2 つ以上を要求) | 0.45 (旧 0.5) |
+| `takeout_x` | `Double(Takeout)`: パートナー未ビッド、相手のスートが 2 レベル以下 | `hcp ≥ takeout_double.0` ∧ `suit_len[their] ≤ takeout_double.1` ∧ 未ビッドスート各 `≥ takeout_double.2` (未ビッドが 3 つ以上なら `Or` で 2 つ以上を要求)。既に非パスのコールをしたディフェンダー (`Overcaller`/`Advancer`/`Balancer`) は下限に `SECOND_TAKEOUT_DOUBLE_EXTRA` (3) を加える (§8.6「後の巡の制限」(5)) | 0.45 (旧 0.5) |
 | `penalty_x` | `Double(Penalty)`: パートナーの最後のビッドが NT、相手が NT または 4 レベル以上、または我々がスートを合意済み | `hcp ≥ 10` ∧ `suit_len[their] ≥ 4` | 0.3 |
-| `negative_x` | `Double(Negative)`: パートナーがスートを開き RHO が 2 レベル以下でオーバーコール | `hcp ≥ response.new_suit_1.1 + 2 × (level − 1)` ∧ 未ビッドメジャーの条件: 両メジャーが未ビッドで 1 レベルで言える (`1C (1D) X`) なら両方 `≥ 4`; 1 つだけ未ビッドで 1 レベルで言える (`1C (1H) X`) ならちょうど 4 枚; それ以外 (2 レベルのオーバーコール) は未ビッドメジャー `≥ 4` (`Or`) | 両メジャーの場合 0.5、それ以外 0.4 (旧 0.5) |
+| `negative_x` | `Double(Negative)`: パートナーがスートを開き RHO が 2 レベル以下でオーバーコール。レスポンダーの最初のターン (パートナーのオープンがパートナーの唯一の非パスで最後のコール、RHO の最後のコールがビッド) に限る (§8.6「後の巡の制限」(3)) | `hcp ≥ response.new_suit_1.1 + 2 × (level − 1)` ∧ 未ビッドメジャーの条件: 両メジャーが未ビッドで 1 レベルで言える (`1C (1D) X`) なら両方 `≥ 4`; 1 つだけ未ビッドで 1 レベルで言える (`1C (1H) X`) ならちょうど 4 枚; それ以外 (2 レベルのオーバーコール) は未ビッドメジャー `≥ 4` (`Or`) | 両メジャーの場合 0.5、それ以外 0.4 (旧 0.5) |
 | `raise` | パートナーが先にビッドしたスート `s` を我々がビッド | `suit_len[s] ≥ raise.0` ∧ 役割/レベル別の `hcp` (`Responder`: `response.raise.1` 単純、`response.jump_raise.1` ジャンプ、ゲームレイズ `13+`; `Advancer`: `advance.raise`; `Opener`: `rebid.raise` / `rebid.jump_raise`) | 0.45 (旧 0.6) |
 | `new_suit_resp_1` | `Responder`, `new_suit`, `level 1` | `suit_len[s] ≥ response.new_suit_1.0` ∧ `hcp ≥ response.new_suit_1.1`。相手がメジャーでオーバーコールした後 (`1C (1H) 1S`) は長さ `≥ 5` (4 枚はネガティブ・ダブル) | 0.5 |
 | `new_suit_resp_2` | `Responder`, `new_suit`, `level 2`, `jump == 0` | `suit_len[s] ≥ response.new_suit_2.0` (5) ∧ `hcp ≥ response.new_suit_2.1` (10); `jump == 1` は `hcp ≥ response.jump_shift` | 0.6 (旧 0.5) |
 | `resp_nt` | `Responder`, `nt`, レベル `L` | `hcp = response.nt[L]` (2N/3N は `BALANCED` 寄り: 4 メジャー否定は v2)。最初の応答の 1N はシンプル・レイズを否定する: パートナーのスート `s` について ¬(`suit_len[s] ≥ 支持` ∧ `hcp ∈ response.raise.1`)。支持はメジャーで `response.raise.0` (3)、マイナーで 5 (SAYC の `1H-1N` は「3 枚以上のハートなし」、`1C-1N` は「5 枚以上のクラブなし」)。10 HCP の支持付きは 1N でよい | 0.5 |
 | `rebid_own` | `Opener`, `rebid_own` | `suit_len[s] ≥ 6` ∧ `hcp = opening_hcp` (`jump == 1` なら `rebid.jump_rebid`)。1 スートのオープン後に合意済みスート (自分が先にビッドしパートナーがサポートしたスート) を再び上げる場合は別枝: 長さはオープンの最小長 (2 番目のスートなら 4)、`hcp` は競り合いなしのジャンプなしが `rebid.jump_rebid` (ゲームトライ)、競り合いでは `opening_hcp`、ジャンプは `rebid.jump_rebid.start..=opening_hcp.end` | ジャンプ (`jump ≥ 1`、`rebid.jump_rebid`) は 0.55、それ以外は 0.5 (旧はどちらも 0.5。ジャンプの 16〜18 は非ジャンプの 12〜21 に含まれ、同点ではコール順で安い非ジャンプが勝つので、ジャンプ・リビッドが一度も選ばれなかった) |
 | `reverse` | `Opener`, `reverse` (最初のスートの 2 レベルより上の新スート) | `hcp ≥ rebid.reverse` ∧ 最初のスート `≥ 5` ∧ 2 番目 `≥ 4` | 0.55 (旧 0.4) |
-| `rebid_nt` | `Opener` (1 スートのオープン後), `nt`, 2 レベル以下、合意スートなし | `BALANCED` ∧ `hcp = rebid.nt_1` (`jump == 0`) / `rebid.nt_2` (`jump == 1`)。それより大きいジャンプは `fallback` | 0.45 (旧 0.5) |
+| `rebid_nt` | `Opener` (1 スートのオープン後), `nt`, 2 レベル以下、合意スートなし、オープナーのリビッドそのもの (`owner_last` がオープニング、パートナーが非パスで応答済み、相手が NT 未ビッド。§8.6「後の巡の制限」(4)) | `BALANCED` ∧ `hcp = rebid.nt_1` (`jump == 0`) / `rebid.nt_2` (`jump == 1`)。それより大きいジャンプは `fallback` | 0.45 (旧 0.5) |
 | `rebid_new_suit` | `Opener` (1 スートのオープン後), `new_suit` (リバースでない。`reverse` が先に当たる) | `suit_len[s] ≥ 4` ∧ `hcp = opening_hcp.start..=rebid.jump_raise.end` (`jump ≥ 1` のジャンプシフトは `hcp ≥ rebid.jump_rebid.end + 1`) | 0.35 (旧 0.4) |
 | `advance_new_suit` | `Advancer` の最初のアクション, パートナーの最初のアクションがビッド (テイクアウトダブルへの応答は除く), `new_suit`, `jump == 0` | `suit_len[s] ≥ advance.new_suit.0` ∧ `hcp ≥ advance.new_suit.1` | 0.5 |
 | `cue` | 相手のスートのビッド | シェイプなし; `Opener`/`Responder` で `partner_constraint` があれば `hcp ≥ gf_total − partner_min` (`gf_total = 25`)、それ以外 (`Advancer`/`Overcaller`/`Balancer`、または `partner_constraint` なし) は `advance.cue`; `flags.artificial` | 0.3 |
@@ -1209,6 +1212,7 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
   - NT: 3 → 24、4 → 28、5 → 30、6 → 32、7 → 36
 - 表の値 0 は「下限なし」を意味する。`LevelFloor::NONE` はフェーズ 3 の挙動に戻す。
 - オープニング、パートナーが無言のまま自分が初めて行動する場合、`partner_constraint` が無い場合 (素の `classify`) は、下限を課さない。したがって §8.5 の測定 1 と 3 (素の `classify` + `infer`) は、下限の影響を受けない。
+- パートナーの最後のコールがゲーム以上 (3NT、4M、5m 以上) で、RHO がパスした後のビッド (パートナーのゲームを越えるビッド) は、combined を少なくとも 6 レベルの値 (スート 31、NT 32) にする (`SLAM_LEVEL`。下の「後の巡の制限」(2))。
 - `level_floor` は `#[serde(skip)]` である。直列化形式と `IR_FORMAT` は変わらず、復元した IR は既定の表を持つ。
 - 検証 (`natural_metrics.rs` の `level_floor_limits_replay_escalation_2000`): 固定シードの生成配牌 2000 を SAYC + ナチュラル補完で `replay` した。最終コントラクトのレベル分布は次のとおり。
 
@@ -1319,6 +1323,36 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
   - 文脈付きの定義では、同じ定義のフェーズ 3 の値 0.333 / 0.335 (全体 / 評価半分) に対して 0.429 / 0.4285 (+0.096 / +0.094) で満たす。4.6 の採用時点の「+0.086」は、文脈付きの値を旧定義の基準 0.329 と比べていたので、定義をそろえると +0.082 (全体) / +0.080 (評価半分) だった。
   - 旧定義は、下限が除外する手を引いて外れに数えるので、下限だけで −0.030 になる (上の注意)。レベル下限はリプレイの暴走を止めるために必要なので、下限を入れたまま評価する。
 - 実配牌一致率 (評価用分割) は、フェーズ 3 の 0.478 から 0.6175 に上がった (4.6 の採用時点では 0.618)。
+
+**後の巡の制限 (フェーズ 4 レーン D3、2026-09-30)。** `xtask coverage` の strict [G] は、SAYC に既定のパスしかない局面でナチュラル方策がパス以外を選ぶと、その生成オークションを逸脱に数える。逸脱の大半 (既定パスの上書き 276 件、228 オークション) を調べると、多くはナチュラル規則が最初の行動や最初のリビッド向けの範囲を、そのまま後の巡に当てはめたものだった。SAYC のプレーヤーなら、そこではパスするか、別の意味のコールをする。そこで、規則表の述語を次のように絞った。どの修正も、その局面で規則を発火させなくする (ナチュラル方策はパスする) か、範囲の下限を上げるだけである。最初の行動の制約は変わらない。回帰テストは `tests/natural_later_rounds.rs`。
+
+- (1) 相手が交換した後の参入 (`CallContext::their_bids ≥ 2`、`MAX_ENTRY_LEVEL_AFTER_EXCHANGE = 3`)。`overcall` と `jump_overcall` は、相手のオープンへの参入と、相手がビッドしてレイズした後のパートスコア争い (3 レベルまで) を記述する。
+  - 相手のゲーム (3NT、4M、5m 以上) の上では、どちらの規則も当たらない。例: `1S-P-3S-P-4S-P-P` の 5H (5 枚、7〜16 HCP) はナチュラルなオーバーコールではなく、サクリファイスかリード指示の賭けである。
+  - ゲーム未満の 4 レベルは、`systems/sayc/competing.bml` の競り合いの表と同じく、6 枚以上とオープニングの強さが要る (バランシング席では 3 少ない。`FOUR_LEVEL_ENTRY_MIN_LEN`)。ゲーム未満の 5 レベル以上 (`4C`/`4D` の上) は当たらない。
+  - `jump_overcall` は 3 レベルまで (`MAX_JUMP_OVERCALL_LEVEL`)。制約 `overcall[2]` はウィーク・ツーの手であり、4 レベルへのシングル・ジャンプ (`(2H)-4C`、`(1H)-P-(2NT)-4C`) はその手ではない。
+- (2) パートナーのゲームを越えるビッド (`SLAM_LEVEL = 6`)。パートナーの最後のコールがゲーム以上で、RHO がパスした後のビッドは、スラムの動きである (3NT の上なら、パートナーの選択を覆す訂正)。レベル下限の combined を少なくとも 6 レベルの値にする (上の「レベル下限」)。
+  - 例: ウィーク・ツーのオープナーがパートナーの 3NT を 4S に直す `2S-P-2NT-P-3S-P-3NT-P-4S`、パートナーのゲーム・レイズの上の `1H-P-1S-P-2S-P-4S-P-5C`。
+  - RHO がビッドかダブルした後は競り合いなので、通常の下限のままにする。
+- (3) `negative_x` はレスポンダーの最初のターンだけ。条件は、パートナーのオープンがパートナーの唯一の非パスで、かつ最後のコールであり、RHO の最後のコールがビッドであること。
+  - §8.2 の順では、レスポンダーの後のダブル (`1C (1H) X (2D) P (P) X`、`1H (1S) P (2S) P (P) X`、`2D (P) P (2H) P (P) X`) も `Negative` に分類される。
+  - しかしレスポンダーは既に手を示しているので、このダブルは最初のコールで示せなかった余分の強さかトランプを示す。`negative_x` の範囲 (6+、未ビッドのメジャー) はその意味を持たないので、当たらない。
+- (4) `rebid_nt` はオープナーのリビッドそのものだけ。条件は、`CallContext::owner_last` がオープニングのままで、パートナーが非パスで応答済みで、相手が NT をビッドしていないこと。次の局面では当たらない。
+  - 範囲を示した後の NT (`1D-P-1S-P-1NT-P-2S-P-2NT`)。
+  - リビッドの機会にパスした後 (`1C-P-1D-(1S)-P-(2S)-P-(P)-2NT`)。
+  - パートナーが応答していないとき (`1C-(1D)-P-(1S)-1NT`)。SAYC はミニマムの手でリオープンしない。
+  - 相手の NT の上 (`1C-(1NT)-2H-(P)-2NT`)。
+- (5) ディフェンダー (`Overcaller`/`Advancer`/`Balancer`) の 2 回目のテイクアウト・ダブル (自分が既に非パスのコールをした後) は、下限に `SECOND_TAKEOUT_DOUBLE_EXTRA` (3) を加える。12 → 15、バランシング席では 9 → 12 になる。
+  - 最初の行動がミニマムを示しており、ミニマムの手なら 2 回目はパスするか自分のスートを再びビッドする。例: `(1C)-1S-(X)-P-(2H)-X` の 12 HCP。
+  - オープナーのリオープニング・ダブル (`1D-(1S)-P-(P)-X`) はミニマムでも標準なので、対象外。
+
+効果:
+
+- `xtask coverage` (既定サイズ、release) の strict [G]: 0.745 → (1) 0.798 → (2) 0.826 → (3) 0.839 → (4) 0.852 → (5) 0.861。stop-audited [G] は 0.521 → 0.625、上書きは 276 → 115。raw [G]、コーパスの [C]、IR は変わらない。
+- §8.5 の測定 (現行 SAYC。変更前 → 変更後):
+  - 測定 1: SAYC 再現率 0.7262 → 0.7274、精度 0.7167 → 0.7213 (1500 ノード)。vendor 再現率 0.5793 → 0.5831、精度 0.5966 → 0.5966 (795 ノード)。
+  - 測定 2: 旧定義 0.2812 → 0.2737、文脈付き 0.3357 → 0.3286 (600 決定点。候補は 8,597 → 8,474)。下がった 0.007 は、上の局面で規則が当たらなくなり候補が減った分で、レーン S の基準 (0.01 以内) の内側にある。
+  - 測定 3: 0.7981 → 0.8005。規則別では `rebid_nt` が 69 コール 0.362 → 48 コール 0.417、`negative_x` が 57 → 46 コール、`takeout_x` が 0.466 → 0.447。
+- レベル下限の検証 (2000 配牌、既定の表): 6 レベル以上 6 → 5、7 レベル 0 のまま。
 
 ---
 

@@ -60,10 +60,15 @@
 //! Sizing: `COVERAGE_REPLAYS`, `COVERAGE_POSITIONS`, `COVERAGE_CORPUS_LIMIT` (default: all),
 //! `COVERAGE_SEED` (replay seed, default `0xC0FE_4001`). `BRIDGE_CORPUS_DIR` and
 //! `BRIDGE_SYSTEMS_DIR` override the data locations. `COVERAGE_OUT` overrides the output path.
-//! `COVERAGE_TOP_N` (default 0) additionally lists that many first departures
-//! (`generated.first_departure_top_n`), and `COVERAGE_PRINT_LINTS=<code substring>` prints the
-//! matching lints to stderr; both are authoring aids. `COVERAGE_PRINT_LENIENT` prints each
-//! corpus call resolved through `resolve_lenient` and each seat with empty default-mode support.
+//! `COVERAGE_TOP_N` (default 0) additionally lists that many first departures, first strict
+//! departures and stop swallows (`generated.first_departure_top_n`,
+//! `first_strict_departure_top_n`, `stop_swallow_top_n`), and
+//! `COVERAGE_PRINT_LINTS=<code substring>` prints the matching lints to stderr; both are
+//! authoring aids. `COVERAGE_PRINT_LENIENT` prints each corpus call resolved through
+//! `resolve_lenient` and each seat with empty default-mode support. `COVERAGE_DUMP=<file>`
+//! writes one tab-separated line per generated first strict departure and stop swallow
+//! (category, role, matched trie path, auction, hand, HCP, the natural choice and the natural
+//! rule behind it), the raw material for surveying the strict `[G]` departures by class.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -838,6 +843,8 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
     let mut with_swallow = 0u64;
     let mut swallow_tops: HashMap<PosKey, Agg> = HashMap::new();
     let mut swallow_by_call: BTreeMap<&'static str, u64> = BTreeMap::new();
+    let mut dump: Vec<String> = Vec::new();
+    let dump_path = std::env::var_os("COVERAGE_DUMP");
 
     for _ in 0..n {
         let deal = random_deal(&mut rng);
@@ -887,6 +894,16 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
             if chose_default_pass && !only_default_passes {
                 if let Some(m) = natural_choice(table, ctx, hand, &auction) {
                     if m != Call::Pass {
+                        if dump_path.is_some() {
+                            dump.push(dump_line(
+                                table,
+                                "swallow",
+                                &auction,
+                                matched,
+                                hand,
+                                Some(m),
+                            ));
+                        }
                         swallows += 1;
                         has_swallow = true;
                         *swallow_by_call.entry(call_label(m)).or_default() += 1;
@@ -915,6 +932,16 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
                             hand,
                         );
                         if !strict_departed {
+                            if dump_path.is_some() {
+                                dump.push(dump_line(
+                                    table,
+                                    "override",
+                                    &auction,
+                                    matched,
+                                    hand,
+                                    Some(m),
+                                ));
+                            }
                             strict_departed = true;
                             *strict_departure_by_category
                                 .entry("default_pass_override")
@@ -969,6 +996,10 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
                     record(&mut gaps, key.clone(), kind, &auction, hand);
                 }
                 if !strict_departed {
+                    if dump_path.is_some() {
+                        let m = natural_choice(table, ctx, hand, &auction);
+                        dump.push(dump_line(table, category, &auction, matched, hand, m));
+                    }
                     strict_departed = true;
                     *strict_departure_by_category.entry(category).or_default() += 1;
                     record(
@@ -1015,6 +1046,9 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
         levels[level] += 1;
     }
 
+    if let Some(path) = dump_path {
+        let _ = std::fs::write(path, dump.join("\n") + "\n");
+    }
     json!({
         "replays": n,
         "seed": seed,
@@ -1053,7 +1087,38 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
         "natural_completion_top50": top(&naturals, 50, 1.0),
         // Authoring aid: `COVERAGE_TOP_N=<n>` also lists the first `n` departures.
         "first_departure_top_n": top(&departures, env_usize("COVERAGE_TOP_N", 0), 1.0),
+        "first_strict_departure_top_n": top(&strict_departures, env_usize("COVERAGE_TOP_N", 0), 1.0),
+        "stop_swallow_top_n": top(&swallow_tops, env_usize("COVERAGE_TOP_N", 0), 1.0),
     })
+}
+
+/// Authoring aid (`COVERAGE_DUMP=<file>`): one line per strict departure and stop swallow with
+/// the natural choice and the natural rule that produced it (read without partner context).
+fn dump_line(
+    table: &Table,
+    what: &str,
+    auction: &Auction,
+    matched: usize,
+    hand: Hand,
+    natural: Option<Call>,
+) -> String {
+    let seat = auction.next_seat();
+    let rule = natural
+        .and_then(|m| auction.with(m).ok())
+        .map(|next| {
+            table
+                .natural
+                .infer(&classify(&next, auction.len(), seat))
+                .rule
+        })
+        .unwrap_or("-");
+    format!(
+        "{what}\t{}\t{}\t{auction}\t{hand:?}\t{}\t{}\t{rule}",
+        role_of(auction, seat),
+        trie_path(auction, matched),
+        bridge_eval::hcp(hand),
+        natural.map_or("-".to_string(), call_str),
+    )
 }
 
 /// The HCP band of a hand, as a `by_kind` label of the stop-swallow tops.

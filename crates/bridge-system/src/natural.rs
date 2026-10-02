@@ -322,6 +322,13 @@ pub struct CallContext {
     /// Levels skipped by `partner_first_action` when it is a bid (0 otherwise), measured like
     /// [`CallKind::Bid::jump`] against the last bid before it.
     pub partner_first_jump: u8,
+    /// How many bids (not passes, doubles or redoubles) the opponents have made so far. Two or
+    /// more on a first entry means the opponents have exchanged bids (opener and responder).
+    pub their_bids: u8,
+    /// The right-hand opponent's call just before this one, if any.
+    pub rho_last: Option<Call>,
+    /// `owner`'s own last call so far (a pass included), if any.
+    pub owner_last: Option<Call>,
 }
 
 /// Classifies call `index` of `auction` from the point of view of its caller.
@@ -359,6 +366,9 @@ struct HistoryContext {
     partner_actions: u8,
     partner_first: Option<(usize, Call)>,
     partner_first_jump: u8,
+    their_bids: u8,
+    rho_last: Option<Call>,
+    owner_last: Option<Call>,
 }
 
 impl HistoryContext {
@@ -394,6 +404,12 @@ impl HistoryContext {
             .rev()
             .find(|(i, _)| auction.seat_at(*i) == owner.partner())
             .map(|(_, c)| *c);
+        let owner_last = history
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(i, _)| auction.seat_at(*i) == owner)
+            .map(|(_, c)| *c);
         let agreed_suit = Suit::ALL.into_iter().find(|&s| {
             let strain = Strain::from_suit(s);
             owner_suits.contains(strain) && partner_suits.contains(strain)
@@ -413,6 +429,12 @@ impl HistoryContext {
                 }
             }
         }
+        let their_bids = history
+            .iter()
+            .enumerate()
+            .filter(|&(i, c)| auction.seat_at(i).side() != owner.side() && c.is_bid())
+            .count()
+            .min(u8::MAX as usize) as u8;
         let partner_first_jump = match partner_first {
             Some((i, Call::Bid(b))) => {
                 let before = history[..i].iter().rev().find_map(|c| c.bid());
@@ -442,6 +464,9 @@ impl HistoryContext {
             partner_actions,
             partner_first,
             partner_first_jump,
+            their_bids,
+            rho_last: history.last().copied(),
+            owner_last,
         }
     }
 
@@ -501,6 +526,9 @@ impl HistoryContext {
             partner_actions: self.partner_actions,
             partner_first_action: self.partner_first.map(|(_, c)| c),
             partner_first_jump: self.partner_first_jump,
+            their_bids: self.their_bids,
+            rho_last: self.rho_last,
+            owner_last: self.owner_last,
         }
     }
 }
@@ -987,9 +1015,24 @@ impl NaturalInference {
     }
 }
 
+/// The level whose combined target ([`LevelFloor::combined`]) a bid past partner's game needs:
+/// the six level, slam.
+pub const SLAM_LEVEL: u8 = 6;
+
+/// `true` when partner's last call placed the contract at game or higher (3NT, four of a major,
+/// five of a minor, or above) and the right-hand opponent passed it: a natural bid now goes past
+/// partner's game. It is a slam move (or, over 3NT, a correction that overrides partner's
+/// choice), which the natural rules describe only with slam values: [`apply_level_floor`] raises
+/// its combined target to the six level's.
+fn past_partners_game(ctx: &CallContext) -> bool {
+    matches!(ctx.partner_last, Some(Call::Bid(b)) if is_game_or_higher(b))
+        && ctx.rho_last == Some(Call::Pass)
+}
+
 /// Applies `floor` to a natural bid's inference (see [`LevelFloor`]): a continuation bid (the
 /// caller or partner has acted) at a level with a non-zero combined target, with a known
-/// `partner_constraint`, also requires `own HCP >= combined - partner's minimum HCP`.
+/// `partner_constraint`, also requires `own HCP >= combined - partner's minimum HCP`. A bid past
+/// partner's game ([`past_partners_game`]) uses at least the six level's target.
 fn apply_level_floor(
     floor: &LevelFloor,
     ctx: &CallContext,
@@ -1002,7 +1045,11 @@ fn apply_level_floor(
     if !ctx.owner_acted && ctx.partner_actions == 0 {
         return inf;
     }
-    let combined = floor.combined(bid.level(), bid.strain() == Strain::NoTrump);
+    let nt = bid.strain() == Strain::NoTrump;
+    let mut combined = floor.combined(bid.level(), nt);
+    if past_partners_game(ctx) {
+        combined = combined.max(floor.combined(SLAM_LEVEL, nt));
+    }
     if combined == 0 {
         return inf;
     }
@@ -1255,10 +1302,70 @@ fn is_first_overcall(ctx: &CallContext) -> bool {
     matches!(ctx.role, Role::Overcaller | Role::Balancer) && !ctx.owner_acted
 }
 
+/// The highest level of an ordinary natural first entry once the opponents have exchanged bids
+/// ([`CallContext::their_bids`] >= 2).
+///
+/// The overcall rules describe entering over the opening, or competing for a partscore after
+/// the opponents have bid and raised (the three level in the balancing seat). Above that the
+/// generic ranges (five cards, 10-16 HCP, a king less in the balancing seat) are not a natural
+/// action any more:
+///
+/// - over the opponents' game (3NT, four of a major, five of a minor, or higher) after both of
+///   them have bid, a first entry is a sacrifice or a lead-directing gamble, not a natural
+///   overcall: five hearts and 7-16 HCP over their `1S-3S-4S` do not bid `5H`. No overcall
+///   rule fires, so the natural policy passes;
+/// - one level higher (a four-level entry below their game, over a raise to the three level or
+///   to four of a minor) the entry needs what SAYC's own competitive tables ask for there
+///   (`systems/sayc/competing.bml`): opening values and a six-card suit, a king less in the
+///   balancing seat ([`FOUR_LEVEL_ENTRY_MIN_LEN`]);
+/// - a first entry at the five level or higher below their game (over `4C`/`4D`) is not
+///   natural either.
+///
+/// docs/design/06-system.md §8.3 (`overcall`) and §8.6.
+pub const MAX_ENTRY_LEVEL_AFTER_EXCHANGE: u8 = 3;
+
+/// The minimum suit length of a four-level first entry after the opponents have exchanged
+/// bids (see [`MAX_ENTRY_LEVEL_AFTER_EXCHANGE`]).
+pub const FOUR_LEVEL_ENTRY_MIN_LEN: u8 = 6;
+
+/// The highest level of a natural jump overcall: the weak jump overcall is a two- or
+/// three-level preempt over their bid (`overcall[2]`: a weak-two hand). A jump to the four
+/// level or higher (`(1H)-P-(2NT)-4C`, `(3H)-P-(4NT)-6C`) is not a weak jump overcall.
+pub const MAX_JUMP_OVERCALL_LEVEL: u8 = 3;
+
+/// `true` when `bid` is a game contract or higher: 3NT, four of a major, five of a minor.
+fn is_game_or_higher(bid: Bid) -> bool {
+    let game = match bid.strain() {
+        Strain::NoTrump => 3,
+        Strain::Hearts | Strain::Spades => 4,
+        Strain::Clubs | Strain::Diamonds => 5,
+    };
+    bid.level() >= game
+}
+
+/// How the overcall rules apply to a first entry at `ctx.level` (see
+/// [`MAX_ENTRY_LEVEL_AFTER_EXCHANGE`]): `None` when no overcall rule applies, `Some(true)` for
+/// a four-level entry after the opponents' exchange (opening values and six cards), and
+/// `Some(false)` for the ordinary ranges.
+fn entry_after_exchange(ctx: &CallContext) -> Option<bool> {
+    if ctx.their_bids < 2 {
+        return Some(false);
+    }
+    if ctx.last_bid.is_some_and(is_game_or_higher) {
+        return None;
+    }
+    match ctx.level {
+        0..=MAX_ENTRY_LEVEL_AFTER_EXCHANGE => Some(false),
+        4 => Some(true),
+        _ => None,
+    }
+}
+
 fn rule_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if !is_first_overcall(ctx) {
         return None;
     }
+    let four_level = entry_after_exchange(ctx)?;
     // `new_suit` excludes a cue bid of the opponents' suit (which is `rule_cue`'s).
     let CallKind::Bid {
         nt: false,
@@ -1275,6 +1382,15 @@ fn rule_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infer
         &p.overcall[0]
     } else {
         &p.overcall[1]
+    };
+    let (min_len, hcp) = if four_level {
+        let from = (*hcp.start()).max(*p.opening_hcp.start());
+        (
+            &(*min_len).max(FOUR_LEVEL_ENTRY_MIN_LEN),
+            &(from..=*hcp.end().max(&from)),
+        )
+    } else {
+        (min_len, hcp)
     };
     let hcp = opener_or_balancer_hcp(p, ctx.role, hcp.clone());
     let constraint = HandConstraint::Atom(
@@ -1298,7 +1414,10 @@ fn rule_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infer
 }
 
 fn rule_jump_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
-    if !is_first_overcall(ctx) {
+    if !is_first_overcall(ctx)
+        || ctx.level > MAX_JUMP_OVERCALL_LEVEL
+        || entry_after_exchange(ctx).is_none()
+    {
         return None;
     }
     let CallKind::Bid {
@@ -1374,6 +1493,23 @@ fn rule_nt_overcall(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<In
     })
 }
 
+/// Extra HCP over `takeout_double`'s minimum that a defender's second takeout double shows (a
+/// takeout double by an overcaller, advancer or balancer who has already made a non-pass call):
+/// a king more, the booklet's "extra values".
+pub const SECOND_TAKEOUT_DOUBLE_EXTRA: u8 = 3;
+
+/// `true` when a defender (overcaller, advancer or balancer) makes a takeout double after an
+/// earlier non-pass call of their own: `(1C)-1S-(X)-P-(2H)-X`, `(1S)-P-(P)-X-(2S)-P-(P)-X`.
+///
+/// The first action (the overcall, the takeout double, the balancing call) already showed a
+/// minimum; with no more than that the defender passes or bids the suit again, so the second
+/// double shows [`SECOND_TAKEOUT_DOUBLE_EXTRA`] points more than a takeout double (12+, or 15+
+/// before the balancing-seat shift). Opener is not a defender: a reopening double with a
+/// minimum opening (`1D-(1S)-P-(P)-X`) is standard (docs/design/06-system.md §8.3).
+fn is_defenders_second_action(ctx: &CallContext) -> bool {
+    matches!(ctx.role, Role::Overcaller | Role::Advancer | Role::Balancer) && ctx.owner_acted
+}
+
 fn rule_takeout_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.call != Call::Double {
         return None;
@@ -1383,6 +1519,11 @@ fn rule_takeout_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
     };
     let their_suit = ctx.last_bid.and_then(|b| b.strain().suit());
     let (min_hcp, their_max, unbid_min) = p.takeout_double;
+    let min_hcp = if is_defenders_second_action(ctx) {
+        min_hcp.saturating_add(SECOND_TAKEOUT_DOUBLE_EXTRA)
+    } else {
+        min_hcp
+    };
     let min_hcp = opener_or_balancer_hcp(p, ctx.role, min_hcp..=37);
 
     let mut constraint = HandConstraint::Atom(Atom::ANY.with_hcp(min_hcp.clone()));
@@ -1428,6 +1569,24 @@ fn rule_penalty_x(_p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inf
     })
 }
 
+/// `true` when responder doubles a bid of the right-hand opponent while partner's opening is
+/// still partner's only non-pass call and partner's last call (`1C (1H) X`, `P P 1D (2C) X`):
+/// responder's turn over the overcall of the opening.
+///
+/// The negative double is that call. A later double by responder (after a first response, a
+/// first negative double, or a first pass: `1C (1H) X (2D) P (P) X`, `1H (1S) P (2S) P (P) X`,
+/// `2D (P) P (2H) P (P) X`) is classified `Negative` by the §8.2 order but is not a negative
+/// double: responder has already described the hand, so the double shows the extra values or
+/// the trumps that the first call could not, which `negative_x`'s range does not say. No rule
+/// fires there, so the natural policy passes (docs/design/06-system.md §8.3).
+fn responders_first_turn_over_overcall(ctx: &CallContext) -> bool {
+    ctx.role == Role::Responder
+        && ctx.partner_actions == 1
+        && matches!(ctx.partner_last, Some(Call::Bid(_)))
+        && ctx.partner_last == ctx.partner_first_action
+        && matches!(ctx.rho_last, Some(Call::Bid(_)))
+}
+
 fn rule_negative_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.call != Call::Double {
         return None;
@@ -1435,6 +1594,9 @@ fn rule_negative_x(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inf
     let CallKind::Double(DoubleKind::Negative) = ctx.kind else {
         return None;
     };
+    if !responders_first_turn_over_overcall(ctx) {
+        return None;
+    }
     let their_level = ctx.last_bid.map(|b| b.level()).unwrap_or(1);
     let min_hcp = p
         .response
@@ -1840,14 +2002,33 @@ fn rule_reverse(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infere
     })
 }
 
+/// `true` when this is opener's rebid proper: opener's last call is still the opening (opener
+/// has not called since, not even a pass), partner has answered it with a non-pass call (a
+/// response or a negative double), and the opponents have not bid notrump.
+///
+/// The notrump ranges of `rule_rebid_nt` describe that one call. Opener's notrump at a later
+/// turn (`1D-P-1S-P-1NT-P-2S-P-2NT`, after the balanced range is already shown), after an
+/// earlier pass (`1C-P-1D-(1S)-P-(2S)-P-(P)-2NT`), when partner has not responded
+/// (`1C-(1D)-P-(1S)-1NT`, a reopening that SAYC does not make with a minimum), or over the
+/// opponents' own notrump (`1C-(1NT)-2H-(P)-2NT`) is not a range rebid, and no rule fires
+/// there (docs/design/06-system.md §8.3).
+fn is_openers_rebid(ctx: &CallContext) -> bool {
+    ctx.opener_first_bid.is_some()
+        && ctx.owner_last == ctx.opener_first_bid.map(Call::Bid)
+        && ctx.partner_actions >= 1
+        && !ctx.their_suits.contains(Strain::NoTrump)
+}
+
 /// Opener's notrump rebid after a 1-of-a-suit opening: the cheapest notrump shows
 /// `rebid.nt_1`, a jump `rebid.nt_2`, both balanced. Higher notrump rebids, and notrump once a
-/// suit is agreed (`1H-P-2H-P-2NT` is a game try, not a range rebid), are left to `fallback`.
+/// suit is agreed (`1H-P-2H-P-2NT` is a game try, not a range rebid), are left to `fallback`;
+/// so is notrump at any turn but the rebid itself ([`is_openers_rebid`]).
 fn rule_rebid_nt(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inference> {
     if ctx.role != Role::Opener
         || !opened_one_of_a_suit(ctx)
         || ctx.level > 2
         || ctx.agreed_suit.is_some()
+        || !is_openers_rebid(ctx)
     {
         return None;
     }
