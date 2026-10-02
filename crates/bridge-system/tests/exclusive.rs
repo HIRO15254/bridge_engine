@@ -360,6 +360,123 @@ fn sayc_exclusive_membership_random_positions_1e5() {
     );
 }
 
+/// `ExclusiveIndex::group` against `entries()` at every `(position, class)`, one position and
+/// one class past the end included: the group `entries()` lists for the key, `None` when it
+/// lists none. Returns how many positions with keys are conditioned with fewer than 16 keys
+/// (the per-position binary search), conditioned with all 16 (the direct index) and
+/// unconditioned (always all 16).
+fn check_group_lookup(ir: &SystemIR) -> [usize; 3] {
+    use bridge_system::exclusive::ExclusiveGroup;
+    let index = ir.exclusive();
+    let mut expected: std::collections::HashMap<(u32, u8), *const ExclusiveGroup> =
+        std::collections::HashMap::new();
+    let mut per_position: std::collections::BTreeMap<u32, usize> =
+        std::collections::BTreeMap::new();
+    for (p, class, group) in index.entries() {
+        assert!(class < 16, "class {class}");
+        let previous = expected.insert((p.0, class), group);
+        assert!(
+            previous.is_none(),
+            "two keys for position {} class {class}",
+            p.0
+        );
+        *per_position.entry(p.0).or_default() += 1;
+    }
+    for p in 0..=ir.index.len() as u32 {
+        for class in 0..=16u8 {
+            let got = index
+                .group(TrieId(p), class)
+                .map(|g| g as *const ExclusiveGroup);
+            assert_eq!(
+                got,
+                expected.get(&(p, class)).copied(),
+                "position {p}, class {class}"
+            );
+        }
+    }
+    let mut kinds = [0usize; 3];
+    for (&p, &keys) in &per_position {
+        let kind = match (ir.index.children_are_conditioned(TrieId(p)), keys) {
+            (true, keys) if keys < 16 => 0,
+            (true, _) => 1,
+            (false, keys) => {
+                assert_eq!(
+                    keys, 16,
+                    "an unconditioned position is keyed under every class"
+                );
+                2
+            }
+        };
+        kinds[kind] += 1;
+    }
+    kinds
+}
+
+/// A system whose `#SEAT`/`#VUL` tables give conditioned positions with fewer than 16 keys
+/// (after 1C: seats 3-4 only; after 1N: vulnerable only) and with all 16 (after 1D: one row for
+/// seats 1-2, another for seats 3-4), plus stops under different seat conditions (the bodies of
+/// `tests/stop.rs`).
+const CONDITIONED: &str = "#+TITLE: conditioned groups
+
+1C = 12--21 hcp, 3+!c
+1D = 12--21 hcp, 4+!d
+1N = 15--17 hcp, bal
+
+#SEAT 34
+
+1C-
+1H = 6+ hcp, 4+!h
+
+1D-
+1S = 6+ hcp, 4+!s
+
+2N = 20--21 hcp, bal
+
+2N-
+3N = 4+ hcp
+  #STOP
+
+#SEAT 12
+
+1D-
+1H = 6+ hcp, 4+!h
+
+2N = 19--20 hcp, bal
+
+2N-
+3N = 5+ hcp
+  #STOP
+
+#SEAT 0
+
+#VUL Y0
+
+1N-
+2C = 8+ hcp
+";
+
+#[test]
+fn group_lookup_agrees_with_the_keys_on_conditioned_positions() {
+    let opts = CompileOptions {
+        coverage_samples: 0,
+        ..CompileOptions::default()
+    };
+    let (ir, _) = bridge_system::compile("inline.bml", CONDITIONED, &MemLoader::default(), &opts);
+    // The openings are conditioned too (the 2NT openings), so every position with keys is.
+    let [fewer, all, unconditioned] = check_group_lookup(&ir);
+    eprintln!(
+        "conditioned < 16 keys: {fewer}, conditioned 16: {all}, unconditioned: {unconditioned}"
+    );
+    assert!(fewer >= 3, "{fewer}");
+    assert!(all >= 2, "{all}");
+
+    // SAYC has no #SEAT/#VUL rows: every position is unconditioned and keyed under all 16
+    // classes.
+    let ir = compile_sayc();
+    let kinds = check_group_lookup(&ir);
+    assert_eq!(kinds, [0, 0, ir.exclusive().stats(&ir).positions]);
+}
+
 /// The index statistics and the build/compile cost on SAYC (reported; the tree fallback share
 /// is asserted to stay <= 1% of pieces).
 #[test]
