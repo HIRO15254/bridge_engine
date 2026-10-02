@@ -657,3 +657,126 @@ fn the_pass_of_an_alternative_is_guarded() {
     assert_eq!(read(&ir, "1C P 1H 2C"), off_system());
     assert_eq!(guards(&ir, 6), 1);
 }
+
+#[test]
+fn a_directive_in_a_cut_applies_to_the_table_it_is_pasted_into() {
+    let source = "1C = 12--21 hcp, 3+!c
+
+#CUT responses
+{DIRECTIVE}
+1H = 6+ hcp, 4+!h
+#ENDCUT
+
+1C-
+#PASTE responses
+1N = 6--10 hcp
+";
+    let plain = compile(&source.replace("{DIRECTIVE}\n", ""));
+    assert_eq!(read(&plain, "1C 1S"), (1, true, calls_of("1H 1NT")));
+    let ir = compile(&source.replace("{DIRECTIVE}", "#EXACTPASS"));
+    no_warnings(&ir);
+    assert_eq!(count(&ir, LintCode::ExactPassWithoutPass), 0);
+    assert_eq!(read(&ir, "1C P"), (0, true, calls_of("1H 1NT")));
+    assert_eq!(read(&ir, "1C 1S"), off_system());
+    assert_eq!(read(&ir, "1C X"), off_system());
+}
+
+#[test]
+fn a_pasted_table_belongs_to_the_file_it_is_pasted_in() {
+    // The clip is cut in `part.bml` and pasted in `root.bml`: the pasted lines take the
+    // `#PASTE` line's file, so the scope of `#EXACTPASS FILE` is the paste site's.
+    let clip = "#CUT table
+1C-
+1H = 6+ hcp, 4+!h
+#ENDCUT
+";
+    let guarded = compile_files(&[
+        (
+            "root.bml",
+            "1C = 12--21 hcp, 3+!c
+
+#INCLUDE part.bml
+
+#EXACTPASS FILE
+
+#PASTE table
+",
+        ),
+        ("part.bml", clip),
+    ]);
+    no_warnings(&guarded);
+    assert_eq!(count(&guarded, LintCode::ExactPassWithoutPass), 0);
+    assert_eq!(read(&guarded, "1C 1S"), off_system());
+    assert_eq!(read(&guarded, "1C P"), (0, true, calls_of("1H")));
+
+    // The reverse: cut after `#EXACTPASS FILE` in `part.bml`, pasted in `root.bml`, which
+    // has none. The table is not guarded, and the file form in `part.bml` covers no table.
+    let unguarded = compile_files(&[
+        (
+            "root.bml",
+            "1C = 12--21 hcp, 3+!c
+
+#INCLUDE part.bml
+
+#PASTE table
+",
+        ),
+        ("part.bml", &format!("#EXACTPASS FILE\n\n{clip}")),
+    ]);
+    assert_eq!(count(&unguarded, LintCode::ExactPassWithoutPass), 1);
+    assert_eq!(read(&unguarded, "1C 1S"), (1, true, calls_of("1H")));
+}
+
+#[test]
+fn a_file_included_twice_has_two_scopes() {
+    // Each inclusion is a file of its own: the 1D table before the directive is outside the
+    // scope in both copies (the first copy's scope ends with that copy), and the 1C table
+    // after it is inside in both.
+    let ir = compile_files(&[
+        (
+            "root.bml",
+            "1C = 12--21 hcp, 3+!c
+1D = 12--21 hcp, 4+!d
+
+#INCLUDE part.bml
+
+#INCLUDE part.bml
+",
+        ),
+        (
+            "part.bml",
+            "1D-
+1H = 6+ hcp, 4+!h
+
+#EXACTPASS FILE
+
+1C-
+1H = 6+ hcp, 4+!h
+",
+        ),
+    ]);
+    assert_eq!(count(&ir, LintCode::ExactPassWithoutPass), 0);
+    assert_eq!(read(&ir, "1C 1S"), off_system());
+    assert_eq!(read(&ir, "1D 1S"), (1, true, calls_of("1H")));
+}
+
+#[test]
+fn a_written_pass_after_their_own_call_is_guarded_from_the_call_before_it() {
+    // `(P)` follows their 1S, with our implicit pass between them: the guard is the `(any)`
+    // sibling of that `(P)`, expanded from 1S like a row written after it (`1C-(1S)-P-(any)-`).
+    let ir = compile(
+        "1C = 12--21 hcp, 3+!c
+
+#EXACTPASS
+1C-(1S)-
+(P)
+  1N = 12--14 hcp, bal
+",
+    );
+    no_warnings(&ir);
+    assert_eq!(count(&ir, LintCode::ExactPassWithoutPass), 0);
+    assert_eq!(read(&ir, "1C 1S P P"), (0, true, calls_of("1NT")));
+    assert_eq!(read(&ir, "1C 1S P 2D"), off_system());
+    assert_eq!(read(&ir, "1C 1S P 2S"), off_system());
+    assert_eq!(guards(&ir, 3), 1);
+}
