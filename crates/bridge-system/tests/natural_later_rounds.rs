@@ -65,11 +65,23 @@ fn no_natural_entry_at_the_five_level_after_their_exchange() {
         "1S P 4S 5H",          // direct, over their game raise
         "1D P 4D 5C",          // five-level first entry below their game
         "1D P 4D P P 5C",      // the same in the balancing seat
-        "1H P 2NT P 4H 5C",    // a single jump is not described either
+        "1H P 2NT P 4H 5C",    // the cheapest club over their game (jump 0)
     ] {
         let (ctx, inf) = last(calls);
         assert_eq!(ctx.level, 5, "{calls}");
         assert!(ctx.their_bids >= 2, "{calls}");
+        assert_eq!(inf.rule, "fallback", "{calls}");
+    }
+    // A single jump to the five level after their exchange is not described either.
+    for calls in ["1H P 3H 5C", "1H P 3H P P 5C"] {
+        let (ctx, inf) = last(calls);
+        assert_eq!(ctx.level, 5, "{calls}");
+        assert_eq!(ctx.their_bids, 2, "{calls}");
+        assert!(
+            matches!(ctx.kind, CallKind::Bid { jump: 1, .. }),
+            "{calls}: {:?}",
+            ctx.kind
+        );
         assert_eq!(inf.rule, "fallback", "{calls}");
     }
 }
