@@ -329,6 +329,12 @@ pub struct CallContext {
     pub rho_last: Option<Call>,
     /// `owner`'s own last call so far (a pass included), if any.
     pub owner_last: Option<Call>,
+    /// Strains `owner` has bid (as a [`Call::Bid`]) two or more times so far: `S` after
+    /// `2S-P-2NT-P-3S`, nothing after `1H-P-3NT`.
+    pub owner_repeated_strains: StrainSet,
+    /// `owner` or partner has bid 4NT or 5NT earlier in the auction (a Blackwood-style ask or a
+    /// quantitative 4NT): later bids past game answer or follow up the ask.
+    pub our_slam_ask: bool,
 }
 
 /// Classifies call `index` of `auction` from the point of view of its caller.
@@ -369,6 +375,8 @@ struct HistoryContext {
     their_bids: u8,
     rho_last: Option<Call>,
     owner_last: Option<Call>,
+    owner_repeated_strains: StrainSet,
+    our_slam_ask: bool,
 }
 
 impl HistoryContext {
@@ -435,6 +443,27 @@ impl HistoryContext {
             .filter(|&(i, c)| auction.seat_at(i).side() != owner.side() && c.is_bid())
             .count()
             .min(u8::MAX as usize) as u8;
+        let mut owner_strains = StrainSet::EMPTY;
+        let mut owner_repeated_strains = StrainSet::EMPTY;
+        let mut our_slam_ask = false;
+        for (i, c) in history.iter().enumerate() {
+            let seat = auction.seat_at(i);
+            let Call::Bid(b) = c else {
+                continue;
+            };
+            if seat == owner {
+                if owner_strains.contains(b.strain()) {
+                    owner_repeated_strains = owner_repeated_strains.with(b.strain());
+                }
+                owner_strains = owner_strains.with(b.strain());
+            }
+            if seat.side() == owner.side()
+                && b.strain() == Strain::NoTrump
+                && matches!(b.level(), 4 | 5)
+            {
+                our_slam_ask = true;
+            }
+        }
         let partner_first_jump = match partner_first {
             Some((i, Call::Bid(b))) => {
                 let before = history[..i].iter().rev().find_map(|c| c.bid());
@@ -467,6 +496,8 @@ impl HistoryContext {
             their_bids,
             rho_last: history.last().copied(),
             owner_last,
+            owner_repeated_strains,
+            our_slam_ask,
         }
     }
 
@@ -529,6 +560,8 @@ impl HistoryContext {
             their_bids: self.their_bids,
             rho_last: self.rho_last,
             owner_last: self.owner_last,
+            owner_repeated_strains: self.owner_repeated_strains,
+            our_slam_ask: self.our_slam_ask,
         }
     }
 }
@@ -1015,24 +1048,98 @@ impl NaturalInference {
     }
 }
 
-/// The level whose combined target ([`LevelFloor::combined`]) a bid past partner's game needs:
-/// the six level, slam.
+/// The level whose combined target ([`LevelFloor::combined`]) a bid that overrides partner's
+/// game needs: the six level, slam (31 combined HCP in a suit, 32 in notrump by default).
 pub const SLAM_LEVEL: u8 = 6;
 
-/// `true` when partner's last call placed the contract at game or higher (3NT, four of a major,
-/// five of a minor, or above) and the right-hand opponent passed it: a natural bid now goes past
-/// partner's game. It is a slam move (or, over 3NT, a correction that overrides partner's
-/// choice), which the natural rules describe only with slam values: [`apply_level_floor`] raises
-/// its combined target to the six level's.
-fn past_partners_game(ctx: &CallContext) -> bool {
-    matches!(ctx.partner_last, Some(Call::Bid(b)) if is_game_or_higher(b))
+/// `true` when the bid overrides partner's final game choice: partner's last call placed the
+/// contract at game or higher (3NT, four of a major, five of a minor, or above), the right-hand
+/// opponent passed it, and the bid is none of the following.
+///
+/// - An answer to, or a follow-up of, a 4NT/5NT ask by either partner
+///   ([`CallContext::our_slam_ask`]): `1H-P-3H-P-4NT-P-5H`, `...-4NT-P-5D-P-5H`.
+/// - A bid over a forcing game-level call ([`CallContext::forcing_situation`]): partner's call
+///   was not a final choice.
+/// - An ordinary correction of partner's 3NT ([`corrects_partners_3nt`]): `1H-P-3NT-P-4H` with
+///   six hearts, `1NT-P-2H-P-2S-P-3NT-P-4S`.
+///
+/// What is left is a slam move, or pulling partner's game when the bid adds nothing partner did
+/// not know (`2S-P-2NT-P-3S-P-3NT-P-4S`: the weak-two opener has already rebid the spades), which
+/// the natural rules describe only with slam values: [`apply_level_floor`] raises its combined
+/// target to the six level's.
+fn overrides_partners_game(ctx: &CallContext) -> bool {
+    let Some(Call::Bid(partner_bid)) = ctx.partner_last else {
+        return false;
+    };
+    is_game_or_higher(partner_bid)
         && ctx.rho_last == Some(Call::Pass)
+        && !ctx.our_slam_ask
+        && !ctx.forcing_situation
+        && !corrects_partners_3nt(ctx)
+}
+
+/// `true` when the bid corrects partner's 3NT (the right-hand opponent passed it) to game in a
+/// suit our side has bid and the opponents have not: four of a major or five of a minor, in a
+/// strain `owner` has not bid twice already ([`CallContext::owner_repeated_strains`]).
+///
+/// Such a bid tells partner something partner did not know when choosing 3NT: a sixth card in
+/// the suit opened (`1H-P-3NT-P-4H`; SAYC's 3NT response promises only two hearts), or support
+/// for the suit partner offered (`1NT-P-2H-P-2S-P-3NT-P-4S`, `1S-P-2H-P-2NT-P-3NT-P-4H`). The
+/// ordinary rule describes it with the ordinary level floor, read as the cheapest game bid in
+/// the suit (five of a minor is not a jump rebid or a jump raise) and, in a minor, with a hand
+/// unsuited to notrump ([`unsuited_to_notrump`]). A suit nobody on our side has bid
+/// (`1H-P-3NT-P-5C`), the opponents' suit (a cue bid) and a suit `owner` has already rebid are
+/// not corrections.
+fn corrects_partners_3nt(ctx: &CallContext) -> bool {
+    let (Some(Call::Bid(partner_bid)), Some(bid)) = (ctx.partner_last, ctx.call.bid()) else {
+        return false;
+    };
+    let strain = bid.strain();
+    partner_bid.level() == 3
+        && partner_bid.strain() == Strain::NoTrump
+        && ctx.rho_last == Some(Call::Pass)
+        && strain != Strain::NoTrump
+        && bid.level() == game_level(strain)
+        && ctx.our_suits.contains(strain)
+        && !ctx.their_suits.contains(strain)
+        && !ctx.owner_repeated_strains.contains(strain)
+}
+
+/// A hand unsuited to notrump: a singleton or a void. A correction of partner's 3NT to five of
+/// a minor shows one (with a balanced hand the nine-trick game is the natural contract), so a
+/// notrump opener never makes it.
+fn unsuited_to_notrump() -> HandConstraint {
+    let short = Suit::ALL.into_iter().fold(ShapeSet::EMPTY, |acc, s| {
+        acc.union(suit_len_set(s, &(0..=1)))
+    });
+    HandConstraint::Atom(Atom {
+        shapes: short,
+        ..Atom::ANY
+    })
+}
+
+/// The jump the natural rules read for a bid: [`CallKind::Bid::jump`], except that a correction
+/// of partner's 3NT ([`corrects_partners_3nt`]) is the cheapest game bid in its suit, not a jump
+/// (`1D-P-3NT-P-5D` skips four diamonds only because four is not game).
+fn effective_jump(ctx: &CallContext, jump: u8) -> u8 {
+    if corrects_partners_3nt(ctx) { 0 } else { jump }
+}
+
+/// `constraint`, and a hand unsuited to notrump when the bid corrects partner's 3NT to five of
+/// a minor ([`corrects_partners_3nt`], [`unsuited_to_notrump`]).
+fn with_correction_shape(ctx: &CallContext, constraint: HandConstraint) -> HandConstraint {
+    let minor = ctx.call.bid().is_some_and(|b| b.strain().is_minor());
+    if minor && corrects_partners_3nt(ctx) {
+        constraint.and(unsuited_to_notrump())
+    } else {
+        constraint
+    }
 }
 
 /// Applies `floor` to a natural bid's inference (see [`LevelFloor`]): a continuation bid (the
 /// caller or partner has acted) at a level with a non-zero combined target, with a known
-/// `partner_constraint`, also requires `own HCP >= combined - partner's minimum HCP`. A bid past
-/// partner's game ([`past_partners_game`]) uses at least the six level's target.
+/// `partner_constraint`, also requires `own HCP >= combined - partner's minimum HCP`. A bid that
+/// overrides partner's game ([`overrides_partners_game`]) uses at least the six level's target.
 fn apply_level_floor(
     floor: &LevelFloor,
     ctx: &CallContext,
@@ -1047,7 +1154,7 @@ fn apply_level_floor(
     }
     let nt = bid.strain() == Strain::NoTrump;
     let mut combined = floor.combined(bid.level(), nt);
-    if past_partners_game(ctx) {
+    if overrides_partners_game(ctx) {
         combined = combined.max(floor.combined(SLAM_LEVEL, nt));
     }
     if combined == 0 {
@@ -1333,14 +1440,18 @@ pub const FOUR_LEVEL_ENTRY_MIN_LEN: u8 = 6;
 /// level or higher (`(1H)-P-(2NT)-4C`, `(3H)-P-(4NT)-6C`) is not a weak jump overcall.
 pub const MAX_JUMP_OVERCALL_LEVEL: u8 = 3;
 
-/// `true` when `bid` is a game contract or higher: 3NT, four of a major, five of a minor.
-fn is_game_or_higher(bid: Bid) -> bool {
-    let game = match bid.strain() {
+/// The game level of `strain`: 3 in notrump, 4 in a major, 5 in a minor.
+fn game_level(strain: Strain) -> u8 {
+    match strain {
         Strain::NoTrump => 3,
         Strain::Hearts | Strain::Spades => 4,
         Strain::Clubs | Strain::Diamonds => 5,
-    };
-    bid.level() >= game
+    }
+}
+
+/// `true` when `bid` is a game contract or higher: 3NT, four of a major, five of a minor.
+fn is_game_or_higher(bid: Bid) -> bool {
+    bid.level() >= game_level(bid.strain())
 }
 
 /// How the overcall rules apply to a first entry at `ctx.level` (see
@@ -1660,6 +1771,7 @@ fn rule_raise(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inferenc
     };
     let bid = ctx.call.bid()?;
     let suit = bid.strain().suit()?;
+    let jump = effective_jump(ctx, jump);
     let (min_len, hcp) = match ctx.role {
         Role::Responder if bid.level() >= 4 => (p.response.raise.0, 13..=37),
         Role::Responder if jump >= 1 => (p.response.jump_raise.0, p.response.jump_raise.1.clone()),
@@ -1668,8 +1780,10 @@ fn rule_raise(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Inferenc
         Role::Opener => (p.response.raise.0, p.rebid.raise.clone()),
         _ => (p.advance.raise.0, p.advance.raise.1.clone()),
     };
-    let constraint =
-        HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, min_len..=13));
+    let constraint = with_correction_shape(
+        ctx,
+        HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, min_len..=13)),
+    );
     Some(Inference {
         constraint,
         confidence: 0.45,
@@ -1877,8 +1991,9 @@ fn opening_level_hcp(p: &NaturalParams, opener_first_bid: Option<Bid>) -> RangeI
             .find(|(lvl, _, _)| *lvl == bid.level())
             .map(|(_, _, hcp)| hcp.clone())
             .unwrap_or_else(|| p.opening_hcp.clone()),
-        // A 1-level opening (suit or NT), a notrump opening at any level, or anything else this
-        // table does not special-case: the 1-level range is still the closest available default.
+        // A 1-level suit opening, or anything else this table does not special-case: the
+        // 1-level range is still the closest available default. (`rule_rebid_own` answers a
+        // notrump opening with its own range before it gets here: `notrump_opening_hcp`.)
         _ => p.opening_hcp.clone(),
     }
 }
@@ -1900,12 +2015,19 @@ fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
     if ctx.agreed_suit == Some(suit) && opened_one_of_a_suit(ctx) {
         return Some(rule_reraise_agreed(p, ctx, suit, jump, ex));
     }
+    if let Some(hcp) = notrump_opening_hcp(p, ctx.opener_first_bid) {
+        return Some(rule_rebid_own_after_notrump(ctx, suit, hcp, ex));
+    }
+    let jump = effective_jump(ctx, jump);
     let hcp = if jump >= 1 {
         p.rebid.jump_rebid.clone()
     } else {
         opening_level_hcp(p, ctx.opener_first_bid)
     };
-    let constraint = HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, 6..=13));
+    let constraint = with_correction_shape(
+        ctx,
+        HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, 6..=13)),
+    );
     Some(Inference {
         constraint,
         // A jump rebid (16-18) lies inside the plain rebid's range (12-21): at an equal
@@ -1922,6 +2044,58 @@ fn rule_rebid_own(p: &NaturalParams, ctx: &CallContext, ex: bool) -> Option<Infe
     })
 }
 
+/// The minimum length a notrump opener shows by bidding again a suit it bid after the opening
+/// ([`rule_rebid_own_after_notrump`]).
+pub const NT_OPENER_SUIT_MIN_LEN: u8 = 3;
+
+/// The HCP range of `owner`'s notrump opening (`nt[L]` for the opening's level `L`), or `None`
+/// when the opening was not notrump or its level has no range.
+fn notrump_opening_hcp(
+    p: &NaturalParams,
+    opener_first_bid: Option<Bid>,
+) -> Option<RangeInclusive<u8>> {
+    let bid = opener_first_bid.filter(|b| b.strain() == Strain::NoTrump)?;
+    p.nt.iter()
+        .find(|(level, _)| *level == bid.level())
+        .map(|(_, hcp)| hcp.clone())
+}
+
+/// A notrump opener bids again a suit it bid after the opening (a transfer completion or an
+/// answer to Stayman): `1NT-P-2H-P-2S-P-3NT-P-4S`, `1NT-P-2C-P-2H-P-3H-P-4H`. The opening
+/// already showed a balanced hand of the notrump range, so the bid shows support for partner or
+/// a fourth card, not a long suit: balanced, `nt[L]`, [`NT_OPENER_SUIT_MIN_LEN`]+ cards. The
+/// six-card rebid of a suit opening would be a hand the notrump opening excludes.
+fn rule_rebid_own_after_notrump(
+    ctx: &CallContext,
+    suit: Suit,
+    hcp: RangeInclusive<u8>,
+    ex: bool,
+) -> Inference {
+    Inference {
+        constraint: with_correction_shape(
+            ctx,
+            HandConstraint::Atom(
+                Atom {
+                    shapes: ShapeSet::BALANCED,
+                    ..Atom::ANY
+                }
+                .with_hcp(hcp.clone())
+                .with_len(suit, NT_OPENER_SUIT_MIN_LEN..=13),
+            ),
+        ),
+        confidence: 0.5,
+        rule: "rebid_own",
+        explanation: expl!(
+            ex,
+            "notrump opener bids {} again: balanced, {}+ cards, {}-{} hcp",
+            ctx.call,
+            NT_OPENER_SUIT_MIN_LEN,
+            hcp.start(),
+            hcp.end()
+        ),
+    }
+}
+
 /// `owner` opened one of a suit (the rebid rules below describe rebids after such an opening,
 /// not after a notrump, strong 2C or preempt opening).
 fn opened_one_of_a_suit(ctx: &CallContext) -> bool {
@@ -1933,7 +2107,9 @@ fn opened_one_of_a_suit(ctx: &CallContext) -> bool {
 /// raise of partner's suit, and not the 6-card rebid of an unsupported suit either. A non-jump
 /// re-raise without competition is a game try (`rebid.jump_rebid`); in competition it is
 /// merely competitive (`opening_hcp`); a jump (to game) shows `rebid.jump_rebid`'s minimum or
-/// more. Length is the opening's own minimum for the opened suit, 4 for a second suit.
+/// more; a correction of partner's 3NT to game in the suit ([`corrects_partners_3nt`]) is a
+/// choice of game, any opening (`opening_hcp`). Length is the opening's own minimum for the
+/// opened suit, 4 for a second suit.
 fn rule_reraise_agreed(
     p: &NaturalParams,
     ctx: &CallContext,
@@ -1951,7 +2127,9 @@ fn rule_reraise_agreed(
         }
         _ => 4,
     };
-    let hcp = if jump >= 1 {
+    let hcp = if corrects_partners_3nt(ctx) {
+        p.opening_hcp.clone()
+    } else if jump >= 1 {
         *p.rebid.jump_rebid.start()..=*p.opening_hcp.end()
     } else if ctx.competitive {
         p.opening_hcp.clone()
@@ -1959,8 +2137,9 @@ fn rule_reraise_agreed(
         p.rebid.jump_rebid.clone()
     };
     Inference {
-        constraint: HandConstraint::Atom(
-            Atom::ANY.with_hcp(hcp.clone()).with_len(suit, min_len..=13),
+        constraint: with_correction_shape(
+            ctx,
+            HandConstraint::Atom(Atom::ANY.with_hcp(hcp.clone()).with_len(suit, min_len..=13)),
         ),
         confidence: 0.5,
         rule: "rebid_own",
@@ -2582,12 +2761,13 @@ mod tests {
     }
 
     /// Regression: a rebid of the suit reached via a Jacoby transfer completion must be judged
-    /// against the 1NT opening's own strength (`opening_hcp`, since the notrump tiers are not in
-    /// this table), not against `weak_two` -- `opener_first_suit` names the completion (`2H` at
-    /// level 2), which used to be mistaken for a weak-two opening by level alone (see
-    /// `opening_level_hcp`'s doc comment).
+    /// against the 1NT opening's own strength, not against `weak_two` -- `opener_first_suit`
+    /// names the completion (`2H` at level 2), which used to be mistaken for a weak-two opening
+    /// by level alone (see `opening_level_hcp`'s doc comment). It was first judged against
+    /// `opening_hcp`; since phase 4 lane N it is the notrump range itself, balanced, with three
+    /// cards or more (`rule_rebid_own_after_notrump`).
     #[test]
-    fn rebid_own_after_nt_transfer_completion_uses_opening_hcp() {
+    fn rebid_own_after_nt_transfer_completion_uses_the_notrump_range() {
         let engine = NaturalInference::default();
         // 1NT - P - 2D (transfer) - P - 2H (completion) - P - 3NT (asking) - P - 4H (opener
         // rebids the transfer suit, no jump).
@@ -2622,8 +2802,12 @@ mod tests {
         let inf = engine.infer(&ctx);
         assert_eq!(inf.rule, "rebid_own");
         let params = NaturalParams::default();
-        assert_eq!(inf.constraint.hcp_range(), params.opening_hcp);
+        assert_eq!(inf.constraint.hcp_range(), params.nt[0].1);
         assert_ne!(inf.constraint.hcp_range(), params.weak_two.1);
+        assert_eq!(
+            inf.constraint.suit_len(Suit::Hearts),
+            NT_OPENER_SUIT_MIN_LEN..=5
+        );
     }
 
     /// Regression: a rebid of opener's own suit after a strong, artificial 2C opening must be
@@ -2663,6 +2847,43 @@ mod tests {
         let params = NaturalParams::default();
         assert_eq!(inf.constraint.hcp_range(), params.strong_two_c..=37);
         assert_ne!(inf.constraint.hcp_range(), params.weak_two.1);
+    }
+
+    /// The slam floor of a bid that overrides partner's game is the six level's combined target
+    /// in the bid's own denomination: 31 in a suit, 32 in notrump (no default rule describes a
+    /// notrump bid past game, so this checks `apply_level_floor` directly).
+    #[test]
+    fn slam_floor_uses_the_six_level_target_of_the_denomination() {
+        let calls = |s: &str| -> Vec<Call> {
+            s.split_whitespace()
+                .map(|c| c.parse().expect("a call"))
+                .collect()
+        };
+        let partner = HandConstraint::Atom(Atom::ANY.with_hcp(15..=17));
+        let any = || Inference {
+            constraint: HandConstraint::ANY,
+            confidence: 0.5,
+            rule: "test",
+            explanation: String::new(),
+        };
+        for (auction, want) in [
+            ("1H P 3NT P 4NT", 32 - 15),
+            ("1H P 3NT P 4C", 31 - 15),
+            // A suit nobody on our side has bid is not a correction of partner's 3NT.
+            ("1H P 3NT P 5C", 31 - 15),
+            // Opener's own suit at game is (the ordinary four-level target, 22).
+            ("1H P 3NT P 4H", 22 - 15),
+            // An ask answered or followed up: the ordinary target (5 level: 26, 6 level NT: 32).
+            ("1H P 3NT P 4NT P 5D P 5H", 26 - 15),
+            ("1H P 3NT P 4NT P 5D P 6NT", 32 - 15),
+        ] {
+            let a = Auction::from_calls(Seat::North, Vulnerability::None, calls(auction)).unwrap();
+            let index = a.len() - 1;
+            let mut ctx = classify(&a, index, a.seat_at(index));
+            ctx.partner_constraint = Some(partner.clone());
+            let inf = apply_level_floor(&LevelFloor::STANDARD, &ctx, any(), false);
+            assert_eq!(*inf.constraint.hcp_range().start(), want, "{auction}");
+        }
     }
 
     /// `NaturalParams::default()` matches the SAYC-like values in `docs/design/06-system.md`

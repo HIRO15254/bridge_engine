@@ -1139,6 +1139,8 @@ pub struct CallContext {
     pub their_bids: u8,                         // bids (not P/X/XX) the opponents have made so far
     pub rho_last: Option<Call>,                 // the right-hand opponent's call just before this one
     pub owner_last: Option<Call>,               // owner's own last call so far (a pass included)
+    pub owner_repeated_strains: StrainSet,      // strains owner has bid two or more times so far
+    pub our_slam_ask: bool,                     // owner or partner has bid 4NT or 5NT earlier
 }
 
 /// System-independent classification of auction[index] as made by `owner`; unit-testable.
@@ -1169,7 +1171,7 @@ impl Default for NaturalInference { /* NaturalParams::default() */ }
 
 1. `role`: 我々側の最初の非パスがオープニングなら `Opener`/`Responder`、相手のオープニングの後なら `Overcaller`/`Advancer`。相手の `(bid) P (P)` の直後のコールは `Balancer`。
 2. `kind`: `Pass` / `Redouble` はそのまま。`Double` は上から順に、直前の相手のコールがスートビッドで 2 レベル以下かつパートナーがまだビッドしていなければ (自分の以前のオーバーコールは妨げない。再開のダブルもテイクアウト) `Takeout`、パートナーの最後のビッドが NT (1NT オープンなど) なら `Penalty`、パートナーがオープンした後の相手のオーバーコール (2S 以下) に対してなら `Negative`、相手が NT または 4 レベル以上、あるいは我々が既にスートを合意していれば (自分とパートナーの両方がビッドしたスートがある。`agreed_suit` と同じ判定) `Penalty`、パートナーのテイクアウトダブルの後の相手のレイズに対してなら `Responsive`、パートナーの応答スートへの相手の介入に対する低レベルなら `Support`、それ以外 `Unknown`。`Bid` は `our_suits` / `their_suits` / `partner_last` から `new_suit`、`raise` (パートナーが **先に** ビッドしたスート。自分が先にビッドしパートナーがサポートしただけのスート (`1H-P-2H-P-3H`) は `raise` ではなく `rebid_own`)、`nt`、`jump` (最小合法レベルとの差)、`cue` (相手のスート)、`reverse` (オープナーが 1 レベルで開いたスートより上位の新スートを 2 レベルで)、`rebid_own` を決める。
-3. `position`、`passed_hand`、`vul`、`competitive`、`our_suits`、`their_suits`、`agreed_suit` (同じスートをパートナーと自分がビッドした)、`last_bid`、`owner_acted`、`partner_actions`、`partner_first_action`、`partner_first_jump` はオークションから直接。`partner_constraint = None`、`forcing_situation = false`。
+3. `position`、`passed_hand`、`vul`、`competitive`、`our_suits`、`their_suits`、`agreed_suit` (同じスートをパートナーと自分がビッドした)、`last_bid`、`owner_acted`、`partner_actions`、`partner_first_action`、`partner_first_jump`、`their_bids`、`rho_last`、`owner_last`、`owner_repeated_strains`、`our_slam_ask` はオークションから直接。`partner_constraint = None`、`forcing_situation = false`。
 
 ### 8.3 規則表 (順序付き。最初に述語が成り立つ行を採る)
 
@@ -1192,7 +1194,7 @@ impl Default for NaturalInference { /* NaturalParams::default() */ }
 | `new_suit_resp_1` | `Responder`, `new_suit`, `level 1` | `suit_len[s] ≥ response.new_suit_1.0` ∧ `hcp ≥ response.new_suit_1.1`。相手がメジャーでオーバーコールした後 (`1C (1H) 1S`) は長さ `≥ 5` (4 枚はネガティブ・ダブル) | 0.5 |
 | `new_suit_resp_2` | `Responder`, `new_suit`, `level 2`, `jump == 0` | `suit_len[s] ≥ response.new_suit_2.0` (5) ∧ `hcp ≥ response.new_suit_2.1` (10); `jump == 1` は `hcp ≥ response.jump_shift` | 0.6 (旧 0.5) |
 | `resp_nt` | `Responder`, `nt`, レベル `L` | `hcp = response.nt[L]` (2N/3N は `BALANCED` 寄り: 4 メジャー否定は v2)。最初の応答の 1N はシンプル・レイズを否定する: パートナーのスート `s` について ¬(`suit_len[s] ≥ 支持` ∧ `hcp ∈ response.raise.1`)。支持はメジャーで `response.raise.0` (3)、マイナーで 5 (SAYC の `1H-1N` は「3 枚以上のハートなし」、`1C-1N` は「5 枚以上のクラブなし」)。10 HCP の支持付きは 1N でよい | 0.5 |
-| `rebid_own` | `Opener`, `rebid_own` | `suit_len[s] ≥ 6` ∧ `hcp = opening_hcp` (`jump == 1` なら `rebid.jump_rebid`)。1 スートのオープン後に合意済みスート (自分が先にビッドしパートナーがサポートしたスート) を再び上げる場合は別枝: 長さはオープンの最小長 (2 番目のスートなら 4)、`hcp` は競り合いなしのジャンプなしが `rebid.jump_rebid` (ゲームトライ)、競り合いでは `opening_hcp`、ジャンプは `rebid.jump_rebid.start..=opening_hcp.end` | ジャンプ (`jump ≥ 1`、`rebid.jump_rebid`) は 0.55、それ以外は 0.5 (旧はどちらも 0.5。ジャンプの 16〜18 は非ジャンプの 12〜21 に含まれ、同点ではコール順で安い非ジャンプが勝つので、ジャンプ・リビッドが一度も選ばれなかった) |
+| `rebid_own` | `Opener`, `rebid_own` | `suit_len[s] ≥ 6` ∧ `hcp = opening_hcp` (`jump == 1` なら `rebid.jump_rebid`)。NT のオープン後 (トランスファーの完成やステイマンの答えで示したスートを再びビッドする) は別枝: `BALANCED` ∧ `hcp = nt[L]` (`L` はオープンのレベル) ∧ `suit_len[s] ≥ NT_OPENER_SUIT_MIN_LEN` (3) (§8.6「後の巡の制限の見直し」(1))。1 スートのオープン後に合意済みスート (自分が先にビッドしパートナーがサポートしたスート) を再び上げる場合は別枝: 長さはオープンの最小長 (2 番目のスートなら 4)、`hcp` は競り合いなしのジャンプなしが `rebid.jump_rebid` (ゲームトライ)、競り合いでは `opening_hcp`、ジャンプは `rebid.jump_rebid.start..=opening_hcp.end` | ジャンプ (`jump ≥ 1`、`rebid.jump_rebid`) は 0.55、それ以外は 0.5 (旧はどちらも 0.5。ジャンプの 16〜18 は非ジャンプの 12〜21 に含まれ、同点ではコール順で安い非ジャンプが勝つので、ジャンプ・リビッドが一度も選ばれなかった) |
 | `reverse` | `Opener`, `reverse` (最初のスートの 2 レベルより上の新スート) | `hcp ≥ rebid.reverse` ∧ 最初のスート `≥ 5` ∧ 2 番目 `≥ 4` | 0.55 (旧 0.4) |
 | `rebid_nt` | `Opener` (1 スートのオープン後), `nt`, 2 レベル以下、合意スートなし、オープナーのリビッドそのもの (`owner_last` がオープニング、パートナーが非パスで応答済み、相手が NT 未ビッド。§8.6「後の巡の制限」(4)) | `BALANCED` ∧ `hcp = rebid.nt_1` (`jump == 0`) / `rebid.nt_2` (`jump == 1`)。それより大きいジャンプは `fallback` | 0.45 (旧 0.5) |
 | `rebid_new_suit` | `Opener` (1 スートのオープン後), `new_suit` (リバースでない。`reverse` が先に当たる) | `suit_len[s] ≥ 4` ∧ `hcp = opening_hcp.start..=rebid.jump_raise.end` (`jump ≥ 1` のジャンプシフトは `hcp ≥ rebid.jump_rebid.end + 1`) | 0.35 (旧 0.4) |
@@ -1255,7 +1257,10 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
   - NT: 3 → 24、4 → 28、5 → 30、6 → 32、7 → 36
 - 表の値 0 は「下限なし」を意味する。`LevelFloor::NONE` はフェーズ 3 の挙動に戻す。
 - オープニング、パートナーが無言のまま自分が初めて行動する場合、`partner_constraint` が無い場合 (素の `classify`) は、下限を課さない。したがって §8.5 の測定 1 と 3 (素の `classify` + `infer`) は、下限の影響を受けない。
-- パートナーの最後のコールがゲーム以上 (3NT、4M、5m 以上) で、RHO がパスした後のビッド (パートナーのゲームを越えるビッド) は、combined を少なくとも 6 レベルの値 (スート 31、NT 32) にする (`SLAM_LEVEL`。下の「後の巡の制限」(2))。
+- パートナーの最終的なゲームの選択を覆すビッドは、combined を少なくとも 6 レベルの値 (スート 31、NT 32) にする (`SLAM_LEVEL`、`overrides_partners_game`。下の「後の巡の制限」(2) と「後の巡の制限の見直し」(1))。条件は、パートナーの最後のコールがゲーム以上 (3NT、4M、5m 以上) で、RHO がパスし、ビッドが次のどれでもないこと。
+  - 自分かパートナーの 4NT/5NT の問いへの答えと、その後の続き (`our_slam_ask`)。例: `1H-P-3H-P-4NT-P-5H`、`...-4NT-P-5D-P-5H`。
+  - パートナーのフォーシングなゲームレベルのコールの後 (`forcing_situation`)。
+  - パートナーの 3NT (RHO はパス) のふつうの訂正 (`corrects_partners_3nt`): ゲームレベルのスート (4M、5m) で、自分の側がビッドし、相手はビッドしておらず、自分がまだ 2 回ビッドしていないストレイン (`owner_repeated_strains`)。例: `1H-P-3NT-P-4H` (6 枚)、`1NT-P-2H-P-2S-P-3NT-P-4S`、`1S-P-2H-P-2NT-P-3NT-P-4H`。規則はこれをそのスートの最も安いゲームビッドとして読む: 5m はジャンプ・リビッドでもジャンプ・レイズでもなく (`effective_jump`)、マイナーではシングルトンかボイドを要求する (NT に向かない手。`unsuited_to_notrump`)。合意済みスートの再レイズの枝では `hcp = opening_hcp` (ゲームの選択)。
 - `level_floor` は `#[serde(skip)]` である。直列化形式と `IR_FORMAT` は変わらず、復元した IR は既定の表を持つ。
 - 検証 (`natural_metrics.rs` の `level_floor_limits_replay_escalation_2000`): 固定シードの生成配牌 2000 を SAYC + ナチュラル補完で `replay` した。最終コントラクトのレベル分布は次のとおり。
 
@@ -1396,6 +1401,14 @@ L3 は `Resolution::Natural` を作るときこのモジュールを呼ぶ (`eps
   - 測定 2: 旧定義 0.2812 → 0.2737、文脈付き 0.3357 → 0.3286 (600 決定点。候補は 8,597 → 8,474)。下がった 0.007 は、上の局面で規則が当たらなくなり候補が減った分で、レーン S の基準 (0.01 以内) の内側にある。
   - 測定 3: 0.7981 → 0.8005。規則別では `rebid_nt` が 69 コール 0.362 → 48 コール 0.417、`negative_x` が 57 → 46 コール、`takeout_x` が 0.466 → 0.447。
 - レベル下限の検証 (2000 配牌、既定の表): 6 レベル以上 6 → 5、7 レベル 0 のまま。
+
+**後の巡の制限の見直し (フェーズ 4 レーン N、2026-10-02)。** 統合レビュー (natural-1〜9) を受けて、上の制限を見直した。ナチュラルの選択は strict [G] の穴の検出器であり、同時に `human()` の尤度の混合 p = (1−ε)[(1−δ)S + δM] + ε/n の M でもある。健全なナチュラルの意味がある局面で規則を当てなくすると、[G] を見かけ上上げ、人間のモデルも誤る。そこで、ブリッジとしてナチュラルな意味があるコールは、規則を消すのではなく正しい範囲で記述し直した。回帰テストは同じ `tests/natural_later_rounds.rs`。
+
+- (1) スラム下限は、パートナーの最終的なゲームの選択を覆すビッドだけにした (`overrides_partners_game`。上の「レベル下限」)。(2) の当初の述語はレベルだけを見ていたので、ふつうの訂正やブラックウッドの答えまでスラムの値を要求していた。例: `1H-P-3NT-P-4H` (6 枚) は 12〜21 から 16〜21 に、`1NT-P-2H-P-2S-P-3NT-P-4S` は 21〜21 に、`1H-P-3H-P-4NT-P-5H` は 14+ から 19+ になっていた。
+  - 除外: 4NT/5NT の問いへの答えと続き、フォーシングなゲームレベルのコールの後、パートナーの 3NT のふつうの訂正 (上の「レベル下限」の条件)。どれも通常の下限が残る。
+  - 訂正の記述: 自分のオープンしたメジャーは 6 枚以上・オープンの範囲 (`1H-P-3NT-P-4H` は 12〜21)、パートナーのスートへの選択は `raise` の範囲、5m はジャンプとして読まず、シングルトンかボイドを要求する (`1D-P-3NT-P-5D` は 6 枚以上・12〜21・NT に向かない手)。NT のオープナーはバランスなので 3NT を 5m に直さない。
+  - 残るもの: スラムの動きと、パートナーが知らない情報を何も足さないゲームの引き戻し (`2S-P-2NT-P-3S-P-3NT-P-4S`: スペードは 3S で既に再ビッド済み)、3NT の上の 4 レベルのマイナー (`1D-P-3NT-P-4D`、スラムトライ)、誰もビッドしていないスートや相手のスート (キュービッド) でのゲーム (`1H-P-3NT-P-5C`)。
+  - NT のオープナーの `rebid_own` (§8.3 の表) を、NT の範囲・バランス・3 枚以上にした。従来は 1 スートのオープンと同じ 6 枚以上・12〜21 で、バランスの NT オープンと矛盾していた (測定 1 の該当ノードの再現率は 0.04〜0.10)。`1NT-P-2H-P-2S-P-3NT-P-4S` の訂正は、これで 15〜17、バランス、スペード 3 枚以上になる。
 
 ---
 
