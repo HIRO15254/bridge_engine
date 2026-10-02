@@ -40,14 +40,17 @@
 //!   the SAYC-compatible-opening subset (the true opener's hand lies in the exclusive region X of
 //!   the recorded opening, from `SystemIR::exclusive`), seats with empty strict support, seats
 //!   whose default-mode support is empty (what the sampler would report as `EmptySupport`), the
-//!   `resolve_lenient` usage rate (`resolve_lenient_calls`, task 4.4), with two counts in the
-//!   baseline's units: `resolve_lenient_entries`, the lenient calls of a partnership that made
-//!   no earlier lenient call in the auction (once a lenient match reaches a system stop, every
-//!   later pass of that partnership also resolves through the stop loop and is counted by
-//!   `resolve_lenient_calls`; the baseline had no stops, so there every lenient call was an
-//!   entry), and `resolve_lenient_eligible_calls`, the calls whose exact resolve stops at an
-//!   opponents' non-pass call (the only calls a substitution can help), and the
-//!   system-resolution rate raw and *strict*
+//!   `resolve_lenient` usage rate (`resolve_lenient_calls`, task 4.4), with three counts in
+//!   the baseline's units: `resolve_lenient_entries`, the lenient calls that are not a stop
+//!   loop's follow-on (a follow-on resolves to a stop's default pass, the synthesised stop pass
+//!   or a `Pass` row at priority <= -100, by reading as a pass an opponents' call that an
+//!   earlier lenient call of the same partnership read as a pass; every other lenient call,
+//!   including a later one through the same substituted call that reaches a written row, is an
+//!   entry); `resolve_lenient_eligible_calls`, the calls whose exact resolve stops at an
+//!   opponents' non-pass call after the opening (the only stalls a substitution can help); and
+//!   `resolve_lenient_opening_stalls`, the calls whose exact resolve stops at the opponents'
+//!   opening (a substitution there would leave a key that starts with a pass, which never
+//!   matches), reported apart; and the system-resolution rate raw and *strict*
 //!   (`system_resolution_strict_rate`, the phase-4 `[C]` criterion: an Exact or Partial call
 //!   where the caller's system offers nothing but default passes is not counted as resolved,
 //!   `resolved_at_default_pass`; the `[C]` counterpart of strict `[G]`), the true-deal policy
@@ -219,7 +222,7 @@ pub fn run(args: &[&str]) -> Result<std::process::ExitCode> {
     let exclusive_json = exclusive_report(&ir);
 
     let t = Instant::now();
-    let generated = generated_report(&table, &ctx);
+    let generated = generated_report(&table, &ctx)?;
     let generated_s = t.elapsed().as_secs_f64();
     eprintln!(
         "coverage: generated in {generated_s:.1} s: all_system_rate {}, strict {}, \
@@ -830,7 +833,7 @@ enum Outcome {
     Gap,
 }
 
-fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
+fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Result<Value> {
     let n = env_usize("COVERAGE_REPLAYS", 1000);
     let seed = env_u64("COVERAGE_SEED", 0xC0FE_4001);
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
@@ -1071,9 +1074,11 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
     }
 
     if let Some(path) = dump_path {
-        let _ = std::fs::write(path, dump.join("\n") + "\n");
+        let path = PathBuf::from(path);
+        std::fs::write(&path, dump.join("\n") + "\n")
+            .map_err(|e| format!("writing COVERAGE_DUMP {}: {e}", path.display()))?;
     }
-    json!({
+    Ok(json!({
         "replays": n,
         "seed": seed,
         "all_system": all_system,
@@ -1113,7 +1118,7 @@ fn generated_report(table: &Table, ctx: &BidContext<'_>) -> Value {
         "first_departure_top_n": top(&departures, env_usize("COVERAGE_TOP_N", 0), 1.0),
         "first_strict_departure_top_n": top(&strict_departures, env_usize("COVERAGE_TOP_N", 0), 1.0),
         "stop_swallow_top_n": top(&swallow_tops, env_usize("COVERAGE_TOP_N", 0), 1.0),
-    })
+    }))
 }
 
 /// Authoring aid (`COVERAGE_DUMP=<file>`): one line per strict departure and stop swallow with
@@ -1385,10 +1390,13 @@ struct KindStats {
     empty_strict_seats: u64,
     empty_default_seats: u64,
     lenient_calls: u64,
-    /// Lenient calls of a partnership that made no earlier lenient call in the auction.
+    /// Lenient calls that are not a stop loop's follow-on (see [`LenientUse::follow_on_of`]).
     lenient_entries: u64,
-    /// Calls whose exact resolve stops at an opponents' non-pass call.
+    /// Calls whose exact resolve stops at an opponents' non-pass call after the opening.
     lenient_eligible: u64,
+    /// Calls whose exact resolve stops at the opponents' opening, where reading it as a pass
+    /// cannot match (a key never starts with a pass).
+    lenient_opening_stalls: u64,
     /// Exact or Partial calls made where the caller's system offers nothing but default passes
     /// ([`default_pass_only`]: a `{stop}` row or the synthesised stop pass): the system "resolves"
     /// them with any hand, so the strict rate does not count them as resolved (the `[C]`
@@ -1419,6 +1427,7 @@ impl KindStats {
             "resolve_lenient_rate": self.lenient_calls as f64 / c,
             "resolve_lenient_entries": self.lenient_entries,
             "resolve_lenient_eligible_calls": self.lenient_eligible,
+            "resolve_lenient_opening_stalls": self.lenient_opening_stalls,
         })
     }
 }
@@ -1616,9 +1625,13 @@ struct LenientUse {
     vul: RelVul,
     /// Calls the exact resolve matched.
     exact_depth: usize,
-    /// The exact resolve stops at an opponents' non-pass call, the only kind of call
-    /// `resolve_lenient` substitutes.
+    /// The exact resolve stops at an opponents' non-pass call after the opening: the only
+    /// stalls a substitution can help (`resolve_lenient` substitutes only the opponents'
+    /// non-pass calls, and one at the opening would leave a key that starts with a pass).
     eligible: bool,
+    /// The exact resolve stops at the opponents' opening (depth 0): reported apart, as
+    /// `resolve_lenient_opening_stalls`.
+    opening_stall: bool,
     /// The first full lenient match (the fewest substitutions): its substitution count and the
     /// node the call resolved to. `Some` exactly when the exact resolve stops short and some
     /// lenient attempt matches every call (the `resolve_lenient_calls` test).
@@ -1639,6 +1652,28 @@ impl LenientUse {
             opener_pos: self.opener_pos,
             vul: self.vul,
         }
+    }
+
+    /// Whether this lenient call is the follow-on of an earlier lenient call of the same
+    /// partnership: it resolves to a stop's default pass (the synthesised stop pass, or a `Pass`
+    /// row at priority <= [`DEFAULT_PASS_PRIORITY`]) and reads as a pass one of the opponents'
+    /// calls that an earlier lenient call of the partnership read as a pass (`earlier`, as
+    /// indices into the auction; `leading` is the auction's leading passes, which the key
+    /// strips). Such a call goes round the stop loop the earlier lenient reading reached. Any
+    /// other lenient call is an entry: a later call that reads the same opponents' call as a
+    /// pass but resolves to a written row is a lenient table reading of its own.
+    fn follow_on_of(&self, system: &SystemIR, earlier: &[usize], leading: usize) -> bool {
+        let Some((_, Some(node))) = self.lenient else {
+            return false;
+        };
+        let node = system.node(node);
+        let default_pass = node.is_synthesised()
+            || (node.call == Call::Pass && node.priority <= DEFAULT_PASS_PRIORITY);
+        default_pass
+            && self
+                .substituted(system)
+                .iter()
+                .any(|&(i, _)| earlier.contains(&(i + leading)))
     }
 
     /// The key's calls that the first full lenient match reads as a pass, as `(index, call)`:
@@ -1684,12 +1719,15 @@ fn lenient_use(table: &Table, auction: &Auction, index: usize) -> Option<Lenient
         vul: key.vul,
         exact_depth,
         eligible: false,
+        opening_stall: false,
         lenient: None,
     };
     if exact_depth == key.calls.len() {
         return Some(out);
     }
-    out.eligible = !out.is_ours(exact_depth) && key.calls[exact_depth] != Call::Pass;
+    let their_bid = !out.is_ours(exact_depth) && key.calls[exact_depth] != Call::Pass;
+    out.eligible = their_bid && exact_depth > 0;
+    out.opening_stall = their_bid && exact_depth == 0;
     out.lenient = system
         .index
         .resolve_lenient(&key, LENIENT_MAX_SUBST)
@@ -1816,8 +1854,9 @@ fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path, files: &[Strin
             ..KindStats::default()
         };
         let mut every_exact = true;
-        // Whether each partnership (index 0: North-South) already made a lenient call here.
-        let mut lenient_seen = [false; 2];
+        // The opponents' calls (auction indices) each partnership (index 0: North-South) has
+        // read as a pass in an earlier lenient call of this auction.
+        let mut lenient_substituted: [Vec<usize>; 2] = [Vec::new(), Vec::new()];
         for pc in &interp.per_call {
             st.calls += 1;
             match pc.kind {
@@ -1849,11 +1888,15 @@ fn corpus_report(table: &Table, ctx: &BidContext<'_>, dir: &Path, files: &[Strin
             }
             if let Some(use_) = lenient_use(table, auction, pc.call_index) {
                 st.lenient_eligible += u64::from(use_.eligible);
+                st.lenient_opening_stalls += u64::from(use_.opening_stall);
                 if use_.lenient.is_some() {
                     st.lenient_calls += 1;
                     let side = usize::from(use_.seat.side() != Seat::North.side());
-                    let entry = !lenient_seen[side];
-                    lenient_seen[side] = true;
+                    let system = &table.systems[use_.seat.index() as usize];
+                    let leading = auction.leading_passes();
+                    let entry = !use_.follow_on_of(system, &lenient_substituted[side], leading);
+                    lenient_substituted[side]
+                        .extend(use_.substituted(system).iter().map(|&(i, _)| i + leading));
                     st.lenient_entries += u64::from(entry);
                     if print_lenient {
                         eprintln!(
@@ -2073,5 +2116,6 @@ fn add_stats(into: &mut KindStats, st: &KindStats) {
     into.lenient_calls += st.lenient_calls;
     into.lenient_entries += st.lenient_entries;
     into.lenient_eligible += st.lenient_eligible;
+    into.lenient_opening_stalls += st.lenient_opening_stalls;
     into.resolved_at_default_pass += st.resolved_at_default_pass;
 }
