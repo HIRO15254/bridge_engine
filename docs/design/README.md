@@ -19,7 +19,9 @@
 | 10 | `10-dds.md` | `bridge-dds` | DDS v2.9.0 のベンダリング、`build.rs`、手書き `#[repr(C)]` とレイアウト検証、安全ラッパー、ファサードの `dds` feature |
 | 11 | `11-testing.md` | テスト戦略 | 各クレートのテスト種別と基準、双方向整合性、再現率、ベンチ、CI とナイトリー |
 | 12 | `12-roadmap.md` | 実装順序 | フェーズ 0〜6 の PR 単位タスクと完了条件、リスク一覧 |
-| 13 | `13-decisions.md` | 決定記録 | D1〜D17 の ADR (決定・理由・仕様との差分・影響クレート) |
+| 13 | `13-decisions.md` | 決定記録 | D1〜D20 の ADR (決定・理由・仕様との差分・影響クレート) |
+| 14 | `14-lead.md` | `bridge-lead` (フェーズ 6、別クレート) | オープニングリードアドバイザ: API、アルゴリズム、評価方法、未決事項 |
+| 15 | `15-phase4-plan.md` | フェーズ 4 の実装計画 (作業文書) | interpret と方策の整合: 試作 A/B/C の実測と審査、設計本文の差し替え、決定事項 (D18〜D20 の原文)、レーン、受け入れ基準、フェーズ 4〜6 の完了基準の改訂案 |
 | 16 | `16-extended-bml.md` | 拡張 BML リファレンス | 本コンパイラが受理する BML 方言の正本: ファイル構造、表、コールトークン、説明文の語彙、注釈とメタ行、解決の意味論、全 Lint、完全な EBNF、例とクックブック (例は `tests/bml_reference.rs` がコンパイルする) |
 
 ## 2. 読み方
@@ -65,6 +67,7 @@ flowchart TD
   sample[bridge-sample]
   dds[bridge-dds]
   facade[bridge]
+  lead[bridge-lead]
 
   core --> format
   core --> eval
@@ -78,6 +81,8 @@ flowchart TD
   format --> facade
   sample --> facade
   dds -. "feature dds, non-wasm" .-> facade
+  facade --> lead
+  sample --> lead
 ```
 
 層の対応は次の通り。
@@ -92,6 +97,7 @@ flowchart TD
 | L4 | `bridge-sample` |
 | L5 | `bridge-play` |
 | ファサード | `bridge` |
+| アプリ (別クレート、フェーズ 6) | `bridge-lead` (`14-lead.md`。ファサードと下位クレートを消費するだけで、他のクレートからは依存されない) |
 
 ## 5. 表記規約
 

@@ -22,10 +22,10 @@
 //! [`InterpretOptions::for_context`] (and see [`crate::BidContext::natural`]) so that the mirror
 //! and the likelihood describe the same policy.
 //!
-//! [`InterpretMode::Legacy`] keeps the phase-3 Step A for one phase of before/after comparisons:
-//! the call's node (one alternative per top-level `Or` branch, or its lenient / natural reading)
-//! scaled by `1 − ε` plus a defensive `(ANY, ε, Fallback)` branch, with `ε` set by the resolution
-//! kind.
+//! [`InterpretMode::Legacy`] keeps the phase-3 Step A until reproduction (iii) (the phase-3
+//! continuity metric) is retired: the call's node (one alternative per top-level `Or` branch, or
+//! its lenient / natural reading) scaled by `1 − ε` plus a defensive `(ANY, ε, Fallback)` branch,
+//! with `ε` set by the resolution kind.
 //!
 //! **Step B (per seat).** The alternatives of a seat's calls are combined by cross product
 //! (`and`; unsatisfiable combinations dropped by a check on precomputed summaries), truncated at
@@ -231,8 +231,9 @@ pub enum InterpretMode {
     #[default]
     Mirror,
     /// The phase-3 interpretation: each call's node (or lenient/natural reading) with the
-    /// `eps_exact`/`eps_partial`/`eps_natural` fallback mixture and `lenient_decay`. Kept for one
-    /// phase for before/after comparisons ([`InterpretOptions::legacy`]).
+    /// `eps_exact`/`eps_partial`/`eps_natural` fallback mixture and `lenient_decay`. Kept until
+    /// reproduction (iii) is retired (docs/design/07-bidding.md §9 item 8)
+    /// ([`InterpretOptions::legacy`]).
     Legacy,
 }
 

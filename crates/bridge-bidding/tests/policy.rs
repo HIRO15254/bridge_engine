@@ -263,12 +263,12 @@ fn policy_argmax_matches_choose_bid_response_to_1h() {
 }
 
 /// Regression: every node in `sayc_system()` has `priority: 0` (see `tests/common`), so every
-/// kept candidate in `check_position`'s trials tied on priority, and `call_distribution` fell
-/// back to summing equal scores — the test could not actually distinguish a priority-driven
-/// softmax from a uniform one (flipping the sign of priority or τ would still have passed). This
-/// system gives two candidates at the same position distinct priorities and checks that the
-/// policy's argmax follows `choose_bid`'s own priority order, not merely membership in the
-/// legal-call set.
+/// kept candidate in `check_position`'s trials tied on priority, and the test could not
+/// actually distinguish a priority-driven choice from an arbitrary one (it was written when the
+/// policy was still the phase-3 priority softmax, where flipping the sign of priority or τ would
+/// still have passed). This system gives two candidates at the same position distinct
+/// priorities and checks that the policy's argmax follows `choose_bid`'s own priority order,
+/// not merely membership in the legal-call set.
 #[test]
 fn policy_argmax_respects_distinct_priorities() {
     let mut b = SystemBuilder::new();

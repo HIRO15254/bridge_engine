@@ -139,7 +139,7 @@
 pub struct PolicyParams {
     pub epsilon: f32,          // 一様床 ε。既定 1e-3
     pub deviation: f32,        // システム外（ナチュラル）への逸脱 δ。既定 0.0
-    pub legacy_temperature: Option<f32>, // Some(τ) で旧 priority ソフトマックス（比較用、フェーズ 6 評価後に削除）。鏡像の保証は無い
+    pub legacy_temperature: Option<f32>, // Some(τ) で旧 priority ソフトマックス（比較用、フェーズ 6 評価後に削除）。鏡像の保証は無い。【削除済み: フェーズ 6 の評価の後の 377c93c。13-decisions D18】
 }
 impl PolicyParams {
     pub fn system_players() -> Self; // = Default。システムどおりに競る前提（生成オークション）
@@ -171,7 +171,7 @@ impl PolicyParams {
 1. δ < 1/2 なら argmax_c p = `choose_bid` の選択。これは τ に依存しない構造的な等式で、`tests/policy.rs` の 10^5 局面テストはそのまま 100% になる。
 2. 同じ優先度どうしでの質量の分け合い（旧 shared 25〜48%）は起きない。
 3. δ = 0 のときは、システム内の位置で m_P を評価しない（計算不要）。
-4. `legacy_temperature = Some(τ)` のときは旧式（priority/τ の logsumexp → softmax → ε 床）を返す。これは比較評価専用で、`interpret` の鏡像はこの場合を保証しない。
+4. `legacy_temperature = Some(τ)` のときは旧式（priority/τ の logsumexp → softmax → ε 床）を返す。これは比較評価専用で、`interpret` の鏡像はこの場合を保証しない。【この経路はフェーズ 6 の評価の後に削除した（377c93c、13-decisions D18）。以下は計画時の記述】
 
 旧定義（τ = 1 の priority ソフトマックス）を捨てる理由は 13-decisions D18 に書く。要点は 2 つある。BML の priority は整列のための小さな整数で、対数オッズとして較正されていない。そして、1NT と 1C の両方を満たす手が 27% で 1C を開くといった分布は、システムの意味にも `replay` にも一致しない。
 
@@ -218,7 +218,7 @@ Pass については、ナチュラル暗黙パスとして (Pass 規則 ∨ ¬�
 **パートナー文脈**：`ctx.partner_constraint` には、パートナーの直前のコールの非 Fallback 片の和の要約（HCP 範囲 + シェイプ）を入れる。`choose_bid` と `interpret` は同じ関数 `partner_context(prefix)` を呼ぶ。ナチュラル排他は要約を変えないので、この経路では計算しない。
 
 §4.2（ε-混合の根拠）に追記
-ε-混合は方策の一様床として定義し直す。`eps_exact` / `eps_partial` / `eps_natural` / `lenient_decay` は既定の経路から外し、`InterpretOptions::legacy()` として 1 フェーズだけ残す（ESS の前後比較用）。「信頼度が低いほど ε を大きくする」という役割は、δ（システム外への逸脱）と、方策上選ばれないコールの床に移る。`InterpretOptions` は `InterpretOptions::for_context(&BidContext)` で作る。これで `PolicyParams` と `implicit_pass` を尤度と同じ値から取るので、解釈と尤度がずれることは構造上起きない。
+ε-混合は方策の一様床として定義し直す。`eps_exact` / `eps_partial` / `eps_natural` / `lenient_decay` は既定の経路から外し、`InterpretOptions::legacy()` として 1 フェーズだけ残す（ESS の前後比較用）。「信頼度が低いほど ε を大きくする」という役割は、δ（システム外への逸脱）と、方策上選ばれないコールの床に移る。`InterpretOptions` は `InterpretOptions::for_context(&BidContext)` で作る。これで `PolicyParams` と `implicit_pass` を尤度と同じ値から取るので、解釈と尤度がずれることは構造上起きない。【フェーズ 6 の後も、再現 (iii) を退役させるまで残す (13-decisions D18、07-bidding §9 の 8)】
 
 §4.3（「以前の制約を弱める」）の 1 を差し替え
 L3 は、各コールに**兄弟の上位候補を除いた排他領域**を使う。祖先の制約は取り込まない（AND は Step B で行う）。以前の「そのノード自身の制約だけ」は廃止する。
@@ -283,7 +283,7 @@ L3 は、各コールに**兄弟の上位候補を除いた排他領域**を使�
 ---------------------------------------------
 1. リテラルを持つ上位候補の差し引き：現在は sub による上側近似。over-cover の率を見て、厳密な DNF に切り替えるかどうかを決める。
 2. δ を相手と味方で分けるか、位置の種類（競り合い・オープニング）で分けるか。
-3. `legacy_temperature` を削除する時期：フェーズ 6 のリード評価で hard 方策と比較した後。
+3. `legacy_temperature` を削除する時期：フェーズ 6 のリード評価で hard 方策と比較した後。**解決済み（2026-10-02）**：比較（14-lead.md §4.3: 上位 1 / 3 = 0.78 / 0.93 対 0.78 / 0.92、ESS 中央値 78.1 対 26.1）で hard は同等以上だったので、`legacy_temperature` と `PolicyParams::legacy(τ)` を削除した（コード 377c93c、13-decisions D18、07-bidding.md §9 の 8）。`InterpretMode::Legacy` は再現 (iii) が読むので残す。
 4. 方策上選ばれない枝（ShadowedBranch lint）を、SAYC の側で消すか残すか。
 
 ---------------------------------------------
@@ -370,9 +370,9 @@ L3 は、各コールに**兄弟の上位候補を除いた排他領域**を使�
 
 ## 決定事項（Decisions）
 
-- D18 policy target: p(c|h) = (1-eps)*[(1-delta)*S + delta*M] + eps/n. S = deterministic system choice (choose_bid; uniform when NoCandidate), M = deterministic natural choice (ranked natural candidates plus a natural implicit Pass). The priority softmax at tau=1 is retired; it survives only as PolicyParams.legacy_temperature for the phase-6 comparison. There is no tie_gap and no rank temperature. argmax == choose_bid holds structurally for delta < 0.5.
+- D18 policy target: p(c|h) = (1-eps)*[(1-delta)*S + delta*M] + eps/n. S = deterministic system choice (choose_bid; uniform when NoCandidate), M = deterministic natural choice (ranked natural candidates plus a natural implicit Pass). The priority softmax at tau=1 is retired; it survived only as PolicyParams.legacy_temperature for the phase-6 comparison, and was deleted after it (phase 6, 377c93c). There is no tie_gap and no rank temperature. argmax == choose_bid holds structurally for delta < 0.5.
 - Two pre-registered presets. PolicyParams::system_players() (eps 1e-3, delta 0) is used for SAYC-generated auctions. PolicyParams::human() takes (eps, delta) fitted by maximum likelihood on the corpus tune split, from true-deal agreement between human calls and choose_bid/natural. It is used for corpus auctions and the lead advisor. With delta=0, off-system calls at on-system positions carry no information, which is exactly what the model says. With delta>0 they are read naturally, which fixes the 97/100 corpus auctions that leave the system.
-- D19 interpretation = calibrated policy mirror. Per call the pieces are X_c^(b) (system exclusive region, per branch, disjointified) with raw weight (1-eps)(1-delta); N_sys (no system candidate) with (1-eps)(1-delta)/n; Y_c (natural exclusive region) with (1-eps)*delta, or (1-eps) off-system; N_nat with (1-eps)*delta/n; ANY with eps/n. CallInterpretation records log_scale, so p(c|h) = exp(log_scale) * sum_i w_i*1[h in C_i] holds exactly. With literals the representation only over-covers; under-cover is never allowed. This replaces the eps_exact/partial/natural and lenient_decay weights; InterpretOptions::legacy() is kept for one phase for before/after comparisons.
+- D19 interpretation = calibrated policy mirror. Per call the pieces are X_c^(b) (system exclusive region, per branch, disjointified) with raw weight (1-eps)(1-delta); N_sys (no system candidate) with (1-eps)(1-delta)/n; Y_c (natural exclusive region) with (1-eps)*delta, or (1-eps) off-system; N_nat with (1-eps)*delta/n; ANY with eps/n. CallInterpretation records log_scale, so p(c|h) = exp(log_scale) * sum_i w_i*1[h in C_i] holds exactly. With literals the representation only over-covers; under-cover is never allowed. This replaces the eps_exact/partial/natural and lenient_decay weights; InterpretOptions::legacy() is kept for one phase for before/after comparisons (after phase 6 it stays until reproduction (iii) is retired; 13-decisions D18).
 - X_c is the set of hands whose first satisfied member in rank order has call c: X_c = union over members m with call c of (C_m AND NOT union of higher-ranked members with a different call). Same-call duplicates (Exact plus Class edges) are unioned, not excluded. BML {w:} branch weights are no longer proposal densities; they stay for explanations only.
 - One rank comparator, bridge_system::exclusive::rank_cmp: priority desc, then tie_break, then call index asc. It is used by choose_bid's sort, the index, and the natural candidate ranking (round(confidence*100) desc, then LowestCall/HighestCall, then call index).
 - The system exclusion is precomputed by bridge-system as a derived ExclusiveIndex (A's algorithm: exact atom-level subtraction, 48-atom cap with a tree fallback, grouping by (parent TrieId, 16 seat/vul classes) and dedup). It is built eagerly at the end of compile(). It is stored in a OnceLock that is #[serde(skip)] and built lazily for deserialized or hand-built IRs. It is not serialized: IR_FORMAT is unchanged and there is no 1.51x postcard growth. Lookup.parent is added to the trie. Positions where a higher-ranked sibling is illegal recompute from the legal siblings at run time.
@@ -407,7 +407,7 @@ Commit 0, within the first half day, is an API-first commit that lanes B and P b
 - depends_on: Lane S commit 0 (API). It can start immediately against the runtime-recompute path; switch to the index when S step (1) lands.
 
 (1) choose.rs: B's enumerate_candidates refactor, so choose_bid, call_distribution and interpret share one hand-independent candidate list. Sort with exclusive::rank_cmp. Add the natural-branch implicit Pass (from C). Add a shared partner_context(prefix) that returns the summary of partner's last call's non-Fallback pieces.
-(2) policy.rs: the new PolicyParams {epsilon, deviation, legacy_temperature}, the system_players()/human() presets (the human values come from lane D's fit at integration; use a placeholder until then)（フェーズ 4 の統合で ε 0.3404、δ 0.3959 に設定済み。完了時の最尤推定値 0.3420 / 0.3943 でも据え置いた。12-roadmap）, and the new call_distribution formula.
+(2) policy.rs: the new PolicyParams {epsilon, deviation, legacy_temperature} (legacy_temperature was deleted after the phase-6 lead evaluation, 377c93c), the system_players()/human() presets (the human values come from lane D's fit at integration; use a placeholder until then)（フェーズ 4 の統合で ε 0.3404、δ 0.3959 に設定済み。完了時の最尤推定値 0.3420 / 0.3943 でも据え置いた。12-roadmap）, and the new call_distribution formula.
 (3) interpret.rs + exclusion.rs: Step A emits the calibrated pieces X/N_sys/Y/N_nat/ANY with log_scale and the shadowed flag. X comes from the index via lookup.parent, with a run-time recompute when a higher-ranked sibling is illegal. For lenient positions use only the first full lenient match. Natural exclusion uses grid + infer_batch in two forms: flat for the proposal, tree for membership. Add InterpretOptions::for_context and legacy().
 (4) Step B: precomputed summaries, mass-ordered truncation, and an always-kept catch-all combo.
 (5) auction_policy.rs: AuctionPolicy with a fast log_likelihood; keep sequence_log_likelihood as the reference.
@@ -433,7 +433,7 @@ Commit 0, within the first half day, is an API-first commit that lanes B and P b
 - (ii) the corpus SAYC-reproducible subset (true deal replays to the recorded auction);
 - (iii) the legacy definition, kept for continuity;
 - (iv) per-call true-deal agreement.
-(5) Lead advisor: use InterpretOptions::for_context with the human preset. Evaluate top-1 and top-3 against baselines (a)/(b), comparing hard against legacy_temperature=1. Give the flaky dds_smoke a 1e-9 FP tolerance.
+(5) Lead advisor: use InterpretOptions::for_context with the human preset. Evaluate top-1 and top-3 against baselines (a)/(b), comparing hard against legacy_temperature=1 (done in phase 6, 14-lead.md §4.3; legacy_temperature was then deleted). Give the flaky dds_smoke a 1e-9 FP tolerance.
 (6) Decide whether residual rejection is on by default using time per effective sample.
 (7) Update 09-sample.md (§3.1, §6.1, §6.4c, residual rejection, §9, §10.2 with the prototype table), 11-testing.md (§2, §3, §9, the evaluation-data section) and 14-lead.md.
 
@@ -467,7 +467,7 @@ Commit 0, within the first half day, is an API-first commit that lanes B and P b
 - P, ESS (frozen 50-case suite; generated cases use system_players, corpus cases use human on the eval split; n=1000): median ESS/n >= 0.5 overall and >= 0.5 on the generated set; corpus >= 0.4. ESS per attempt, acceptance median/min and wall time are all reported (target: ESS per attempt >= 0.35). If residual rejection is on, <= 2 of 50 cases may exhaust the budget and the suite must take <= 2x the wall time of the no-rejection run; the suite finishes in <= 60 s release.
 - P, throughput: the bridge-sample deals bench reaches >= 1e4 deals/s/core on all three real-SAYC cases, including Stayman 3NT (was 8.1K), using the fast likelihood.
 - P, reproduction: on the generated fixture (100 auctions), the median weighted reproduction is >= 0.6. For the corpus SAYC-reproducible subset, the count and median are reported, with a target median >= 0.6. The legacy definition and per-call true-deal agreement are reported.
-- P, lead advisor (100 corpus boards, eval split where possible, n=100, human preset): top-3 >= 0.90 and top-1 >= baseline (a) (0.808). Median ESS is reported (target >= 20; it was 4). hard vs legacy_temperature=1 is compared; if hard is worse on top-1 by more than 0.02, D18 is reopened.
+- P, lead advisor (100 corpus boards, eval split where possible, n=100, human preset): top-3 >= 0.90 and top-1 >= baseline (a) (0.808). Median ESS is reported (target >= 20; it was 4). hard vs legacy_temperature=1 is compared; if hard is worse on top-1 by more than 0.02, D18 is reopened (done in phase 6: 0.78 vs 0.78, not reopened; legacy_temperature then deleted, 14-lead.md §4.3).
 - D, coverage: cargo xtask coverage runs in <= 120 s release and writes every listed field, with a baseline recorded before any SAYC change. On generated SAYC auctions (1000 fixed-seed replays), >= 80% are all-system (no natural completion, no gap). The phase-3 NoCandidate tops (1D-(3C) responder 36, P-P-1D-(1H) responder 31, 1C-(1H) responder 25, measured per 1e6) each drop by >= 80%. New rows add 0 ShadowedBranch lints, Error lints stay at 0, and the forward-consistency non-gap count stays at 0. On the corpus SAYC-compatible-opening subset, call-level system resolution (Exact or Partial) reaches >= 80% (target), and the all-Exact rates for all, eval and subset are reported. The resolve_lenient usage rate falls below the baseline. The (eps, delta) MLE is reported together with its log-likelihood curve.
 
 ## 完了基準の改訂案（Criteria changes）

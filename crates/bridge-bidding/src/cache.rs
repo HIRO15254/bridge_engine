@@ -12,10 +12,10 @@ use crate::{
 };
 
 /// The bits of the options that change an interpretation.
-type OptionsKey = (usize, bool, InterpretMode, [u32; 3], bool, [u32; 4]);
+type OptionsKey = (usize, bool, InterpretMode, [u32; 2], bool, [u32; 4]);
 
 /// The bits of the policy that change an [`AuctionPolicy`] (plus the natural engine's address).
-type PolicyKey = ([u32; 3], bool, usize);
+type PolicyKey = ([u32; 2], bool, usize);
 
 fn options_key(opts: &InterpretOptions) -> OptionsKey {
     (
@@ -25,9 +25,6 @@ fn options_key(opts: &InterpretOptions) -> OptionsKey {
         [
             opts.policy.epsilon.to_bits(),
             opts.policy.deviation.to_bits(),
-            opts.policy
-                .legacy_temperature
-                .map_or(u32::MAX, f32::to_bits),
         ],
         opts.implicit_pass == ImplicitPass::Complement,
         [
@@ -91,11 +88,7 @@ impl InterpretCache {
         let key = (
             auction_key(auction),
             (
-                [
-                    ctx.policy.epsilon.to_bits(),
-                    ctx.policy.deviation.to_bits(),
-                    ctx.policy.legacy_temperature.map_or(u32::MAX, f32::to_bits),
-                ],
+                [ctx.policy.epsilon.to_bits(), ctx.policy.deviation.to_bits()],
                 ctx.implicit_pass == ImplicitPass::Complement,
                 natural as *const _ as usize,
             ),

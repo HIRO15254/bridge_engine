@@ -21,6 +21,7 @@ bridge-bidding = { path = "crates/bridge-bidding", version = "0.0.1", default-fe
 bridge-play = { path = "crates/bridge-play", version = "0.0.1", default-features = false }
 bridge-sample = { path = "crates/bridge-sample", version = "0.0.1", default-features = false }
 bridge-dds = { path = "crates/bridge-dds", version = "0.0.1" }
+bridge = { path = "crates/bridge", version = "0.0.1", default-features = false }
 
 # External
 thiserror = "2"

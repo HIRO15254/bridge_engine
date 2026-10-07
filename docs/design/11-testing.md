@@ -30,7 +30,7 @@
 | ナチュラル推定 3 測定 (§6) | `bridge-system` `tests/natural_metrics.rs` | `#[ignore]`、JSON 出力 | 数値が出る |
 | **双方向整合性** `forward_consistency` (§2) | `bridge-bidding` `tests/consistency.rs` | `#[ignore]` release、10^6 配牌、`strict` | 違反 0。`NoCandidate`/`ImplicitPass` はノード別集計 → `target/coverage_report.json` |
 | 再現率 `sayc_reproduction_rate` (§3) | `bridge-bidding` `tests/reproduction.rs` | `#[ignore]` release。(i) 生成フィクスチャ 100 本、(ii) コーパス評価用分割の SAYC 再現可能部分集合、(iii) 旧定義 500 本、(iv) コール単位の一致率 | (i) と (ii) の中央値 ≥ 0.6 (フェーズ 4)。(iii)(iv) は報告 |
-| `policy_argmax_matches_choose_bid` | `bridge-bidding` `tests/policy.rs` | unit、τ = 0.01、10^5 局面 | 100% |
+| `policy_argmax_matches_choose_bid` | `bridge-bidding` `tests/policy.rs` | unit 10^3 局面 (`sayc_policy_argmax_matches_choose_bid_1e3`) と `#[ignore]` release 10^5 局面 (`sayc_policy_argmax_matches_choose_bid_1e5`)、どちらも両プリセット (`system_players()` と `human()`) (フェーズ 3 のソフトマックスの τ = 0.01 は、D18 で方策を改めた時に不要になった) | 100% |
 | `illegal_call_is_lint` | `bridge-bidding` `tests/choose.rs` | unit (合成 `SystemIR` に不正な継続) | `Diagnostic::IllegalSystemCall`、パニックなし |
 | `weights_sum_to_one`、`and_combination_drops_contradictions`、`seat_without_calls_is_any` | `bridge-bidding` `tests/interpret.rs` | unit | 全通過 |
 | `interpret` ベンチ (12 コール) | `bridge-bidding` `benches/interpret.rs` | criterion | < 10 μs |
@@ -46,6 +46,9 @@
 | DDS レイアウト | `bridge-dds` `tests/layout.rs` | unit (C++ プローブ) | 全構造体・全フィールドで一致 |
 | DDS 差分 `differential_dds` | `bridge-dds` `tests/differential.rs` | `list100.txt` (コーパス、または `cargo xtask dds vendor` が展開する `vendor/dds-2.9.0/hands/list100.txt`。CI の `dds` ジョブで必須)、`masterDD.txt` は `#[ignore]` | 100% 一致 |
 | 並行 `SolveBoard` `concurrent_solve_board` | `bridge-dds` `tests/concurrency.rs` | 8 スレッド × 100 局面 | エラー 0、逐次結果と一致 |
+| リード助言の集計と契約・エラー系 (`advise` の期待値の手計算との一致、同値グループ化、決定性、`IncompleteAuction` / `PassedOut` / `WrongHandSize` / `NoSamples`、得点表) | `bridge-lead` `tests/advise.rs`, `tests/contract.rs`, `src/aggregate.rs`, `src/scoring.rs` | unit (DDS 不要、`tests/common/mod.rs` の `FakeDd`、`14-lead.md` §4) | 全通過 |
+| リード助言の DDS smoke | `bridge-lead` `tests/dds_smoke.rs` | `--features dds`、固定の配牌とオークション、少数サンプルで実 DDS (ベンダリング前は何もせず通る) | 全通過 |
+| リード助言のコーパス評価 `corpus_eval` (フェーズ 6.2) | `bridge-lead` `tests/corpus_eval.rs` | `#[ignore]`、release、`--features dds,parallel`、`target/lead_report.json` (`14-lead.md` §4) | 評価分割 100 ボードで上位 3 の DD 最善命中率 ≥ 0.90 かつ上位 1 ≥ ベースライン (a)。ESS 中央値・ESS/n を報告 |
 | wasm ビルド | CI `wasm` ジョブ | `cargo check --target wasm32-unknown-unknown` | 通る |
 
 ## 2. 双方向整合性プロパティテスト (仕様 §10)
@@ -365,6 +368,7 @@ jobs:
 | DDS 取得とテスト | `cargo xtask dds vendor && cargo test -p bridge-dds` |
 | フェーズ完了時の重いテスト | `BRIDGE_CORPUS_DIR=corpus/data cargo test --release --workspace -- --ignored` (整合性 10^6、ESS、コーパス、DDS 差分、ナチュラル推定測定) |
 | ESS スイート | `cargo test --release -p bridge-sample --all-features --test ess_suite -- --ignored --nocapture` (`ESS_SUITE_MODE=tune` でチューニング集合、`ESS_SUITE_WRITE_FIXTURE=1` で固定ケースの再生成、§13) |
+| リード助言 (フェーズ 6) | 単体: `cargo test -p bridge-lead --all-features` (`--features dds` で DDS smoke も)。コーパス評価: `cargo test -p bridge-lead --release --features dds,parallel --test corpus_eval -- --ignored --nocapture` (設定は `LEAD_*` 環境変数、`14-lead.md` §4。結果は `target/lead_report*.json`) |
 | ベンチ | `cargo bench --workspace` (`hcp` < 10 ns、手サンプル ≥ 10^5/s、配牌 ≥ 10^4/s、`interpret` < 10 μs、BML コンパイル < 1 s) |
 | 1 クレートのベンチ | `cargo bench -p bridge-constraint -- sampler` |
 | カバレッジレポート (フェーズ 4) | `cargo xtask coverage --system systems/sayc/sayc.bml --corpus corpus/data/pbn` |
@@ -379,7 +383,7 @@ jobs:
 - 未決: 再現率の閾値 (フェーズ 4 で中央値 ≥ 0.6、それ以前は報告のみ)。
 - 未決: `random_position` の `random_call_rate` 既定値 0.05 (フェーズ 3.11 で Partial/Natural を入れた後に調整)。
 - 未決: `deny.toml` の最終的な許可ライセンス一覧 (§10)。
-- 未決: フェーズ 6 の上位 3 リード命中率の閾値 X (測定してから決める)。
+- 未決: フェーズ 6 の完了基準の読み (上位 1 を同じボードで測った (a) と比べるか、計画に書かれた 0.808 と比べるか。計画の持ち主の確認事項、12-roadmap.md 節「フェーズ 6 の完了」)。閾値 X 自体は計画 (15-phase4-plan.md) で「上位 3 ≥ 0.90 かつ上位 1 ≥ ベースライン (a)」に固定済みで、最終ライン (フェーズ 4 + 5 の統合後) で測定した (`14-lead.md` §4.3): 評価分割の 100 ボードで上位 3 = 0.93、上位 1 = 0.78 ≥ (a) 0.74 (同じボードの比較は達成。数字の 0.808 とは評価分割で 0.78 < 0.808 で未達、フェーズ 3 のボードでは 0.83 で達成)。
 
 ## 13. ESS スイートと評価データ (フェーズ 4)
 

@@ -20,6 +20,7 @@ bridge_engine/
 │   ├── bridge-play/           # プレイ履歴からの制約
 │   ├── bridge-sample/         # 配牌サンプラー
 │   ├── bridge-dds/            # vendor/dds-2.9.0/ (git-ignored), build.rs, VENDOR.md, src/{sys,convert}.rs, src/layout_probe.cpp, tests/layout.rs
+│   ├── bridge-lead/           # オープニングリードアドバイザ (フェーズ 6、別クレート。`lead-advisor` CLI)
 │   └── bridge/                # ファサード (再エクスポート)
 ├── xtask/                     # corpus fetch, systems fetch, dds vendor, dds regen-bindings, coverage (src/main.rs)
 ├── systems/                   # 自作 sayc.bml (two-over-one.bml は任意)、fixtures/、vendor/manifest.toml
@@ -27,7 +28,7 @@ bridge_engine/
 └── docs/design/               # 本設計
 ```
 
-フェーズ 0 の骨格 (`12-roadmap.md` §1) で上記の全てが揃う。`crates/*/src/` は公開型と関数シグネチャを英語 rustdoc 付きで宣言し、本体は `todo!("phase N")`。`xtask/src/main.rs` はサブコマンドの枠だけ (全て「未実装」で終了コード 1)、`systems/` は `README.md` のみ、`corpus/manifest.toml` は sha256 が空、`crates/bridge-dds/` は `build.rs`、`VENDOR.md`、`src/layout_probe.cpp` を含む。
+フェーズ 0 の骨格 (`12-roadmap.md` §1) で上記の全てが揃う (`bridge-lead/` だけはフェーズ 6 で追加した)。`crates/*/src/` は公開型と関数シグネチャを英語 rustdoc 付きで宣言し、本体は `todo!("phase N")`。`xtask/src/main.rs` はサブコマンドの枠だけ (全て「未実装」で終了コード 1)、`systems/` は `README.md` のみ、`corpus/manifest.toml` は sha256 が空、`crates/bridge-dds/` は `build.rs`、`VENDOR.md`、`src/layout_probe.cpp` を含む。
 
 ## 2. クレート一覧と責務
 
@@ -43,6 +44,7 @@ bridge_engine/
 | `bridge-sample` | L4 | `Proposal` トレイト、重点重み付け、ESS、決定的並列 | `core`, `constraint`, `bidding`, `play` | `rand_core`, `rand_xoshiro`, `rayon` (optional), `thiserror`, `tracing`, `serde` (optional) | `09-sample.md` |
 | `bridge-dds` | FFI | DDS v2.9.0 の `cc` ビルドと安全ラッパー | `core` (`std` 必須) | `thiserror`, `cc` (build) | `10-dds.md` |
 | `bridge` | ファサード | 全クレートの再エクスポート、`dd::DoubleDummy` トレイト | 全部 | `thiserror` | `10-dds.md` |
+| `bridge-lead` | アプリ (別クレート) | オープニングリードアドバイザ (フェーズ 6): オークション + リーダーの手 → サンプル配牌 → 各リードの DD 守備トリック → 順位。`lead-advisor` CLI とコーパス評価 | `bridge` (ファサード)、`core`、`constraint`、`bidding`、`sample`、`format` (feature `dds`) | `thiserror`, `tracing`, `rayon` (optional) | `14-lead.md` |
 | `xtask` | ツール | コーパス取得、外部 BML 取得、DDS ベンダリング、bindgen オフライン生成、カバレッジレポート | なし (ワークスペース外の依存のみ) | フェーズ 1 で `ureq`, `sha2`, `zip`、フェーズ 5 で `bindgen` | `11-testing.md` |
 
 クレート名は `bridge-*`、ライブラリ名は `bridge_*`。上位アプリは原則ファサード `bridge` のみに依存する。
@@ -75,8 +77,8 @@ flowchart TD
 
 | クレート | feature | 既定 | 内容 |
 | --- | --- | --- | --- |
-| 全クレート | `std` | on | `default = ["std"]`。`no_std` は非目標だが、将来のために feature 名を予約する |
-| 全クレート | `serde` | off | `serde = ["dep:serde"]`。上位クレートは下位の `serde` を伝播させる (`bridge-constraint/serde` は `bridge-core/serde`, `bridge-eval/serde` を有効化) |
+| 全クレート (`bridge-dds`・`bridge-lead` を除く) | `std` | on | `default = ["std"]`。`no_std` は非目標だが、将来のために feature 名を予約する |
+| 全クレート (`bridge-dds`・`bridge-lead` を除く) | `serde` | off | `serde = ["dep:serde"]`。上位クレートは下位の `serde` を伝播させる (`bridge-constraint/serde` は `bridge-core/serde`, `bridge-eval/serde` を有効化) |
 | `bridge-sample` | `parallel` | off | `parallel = ["dep:rayon"]`。WASM では無効 |
 | `bridge-system` | `cache` | off | `cache = ["std", "serde", "dep:postcard", "dep:blake3"]`。`cache.rs` (`SystemCache`) を有効化 |
 | `bridge-dds` | `openmp` | off | `DDS_THREADS_OPENMP` でビルド。既定は `DDS_THREADS_STL` |
@@ -84,8 +86,12 @@ flowchart TD
 | `bridge` | `parallel` | off | `bridge-sample/parallel` |
 | `bridge` | `cache` | off | `bridge-system/cache` |
 | `bridge` | `dds` | off | `dds = ["dep:bridge-dds"]`。非 wasm のみ |
+| `bridge-lead` | `dds` | off | `dds = ["bridge/dds", "dep:bridge-format"]`。実 DDS の `dd::dds()`、`lead-advisor` CLI、DDS smoke、コーパス評価 |
+| `bridge-lead` | `parallel` | off | `parallel = ["bridge-sample/parallel", "dep:rayon"]`。配牌ごとの DD 解析を rayon で並列化 (順序は保つ) |
 
 ファサードの既定は `default = ["std", "format"]`。`bridge-dds` は `default = []` で `std` feature を持たず、`bridge-core` を `features = ["std"]` で参照する。
+
+`bridge-lead` (アプリ層) も `default = []` で `std` / `serde` feature を持たない (feature は `dds` と `parallel` だけ)。`bridge-core`・`bridge-constraint`・`bridge-bidding`・`bridge-sample` (と optional の `bridge-format`) は `features = ["std"]` で参照し、ファサード `bridge` は既定の feature なしで参照する (`dds` で `bridge/dds`)。
 
 ファサード `bridge` のモジュール構成 (`crates/bridge/src/lib.rs`): ルートに `bridge_core::*`、`eval` (`bridge-eval`)、`constraint`、`system`、`bidding`、`play`、`sample`、`format` (feature `format`)、`dd` (`DdTable`、`DoubleDummy` トレイト、`DdError`、`dds()`。`10-dds.md` §9)。
 

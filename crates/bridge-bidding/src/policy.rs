@@ -14,16 +14,15 @@
 //! - **`p(c|h) = (1 − ε)·π(c|h) + ε/n`**.
 //!
 //! For `δ < 1/2` the argmax of `p` is `choose_bid`'s call whenever `choose_bid` chooses one:
-//! a structural identity, independent of any temperature. With `δ = 0` the natural candidates
-//! are not evaluated at on-system positions.
+//! a structural identity. With `δ = 0` the natural candidates are not evaluated at on-system
+//! positions.
 //!
-//! `PolicyParams::legacy_temperature = Some(τ)` selects the retired phase-3 policy instead
-//! (priority/τ logsumexp per call, softmax, then the ε floor), kept only for the phase-6
-//! comparison; `interpret`'s mirror is not calibrated to it.
+//! The phase-3 priority softmax (a temperature `τ`, `PolicyParams::legacy_temperature`) was
+//! deleted after the phase-6 lead evaluation (docs/design/13-decisions.md D18).
 
 use bridge_core::{Auction, Call, Deal, Hand};
 
-use crate::choose::{enumerate_position, gather, natural_choice, natural_ranked, system_choice};
+use crate::choose::{enumerate_position, natural_choice, natural_ranked, system_choice};
 use crate::{BidContext, Table};
 
 /// Parameters of the bidding policy `p(c|h) = (1 − ε)·[(1 − δ)·S + δ·M] + ε/n`.
@@ -35,20 +34,15 @@ pub struct PolicyParams {
     /// The deviation `δ` from the system to the natural policy at on-system positions (default
     /// 0). Keep it below 1/2 so the argmax stays `choose_bid`'s call.
     pub deviation: f32,
-    /// `Some(τ)` selects the retired priority softmax at temperature `τ` (comparison only; to
-    /// be removed after the phase-6 lead evaluation). `interpret`'s mirror is not calibrated to
-    /// it. Default `None`.
-    pub legacy_temperature: Option<f32>,
 }
 
 impl PolicyParams {
-    /// Players who bid exactly the system: `ε = 1e-3`, `δ = 0`, no legacy temperature. Used for
-    /// SAYC-generated auctions. Equal to `PolicyParams::default()`.
+    /// Players who bid exactly the system: `ε = 1e-3`, `δ = 0`. Used for SAYC-generated
+    /// auctions. Equal to `PolicyParams::default()`.
     pub const fn system_players() -> PolicyParams {
         PolicyParams {
             epsilon: 1e-3,
             deviation: 0.0,
-            legacy_temperature: None,
         }
     }
 
@@ -82,17 +76,6 @@ impl PolicyParams {
         PolicyParams {
             epsilon: 0.3404,
             deviation: 0.3959,
-            legacy_temperature: None,
-        }
-    }
-
-    /// The retired phase-3 policy (priority softmax at temperature `temperature`, `ε = 1e-3`),
-    /// for before/after comparisons only.
-    pub const fn legacy(temperature: f32) -> PolicyParams {
-        PolicyParams {
-            epsilon: 1e-3,
-            deviation: 0.0,
-            legacy_temperature: Some(temperature),
         }
     }
 }
@@ -102,16 +85,6 @@ impl Default for PolicyParams {
     fn default() -> PolicyParams {
         PolicyParams::system_players()
     }
-}
-
-/// `ln Σ exp(x)`, computed with the usual max-subtraction for stability. `-∞` for an empty slice.
-fn logsumexp(xs: &[f32]) -> f32 {
-    let m = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-    if !m.is_finite() {
-        return m;
-    }
-    let sum: f32 = xs.iter().map(|x| (x - m).exp()).sum();
-    m + sum.ln()
 }
 
 /// One slot per `Call::index()` value (`0..38`, Pass/Double/Redouble plus every `Bid`); see
@@ -160,9 +133,6 @@ pub fn call_distribution(
         natural: Some(ctx.natural.unwrap_or(table.natural.as_ref())),
         ..*ctx
     };
-    if let Some(tau) = ctx.policy.legacy_temperature {
-        return legacy_distribution(table, hand, auction, ctx, &legal, tau);
-    }
     let n_legal = legal.len() as f32;
     let eps = ctx.policy.epsilon;
     let delta = ctx.policy.deviation;
@@ -189,49 +159,6 @@ pub fn call_distribution(
     legal
         .into_iter()
         .map(|c| (c, (1.0 - eps) * pi[c.index() as usize] + eps / n_legal))
-        .collect()
-}
-
-/// The retired phase-3 policy: for each distinct call among the satisfied candidates,
-/// `score(c) = logsumexp_{candidates with call c}(priority / τ)`, softmax over the scores, then
-/// the `ε/n` floor; uniform when no candidate is satisfied.
-fn legacy_distribution(
-    table: &Table,
-    hand: Hand,
-    auction: &Auction,
-    ctx: &BidContext<'_>,
-    legal: &[Call],
-    tau: f32,
-) -> Vec<(Call, f32)> {
-    let n_legal = legal.len() as f32;
-    let eps = ctx.policy.epsilon;
-    let kept = gather(table, hand, auction, ctx).kept;
-    if kept.is_empty() {
-        return legal.iter().map(|&c| (c, 1.0 / n_legal)).collect();
-    }
-    let mut scores_by_call: [Vec<f32>; N_CALLS] = std::array::from_fn(|_| Vec::new());
-    for k in &kept {
-        scores_by_call[k.call.index() as usize].push(f32::from(k.priority) / tau);
-    }
-    let mut scores = [f32::NEG_INFINITY; N_CALLS];
-    for (i, xs) in scores_by_call.iter().enumerate() {
-        if !xs.is_empty() {
-            scores[i] = logsumexp(xs);
-        }
-    }
-    let all_scores: Vec<f32> = scores.iter().copied().filter(|s| s.is_finite()).collect();
-    let lse_all = logsumexp(&all_scores);
-    legal
-        .iter()
-        .map(|&c| {
-            let s = scores[c.index() as usize];
-            let softmax = if s.is_finite() {
-                (s - lse_all).exp()
-            } else {
-                0.0
-            };
-            (c, (1.0 - eps) * softmax + eps / n_legal)
-        })
         .collect()
 }
 
