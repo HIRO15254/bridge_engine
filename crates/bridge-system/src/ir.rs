@@ -40,12 +40,28 @@ pub struct SystemIR {
     pub index: AuctionTrie,
     /// Diagnostics produced at compile time.
     pub lints: Vec<Lint>,
+    /// Derived, lazily built index of exclusive regions ([`SystemIR::exclusive`]). Not
+    /// serialised (`IR_FORMAT` and the serialised bytes do not depend on it); a struct literal
+    /// sets it to `ExclusiveCell::default()`. After mutating `nodes` or `index` of an IR whose
+    /// index was already built, call [`ExclusiveCell::clear`](crate::exclusive::ExclusiveCell::clear).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub exclusive_cell: crate::exclusive::ExclusiveCell,
 }
 
 impl SystemIR {
     /// The node with the given id.
     pub fn node(&self, id: NodeId) -> &Node {
         &self.nodes[id.0 as usize]
+    }
+
+    /// The derived index of exclusive (rank-aware) regions of every position's candidates
+    /// (docs/design/15-phase4-plan.md D19): built on first use and cached in
+    /// [`SystemIR::exclusive_cell`].
+    ///
+    /// Naive; replaced in phase 4 lane S: lane S builds it eagerly at the end of `compile()`;
+    /// a deserialised or hand-built IR still builds it on first access.
+    pub fn exclusive(&self) -> &crate::exclusive::ExclusiveIndex {
+        self.exclusive_cell.get_or_build(self)
     }
 
     /// The row with the given id.
@@ -100,7 +116,9 @@ pub struct Node {
     pub row: RowId,
     /// Whose hand the constraint describes.
     pub side: Side,
-    /// Pattern path (shared with the row).
+    /// Pattern path (shared with the row). Empty for the nodes the compiler synthesises for
+    /// system stops ([`Node::is_synthesised`]); an empty path alone does not mark one (a
+    /// hand-built IR may leave every path empty).
     pub path: Arc<[SidedPattern]>,
     /// Concrete calls from the opening bid up to and including this call, implicit passes
     /// included. An opponents' wildcard step (`(any)`/`(bid)`/`(suit)`, a trie
@@ -128,10 +146,26 @@ pub struct Node {
     pub alertable: Alertability,
     /// Derived flags.
     pub flags: NodeFlags,
-    /// Description after variable substitution (`4+M` → `4+!h`).
+    /// Description after variable substitution (`4+M` → `4+!h`), as shown to a user: `compile()`
+    /// removes the `{prio:N}`, `{w:X}` and `{stop}` annotations, whose content is in
+    /// [`Node::priority`], [`Node::branch_weights`] and [`NodeFlags::stop`]
+    /// ([`Row::description_raw`] keeps them). So `P = {prio:-100} {stop} any hand` and the
+    /// synthesised stop pass both read `any hand`.
     pub description: String,
     /// Row-nodes one actual call deeper (implicit passes skipped).
     pub children: Vec<NodeId>,
+}
+
+impl Node {
+    /// `true` for a node the compiler synthesised rather than expanded from a row
+    /// ([`NodeFlags::synthesised`]): the stop pass (ours, `Pass` with any hand at `{prio:-100}`,
+    /// flagged [`NodeFlags::stop`]) and the opponents' `(any)` step before it, which the system
+    /// stops under one `#SEAT`/`#VUL` condition share (`docs/design/06-system.md` §4.5). Such a
+    /// node has no position of its own (an empty [`Node::path`] and [`Node::calls`]) and no
+    /// parent; its row is a synthesised row too.
+    pub fn is_synthesised(&self) -> bool {
+        self.flags.synthesised
+    }
 }
 
 /// Alert status of a call.
@@ -174,6 +208,14 @@ pub struct NodeFlags {
     pub agreed_suit: Option<Suit>,
     /// `S/O`, `T/P`.
     pub sign_off: bool,
+    /// A system stop (`{stop}`, `#STOP`, `docs/design/06-system.md` §4.5): once this call is
+    /// made, the partnership passes with any hand whatever the opponents call. Set on the nodes
+    /// of a stop row and on the synthesised stop pass itself ([`Node::is_synthesised`]).
+    /// Informational: resolution follows the trie edges the compiler grafted for the stop.
+    pub stop: bool,
+    /// The compiler synthesised this node for a system stop rather than expanding it from a row
+    /// ([`Node::is_synthesised`]). Never set by a description.
+    pub synthesised: bool,
 }
 
 /// Recognition statistics of one description.
@@ -399,6 +441,7 @@ mod tests {
             },
             balancing_shift: -3,
             implicit_raise_support: true,
+            level_floor: Default::default(),
         }
     }
 
@@ -432,6 +475,7 @@ mod tests {
             nodes: Vec::new(),
             index,
             lints: Vec::new(),
+            exclusive_cell: Default::default(),
         }
     }
 

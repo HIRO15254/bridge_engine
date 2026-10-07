@@ -88,6 +88,7 @@ impl SystemBuilder {
                 nodes: Vec::new(),
                 index: AuctionTrie::new(),
                 lints: Vec::new(),
+                exclusive_cell: Default::default(),
             },
         }
     }
@@ -734,4 +735,58 @@ pub fn random_sayc_position_with_substitution(
         forced_passes,
         random_calls,
     }
+}
+
+/// Every `.pbn` file under `dir`, sorted.
+fn pbn_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("pbn") {
+                out.push(path);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, &mut out);
+    out.sort();
+    out
+}
+
+/// Up to `limit` corpus auctions (every `.pbn` game under `<corpus>/pbn` whose view resolves an
+/// auction, in file order), each with its deal when the game has one; empty when there is no
+/// corpus directory.
+pub fn corpus_auctions_with_deals(limit: usize) -> Vec<(Auction, Option<Deal>)> {
+    let Some(dir) = corpus_dir() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    'files: for path in pbn_files(&dir.join("pbn")) {
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let (file, _warnings) = bridge_format::pbn::parse_lenient(&bytes);
+        let mut previous: Option<bridge_format::GameView> = None;
+        for game in &file.games {
+            let view = game.view(previous.as_ref()).ok();
+            if let Some(view) = &view {
+                if let Some(auction) = &view.auction {
+                    out.push((
+                        auction.clone(),
+                        view.deal.as_ref().and_then(|d| d.complete()),
+                    ));
+                    if out.len() >= limit {
+                        break 'files;
+                    }
+                }
+            }
+            previous = view;
+        }
+    }
+    out
 }

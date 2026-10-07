@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use bridge_constraint::{Atom, Dnf, DnfOptions};
+use bridge_constraint::{Atom, Dnf, DnfOptions, HandConstraint};
 
 use crate::{CompileOptions, NodeId, RowId, SystemIR, ast::Span};
 
@@ -55,6 +55,37 @@ pub enum LintCode {
     // coverage
     MissingOpeningCoverage,
     MissingResponseCoverage,
+    // exclusive index (appended last so the serialised indices of the codes above stay fixed)
+    /// A top-level branch of a node's constraint that higher-ranked siblings cover entirely at
+    /// every position where the node is a candidate: `choose_bid` never selects the node through
+    /// it (Warning).
+    ShadowedBranch,
+    /// Two top-level branches of one node's constraint overlap; the exclusive index
+    /// disjointifies them (a later branch keeps only hands outside the earlier ones) (Info).
+    OverlappingBranches,
+    // relative levels (phase-4 extension, appended for the same reason)
+    /// A relative level (`cS`, `jY`, `docs/design/06-system.md` §4.6) below an opponents'
+    /// wildcard that may stand for a bid: the last bid, and so the level, is unknown (Error;
+    /// the row and its subtree are skipped there).
+    LevelWithoutAnchor,
+    /// A relative level with no candidate: the jump (or the cheapest level) would pass the
+    /// seven level (Info).
+    NoSufficientLevel,
+    // `#ANYORDER` (phase-4 extension, appended for the same reason)
+    /// `#ANYORDER` in a table with fewer than two of the variables `X`, `Y`, `Z`: there is no
+    /// strain order to lift, so the directive has no effect (Info; `06-system.md` §4.7).
+    AnyOrderWithoutVariables,
+    // stop audit (lane D2 review, appended for the same reason)
+    /// A system stop's pass (`{prio:-100} {stop} any hand`, written or synthesised) is a
+    /// candidate for a player whose partner's last call was forcing (one round or to game) and
+    /// whose right-hand opponent passed, or while the partnership is in a game force below game:
+    /// every hand no other row takes passes a forcing call (Warning; `06-system.md` §4.5).
+    StopUnderForcing,
+    // `#EXACTPASS` (appended for the same reason)
+    /// `#EXACTPASS` in a table, or `#EXACTPASS FILE` before the tables of a file, where no row
+    /// of ours follows an opponents' pass (written `(P)` or implicit): there is no position to
+    /// guard, so the directive has no effect (Info; `06-system.md` §4.8).
+    ExactPassWithoutPass,
 }
 
 /// One diagnostic.
@@ -195,7 +226,326 @@ pub fn run_post_compile_checks(ir: &mut SystemIR, opts: &CompileOptions) {
     check_own_history(ir);
     check_recognition(ir);
     check_sibling_ambiguity(ir);
+    check_exclusive_branches(ir);
+    check_stop_under_forcing(ir);
     check_coverage(ir, opts);
+}
+
+/// [`LintCode::StopUnderForcing`]: walks the trie from both roots, tracking whether our side's
+/// last call was forcing with the opponents passing since (`one_round`), and whether our side
+/// has made a game-forcing call and no bid at game level or higher followed (`gf`). At our turn
+/// with either pending, a stop pass among the candidates that some hand reaches (not shadowed
+/// in the exclusive index under at least one condition class) is reported once per position,
+/// anchored at the forcing call's row. An opponents' bid releases a one-round force; the
+/// wildcard edge a pass would take (no exact `Pass` edge, the first class admitting a pass) is
+/// followed as that pass (the stop is reached through it), any other is a call of unknown
+/// level and releases both. The walk does not go past a
+/// stop pass (the partnership has stopped; the stop's shared loop is not re-reported).
+fn check_stop_under_forcing(ir: &mut SystemIR) {
+    use bridge_core::{Call, Strain};
+
+    use crate::{Forcing, exclusive::class_conditions, trie::AuctionTrie, trie::TrieId};
+
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    struct State {
+        at: TrieId,
+        ours: bool,
+        one_round: bool,
+        gf: bool,
+    }
+    #[derive(Clone, Copy)]
+    struct Anchors {
+        one_round: Option<NodeId>,
+        gf: Option<NodeId>,
+    }
+
+    fn is_game(call: Call) -> bool {
+        match call {
+            Call::Bid(b) => match b.strain() {
+                Strain::NoTrump => b.level() >= 3,
+                Strain::Hearts | Strain::Spades => b.level() >= 4,
+                _ => b.level() >= 5,
+            },
+            _ => false,
+        }
+    }
+
+    let trie = &ir.index;
+    let index = ir.exclusive();
+    let is_stop_pass = |id: NodeId| {
+        let n = ir.node(id);
+        n.call == Call::Pass && n.flags.stop && n.priority <= -100
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut reported = std::collections::HashSet::new();
+    let mut new_lints = Vec::new();
+    let mut stack = vec![
+        (
+            State {
+                at: AuctionTrie::root_id(true),
+                ours: true,
+                one_round: false,
+                gf: false,
+            },
+            Anchors {
+                one_round: None,
+                gf: None,
+            },
+            Vec::new(),
+        ),
+        (
+            State {
+                at: AuctionTrie::root_id(false),
+                ours: false,
+                one_round: false,
+                gf: false,
+            },
+            Anchors {
+                one_round: None,
+                gf: None,
+            },
+            Vec::new(),
+        ),
+    ];
+    // The path is only for the message, in BML's notation: the opponents' calls in
+    // parentheses, `(any)` for a wildcard step.
+    while let Some((st, anchors, path)) = stack.pop() {
+        // Checked on every arrival (a stop loop's shared node is reached from many forcing
+        // calls), reported once per (position, forcing call); only the expansion is deduplicated.
+        let anchor = if st.one_round {
+            anchors.one_round
+        } else {
+            anchors.gf
+        };
+        let fresh = anchor.is_some_and(|a| !reported.contains(&(st.at, a)));
+        if st.ours && (st.one_round || st.gf) && fresh {
+            // Only a stop pass some hand can reach: under at least one condition class it is a
+            // member of the exclusive group with a non-empty region (rows that cover every hand
+            // shadow it, and then no hand passes the forcing call).
+            let stop = (0u8..16).any(|class| {
+                let (opener_pos, vul) = class_conditions(class);
+                index.group_for(st.at, opener_pos, vul).is_some_and(|g| {
+                    g.members
+                        .iter()
+                        .any(|&(call, n)| call == Call::Pass && is_stop_pass(n))
+                        && !g.is_shadowed(Call::Pass)
+                })
+            });
+            if let (true, Some(anchor)) = (stop, anchor) {
+                reported.insert((st.at, anchor));
+                let node = ir.node(anchor);
+                let forcing_call = &path[..node.calls.len().min(path.len())];
+                let why = if st.one_round {
+                    "partner's forcing call, the opponents passing"
+                } else {
+                    "a game force of ours, below game"
+                };
+                new_lints.push(
+                    Lint::warning(
+                        LintCode::StopUnderForcing,
+                        format!(
+                            "a system stop's pass (any hand) is a candidate at {} after {} \
+                             ({why}): hands no row takes pass a forcing call",
+                            path.join("-"),
+                            forcing_call.join("-")
+                        ),
+                    )
+                    .with_row(node.row)
+                    .with_node(anchor)
+                    .with_span(ir.row(node.row).span.clone()),
+                );
+            }
+        }
+        if !seen.insert(st) {
+            continue;
+        }
+        for (call, child) in trie.exact_edges(st.at) {
+            let nodes: Vec<NodeId> = trie
+                .entries_at(child)
+                .map(|(_, _, n)| n)
+                .filter(|&n| !ir.node(n).is_synthesised())
+                .collect();
+            if st.ours
+                && call == Call::Pass
+                && trie.entries_at(child).any(|(_, _, n)| is_stop_pass(n))
+            {
+                continue;
+            }
+            let mut next = State {
+                at: child,
+                ours: !st.ours,
+                one_round: st.one_round,
+                gf: st.gf && !is_game(call),
+            };
+            let mut next_anchors = anchors;
+            if st.ours {
+                let forcing = |f: Forcing| {
+                    nodes
+                        .iter()
+                        .copied()
+                        .find(|&n| ir.node(n).flags.forcing == f)
+                };
+                let game = forcing(Forcing::ToGame);
+                let one = game.or_else(|| forcing(Forcing::OneRound));
+                next.one_round = one.is_some();
+                next_anchors.one_round = one;
+                if let Some(g) = game {
+                    if !is_game(call) {
+                        next.gf = true;
+                        next_anchors.gf = Some(g);
+                    }
+                }
+            } else if call != Call::Pass {
+                next.one_round = false;
+            }
+            let mut next_path = path.clone();
+            next_path.push(if st.ours {
+                format!("{call}")
+            } else {
+                format!("({call})")
+            });
+            stack.push((next, next_anchors, next_path));
+        }
+        if !st.ours {
+            // A pass takes the exact `Pass` edge when there is one, else the first wildcard
+            // that admits it (`AuctionTrie::resolve`); every other wildcard edge is reached
+            // only by a call other than a pass.
+            let mut pass_taken = trie.find_child_call(st.at, Call::Pass).is_some();
+            for (class, child) in trie.class_edges(st.at) {
+                let as_pass = !pass_taken && class.matches(Call::Pass);
+                pass_taken |= as_pass;
+                let next = if as_pass {
+                    State {
+                        at: child,
+                        ours: true,
+                        ..st
+                    }
+                } else {
+                    State {
+                        at: child,
+                        ours: true,
+                        one_round: false,
+                        gf: false,
+                    }
+                };
+                let mut next_path = path.clone();
+                next_path.push("(any)".to_owned());
+                stack.push((next, anchors, next_path));
+            }
+        }
+    }
+    ir.lints.extend(new_lints);
+}
+
+/// The exclusive-index lints (docs/design/06-system.md §9):
+///
+/// - [`LintCode::ShadowedBranch`] (Warning): branch `b` of our own node `m` with
+///   `b ∧ ¬∪{members ranked above m}` empty in *every* sibling group (every condition class)
+///   where `m` is a candidate. `choose_bid` then never selects `m` through `b`; when every
+///   branch is shadowed, the call is never chosen there at all. A branch that is empty on its
+///   own is left to [`LintCode::UnsatisfiableConstraint`]. Opponents' nodes
+///   ([`Side::Them`](crate::pattern::Side::Them)) are never reported: they are trie edges
+///   (mostly table headers such as `1C-(1H)-`) that usually carry no requirement, not choices
+///   of our policy, so every such call ranked below another one at the same position would
+///   otherwise read as shadowed.
+/// - [`LintCode::OverlappingBranches`] (Info): a node whose top-level `Or` branches overlap on
+///   the (shape, HCP) grid (for branches with literals: their superset boxes overlap), reported
+///   once per row and branch pair. The index disjointifies them.
+fn check_exclusive_branches(ir: &mut SystemIR) {
+    use crate::exclusive::{branches_of, grid_proves_empty, subtract};
+
+    let index = ir.exclusive();
+    // (node, branch) -> (groups where it appears, groups where it is shadowed)
+    let mut seen: HashMap<(NodeId, u16), (u32, u32)> = HashMap::new();
+    for group in index.groups() {
+        for (i, &(call, node)) in group.members.iter().enumerate() {
+            if ir.node(node).side == crate::pattern::Side::Them {
+                continue;
+            }
+            let branches = branches_of(&ir.node(node).constraint);
+            let pieces = group.pieces(call).unwrap_or(&[]);
+            let mut above: Option<Vec<&HandConstraint>> = None;
+            for (j, branch) in branches.iter().enumerate() {
+                let j = j as u16;
+                let entry = seen.entry((node, j)).or_insert((0, 0));
+                entry.0 += 1;
+                if pieces.iter().any(|p| p.node == node && p.branch == j) {
+                    continue;
+                }
+                if grid_proves_empty(branch) {
+                    continue;
+                }
+                let above = above.get_or_insert_with(|| {
+                    group.members[..i]
+                        .iter()
+                        .map(|&(_, id)| &ir.node(id).constraint)
+                        .collect()
+                });
+                if grid_proves_empty(&subtract(branch, above)) {
+                    entry.1 += 1;
+                }
+            }
+        }
+    }
+    let mut shadowed: Vec<(NodeId, u16)> = seen
+        .into_iter()
+        .filter(|&(_, (appear, shadowed))| appear > 0 && shadowed == appear)
+        .map(|(key, _)| key)
+        .collect();
+    shadowed.sort_unstable();
+
+    let mut new_lints = Vec::new();
+    for (node_id, branch) in shadowed {
+        let node = ir.node(node_id);
+        let count = branches_of(&node.constraint).len();
+        // Messages are kept short: lints are part of the serialised IR.
+        let message = if count == 1 {
+            "never chosen: higher-ranked siblings cover it".to_string()
+        } else {
+            format!(
+                "branch {}/{count} never chosen: higher-ranked siblings cover it",
+                branch + 1
+            )
+        };
+        new_lints.push(
+            Lint::warning(LintCode::ShadowedBranch, message)
+                .with_row(node.row)
+                .with_node(node.id)
+                .with_span(ir.row(node.row).span.clone()),
+        );
+    }
+    // One OverlappingBranches lint per row and branch pair (a row's expansions usually share
+    // the overlap).
+    let mut reported: std::collections::HashSet<(RowId, usize, usize)> =
+        std::collections::HashSet::new();
+    for node in &ir.nodes {
+        let branches = branches_of(&node.constraint);
+        if branches.len() < 2 {
+            continue;
+        }
+        let sups: Vec<_> = branches
+            .iter()
+            .map(|b| bridge_constraint::grid::bounds(b).sup)
+            .collect();
+        let feasible = bridge_constraint::HcpShapeGrid::feasible();
+        let pair = (0..sups.len()).find_map(|j| {
+            (j + 1..sups.len())
+                .find(|&k| !sups[j].and(&sups[k]).and(feasible).is_empty())
+                .map(|k| (j, k))
+        });
+        if let Some((j, k)) = pair.filter(|&(j, k)| reported.insert((node.row, j, k))) {
+            new_lints.push(
+                Lint::info(
+                    LintCode::OverlappingBranches,
+                    format!("branches {} and {} overlap", j + 1, k + 1),
+                )
+                .with_row(node.row)
+                .with_node(node.id)
+                .with_span(ir.row(node.row).span.clone()),
+            );
+        }
+    }
+    ir.lints.extend(new_lints);
 }
 
 /// §9.3 check 1: every node's constraint must be satisfiable.
@@ -309,9 +659,11 @@ fn check_sibling_ambiguity(ir: &mut SystemIR) {
         check_sibling_group(ir, &parent.children, &opts, &mut new_lints);
     }
 
+    // The synthesised stop nodes have no parent either, but they are not openings.
     let roots: Vec<NodeId> = ir
         .nodes
         .iter()
+        .filter(|n| !n.is_synthesised())
         .map(|n| n.id)
         .filter(|id| !has_parent.contains(id))
         .collect();
@@ -329,23 +681,24 @@ fn check_sibling_group(
     opts: &DnfOptions,
     new_lints: &mut Vec<Lint>,
 ) {
-    let mut groups: HashMap<
-        (
-            crate::pattern::Side,
-            crate::ast::SeatCond,
-            crate::ast::VulCond,
-        ),
-        Vec<NodeId>,
-    > = HashMap::new();
+    // Groups in order of first appearance, so the lints (part of the serialised IR) come out in
+    // the same order on every compile; a `HashMap` here made that order vary between runs.
+    type GroupKey = (
+        crate::pattern::Side,
+        crate::ast::SeatCond,
+        crate::ast::VulCond,
+    );
+    let mut groups: Vec<(GroupKey, Vec<NodeId>)> = Vec::new();
     for &child in children {
         let n = ir.node(child);
-        groups
-            .entry((n.side, n.seat, n.vul))
-            .or_default()
-            .push(child);
+        let key = (n.side, n.seat, n.vul);
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, members)) => members.push(child),
+            None => groups.push((key, vec![child])),
+        }
     }
 
-    for siblings in groups.into_values() {
+    for (_, siblings) in groups {
         if siblings.len() < 2 {
             continue;
         }
@@ -500,6 +853,7 @@ mod post_compile_tests {
             },
             balancing_shift: -3,
             implicit_raise_support: true,
+            level_floor: Default::default(),
         }
     }
 
@@ -617,6 +971,7 @@ mod post_compile_tests {
                 nodes: self.nodes,
                 index: AuctionTrie::new(),
                 lints: Vec::new(),
+                exclusive_cell: Default::default(),
             }
         }
     }

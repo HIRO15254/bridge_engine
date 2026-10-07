@@ -20,6 +20,7 @@
 | 11 | `11-testing.md` | テスト戦略 | 各クレートのテスト種別と基準、双方向整合性、再現率、ベンチ、CI とナイトリー |
 | 12 | `12-roadmap.md` | 実装順序 | フェーズ 0〜6 の PR 単位タスクと完了条件、リスク一覧 |
 | 13 | `13-decisions.md` | 決定記録 | D1〜D17 の ADR (決定・理由・仕様との差分・影響クレート) |
+| 16 | `16-extended-bml.md` | 拡張 BML リファレンス | 本コンパイラが受理する BML 方言の正本: ファイル構造、表、コールトークン、説明文の語彙、注釈とメタ行、解決の意味論、全 Lint、完全な EBNF、例とクックブック (例は `tests/bml_reference.rs` がコンパイルする) |
 
 ## 2. 読み方
 
@@ -40,7 +41,7 @@
 | §3 入出力 (`bridge-format`) | PBN / LIN / RBN / Deal 文字列 | `03-format.md` | `02-core.md` (Display/FromStr) |
 | §4 L1 ハンド評価 (`bridge-eval`) | HCP、コントロール、LTC、QT、分布点 | `04-eval.md` | `05-constraint.md` (`Metric`) |
 | §4 L1 制約言語 (`bridge-constraint`) | `HandConstraint` の四性質、正規化、階層サンプリング | `05-constraint.md` | `02-core.md` (`ShapeSet`), `13-decisions.md` (D1〜D4, D13) |
-| §5 L2 システム定義と BML | BML 採用、`SystemIR`、制約コンパイラ、フォールバック階層、バージョニング | `06-system.md` | `13-decisions.md` (D7, D9, D16, D17) |
+| §5 L2 システム定義と BML | BML 採用、`SystemIR`、制約コンパイラ、フォールバック階層、バージョニング | `06-system.md`、`16-extended-bml.md` (書き手向けの方言リファレンス) | `13-decisions.md` (D7, D9, D16, D17) |
 | §6 L3 解釈器と生成器 | `Table`、`interpret`、`choose_bid`、`BidChoice` | `07-bidding.md` | `13-decisions.md` (D6, D11, D15) |
 | §7 L4 サンプラー | `Proposal`、重点重み付け、ESS、並行化 | `09-sample.md` | `05-constraint.md` (`Sampler`), `13-decisions.md` (D12) |
 | §8 L5 プレイ側の約束 | ハード制約、リード約束、シグナル | `08-play.md` | `05-constraint.md` (`KnownCards`) |

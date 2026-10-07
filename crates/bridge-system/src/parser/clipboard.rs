@@ -136,13 +136,32 @@ fn apply_replacements(text: &str, replacements: &[(String, String)]) -> String {
     result
 }
 
-fn parse_paste_args(rest: &str) -> (String, Vec<(String, String)>) {
+/// The clipboard name and the `tgt=rep` substitutions after it. An argument with no `=`, or
+/// with an empty target (`=x`, which would insert `x` between every character), is dropped with
+/// a Warning.
+fn parse_paste_args(
+    rest: &str,
+    span: &crate::ast::Span,
+    lints: &mut Vec<Lint>,
+) -> (String, Vec<(String, String)>) {
     let mut tokens = rest.split_whitespace();
     let name = tokens.next().unwrap_or("").to_string();
     let mut replacements = Vec::new();
     for tok in tokens {
-        if let Some((tgt, rep)) = tok.split_once('=') {
-            replacements.push((tgt.to_string(), rep.to_string()));
+        match tok.split_once('=') {
+            Some((tgt, rep)) if !tgt.is_empty() => {
+                replacements.push((tgt.to_string(), rep.to_string()));
+            }
+            _ => lints.push(
+                Lint::warning(
+                    LintCode::UnknownDirective,
+                    format!(
+                        "#PASTE {name}: argument {tok:?} is not a `target=replacement` \
+                         substitution with a non-empty target; ignored"
+                    ),
+                )
+                .with_span(span.clone()),
+            ),
         }
     }
     (name, replacements)
@@ -205,7 +224,7 @@ fn expand_pastes_once(
         let trimmed = line.text.trim_start();
         if is_paste_line(&line) {
             let (_, rest) = first_word(trimmed);
-            let (name, replacements) = parse_paste_args(rest);
+            let (name, replacements) = parse_paste_args(rest, &line.span, lints);
             let indent = " ".repeat(indent_of(&line));
             match clipboard.find(&name) {
                 Some(body) => {

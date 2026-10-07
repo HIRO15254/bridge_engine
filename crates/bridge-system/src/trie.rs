@@ -6,6 +6,12 @@
 //! wildcard (`OppClass`) children separately; the row nodes attached to an edge are filtered
 //! by their seat/vulnerability conditions, the most specific one winning, so at most one node
 //! is returned per depth.
+//!
+//! The arena is a tree except for system stops (`docs/design/06-system.md` §4.5): the compiler
+//! links every stop position, through an `(any)` wildcard edge, to a shared pair of detached
+//! nodes -- the opponents' `(any)` step and our stop pass -- whose edges form a cycle (stop pass
+//! → `(any)` → `P` → stop pass). A walk therefore never ends, only its calls do; nothing here
+//! traverses the arena recursively.
 
 use bridge_constraint::HandConstraint;
 use bridge_core::{Auction, Call, Seat};
@@ -81,6 +87,13 @@ pub struct Lookup {
     pub by_depth: SmallVec<[Option<NodeId>; 16]>,
     /// The trie node reached at `matched_depth` (for `children`).
     pub end: TrieId,
+    /// The trie node reached at `matched_depth - 1`: the position whose `children` are the
+    /// siblings of the last matched call (the root when nothing matched, where it equals `end`).
+    /// Tracked inside the walk at no extra cost, so a caller never has to re-resolve the
+    /// one-call-shorter key to find the siblings; every attempt returned by
+    /// [`AuctionTrie::resolve_lenient`] carries it too. Used with
+    /// [`crate::exclusive::ExclusiveIndex`] to find the sibling group of a call.
+    pub parent: TrieId,
     /// Number of wildcard edges taken (0 = pure exact match).
     pub via_class: u8,
 }
@@ -182,6 +195,7 @@ impl AuctionTrie {
         let root = Self::root_id(key.we_opened);
         let mut cur = root;
         let mut end = root;
+        let mut parent = root;
         let mut matched_depth = 0usize;
         let mut via_class = 0u8;
         let mut by_depth: SmallVec<[Option<NodeId>; 16]> = smallvec![None; key.calls.len()];
@@ -213,6 +227,7 @@ impl AuctionTrie {
                 break;
             }
 
+            parent = cur;
             cur = child_id;
             end = child_id;
             matched_depth = i + 1;
@@ -225,6 +240,7 @@ impl AuctionTrie {
             matched_depth,
             by_depth,
             end,
+            parent,
             via_class,
         }
     }
@@ -403,7 +419,7 @@ impl AuctionTrie {
     }
 
     /// The existing child of `at` for `call`, without creating it.
-    fn find_child_call(&self, at: TrieId, call: Call) -> Option<TrieId> {
+    pub(crate) fn find_child_call(&self, at: TrieId, call: Call) -> Option<TrieId> {
         let idx = call.index();
         self.nodes[at.0 as usize]
             .exact
@@ -412,8 +428,23 @@ impl AuctionTrie {
             .map(|pos| self.nodes[at.0 as usize].exact[pos].1)
     }
 
+    /// The exact (concrete-call) edges out of `at`, in call-index order.
+    pub(crate) fn exact_edges(&self, at: TrieId) -> impl Iterator<Item = (Call, TrieId)> + '_ {
+        self.nodes[at.0 as usize].exact.iter().map(|&(idx, child)| {
+            (
+                Call::from_index(idx).expect("stored call index is valid"),
+                child,
+            )
+        })
+    }
+
+    /// The wildcard (opponents' class) edges out of `at`, in insertion (match) order.
+    pub(crate) fn class_edges(&self, at: TrieId) -> impl Iterator<Item = (OppClass, TrieId)> + '_ {
+        self.nodes[at.0 as usize].classes.iter().copied()
+    }
+
     /// The existing wildcard child of `at` for `class`, without creating it.
-    fn find_child_class(&self, at: TrieId, class: OppClass) -> Option<TrieId> {
+    pub(crate) fn find_child_class(&self, at: TrieId, class: OppClass) -> Option<TrieId> {
         self.nodes[at.0 as usize]
             .classes
             .iter()
@@ -454,6 +485,108 @@ impl AuctionTrie {
         Ok(())
     }
 
+    /// The trie position reached by `path` from the given root, without creating anything.
+    pub(crate) fn find_path(&self, we_opened: bool, path: &[Edge]) -> Option<TrieId> {
+        let mut cur = Self::root_id(we_opened);
+        for edge in path {
+            cur = match *edge {
+                Edge::Call(call) => self.find_child_call(cur, call)?,
+                Edge::Class(class) => self.find_child_class(cur, class)?,
+            };
+        }
+        Some(cur)
+    }
+
+    /// A new trie node with no parent (reachable only through edges added by
+    /// [`Self::link_call`] / [`Self::link_class`]): the shared nodes of system stops.
+    pub(crate) fn new_detached(&mut self) -> TrieId {
+        let id = TrieId(self.nodes.len() as u32);
+        self.nodes.push(TrieNode::root());
+        id
+    }
+
+    /// Adds the exact edge `at --call--> to`; `at` must not have one for `call` yet.
+    pub(crate) fn link_call(&mut self, at: TrieId, call: Call, to: TrieId) {
+        let idx = call.index();
+        let exact = &mut self.nodes[at.0 as usize].exact;
+        let pos = exact
+            .binary_search_by_key(&idx, |&(k, _)| k)
+            .expect_err("link_call: the edge already exists");
+        exact.insert(pos, (idx, to));
+    }
+
+    /// Appends the wildcard edge `at --class--> to` after `at`'s existing wildcard edges (so it
+    /// is tried last); `at` must not have one for `class` yet.
+    pub(crate) fn link_class(&mut self, at: TrieId, class: OppClass, to: TrieId) {
+        let classes = &mut self.nodes[at.0 as usize].classes;
+        debug_assert!(classes.iter().all(|&(c, _)| c != class));
+        classes.push((class, to));
+    }
+
+    /// Points `at`'s existing exact (`Edge::Call`) or wildcard (`Edge::Class`) edge at `to`
+    /// instead, keeping its place among `at`'s wildcard edges; the edge must exist.
+    pub(crate) fn relink(&mut self, at: TrieId, edge: Edge, to: TrieId) {
+        let node = &mut self.nodes[at.0 as usize];
+        let slot = match edge {
+            Edge::Call(call) => {
+                let idx = call.index();
+                node.exact
+                    .iter_mut()
+                    .find(|(k, _)| *k == idx)
+                    .map(|(_, child)| child)
+            }
+            Edge::Class(class) => node
+                .classes
+                .iter_mut()
+                .find(|(c, _)| *c == class)
+                .map(|(_, child)| child),
+        };
+        *slot.expect("relink: the edge exists") = to;
+    }
+
+    /// The `(seat, vul, node)` entries at `at`, in insertion order.
+    pub(crate) fn entries_at(
+        &self,
+        at: TrieId,
+    ) -> impl Iterator<Item = (SeatCond, VulCond, NodeId)> + '_ {
+        self.nodes[at.0 as usize]
+            .entries
+            .iter()
+            .map(|e| (e.seat, e.vul, e.node))
+    }
+
+    /// [`Self::insert_path`] at an existing trie node: adds the entry unless one with identical
+    /// conditions is already there (returned as `Err`, first definition wins).
+    pub(crate) fn push_entry(
+        &mut self,
+        at: TrieId,
+        seat: SeatCond,
+        vul: VulCond,
+        node: NodeId,
+    ) -> Result<(), NodeId> {
+        let specificity = seat.specificity() * 3 + vul.specificity();
+        let entries = &mut self.nodes[at.0 as usize].entries;
+        if let Some(existing) = entries.iter().find(|e| e.seat == seat && e.vul == vul) {
+            return Err(existing.node);
+        }
+        entries.push(Entry {
+            seat,
+            vul,
+            specificity,
+            node,
+        });
+        Ok(())
+    }
+
+    /// Whether some entry at `at` has a `(seat, vul)` condition covering the given one (see
+    /// [`Self::covering_entry`]).
+    pub(crate) fn covering_entry_at(&self, at: TrieId, seat: SeatCond, vul: VulCond) -> bool {
+        self.nodes[at.0 as usize]
+            .entries
+            .iter()
+            .any(|e| condition_covers(e.seat, e.vul, seat, vul))
+    }
+
     /// Number of trie nodes.
     pub fn len(&self) -> usize {
         self.nodes.len()
@@ -464,7 +597,25 @@ impl AuctionTrie {
         self.nodes.len() <= 2
     }
 
-    fn root_id(we_opened: bool) -> TrieId {
+    /// `true` when `at` has at least one exact child edge (a candidate of
+    /// [`AuctionTrie::children`] under some condition class).
+    pub fn has_children(&self, at: TrieId) -> bool {
+        !self.nodes[at.0 as usize].exact.is_empty()
+    }
+
+    /// `true` when some entry of an exact child of `at` carries a seat or vulnerability
+    /// condition, i.e. [`AuctionTrie::children`] may depend on `(opener_pos, vul)`. When
+    /// `false`, `children(at, ..)` is the same list for every condition.
+    pub fn children_are_conditioned(&self, at: TrieId) -> bool {
+        self.nodes[at.0 as usize].exact.iter().any(|&(_, child)| {
+            self.nodes[child.0 as usize]
+                .entries
+                .iter()
+                .any(|e| e.seat != SeatCond::Any || e.vul.specificity() != 0)
+        })
+    }
+
+    pub(crate) fn root_id(we_opened: bool) -> TrieId {
         TrieId(if we_opened { 0 } else { 1 })
     }
 
@@ -561,7 +712,12 @@ fn condition_overlaps(a_seat: SeatCond, a_vul: VulCond, b_seat: SeatCond, b_vul:
 /// never add a case it does not already handle. Checked by brute force over the finite domain
 /// (4 positions x 2 x 2 vulnerabilities): both condition types are small enums with no relation
 /// between variants worth hand-encoding.
-fn condition_covers(a_seat: SeatCond, a_vul: VulCond, b_seat: SeatCond, b_vul: VulCond) -> bool {
+pub(crate) fn condition_covers(
+    a_seat: SeatCond,
+    a_vul: VulCond,
+    b_seat: SeatCond,
+    b_vul: VulCond,
+) -> bool {
     for position in 1..=4u8 {
         if !b_seat.matches(position) {
             continue;

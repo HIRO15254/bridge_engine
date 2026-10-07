@@ -180,7 +180,8 @@ fn illegal_call_is_lint() {
 }
 
 /// A truncated system: past the point the trie covers exactly, resolution degrades to `Partial`
-/// via `resolve_lenient`, with `eps_partial` mixed in (non-strict).
+/// via `resolve_lenient`, with `eps_partial` mixed in (non-strict). Legacy mode
+/// ([`InterpretOptions::legacy`]); `partial_position_mirror_pieces` is the mirror's version.
 #[test]
 fn partial_and_natural_epsilon() {
     let sys = sayc_system();
@@ -196,7 +197,7 @@ fn partial_and_natural_epsilon() {
             bid(2, Strain::Hearts),
         ],
     );
-    let opts = InterpretOptions::default();
+    let opts = InterpretOptions::legacy();
     let interp = interpret(&table, &a, &opts);
 
     let pc = &interp.per_call[2];
@@ -222,7 +223,7 @@ fn partial_and_natural_epsilon() {
     // just shrinking its weight.
     let strict_opts = InterpretOptions {
         strict: true,
-        ..InterpretOptions::default()
+        ..InterpretOptions::legacy()
     };
     let strict_interp = interpret(&table, &a, &strict_opts);
     let strict_pc = &strict_interp.per_call[2];
@@ -235,6 +236,70 @@ fn partial_and_natural_epsilon() {
     );
     let (_, strict_weight, _) = &strict_pc.alternatives[0];
     assert!((*strict_weight - 1.0).abs() < TOL);
+}
+
+/// The mirror at a lenient (`Partial`) position: `X` pieces of the first full lenient match
+/// with the system weight `(1 − ε)`, the no-candidate complement at `(1 − ε)/n`, and `ANY` at
+/// `ε/n`; `log_scale` is `ln Σ raw`, and `strict` keeps only the `X` pieces.
+#[test]
+fn partial_position_mirror_pieces() {
+    let sys = sayc_system();
+    let table = table_of(&sys);
+    let a = auction(
+        Seat::North,
+        Vulnerability::None,
+        &[
+            bid(1, Strain::Hearts),
+            bid(1, Strain::NoTrump),
+            bid(2, Strain::Hearts),
+        ],
+    );
+    let opts = InterpretOptions::default();
+    let interp = interpret(&table, &a, &opts);
+    let pc = &interp.per_call[2];
+    assert_eq!(pc.kind, ResolutionKind::Partial { matched_depth: 1 });
+    assert_eq!(interp.divergence, Some(2));
+    assert!(!pc.shadowed);
+    let sum: f32 = pc.alternatives.iter().map(|(_, w, _)| *w).sum();
+    assert!((sum - 1.0).abs() < TOL);
+    let eps = f64::from(opts.policy.epsilon);
+    let prefix = auction(
+        Seat::North,
+        Vulnerability::None,
+        &[bid(1, Strain::Hearts), bid(1, Strain::NoTrump)],
+    );
+    let n = prefix.legal_calls().count() as f64;
+    let scale = pc.log_scale.exp();
+    let raw = |kind_ok: &dyn Fn(ResolutionKind) -> bool| -> f64 {
+        pc.alternatives
+            .iter()
+            .filter(|(_, _, ex)| kind_ok(ex.kind))
+            .map(|(_, w, _)| f64::from(*w) * scale)
+            .sum()
+    };
+    let system = raw(&|k| matches!(k, ResolutionKind::Partial { .. }));
+    assert!((system - (1.0 - eps)).abs() < 1e-5, "system raw {system}");
+    let fallback = raw(&|k| k == ResolutionKind::Fallback);
+    // The complement of the lenient siblings at (1 − ε)/n plus ANY at ε/n.
+    assert!(
+        (fallback - ((1.0 - eps) / n + eps / n)).abs() < 1e-5,
+        "fallback raw {fallback}"
+    );
+
+    let strict_opts = InterpretOptions {
+        strict: true,
+        ..InterpretOptions::default()
+    };
+    let strict_pc = &interpret(&table, &a, &strict_opts).per_call[2];
+    assert!(!strict_pc.alternatives.is_empty());
+    assert!(
+        strict_pc
+            .alternatives
+            .iter()
+            .all(|(_, _, ex)| ex.kind != ResolutionKind::Fallback)
+    );
+    let strict_sum: f32 = strict_pc.alternatives.iter().map(|(_, w, _)| *w).sum();
+    assert!((strict_sum - 1.0).abs() < TOL);
 }
 
 /// Regression: our own call can land exactly on an implicit-pass trie node that exists only
@@ -425,4 +490,224 @@ fn implicit_pass_bidirectional() {
             .iter()
             .any(|(c, w, ex)| ex.kind != ResolutionKind::Fallback && *w > 0.0 && c.satisfies(hand))
     );
+}
+
+/// `rank_order_shared` (07-bidding.md §8): over 10^4 SAYC positions, `choose_bid`'s
+/// `alternatives` follow the documented rank order (priority descending, then the system's
+/// `tie_break`, then call index ascending; recomputed here from the nodes, independently of
+/// `rank_cmp_keys`, which `choose_bid` itself sorts with), and their system members appear in the
+/// order of the exclusive index's sibling group (the order `interpret`'s mirror and
+/// `call_distribution` use), whenever the position resolves exactly.
+#[test]
+fn rank_order_shared() {
+    use bridge_system::TieBreak;
+    use bridge_system::{LookupKey, RelVul};
+
+    let table = compile_sayc("sayc.bml");
+    let ctx = BidContext {
+        scoring: Scoring::Imp,
+        natural: Some(table.natural.as_ref()),
+        implicit_pass: ImplicitPass::Complement,
+        policy: PolicyParams::system_players(),
+    };
+    let n: u64 = std::env::var("RANK_ORDER_N")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10_000);
+    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0x5A1C_7001);
+    let (mut checked, mut grouped) = (0u64, 0u64);
+    while checked < n {
+        let (deal, auction) = random_sayc_position(&mut rng, &table, &ctx);
+        if auction.is_complete() {
+            continue;
+        }
+        let seat = auction.next_seat();
+        let BidChoice::Chosen(chosen) = choose_bid(&table, deal.hand(seat), &auction, &ctx) else {
+            continue;
+        };
+        checked += 1;
+        let system = &table.systems[seat.index() as usize];
+        // The documented order as a lexicographic key (smaller ranks higher). A node-less
+        // candidate's row / volume ranks after every node's.
+        let key = |a: &bridge_bidding::Alternative| {
+            if let Some(n) = a.node {
+                assert_eq!(a.priority, system.node(n).priority, "priority of {n:?}");
+            }
+            let index = i64::from(a.call.index());
+            let tie = match system.meta.tie_break {
+                TieBreak::RowOrder => a.node.map_or(i64::MAX, |n| i64::from(system.node(n).row.0)),
+                TieBreak::Narrowest => a
+                    .node
+                    .map_or(i64::MAX, |n| i64::from(system.node(n).volume_log2)),
+                TieBreak::LowestCall => index,
+                TieBreak::HighestCall => -index,
+            };
+            (-i64::from(a.priority), tie, index)
+        };
+        for w in chosen.alternatives.windows(2) {
+            assert!(
+                key(&w[0]) <= key(&w[1]),
+                "alternatives out of rank order at {auction}: {:?} before {:?}",
+                w[0],
+                w[1]
+            );
+        }
+        let vulnerability = auction.vulnerability();
+        let vul = RelVul {
+            we: vulnerability.is_vulnerable(seat),
+            they: vulnerability.is_vulnerable(seat.next()),
+        };
+        let lk = match LookupKey::for_auction(&auction, seat) {
+            Some(k) => k,
+            None => LookupKey {
+                we_opened: true,
+                calls: &[],
+                opener_pos: auction.position_of(seat),
+                vul,
+            },
+        };
+        let lookup = system.index.resolve(&lk);
+        if lookup.matched_depth != lk.calls.len() {
+            continue;
+        }
+        let Some(group) = system
+            .exclusive()
+            .group_for(lookup.end, lk.opener_pos, lk.vul)
+        else {
+            continue;
+        };
+        let ranks: Vec<usize> = chosen
+            .alternatives
+            .iter()
+            .filter_map(|a| a.node.map(|n| (a.call, n)))
+            .map(|m| {
+                group
+                    .members
+                    .iter()
+                    .position(|&x| x == m)
+                    .unwrap_or_else(|| panic!("{m:?} is not a group member at {auction}"))
+            })
+            .collect();
+        assert!(
+            ranks.windows(2).all(|w| w[0] < w[1]),
+            "choose_bid order {ranks:?} differs from the index group order at {auction}"
+        );
+        grouped += 1;
+    }
+    eprintln!("rank_order_shared: {checked} positions, {grouped} compared with the index group");
+    assert!(grouped > n / 4, "only {grouped} positions resolved exactly");
+}
+
+/// The run-time recompute of `X_c` (15-phase4-plan D19): at a lenient position where a
+/// higher-ranked sibling is illegal after the actual prefix, the call's exclusive region comes
+/// from the legal siblings only, not from the index (where the illegal sibling shadows it), and
+/// the mirror still equals `call_distribution`.
+///
+/// System: `1C` opening; responses `1C-P-1D` (any hand, priority 10) and `1C-P-1H` (4+ hearts,
+/// priority 5). In `1C-(1D)-1H` the lenient match substitutes East's `1D` by `Pass`, so the
+/// position is `1C-P` with `1D` illegal. The index reads `1H` as shadowed by `1D`; the run-time
+/// region is `1H`'s own constraint.
+#[test]
+fn recomputed_region_when_a_higher_sibling_is_illegal() {
+    use bridge_bidding::call_distribution;
+    use rand_xoshiro::Xoshiro256PlusPlus;
+
+    let mut b = SystemBuilder::new();
+    b.insert(
+        true,
+        &[bid(1, Strain::Clubs)],
+        bid(1, Strain::Clubs),
+        atom_hcp(12, 21),
+        SeatCond::Any,
+        VulCond::default(),
+        "opening",
+        0,
+    );
+    b.insert(
+        true,
+        &[bid(1, Strain::Clubs), PASS, bid(1, Strain::Diamonds)],
+        bid(1, Strain::Diamonds),
+        atom_hcp(0, 37),
+        SeatCond::Any,
+        VulCond::default(),
+        "any response",
+        10,
+    );
+    b.insert(
+        true,
+        &[bid(1, Strain::Clubs), PASS, bid(1, Strain::Hearts)],
+        bid(1, Strain::Hearts),
+        atom_suit_hcp(Suit::Hearts, 4, 13, 0, 37),
+        SeatCond::Any,
+        VulCond::default(),
+        "four hearts",
+        5,
+    );
+    let table = Table::uniform(
+        Arc::new(b.build()),
+        Arc::new(bridge_system::NaturalInference::default()),
+    );
+    let ctx = BidContext {
+        scoring: Scoring::Imp,
+        natural: None,
+        implicit_pass: ImplicitPass::Complement,
+        policy: PolicyParams::human(),
+    };
+    let prefix = auction(
+        Seat::North,
+        Vulnerability::None,
+        &[bid(1, Strain::Clubs), bid(1, Strain::Diamonds)],
+    );
+    let a = prefix.with(bid(1, Strain::Hearts)).expect("legal");
+    let interp = interpret(&table, &a, &InterpretOptions::for_context(&ctx));
+    let pc = &interp.per_call[2];
+    assert_eq!(pc.kind, ResolutionKind::Partial { matched_depth: 1 });
+    assert!(!pc.shadowed, "1H is shadowed only by the illegal 1D");
+    let system_pieces: Vec<_> = pc
+        .alternatives
+        .iter()
+        .filter(|(_, _, ex)| matches!(ex.kind, ResolutionKind::Partial { .. }))
+        .collect();
+    assert_eq!(system_pieces.len(), 1, "{:?}", pc.alternatives);
+
+    // The mirror equals the policy on every hand (with and without four hearts).
+    let scale = pc.log_scale.exp();
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x4EC0);
+    let (mut with_hearts, mut without) = (0, 0);
+    for _ in 0..400 {
+        let hand = random_hand13(&mut rng);
+        if hand.holding(Suit::Hearts).len() >= 4 {
+            with_hearts += 1;
+        } else {
+            without += 1;
+        }
+        let p = f64::from(
+            call_distribution(&table, hand, &prefix, &ctx)
+                .iter()
+                .find(|(c, _)| *c == bid(1, Strain::Hearts))
+                .map(|(_, p)| *p)
+                .expect("1H is legal"),
+        );
+        let m: f64 = scale
+            * pc.alternatives
+                .iter()
+                .filter(|(c, _, _)| c.satisfies(hand))
+                .map(|(_, w, _)| f64::from(*w))
+                .sum::<f64>();
+        assert!(
+            (m - p).abs() <= 1e-4 * p,
+            "hand {hand:?}: mirror {m:e}, policy {p:e}"
+        );
+    }
+    assert!(with_hearts > 0 && without > 0);
+}
+
+/// A hand-built IR leaves every node's path empty; that does not make its nodes synthesised
+/// system-stop nodes (`Node::is_synthesised` reads the explicit flag).
+#[test]
+fn hand_built_nodes_are_not_synthesised() {
+    let sys = sayc_system();
+    assert!(!sys.sys.nodes.is_empty());
+    assert!(sys.sys.nodes.iter().all(|n| n.path.is_empty()));
+    assert!(!sys.sys.nodes.iter().any(|n| n.is_synthesised()));
 }

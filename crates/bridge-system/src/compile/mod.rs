@@ -79,8 +79,18 @@ pub fn compile(
             _ => None,
         })
         .collect();
-    let expansion = expand::expand_file(&tables, &meta, opts);
+    let mut expansion = expand::expand_file(&tables, &meta, opts);
     lints.extend(expansion.lints);
+    // What a user reads (`BidChoice::explanation`, `interpret`): the `{prio:N}` / `{w:X}` /
+    // `{stop}` annotations are already in each node's priority, branch weights and flags, and
+    // `Row::description_raw` keeps them. Done once here, after every expansion-time check that
+    // reads a description (placeholders, duplicate paths), so nothing pays for it per call.
+    for node in &mut expansion.nodes {
+        let stripped = desc::normalize::strip_annotations(&node.description);
+        if stripped.len() != node.description.len() {
+            node.description = stripped.into_owned();
+        }
+    }
 
     let mut ir = SystemIR {
         meta,
@@ -88,7 +98,16 @@ pub fn compile(
         nodes: expansion.nodes,
         index: expansion.trie,
         lints,
+        exclusive_cell: Default::default(),
     };
+    // The derived exclusive-region index (docs/design/06-system.md §5): built eagerly here so
+    // the first `interpret`/`call_distribution` does not pay for it, and before the
+    // post-compile checks, whose `ShadowedBranch`/`OverlappingBranches` lints read it. It is
+    // not serialised; the lints only append to `ir.lints`, which the index does not depend on.
+    let index = crate::exclusive::ExclusiveIndex::build(&ir);
+    let exclusive = index.stats(&ir);
+    // A freshly constructed IR has an empty cell, so `set` cannot fail.
+    let _ = ir.exclusive_cell.set(index);
     crate::lint::run_post_compile_checks(&mut ir, opts);
 
     let summary = crate::lint::LintSummary::of(&ir.lints);
@@ -100,6 +119,9 @@ pub fn compile(
         lints_error = summary.errors,
         lints_warn = summary.warnings,
         lints_info = summary.infos,
+        exclusive_groups = exclusive.groups,
+        exclusive_pieces = exclusive.pieces,
+        exclusive_tree_pieces = exclusive.tree_pieces,
         elapsed_ms = started.map_or(0, |s| s.elapsed().as_millis() as u64),
         "compiled a BML system"
     );

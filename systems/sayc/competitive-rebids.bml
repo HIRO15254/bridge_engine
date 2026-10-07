@@ -1,0 +1,213 @@
+* Later rounds of competitive auctions
+
+Phase 4 (NOTES.md #P4). The booklet stops at responder's first call over an
+overcall; the tables below carry the most frequent competitive auctions one or
+two rounds further with the same rebid framework as the uncontested ones
+(minimum 12--15 / medium 16--18 / maximum 19--21 for opener). Every
+continuation ends in a system stop (`passes.bml`): a partnership that has
+described its hands stops, and later competition by the opponents is passed.
+
+** Opener's rebid after a negative double
+
+The negative double promised four cards in the unbid major (both majors after
+1!c-(1!d)) and 6+ points. Opener with four cards there bids it at the cheapest
+level with a minimum, jumps with a medium hand and bids game with a maximum.
+Otherwise opener rebids notrump with a stopper (1NT 12--14, 2NT 18--19), jumps
+in a six-card suit with a medium hand, and with anything else makes the
+cheapest rebid of the opening suit (the double is forcing, so this rebid
+carries no requirement of its own). Responder raises a minimum major rebid to
+game with 12+ and invites with 10--11; accepts the jump with 8+; bids 3NT
+opposite 1NT with 13+ and invites with 2NT; and otherwise passes.
+
+#CUT fit-min
+  (P)
+    4\F = {prio:2} 12+ hcp
+      #STOP
+    3\F = {prio:1} 10--11 hcp
+      (P)
+        4\F = {prio:1} 14+ hcp
+          #STOP
+        P = {prio:-100} {stop} any hand
+      (any)
+        P = {prio:-100} {stop} any hand
+    P = {prio:-100} {stop} any hand
+  (any)
+    P = {prio:-100} {stop} any hand
+#ENDCUT
+
+#CUT fit-jump
+  (P)
+    4\F = {prio:1} 8+ hcp
+      #STOP
+    P = {prio:-100} {stop} any hand
+  (any)
+    P = {prio:-100} {stop} any hand
+#ENDCUT
+
+#CUT nt-min
+  (P)
+    3N = {prio:2} 13+ hcp
+      #STOP
+    2N = {prio:1} 11--12 hcp
+      (P)
+        3N = {prio:1} 13--14 hcp
+          #STOP
+        P = {prio:-100} {stop} any hand
+      (any)
+        P = {prio:-100} {stop} any hand
+    P = {prio:-100} {stop} any hand
+  (any)
+    P = {prio:-100} {stop} any hand
+#ENDCUT
+
+#CUT nt-max
+  (P)
+    3N = {prio:1} any hand
+      #STOP
+  (any)
+    P = {prio:-100} {stop} any hand
+#ENDCUT
+
+#CUT neg-dbl-rebid
+\C = {prio:4} 19--21 hcp, 4+!\s
+  #STOP
+\B = {prio:4} 16--18 hcp, 4+!\s
+#PASTE fit-jump \F=\M
+\A = {prio:4} 12--15 hcp, 4+!\s
+#PASTE fit-min \F=\M
+2N = {prio:2} 18--19 hcp, bal, stopper
+#PASTE nt-max
+1N = {prio:2} 12--14 hcp, bal, stopper
+#PASTE nt-min
+\J = {prio:1} 16--18 hcp, 6+!\o
+  #STOP
+\O = {prio:-1} any hand
+  #STOP
+#ENDCUT
+
+When the opener's left-hand opponent raises the overcall or cuebids opener's
+suit over the double, opener is no longer forced to bid: with four cards in the
+doubler's major opener competes in it (a jump or game with extra values), and
+otherwise passes. After any other call opener passes.
+
+#CUT neg-dbl-compete-3
+4\M = {prio:3} 17+ hcp, 4+!\s
+  #STOP
+3\M = {prio:1} 4+!\s
+  #STOP
+P = {prio:-100} {stop} any hand
+#ENDCUT
+
+#CUT neg-dbl-compete
+4\M = {prio:3} 17+ hcp, 4+!\s
+  #STOP
+2\M = {prio:2} 12--16 hcp, 4+!\s
+  #STOP
+3\M = {prio:1} 4+!\s
+  #STOP
+P = {prio:-100} {stop} any hand
+#ENDCUT
+
+1C-(1H)-D-(P)-
+#PASTE neg-dbl-rebid \C=4S \B=2S \A=1S \M=S \s=s \J=3C \O=2C \o=c
+
+1C-(1H)-D-(2H)-
+#PASTE neg-dbl-compete \M=S \s=s
+
+1C-(1H)-D-(2C)-
+#PASTE neg-dbl-compete \M=S \s=s
+
+1C-(1H)-D-(any)-
+P = {prio:-100} {stop} any hand
+
+1D-(1H)-D-(P)-
+#PASTE neg-dbl-rebid \C=4S \B=2S \A=1S \M=S \s=s \J=3D \O=2D \o=d
+
+1D-(1H)-D-(2H)-
+#PASTE neg-dbl-compete \M=S \s=s
+
+1D-(1H)-D-(2D)-
+#PASTE neg-dbl-compete \M=S \s=s
+
+1D-(1H)-D-(any)-
+P = {prio:-100} {stop} any hand
+
+1C-(1S)-D-(P)-
+#PASTE neg-dbl-rebid \C=4H \B=3H \A=2H \M=H \s=h \J=3C \O=2C \o=c
+
+1C-(1S)-D-(2S)-
+#PASTE neg-dbl-compete-3 \M=H \s=h
+
+1C-(1S)-D-(2C)-
+#PASTE neg-dbl-compete \M=H \s=h
+
+1C-(1S)-D-(any)-
+P = {prio:-100} {stop} any hand
+
+1D-(1S)-D-(P)-
+#PASTE neg-dbl-rebid \C=4H \B=3H \A=2H \M=H \s=h \J=3D \O=2D \o=d
+
+1D-(1S)-D-(2S)-
+#PASTE neg-dbl-compete-3 \M=H \s=h
+
+1D-(1S)-D-(2D)-
+#PASTE neg-dbl-compete \M=H \s=h
+
+1D-(1S)-D-(any)-
+P = {prio:-100} {stop} any hand
+
+After 1!c-(1!d)-double, opener shows a four-card heart suit first, then spades.
+
+1C-(1D)-D-(P)-
+4H = {prio:5} 19--21 hcp, 4+!h
+  #STOP
+2H = {prio:5} 16--18 hcp, 4+!h
+#PASTE fit-jump \F=H
+1H = {prio:5} 12--15 hcp, 4+!h
+#PASTE fit-min \F=H
+#PASTE neg-dbl-rebid \C=4S \B=2S \A=1S \M=S \s=s \J=3C \O=2C \o=c
+
+1C-(1D)-D-(2D)-
+4H = {prio:4} 17+ hcp, 4+!h
+  #STOP
+2H = {prio:3} 12--16 hcp, 4+!h
+  #STOP
+3H = {prio:2} 4+!h
+  #STOP
+#PASTE neg-dbl-compete \M=S \s=s
+
+1C-(1D)-D-(2C)-
+4H = {prio:4} 17+ hcp, 4+!h
+  #STOP
+2H = {prio:3} 12--16 hcp, 4+!h
+  #STOP
+3H = {prio:2} 4+!h
+  #STOP
+#PASTE neg-dbl-compete \M=S \s=s
+
+1C-(1D)-D-(any)-
+P = {prio:-100} {stop} any hand
+
+After 1!h-(1!s)-double (both minors), opener rebids a six-card heart suit,
+notrump with a stopper, or the cheaper four-card minor.
+
+1H-(1S)-D-(P)-
+3H = {prio:3} 16--18 hcp, 6+!h
+  #STOP
+2N = {prio:2} 18--19 hcp, bal, stopper
+#PASTE nt-max
+1N = {prio:2} 12--14 hcp, bal, stopper
+#PASTE nt-min
+3C = {prio:1} 16+ hcp, 4+!c
+  #STOP
+3D = {prio:1} 16+ hcp, 4+!d
+  #STOP
+2C = 4+!c
+  #STOP
+2D = 4+!d
+  #STOP
+2H = {prio:-1} any hand
+  #STOP
+
+1H-(1S)-D-(any)-
+P = {prio:-100} {stop} any hand

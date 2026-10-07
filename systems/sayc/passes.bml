@@ -1,0 +1,23 @@
+* System stops
+
+Phase 4 (NOTES.md #P1). A position with no rows is off-system: its call is chosen
+by natural inference, and so is every later call of the partnership, because our
+own pass is a trie edge only where a row names it. Where this file's answer is
+"pass from now on" -- we defend quietly while the opponents bid on, or the
+partnership has reached its contract -- the tables say so with a system stop
+(`docs/design/06-system.md` §4.5): from the stop on, whatever the opponents call,
+the partnership passes with any hand, and the auction stays on the system for the
+calls that follow.
+
+Two markers write it. A table's lowest-ranked call `P = {prio:-100} {stop} any hand`
+is our pass with no requirement: under the phase-4 rank policy it is chosen exactly
+when no other listed call applies, like the implicit pass it replaces, and after it
+the partnership has stopped. A `#STOP` line under a row (or at a table's top level,
+for the history row's last call) stops the partnership after that row's call, when
+it ends our bidding. The stop pass after a stop carries `{prio:-100}` too. An
+opponents' call that a table writes out after a stop keeps that table's meaning (the
+stop only answers the calls no row names).
+
+Until the integration of phase 4 these stops were written out as pasted pass chains
+(six rounds of `(any)` and our pass, about 34k rows); the compiler now grafts the same
+structure onto the trie from the markers, without a row per position.

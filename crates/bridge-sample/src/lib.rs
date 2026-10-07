@@ -328,6 +328,8 @@ mod tests {
             call: explanation.call,
             kind: ResolutionKind::Exact,
             alternatives: vec![(strong_balanced.clone(), 1.0, explanation)],
+            log_scale: 0.0,
+            shadowed: false,
         };
         let interpretation = Interpretation {
             seats: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
@@ -429,6 +431,8 @@ mod tests {
             call: explanation.call,
             kind: ResolutionKind::Exact,
             alternatives: vec![(balanced.clone(), 1.0, explanation)],
+            log_scale: 0.0,
+            shadowed: false,
         };
         let interpretation = Interpretation {
             seats: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],

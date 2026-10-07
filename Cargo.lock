@@ -237,6 +237,7 @@ dependencies = [
  "bridge-eval",
  "insta",
  "postcard",
+ "rand_xoshiro",
  "serde",
  "serde_json",
  "smallvec",
@@ -1690,8 +1691,17 @@ checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 name = "xtask"
 version = "0.0.1"
 dependencies = [
+ "bridge-bidding",
+ "bridge-constraint",
+ "bridge-core",
+ "bridge-eval",
+ "bridge-format",
+ "bridge-system",
  "flate2",
+ "postcard",
+ "rand_xoshiro",
  "serde",
+ "serde_json",
  "sha2",
  "tar",
  "toml",

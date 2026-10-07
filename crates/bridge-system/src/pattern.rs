@@ -65,7 +65,8 @@ impl StrainSet {
     }
 }
 
-/// A bid level, or `n` for "any level" (extension used by some real files).
+/// A bid level, `n` for "any level" (extension used by some real files), or a level relative to
+/// the path's last bid (`c`, `j`; phase-4 extension, `docs/design/06-system.md` §4.6).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Level {
@@ -73,6 +74,20 @@ pub enum Level {
     At(u8),
     /// `n`.
     Any,
+    /// `c` (extension): the lowest level at which the strain is sufficient after the last bid of
+    /// the path, either side (level 1 when nothing has been bid yet). `cS` over `1H` is `1S`,
+    /// over `2H` it is `2S`, over `2S` it is `3S`.
+    Cheapest,
+    /// `j` (extension): one level above [`Level::Cheapest`], a single jump. `jS` over `1H` is
+    /// `2S`; there is no candidate when that would pass `7`.
+    Jump,
+}
+
+impl Level {
+    /// Whether the level is relative to the path's last bid (`c`, `j`).
+    pub const fn is_relative(self) -> bool {
+        matches!(self, Level::Cheapest | Level::Jump)
+    }
 }
 
 /// A call pattern as written in BML.
@@ -179,6 +194,15 @@ impl Binding {
     /// must have checked that with [`Binding::get`] first and dropped the row otherwise, per
     /// `Lint::UnboundOther`), so they yield an empty list here.
     pub fn candidates(&self, var: Var, used: StrainSet) -> Vec<Strain> {
+        self.candidates_in_order(var, used, true)
+    }
+
+    /// [`Binding::candidates`], with the `X < Y < Z` order applied only when `ordered` is set.
+    /// An `#ANYORDER` table (`docs/design/06-system.md` §4.7) passes `false`: a fresh `X`, `Y`
+    /// or `Z` may then take any unused strain of its domain, above or below the ones already
+    /// bound (distinctness still holds, because a bound variable's strain has been bid and is in
+    /// `used`).
+    pub fn candidates_in_order(&self, var: Var, used: StrainSet, ordered: bool) -> Vec<Strain> {
         let domain = match var {
             Var::Major => StrainSet::MAJORS,
             Var::Minor => StrainSet::MINORS,
@@ -191,6 +215,7 @@ impl Binding {
         // must be below it, and the upper bound is the lowest already-bound variable that must
         // be above it.
         let (lower_bound, upper_bound) = match var {
+            _ if !ordered => (None, None),
             Var::X => (None, min_strain(self.y, self.z)),
             Var::Y => (self.x, self.z),
             Var::Z => (max_strain(self.x, self.y), None),

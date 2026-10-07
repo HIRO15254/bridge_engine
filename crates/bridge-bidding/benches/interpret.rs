@@ -13,12 +13,27 @@
 //! `1NT-P-2C-P-2H-P-3NT-P-P-P` (a natural, non-competitive auction) and
 //! `1S-(2H)-X-(P)-3S-(P)-P-P` (a competitive one, with a negative double and a raise under
 //! interference).
+//!
+//! Phase 4 (docs/design/15-phase4-plan.md, lane B step 7) adds:
+//!
+//! - `interpret/sayc-12-call-on-policy`: a 12-call SAYC auction in which every call is one the
+//!   policy makes (the acceptance bench `interpret/sayc-12-call-auction` ends in an off-policy,
+//!   shadowed 3NT).
+//! - `interpret/natural-heavy-auction`: a competitive corpus auction with 9 natural calls.
+//! - `interpret-step-a/*`: Step A alone (`interpret_per_call`), for the Step A / Step B split
+//!   (Step B = `interpret/*` minus `interpret-step-a/*`).
+//! - `interpret-cold/*`: the first interpretation of an auction under a table whose positions are
+//!   not memoised yet (a fresh natural-engine allocation per iteration, so every position misses
+//!   the per-thread memo); `(cold - warm) / natural calls` is the cold cost per natural call.
+//! - `interpret-human/sayc-12-call-auction`: the mirror under `PolicyParams::human()` (`δ > 0`
+//!   adds the natural pieces at on-system positions).
+//! - `auction-policy/*`: `AuctionPolicy::log_likelihood` per deal (and `AuctionPolicy::new`).
 
 use std::sync::Arc;
 
 use bridge_bidding::{
-    BidContext, ImplicitPass, InterpretOptions, PolicyParams, Scoring, Table, interpret,
-    sequence_log_likelihood,
+    AuctionPolicy, BidContext, ImplicitPass, InterpretOptions, PolicyParams, Scoring, Table,
+    interpret, interpret_per_call, sequence_log_likelihood,
 };
 use bridge_constraint::{Atom, HandConstraint};
 use bridge_core::{Auction, Bid, Call, Deal, Hand, Seat, Strain, Suit, Vulnerability};
@@ -27,7 +42,7 @@ use bridge_system::pattern::{Binding, Side};
 use bridge_system::{
     Alertability, Forcing, Node, NodeFlags, NodeId, Recognition, Row, RowId, SystemIR, SystemMeta,
 };
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 
 fn bid(level: u8, strain: Strain) -> Call {
     Call::Bid(Bid::new(level, strain).unwrap())
@@ -134,6 +149,7 @@ fn bench_system() -> SystemIR {
         nodes: Vec::new(),
         index: bridge_system::AuctionTrie::new(),
         lints: Vec::new(),
+        exclusive_cell: Default::default(),
     };
 
     let strains = [
@@ -180,6 +196,7 @@ fn bench_system_realistic() -> SystemIR {
         nodes: Vec::new(),
         index: bridge_system::AuctionTrie::new(),
         lints: Vec::new(),
+        exclusive_cell: Default::default(),
     };
 
     let strains = [
@@ -472,6 +489,190 @@ fn bench_interpret_sayc_12_call(c: &mut Criterion) {
     });
 }
 
+/// A natural-heavy competitive auction from the corpus (D20 corpus enumeration of
+/// `tests/common::corpus_auctions_with_deals`, index 615; dealer West, NS vulnerable):
+/// `1H-(1S)-2C-(2D)-X-(P)-2H-(P)-3H-(P)-P-(P)`, 12 calls of which 9 are read naturally under
+/// SAYC (2 of them shadowed; the count is recomputed and printed when the bench starts).
+fn bench_auction_natural_heavy() -> Auction {
+    Auction::from_calls(
+        Seat::West,
+        Vulnerability::NS,
+        vec![
+            bid(1, Strain::Hearts),
+            bid(1, Strain::Spades),
+            bid(2, Strain::Clubs),
+            bid(2, Strain::Diamonds),
+            Call::Double,
+            Call::Pass,
+            bid(2, Strain::Hearts),
+            Call::Pass,
+            bid(3, Strain::Hearts),
+            Call::Pass,
+            Call::Pass,
+            Call::Pass,
+        ],
+    )
+    .unwrap()
+}
+
+/// `P-P-1NT-P-2C-P-2S-P-4S-P-P-P` (dealer North, none vulnerable): a 12-call SAYC auction that
+/// `replay` bids with the system-players policy (Stayman, a 2S answer, a raise to game), in which
+/// every call is one the policy makes (none shadowed; the four closing passes are read
+/// naturally). `interpret/sayc-12-call-auction` is the acceptance bench, but its 3NT is
+/// off-policy: SAYC has no continuation after `1C-1H-1S-2NT` and the natural rules have no 3NT
+/// candidate there, so it is shadowed and read by its `Fallback` pieces only.
+fn bench_auction_sayc_12_on_policy() -> Auction {
+    Auction::from_calls(
+        Seat::North,
+        Vulnerability::None,
+        vec![
+            Call::Pass,
+            Call::Pass,
+            bid(1, Strain::NoTrump),
+            Call::Pass,
+            bid(2, Strain::Clubs),
+            Call::Pass,
+            bid(2, Strain::Spades),
+            Call::Pass,
+            bid(4, Strain::Spades),
+            Call::Pass,
+            Call::Pass,
+            Call::Pass,
+        ],
+    )
+    .unwrap()
+}
+
+fn sayc_table() -> Table {
+    let system = Arc::new(compile_sayc());
+    let natural = Arc::new(bridge_system::NaturalInference::default());
+    Table::uniform(system, natural)
+}
+
+fn bench_interpret_step_a(c: &mut Criterion) {
+    let table = sayc_table();
+    let opts = InterpretOptions::default();
+    for (name, auction) in [
+        ("sayc-12-call-auction", bench_auction_sayc_12_call()),
+        ("sayc-1nt-auction", bench_auction_sayc_1nt()),
+        ("sayc-competitive-auction", bench_auction_sayc_competitive()),
+    ] {
+        c.bench_function(&format!("interpret-step-a/{name}"), |b| {
+            b.iter(|| std::hint::black_box(interpret_per_call(&table, &auction, &opts)))
+        });
+    }
+    let synthetic = Table::uniform(
+        Arc::new(bench_system()),
+        Arc::new(bridge_system::NaturalInference::default()),
+    );
+    let auction = bench_auction();
+    c.bench_function("interpret-step-a/12-call-auction", |b| {
+        b.iter(|| std::hint::black_box(interpret_per_call(&synthetic, &auction, &opts)))
+    });
+}
+
+fn bench_interpret_sayc_12_on_policy(c: &mut Criterion) {
+    let table = sayc_table();
+    let opts = InterpretOptions::default();
+    let auction = bench_auction_sayc_12_on_policy();
+    let shadowed = interpret(&table, &auction, &opts)
+        .per_call
+        .iter()
+        .filter(|pc| pc.shadowed)
+        .count();
+    eprintln!("sayc-12-call-on-policy: {shadowed} shadowed calls");
+    c.bench_function("interpret/sayc-12-call-on-policy", |b| {
+        b.iter(|| std::hint::black_box(interpret(&table, &auction, &opts)))
+    });
+}
+
+fn bench_interpret_natural_heavy(c: &mut Criterion) {
+    let table = sayc_table();
+    let opts = InterpretOptions::default();
+    let auction = bench_auction_natural_heavy();
+    let natural_calls = interpret(&table, &auction, &opts)
+        .per_call
+        .iter()
+        .filter(|pc| pc.kind == bridge_bidding::ResolutionKind::Natural)
+        .count();
+    c.bench_function("interpret/natural-heavy-auction", |b| {
+        b.iter(|| std::hint::black_box(interpret(&table, &auction, &opts)))
+    });
+    // A table with the same systems and a fresh natural-engine allocation: nothing of it is
+    // memoised yet (the memo is keyed by the table's allocations).
+    let fresh = || Table {
+        systems: table.systems.clone(),
+        natural: Arc::new((*table.natural).clone()),
+    };
+    eprintln!("natural-heavy-auction: {natural_calls} natural calls");
+    c.bench_function("interpret-cold/natural-heavy-auction", |b| {
+        b.iter_batched_ref(
+            fresh,
+            |t| std::hint::black_box(interpret(t, &auction, &opts)),
+            BatchSize::SmallInput,
+        )
+    });
+    let sayc_12 = bench_auction_sayc_12_call();
+    c.bench_function("interpret-cold/sayc-12-call-auction", |b| {
+        b.iter_batched_ref(
+            fresh,
+            |t| std::hint::black_box(interpret(t, &sayc_12, &opts)),
+            BatchSize::SmallInput,
+        )
+    });
+}
+
+fn human_ctx(table: &Table) -> BidContext<'_> {
+    BidContext {
+        scoring: Scoring::Imp,
+        natural: Some(table.natural.as_ref()),
+        implicit_pass: ImplicitPass::Complement,
+        policy: PolicyParams::human(),
+    }
+}
+
+fn bench_interpret_human(c: &mut Criterion) {
+    let table = sayc_table();
+    let ctx = human_ctx(&table);
+    let opts = InterpretOptions::for_context(&ctx);
+    let auction = bench_auction_sayc_12_call();
+    c.bench_function("interpret-human/sayc-12-call-auction", |b| {
+        b.iter(|| std::hint::black_box(interpret(&table, &auction, &opts)))
+    });
+}
+
+fn bench_auction_policy(c: &mut Criterion) {
+    let table = sayc_table();
+    let auction = bench_auction_sayc_12_call();
+    let deal = bench_deal();
+    for (name, policy) in [
+        ("system-players", PolicyParams::system_players()),
+        ("human", PolicyParams::human()),
+    ] {
+        let ctx = BidContext {
+            policy,
+            ..human_ctx(&table)
+        };
+        let ap = AuctionPolicy::new(&table, &auction, &ctx);
+        c.bench_function(
+            &format!("auction-policy/log-likelihood/sayc-12-call-auction/{name}"),
+            |b| b.iter(|| std::hint::black_box(ap.log_likelihood(&deal))),
+        );
+        c.bench_function(
+            &format!("auction-policy/new/sayc-12-call-auction/{name}"),
+            |b| b.iter(|| std::hint::black_box(AuctionPolicy::new(&table, &auction, &ctx))),
+        );
+        c.bench_function(
+            &format!("sequence_log_likelihood/sayc-12-call-auction/{name}"),
+            |b| {
+                b.iter(|| {
+                    std::hint::black_box(sequence_log_likelihood(&table, &deal, &auction, &ctx))
+                })
+            },
+        );
+    }
+}
+
 criterion_group!(
     benches,
     bench_interpret,
@@ -480,6 +681,11 @@ criterion_group!(
     bench_sequence_log_likelihood_realistic,
     bench_interpret_sayc_1nt,
     bench_interpret_sayc_competitive,
-    bench_interpret_sayc_12_call
+    bench_interpret_sayc_12_call,
+    bench_interpret_sayc_12_on_policy,
+    bench_interpret_step_a,
+    bench_interpret_natural_heavy,
+    bench_interpret_human,
+    bench_auction_policy
 );
 criterion_main!(benches);

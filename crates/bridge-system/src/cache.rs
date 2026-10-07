@@ -1,6 +1,7 @@
 //! On-disk cache of compiled systems.
 //!
-//! Key = `blake3(resolved source ‖ compiler_version ‖ ir_format ‖ options)`; value = the
+//! Key = `blake3(resolved source ‖ compiler_version ‖ ir_format ‖ compile_revision ‖ options)`;
+//! value = the
 //! `postcard`-encoded [`SystemIR`]. Any mismatch recompiles. BML remains the source of truth;
 //! the cache is an optimisation, not a distribution format.
 
@@ -82,12 +83,15 @@ impl SystemCache {
     }
 
     /// The cache key for a resolved source: `blake3(source ‖ compiler_version ‖ ir_format ‖
-    /// options)`.
+    /// compile_revision ‖ options)`. [`crate::COMPILE_REVISION`] keeps an entry written by an
+    /// older `compile()` of the same crate version and IR format (one without newer lints) from
+    /// being served.
     pub fn key(source: &[u8], opts: &CompileOptions) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
         hasher.update(source);
         hasher.update(crate::COMPILER_VERSION.as_bytes());
         hasher.update(&IR_FORMAT.to_le_bytes());
+        hasher.update(&crate::COMPILE_REVISION.to_le_bytes());
         hasher.update(&opts.coverage_samples.to_le_bytes());
         hasher.update(&[opts.strict_dnf as u8]);
         hasher.update(&(opts.max_nodes as u64).to_le_bytes());
@@ -204,6 +208,7 @@ mod tests {
             nodes: Vec::new(),
             index: crate::trie::AuctionTrie::new(),
             lints: Vec::new(),
+            exclusive_cell: Default::default(),
         };
         sentinel.meta.name = "SENTINEL: planted directly, never compiled".to_string();
         sentinel.meta.ir_format = IR_FORMAT;
@@ -212,6 +217,51 @@ mod tests {
 
         let (ir, _) = cache.load_or_compile(&src_path, &loader, &opts).unwrap();
         assert_eq!(ir.meta.name, sentinel.meta.name);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_entry_under_the_pre_revision_key_is_a_miss() {
+        // A phase-3 compiler of the same crate version and IR format keyed entries without
+        // `COMPILE_REVISION`. An IR planted under that old key (standing for an IR compiled
+        // without the phase-4 lints) must not be served: the next load recompiles.
+        let dir = temp_cache_dir("revision");
+        let cache = SystemCache::new(&dir);
+        let loader = MemLoader::default();
+        let opts = CompileOptions::default();
+        let src_path = dir.join("root.bml");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&src_path, "#+TITLE: Test System\n").unwrap();
+
+        let (_, _, keyed_source) = resolved_source(&src_path, &loader).unwrap();
+        let old_key = {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&keyed_source);
+            hasher.update(crate::COMPILER_VERSION.as_bytes());
+            hasher.update(&IR_FORMAT.to_le_bytes());
+            hasher.update(&opts.coverage_samples.to_le_bytes());
+            hasher.update(&[opts.strict_dnf as u8]);
+            hasher.update(&(opts.max_nodes as u64).to_le_bytes());
+            *hasher.finalize().as_bytes()
+        };
+        assert_ne!(old_key, SystemCache::key(&keyed_source, &opts));
+
+        let mut stale = SystemIR {
+            meta: SystemMeta::default(),
+            rows: Vec::new(),
+            nodes: Vec::new(),
+            index: crate::trie::AuctionTrie::new(),
+            lints: Vec::new(),
+            exclusive_cell: Default::default(),
+        };
+        stale.meta.name = "STALE: compiled by an older revision".to_string();
+        stale.meta.ir_format = IR_FORMAT;
+        stale.meta.compiler_version = crate::COMPILER_VERSION.to_string();
+        cache.store(&old_key, &stale).unwrap();
+
+        let (ir, _) = cache.load_or_compile(&src_path, &loader, &opts).unwrap();
+        assert_eq!(ir.meta.name, "Test System");
 
         std::fs::remove_dir_all(&dir).ok();
     }

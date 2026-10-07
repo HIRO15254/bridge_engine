@@ -36,6 +36,7 @@ impl Atom {
     pub fn intersect(&self, other: &Atom) -> Atom;             // §4.1
     pub fn negate(&self) -> Vec<Atom>;                         // §4.2、互いに素
     pub fn is_trivially_unsat(&self) -> bool;                  // §5
+    pub fn intersection_is_trivially_unsat(&self, other: &Atom) -> bool;  // = intersect(other).is_trivially_unsat()、eval が無ければ積を作らない
     pub fn normalize(&mut self);                               // ソート + マージ + クランプ
     // 要約
     pub fn hcp_range(&self) -> RangeInclusive<u8>;
@@ -215,6 +216,71 @@ pub enum KnownCardsError {
 ```
 
 プレイ途中の既知カードは `KnownCards::from_viewer(viewer, hand).with_dummy(dummy, dummy_hand).with_play(&history)` と組み立てる (`with_*` は和集合なので順序は問わない。`hand` は残り手でも元の手でもよく、`with_play` が `played_by(viewer)` を合成する)。`bridge-play::hard_constraints(history)` はプレイ由来の分 (`EMPTY.with_play(history)`) だけを返し、自分の手とダミーは呼び出し側が加える (`08-play.md` §5)。互いに素なら `Σ_s needed(s) == pool().len()` が自動的に成り立つ。席 `s` のサンプルは `Sampler::prepare(c, known.pool(), known.known[s.index() as usize], opts)` で行う。
+
+### 2.6 `HcpShapeGrid` (`grid.rs`、フェーズ 4)
+
+リテラルを含まない制約 (`Atom` が `shapes` と `hcp` だけを持ち、`cards` / `eval` が空で、`Custom` も無いもの) の真偽は、手の順序付きシェイプ (560 通り) と HCP (0..=37) だけで決まる。したがってそのような制約の And / Or / Not は、(シェイプ, HCP) のセルの集合として厳密に表せる。`grid.rs` はこの集合を扱う。フェーズ 4 のプロトタイプ C の固定配列 (`exclusion.rs` の `Grid`) と、プロトタイプ B の sub / sup 境界 (`grid.rs`) を 1 つにまとめたものである。
+
+```rust
+/// HCP 値ごとの ShapeSet (342 語)。等しい集合は等しい表現を持つ (`==` は集合の等号)。
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HcpShapeGrid([ShapeSet; 38]);
+
+impl HcpShapeGrid {
+    pub const EMPTY: HcpShapeGrid;
+    pub const ALL: HcpShapeGrid;
+    pub fn from_box(shapes: ShapeSet, hcp: RangeInclusive<u8>) -> HcpShapeGrid;
+    pub fn union_box(&mut self, shapes: ShapeSet, hcp: RangeInclusive<u8>);  // self ∪= from_box(..) をその場で
+    pub fn of_atom_box(atom: &Atom) -> HcpShapeGrid;                 // リテラルを無視した箱
+    pub fn of_exact(c: &HandConstraint) -> Option<HcpShapeGrid>;     // リテラルなしなら Some (厳密)
+    pub fn feasible() -> &'static HcpShapeGrid;                      // 13 枚の手で実現できるセル
+    pub fn contains(&self, hand: Hand) -> bool;
+    pub fn and / or / diff / not (&self, …) -> HcpShapeGrid;         // 342 語の 1 回の走査
+    pub fn is_empty(&self) -> bool;                                  // セルが 1 つも無い
+    pub fn is_empty_hands(&self) -> bool;                            // 実現できるセルが無い (!intersects(feasible()))
+    pub fn is_subset / intersects (&self, other: &HcpShapeGrid) -> bool;
+    pub fn cell_count(&self) -> u32;
+    pub fn hull(&self) -> Option<(ShapeSet, RangeInclusive<u8>)>;
+    pub fn runs(&self) -> Vec<(ShapeSet, RangeInclusive<u8>)>;       // 同じ ShapeSet が続く HCP の極大な連
+    pub fn to_atoms(&self, template: &Atom, cap: usize) -> Vec<Atom>;
+    pub fn to_constraint(&self, template: &Atom, cap: usize) -> HandConstraint;
+}
+
+pub struct GridBounds { pub sub: HcpShapeGrid, pub sup: HcpShapeGrid }   // is_exact(): sub == sup
+pub fn bounds(c: &HandConstraint) -> GridBounds;
+pub fn is_literal_free(c: &HandConstraint) -> bool;
+pub fn subtract_grid(branch: &HandConstraint, minus: &HcpShapeGrid, cap: usize) -> HandConstraint;
+```
+
+- **セルと実現可能性。** 表現はセルの集合で、実現できないセル (例: 13=0=0=0 で 37 HCP) も含みうる。集合演算はそれを区別しない。実際の手だけが問題になるときは、`feasible()` (シェイプごとの HCP の最小・最大から 1 回だけ計算する) と `is_empty_hands()` を使う。
+- **`bounds(c)`。** すべての手 h について sub ∋ h ⇒ c(h) ⇒ sup ∋ h を保証する。
+  - リテラルなしの原子: sub = sup = 箱。
+  - cards / eval リテラルを持つ原子: sub = ∅、sup = 箱。
+  - `Custom`: sub = ∅、sup = 全体。
+  - And / Or: 子の境界を成分ごとに交差 / 合併する。
+  - Not: sub = ¬sup(inner)、sup = ¬sub(inner) (入れ替わる)。
+  - リテラルを含まない制約では常に厳密 (sub = sup = `of_exact`) である。
+- **`to_atoms(template, cap)`。** `runs()` の連 1 つを原子 1 つにする。各原子は `template` のリテラルを持ち、`template` の `shapes` / `hcp` と交差する (空になった原子は落とす)。
+  - `template = Atom::ANY` かつ連が `cap` 以下なら、原子は互いに素で、和はちょうど元の集合になる。
+  - 連が `cap` を超えるときは、隣り合う連を、増えるセルが最も少ない組から順に併合する (ShapeSet の和 × HCP の結合範囲)。したがって結果は元の集合の上位集合になり (広がる方向にしか変わらない)、原子は互いに素のまま残る。
+- **`subtract_grid(branch, minus, cap)`。** 提案用の平坦形 (`07-bidding.md` §4.1 の提案形) で、常に `branch ∧ ¬minus` の上位集合を返す。`minus` は通常、上位候補の sub 境界の和である。これにより、厳密な集合が残す手を取り除いてしまうことはない。
+  - `branch` が原子: 箱 ∖ `minus` の原子に、その原子のリテラルを付ける。
+  - `branch` がリテラルなし: 厳密なグリッド ∖ `minus` の原子。
+  - いずれも連が `cap` 以下なら厳密。
+  - それ以外 (And / Or / Not の下のリテラル、`Custom`): `And([branch, flat])`。flat は sup(branch) ∖ `minus` の原子で、`minus` が何も取り除かなければ `branch` をそのまま返す。
+  - 実現できるセルが残らなければ `Or([])` を返す。
+- **`is_literal_free(c)`**: グリッドを作らずに、`of_exact` が `Some` になるかを判定する。
+- **用途。**
+  - `bridge-system` の排他索引 (`06-system.md` §5.4): 片と補集合が空であることの証明 (`grid_proves_empty`)。
+  - Lint `ShadowedBranch` / `OverlappingBranches` (`06-system.md` §9.3 の 8)。
+  - `bridge-bidding` のナチュラル排他と、排他領域の実行時の再計算。
+- **検証** (`tests/grid.rs`): 固定シードで、リテラルなし 100 と、リテラル / `Custom` を含む 100、計 200 の乱数制約を作る。これを乱数の 13 枚の手と照合し、次を確かめる。
+  - リテラルなしの制約のグリッドが `satisfies` と完全に一致すること。
+  - それ以外の制約で sub ⊆ C ⊆ sup が成り立つこと。
+  - `to_atoms` が上限以下で厳密、上限超えで上位集合かつ互いに素であること。
+  - `subtract_grid` が差集合を覆うこと。
+
+  既定スイートは制約あたり 2,000 手 (4e5 照合)、`#[ignore]` 版は制約あたり 1e5 手 (2e7 照合) で行う。後者は不一致・違反とも 0、release で 974 ms (loadavg 7.4)。
 
 ## 3. `satisfies` の意味論
 
@@ -482,6 +548,7 @@ bridge-constraint/src/
 ├── constraint.rs           // CustomPred, HandConstraint (to_dnf、要約、合成、satisfies、sample)、手動 serde
 ├── dnf.rs                  // DnfTerm, Dnf, DnfOptions, Overflow
 ├── known.rs                // KnownCards
+├── grid.rs                 // HcpShapeGrid, GridBounds, bounds, is_literal_free, subtract_grid (§2.6、フェーズ 4)
 ├── error.rs                // DnfError, PrepareError, KnownCardsError
 └── sampler/                // pub mod
     ├── mod.rs              // Sampler, Sample, SampleOptions、和集合レベル、log_prob

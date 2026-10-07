@@ -125,6 +125,19 @@ pub struct BidTable {
     pub history_desc: Option<Description>,
     /// Top-level rows.
     pub rows: Vec<BmlNode>,
+    /// A `#STOP` directive at the table's top level: the position the history row names is a
+    /// system stop (see [`BmlNode::stop`]).
+    pub stop: bool,
+    /// An `#ANYORDER` directive anywhere in the table: its fresh `X`/`Y`/`Z` bindings ignore the
+    /// `X < Y < Z` strain order (they stay distinct and unused; `docs/design/06-system.md` §4.7).
+    pub any_order: bool,
+    /// The `#EXACTPASS` directive in force for the table, by its location: `#EXACTPASS` anywhere
+    /// in the table, or `#EXACTPASS FILE` in a paragraph of its own earlier in the same file
+    /// (the file scope wins when both apply). The opponents' pass right before each row of ours
+    /// is then exact: every other call of theirs at that position that has no trie edge of its
+    /// own reaches an empty `(any)` sibling, so it is off-system instead of being read as a pass
+    /// (`docs/design/06-system.md` §4.8).
+    pub exact_pass: Option<Span>,
     /// Location.
     pub span: Span,
 }
@@ -138,6 +151,11 @@ pub struct BmlNode {
     pub description: Description,
     /// Sub-rows.
     pub children: Vec<BmlNode>,
+    /// A `#STOP` directive among the sub-rows: the partnership has stopped at this row's
+    /// position, so from here on it passes with any hand whatever the opponents call
+    /// (`docs/design/06-system.md` §4.5). The `{stop}` description annotation means the same
+    /// and is read from the description itself.
+    pub stop: bool,
     /// Indentation in columns.
     pub indent: u16,
     /// Location.

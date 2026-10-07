@@ -72,6 +72,7 @@ expression: "(& file.blocks, & file.lints)"
                             col: 5,
                         },
                         children: [],
+                        stop: false,
                         indent: 0,
                         span: Span {
                             file: FileId(
@@ -109,6 +110,7 @@ expression: "(& file.blocks, & file.lints)"
                             col: 6,
                         },
                         children: [],
+                        stop: false,
                         indent: 0,
                         span: Span {
                             file: FileId(
@@ -146,6 +148,7 @@ expression: "(& file.blocks, & file.lints)"
                             col: 5,
                         },
                         children: [],
+                        stop: false,
                         indent: 0,
                         span: Span {
                             file: FileId(
@@ -183,6 +186,7 @@ expression: "(& file.blocks, & file.lints)"
                             col: 6,
                         },
                         children: [],
+                        stop: false,
                         indent: 0,
                         span: Span {
                             file: FileId(
@@ -220,6 +224,7 @@ expression: "(& file.blocks, & file.lints)"
                             col: 5,
                         },
                         children: [],
+                        stop: false,
                         indent: 0,
                         span: Span {
                             file: FileId(
@@ -257,6 +262,7 @@ expression: "(& file.blocks, & file.lints)"
                             col: 5,
                         },
                         children: [],
+                        stop: false,
                         indent: 0,
                         span: Span {
                             file: FileId(
@@ -294,6 +300,7 @@ expression: "(& file.blocks, & file.lints)"
                             col: 5,
                         },
                         children: [],
+                        stop: false,
                         indent: 0,
                         span: Span {
                             file: FileId(
@@ -331,6 +338,7 @@ expression: "(& file.blocks, & file.lints)"
                             col: 5,
                         },
                         children: [],
+                        stop: false,
                         indent: 0,
                         span: Span {
                             file: FileId(
@@ -370,6 +378,7 @@ expression: "(& file.blocks, & file.lints)"
                             col: 6,
                         },
                         children: [],
+                        stop: false,
                         indent: 0,
                         span: Span {
                             file: FileId(
@@ -409,6 +418,7 @@ expression: "(& file.blocks, & file.lints)"
                             col: 7,
                         },
                         children: [],
+                        stop: false,
                         indent: 0,
                         span: Span {
                             file: FileId(
@@ -448,6 +458,7 @@ expression: "(& file.blocks, & file.lints)"
                             col: 9,
                         },
                         children: [],
+                        stop: false,
                         indent: 0,
                         span: Span {
                             file: FileId(
@@ -459,6 +470,9 @@ expression: "(& file.blocks, & file.lints)"
                         },
                     },
                 ],
+                stop: false,
+                any_order: false,
+                exact_pass: None,
                 span: Span {
                     file: FileId(
                         0,

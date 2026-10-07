@@ -17,6 +17,8 @@ standard Blackwood, negative doubles, Michaels cuebids, and the unusual notrump.
 See `systems/sayc/NOTES.md` for the places where the booklet leaves room for judgment
 and the choices this file makes there.
 
+#INCLUDE passes.bml
+
 #INCLUDE openings.bml
 
 #INCLUDE notrump.bml
@@ -34,3 +36,21 @@ and the choices this file makes there.
 #INCLUDE rebids.bml
 
 #INCLUDE competition.bml
+
+#INCLUDE defense.bml
+
+#INCLUDE later-rounds.bml
+
+#INCLUDE competitive-rebids.bml
+
+#INCLUDE competitive-later.bml
+
+#INCLUDE competitive-extra.bml
+
+#INCLUDE continuations.bml
+
+#INCLUDE competing.bml
+
+#INCLUDE later-rounds-extra.bml
+
+#INCLUDE continuations-p12.bml

@@ -133,7 +133,7 @@ fn forward_consistency() {
     };
     let opts = InterpretOptions {
         strict: true,
-        ..InterpretOptions::default()
+        ..InterpretOptions::for_context(&ctx)
     };
 
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(7);
@@ -166,7 +166,7 @@ fn forward_consistency_opening_only() {
     };
     let opts = InterpretOptions {
         strict: true,
-        ..InterpretOptions::default()
+        ..InterpretOptions::for_context(&ctx)
     };
 
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(42);
@@ -303,7 +303,7 @@ fn choose_bid_natural_branch_matches_interpret_at_a_cuebid() {
     };
     let opts = InterpretOptions {
         strict: true,
-        ..InterpretOptions::default()
+        ..InterpretOptions::for_context(&ctx)
     };
     let a = auction(
         Seat::South,
@@ -784,7 +784,7 @@ fn run_forward_consistency(
     };
     let opts = InterpretOptions {
         strict: true,
-        ..InterpretOptions::default()
+        ..InterpretOptions::for_context(&ctx)
     };
     let mut report = CoverageReport::new(seed, random_call_rate);
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);

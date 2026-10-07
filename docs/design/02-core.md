@@ -230,6 +230,10 @@ impl ShapeSet {
     pub fn factor(self) -> Option<[RangeInclusive<u8>; 4]>;         // 自身が射影の直積に等しいときのみ Some
     pub fn min_hcp(self) -> u8;                                     // min over members of Σ MIN_HCP[len]
     pub fn max_hcp(self) -> u8;                                     // max over members of Σ MAX_HCP[len]
+    // しきい値マスク (HCP 0..=37 ごとに「Σ MAX_HCP ≥ t」「Σ MIN_HCP ≤ t」の 560 bit を const で前計算)
+    pub fn hcp_range_reachable(self, lo: u8, hi: u8) -> bool;       // 非空なら !(lo > max_hcp || hi < min_hcp)、空なら false
+    pub fn holding_hcp_in(self, lo: u8, hi: u8) -> ShapeSet;        // [Σ MIN_HCP, Σ MAX_HCP] が lo..=min(hi, 37) と交わるメンバー
+    pub const fn intersects(self, o: ShapeSet) -> bool;             // self ∩ o ≠ ∅ (積を作らない)
 }
 
 /// `ShapeSet::iter` のイテレータ (Item = Shape、index 昇順)。

@@ -19,6 +19,11 @@
 //! separately, seat `i` of this auction is simply "the `i`-th caller of the table", which lets
 //! [`bridge_core::Seat::partner`] identify `own_prev`/`partner_last` (the two individuals of one
 //! side alternate seats, e.g. opener/responder) without tracking player identity by hand.
+//!
+//! System stops (`#STOP`, `{stop}`, `docs/design/06-system.md` §4.5) are recorded while the
+//! tables are expanded and grafted onto the finished trie by [`graft_stops`]; so are the
+//! positions `#EXACTPASS` guards (§4.8), whose `(any)` siblings [`graft_exact_pass_guards`] adds
+//! after the stops.
 
 use std::ops::RangeInclusive;
 use std::sync::Arc;
@@ -55,6 +60,57 @@ pub(crate) struct Expansion {
     /// no longer counts physical BML rows, and per-row roll-ups (`LintCode::LowRecognition`, the
     /// recognition report's average) silently double- or quadruple-count the same source line.
     row_by_span: std::collections::HashMap<Span, RowId>,
+    /// The system stops met so far, grafted by [`graft_stops`] once every table is expanded.
+    stops: Vec<StopSite>,
+    /// The positions `#EXACTPASS` guards, met so far (the first site per position and
+    /// `#SEAT`/`#VUL` condition), grafted by [`graft_exact_pass_guards`] once every table is
+    /// expanded and every stop grafted.
+    guards: Vec<GuardSite>,
+    /// `(we_opened, trie path, seat, vul)` of every site in `guards`.
+    guarded: std::collections::HashSet<(bool, Vec<Edge>, SeatCond, VulCond)>,
+}
+
+/// One opponents' pass that `#EXACTPASS` makes exact (`docs/design/06-system.md` §4.8): a row
+/// of ours in its scope follows it.
+struct GuardSite {
+    /// The trie position the pass leaves (the opponents are to call there).
+    at: Vec<Edge>,
+    /// The frame of the call the pass follows (the last call written before it): the guard's
+    /// `(any)` step is expanded from it exactly as a row written after that call would be (an
+    /// implicit pass of ours included, when that call is theirs too).
+    from: Frame,
+    seat: SeatCond,
+    vul: VulCond,
+}
+
+/// One system stop: the trie position after which the partnership passes with any hand
+/// (`docs/design/06-system.md` §4.5), under the conditions of the table that wrote it.
+struct StopSite {
+    we_opened: bool,
+    /// The trie path of the stop position.
+    edges: Vec<Edge>,
+    seat: SeatCond,
+    vul: VulCond,
+    /// Where the stop was written (for lints).
+    span: Span,
+}
+
+/// Whether a row's description carries the `{stop}` annotation, in any spelling the description
+/// normaliser accepts (`{stop}`, `{ stop }`): the one that sets [`crate::NodeFlags::stop`].
+fn has_stop_annotation(text: &str) -> bool {
+    // A cheap pre-filter; `normalize` decides.
+    text.contains("stop") && crate::compile::desc::normalize::normalize(text).stop
+}
+
+/// Records a stop at `frame`'s position.
+fn record_stop(frame: &Frame, seat: SeatCond, vul: VulCond, span: &Span, ex: &mut Expansion) {
+    ex.stops.push(StopSite {
+        we_opened: we_opened_of(frame),
+        edges: frame.edges.clone(),
+        seat,
+        vul,
+        span: span.clone(),
+    });
 }
 
 /// Expands every [`BidTable`] block of a file, in order, into a shared [`Expansion`].
@@ -70,6 +126,9 @@ pub(crate) fn expand_file(
         lints: Vec::new(),
         too_many_nodes_reported: false,
         row_by_span: std::collections::HashMap::new(),
+        stops: Vec::new(),
+        guards: Vec::new(),
+        guarded: std::collections::HashSet::new(),
     };
     for table in tables {
         if ex.nodes.len() >= opts.max_nodes {
@@ -81,8 +140,115 @@ pub(crate) fn expand_file(
         }
         expand_table(table, meta, opts, &mut ex);
     }
+    graft_stops(&mut ex);
+    graft_exact_pass_guards(&mut ex, meta, opts);
     demote_illegal_call_for_bindings_that_succeeded(&mut ex);
     ex
+}
+
+/// Records the guard of the opponents' pass at `at` (see [`GuardSite`]), once per position and
+/// `#SEAT`/`#VUL` condition. A hand-written `<P>-(any)-` in every guarding table would give the
+/// guard node one entry per distinct condition too (`AuctionTrie::insert_path` refuses only an
+/// identical one), so the guard does not depend on which table comes first in the file.
+fn record_guard(at: Vec<Edge>, from: &Frame, seat: SeatCond, vul: VulCond, ex: &mut Expansion) {
+    let we_opened = we_opened_of(from);
+    if at.is_empty() || !ex.guarded.insert((we_opened, at.clone(), seat, vul)) {
+        return;
+    }
+    ex.guards.push(GuardSite {
+        at,
+        from: from.clone(),
+        seat,
+        vul,
+    });
+}
+
+/// Gives every position an `#EXACTPASS` table guards an empty `(any)` sibling of the
+/// opponents' pass (`docs/design/06-system.md` §4.8), as if the history row `<path>-(any)-` with
+/// no rows had been written after every table, under the guarding table's `#SEAT`/`#VUL`.
+///
+/// It runs after [`graft_stops`], so it sees every edge the tables and the stops gave the
+/// position; a position where every call the opponents can make (other than the pass) already
+/// has an edge -- a concrete one, a class the table or another table wrote, or the `(any)` step
+/// of a stop -- is left alone. Otherwise the `(any)` edge is appended after the position's
+/// other wildcard edges, so it only takes the calls nothing else takes, and leads to a node with
+/// no rows: an off-system position, where the next call is chosen by natural inference instead
+/// of `resolve_lenient` reading the call as a pass. The node is built like the history row's
+/// `(any)` (an empty description: any hand, `EmptyDescription`), its row is the directive's
+/// line, and it joins the children of the node it follows.
+///
+/// A position guarded under several `#SEAT`/`#VUL` conditions (tables under different
+/// conditions) gets one edge and one entry per condition, as a hand-written `(any)` in each
+/// table would: whether the position needs the guard is decided once, before its first guard is
+/// grafted, since that guard's own `(any)` edge would otherwise take every call for the later
+/// conditions. An entry whose condition an earlier one covers reuses that node, as for any
+/// row with an empty description (`build_or_reuse_node`).
+fn graft_exact_pass_guards(ex: &mut Expansion, meta: &SystemMeta, opts: &CompileOptions) {
+    let sites = std::mem::take(&mut ex.guards);
+    ex.guarded.clear();
+    let mut needed: std::collections::HashMap<(bool, Vec<Edge>), bool> =
+        std::collections::HashMap::new();
+    for site in &sites {
+        let we_opened = we_opened_of(&site.from);
+        let Some(at) = ex.trie.find_path(we_opened, &site.at) else {
+            continue;
+        };
+        let without_edge = *needed
+            .entry((we_opened, site.at.clone()))
+            .or_insert_with(|| {
+                (0..=37u8).filter_map(Call::from_index).any(|call| {
+                    call != Call::Pass
+                        && relaxed_is_legal(&site.at, call)
+                        && ex.trie.find_child_call(at, call).is_none()
+                        && !ex
+                            .trie
+                            .class_edges(at)
+                            .any(|(class, _)| class.matches(call))
+                })
+            });
+        if !without_edge {
+            continue;
+        }
+        let Some(span) = site.from.exact_pass.clone() else {
+            continue;
+        };
+        let row = BmlNode {
+            calls: vec![CallToken {
+                side: Side::Them,
+                pattern: CallPattern::Class(OppClass::AnyCall),
+                raw: "(any)".to_string(),
+                span: span.clone(),
+            }],
+            description: Description::default(),
+            children: Vec::new(),
+            stop: false,
+            indent: 0,
+            span,
+        };
+        let parent = ex
+            .trie
+            .covering_entry(we_opened, &site.from.edges, site.seat, site.vul);
+        let mut claimed = Claimed::default();
+        let outcomes = expand_row(
+            &row,
+            true,
+            &mut claimed,
+            we_opened,
+            site.seat,
+            site.vul,
+            meta,
+            opts,
+            &site.from,
+            ex,
+        );
+        for (node_id, _) in outcomes {
+            if let Some(p) = parent {
+                if !ex.nodes[p.0 as usize].children.contains(&node_id) {
+                    ex.nodes[p.0 as usize].children.push(node_id);
+                }
+            }
+        }
+    }
 }
 
 /// An exact row nested under a variable-bound ancestor (a history token, or a `Var`/`Strains`
@@ -116,6 +282,301 @@ fn demote_illegal_call_for_bindings_that_succeeded(ex: &mut Expansion) {
                 lint.message
             );
         }
+    }
+}
+
+/// `{prio:N}` of the synthesised stop pass: the lowest-ranked call of every position it joins,
+/// so the policy makes it exactly when no other listed call applies.
+pub(crate) const STOP_PASS_PRIORITY: i16 = -100;
+
+/// One `(seat, vul)` condition of a system stop (the `#SEAT`/`#VUL` of the table that wrote it).
+type StopCond = (SeatCond, VulCond);
+
+/// The synthesised nodes of the system stops under one `(seat, vul)` condition: the opponents'
+/// `(any)` step and our stop pass.
+#[derive(Clone, Copy)]
+struct StopNodes {
+    any_node: NodeId,
+    pass_node: NodeId,
+}
+
+/// A detached cycle of two trie nodes (`any --P--> pass --(any)--> any`) whose entries are those
+/// the stops under `conds` add, in the order the stops were written: the endless tail of the
+/// chain rows every stop under those conditions stands for.
+struct StopLoop {
+    conds: Vec<StopCond>,
+    any_trie: crate::trie::TrieId,
+    pass_trie: crate::trie::TrieId,
+}
+
+/// The synthesised nodes (one pair per condition) and the shared loops (one per set of
+/// conditions met at one edge) of every system stop of a file.
+#[derive(Default)]
+struct StopGraft {
+    nodes: Vec<(StopCond, StopNodes)>,
+    loops: Vec<StopLoop>,
+}
+
+impl StopGraft {
+    /// The synthesised nodes under `cond`, created on first use.
+    fn nodes_for(&mut self, ex: &mut Expansion, cond: StopCond) -> StopNodes {
+        if let Some(&(_, nodes)) = self.nodes.iter().find(|(c, _)| *c == cond) {
+            return nodes;
+        }
+        let nodes = new_stop_nodes(ex, cond.0, cond.1);
+        self.nodes.push((cond, nodes));
+        nodes
+    }
+
+    /// The index of the loop carrying exactly `conds` (in this order), created on first use.
+    fn loop_for(&mut self, ex: &mut Expansion, conds: &[StopCond]) -> usize {
+        if let Some(i) = self.loops.iter().position(|l| l.conds == conds) {
+            return i;
+        }
+        let any_trie = ex.trie.new_detached();
+        let pass_trie = ex.trie.new_detached();
+        for &(seat, vul) in conds {
+            let nodes = self.nodes_for(ex, (seat, vul));
+            // The entries the chain rows under each condition would have added, in order: the
+            // stop pass unless one with identical conditions is there, the `(any)` step unless
+            // an entry covers it (as `graft_stops` does at existing nodes).
+            let _ = ex.trie.push_entry(pass_trie, seat, vul, nodes.pass_node);
+            if !ex.trie.covering_entry_at(any_trie, seat, vul) {
+                let _ = ex.trie.push_entry(any_trie, seat, vul, nodes.any_node);
+            }
+        }
+        ex.trie.link_call(any_trie, Call::Pass, pass_trie);
+        ex.trie.link_class(pass_trie, OppClass::AnyCall, any_trie);
+        self.loops.push(StopLoop {
+            conds: conds.to_vec(),
+            any_trie,
+            pass_trie,
+        });
+        self.loops.len() - 1
+    }
+
+    /// The loop `t` belongs to, if it is a loop node.
+    fn loop_of(&self, t: crate::trie::TrieId) -> Option<usize> {
+        self.loops
+            .iter()
+            .position(|l| l.any_trie == t || l.pass_trie == t)
+    }
+
+    /// The trie node of loop `l` entered by our pass (`ours`) or by the opponents' `(any)`.
+    fn target(&self, l: usize, ours: bool) -> crate::trie::TrieId {
+        if ours {
+            self.loops[l].pass_trie
+        } else {
+            self.loops[l].any_trie
+        }
+    }
+}
+
+/// Creates the two synthesised rows and nodes of the stops under `(seat, vul)`.
+fn new_stop_nodes(ex: &mut Expansion, seat: SeatCond, vul: VulCond) -> StopNodes {
+    let synthesise = |ex: &mut Expansion, side: Side, priority: i16, description: &str| {
+        let row_id = RowId(ex.rows.len() as u32);
+        let node_id = NodeId(ex.nodes.len() as u32);
+        let path: Arc<[SidedPattern]> = Arc::from(Vec::new());
+        ex.rows.push(Row {
+            id: row_id,
+            span: Span {
+                file: crate::ast::FileId(0),
+                line: 0,
+                col: 0,
+                pasted_from: None,
+            },
+            path: Arc::clone(&path),
+            description_raw: description.to_string(),
+            // Nothing to recognise: defined as fully recognised, like an empty description.
+            recognition: Recognition {
+                ratio: 1.0,
+                ..Recognition::default()
+            },
+            expansions: vec![node_id],
+        });
+        ex.nodes.push(Node {
+            id: node_id,
+            row: row_id,
+            side,
+            path,
+            calls: Vec::new(),
+            call: Call::Pass,
+            binding: Binding::default(),
+            seat,
+            vul,
+            constraint: HandConstraint::ANY,
+            branch_weights: None,
+            priority,
+            volume_log2: estimate_volume_log2(&HandConstraint::ANY),
+            alertable: Alertability::Unspecified,
+            flags: crate::NodeFlags {
+                stop: side == Side::Us,
+                synthesised: true,
+                ..crate::NodeFlags::default()
+            },
+            description: description.to_string(),
+            children: Vec::new(),
+        });
+        node_id
+    };
+    let any_node = synthesise(ex, Side::Them, 0, "");
+    // The row every stop stands for, as SAYC writes it at its stop sites.
+    let pass_node = synthesise(
+        ex,
+        Side::Us,
+        STOP_PASS_PRIORITY,
+        "{prio:-100} {stop} any hand",
+    );
+    StopNodes {
+        any_node,
+        pass_node,
+    }
+}
+
+/// Grafts every recorded system stop onto the trie (`docs/design/06-system.md` §4.5).
+///
+/// A stop at position `S` behaves exactly as if the rows
+///
+/// ```text
+/// (any)
+///   P = {prio:-100} any hand
+///     (any)
+///       P = {prio:-100} any hand
+///         ...
+/// ```
+///
+/// had been written under `S` without end (under the table's `#SEAT`/`#VUL`) at the end of the
+/// system, after every table: from `S` the walk follows the `(any)` wildcard edge and our `P`
+/// edge alternately. Where such an edge already exists (a table that writes `(any)` or our pass
+/// there itself) the graft goes through the existing node, adding the entry the row would have
+/// added (an `(any)` entry unless one covers it; the stop pass unless an entry with the same
+/// conditions exists, whose empty placeholder description it fills, like [`handle_duplicate`]
+/// and [`fill_covered_placeholders`]); at the first missing edge it links to the shared
+/// [`StopLoop`] of the stop's condition, whose two nodes loop. Stops under several conditions
+/// that meet at one edge share a loop carrying the entries of all of them: when the walk reaches
+/// a loop that lacks the stop's condition, the edge is pointed at the loop of the union instead
+/// (the loop it left keeps serving the other positions linked to it).
+///
+/// Because the rows count as written last, every row and wildcard edge a table writes takes
+/// precedence over the stop, whatever the file order: an exact opponents' call at `S` wins over
+/// the wildcard, a table's `(bid)`/`(suit)`/`(X)` edge at `S` is tried before the stop's
+/// `(any)` (the walk never backtracks, so the stop does not continue into that subtree), and a
+/// table's own pass row on the walk keeps its priority and description.
+fn graft_stops(ex: &mut Expansion) {
+    if ex.stops.is_empty() {
+        return;
+    }
+    let sites = std::mem::take(&mut ex.stops);
+    let mut graft = StopGraft::default();
+    for site in &sites {
+        let Some(at) = ex.trie.find_path(site.we_opened, &site.edges) else {
+            continue;
+        };
+        let cond = (site.seat, site.vul);
+        let StopNodes {
+            any_node,
+            pass_node,
+        } = graft.nodes_for(ex, cond);
+        let flagged: Vec<NodeId> = ex
+            .trie
+            .entries_at(at)
+            .filter(|&(s, v, _)| crate::trie::condition_covers(site.seat, site.vul, s, v))
+            .map(|(_, _, n)| n)
+            .collect();
+        for n in flagged {
+            ex.nodes[n.0 as usize].flags.stop = true;
+        }
+        // The last call of the stop position is ours exactly when its depth has the parity of
+        // the opener's side (sides alternate from the opening bid).
+        let mut ours_next = (site.edges.len() % 2 == 0) == site.we_opened;
+        let mut cur = at;
+        loop {
+            let (edge, next) = if ours_next {
+                (
+                    Edge::Call(Call::Pass),
+                    ex.trie.find_child_call(cur, Call::Pass),
+                )
+            } else {
+                (
+                    Edge::Class(OppClass::AnyCall),
+                    ex.trie.find_child_class(cur, OppClass::AnyCall),
+                )
+            };
+            let Some(next) = next else {
+                let l = graft.loop_for(ex, &[cond]);
+                let to = graft.target(l, ours_next);
+                match edge {
+                    Edge::Call(call) => ex.trie.link_call(cur, call, to),
+                    Edge::Class(class) => ex.trie.link_class(cur, class, to),
+                }
+                break;
+            };
+            if let Some(l) = graft.loop_of(next) {
+                if !graft.loops[l].conds.contains(&cond) {
+                    let mut conds = graft.loops[l].conds.clone();
+                    conds.push(cond);
+                    let union = graft.loop_for(ex, &conds);
+                    let to = graft.target(union, ours_next);
+                    ex.trie.relink(cur, edge, to);
+                }
+                break;
+            }
+            if ours_next {
+                graft_stop_pass_entry(ex, next, site, pass_node);
+            } else if !ex.trie.covering_entry_at(next, site.seat, site.vul) {
+                let _ = ex.trie.push_entry(next, site.seat, site.vul, any_node);
+            }
+            cur = next;
+            ours_next = !ours_next;
+        }
+    }
+}
+
+/// Adds the stop pass at an existing trie node on a stop's path, as the row
+/// `P = {prio:-100} any hand` would have been added there (see [`graft_stops`]).
+fn graft_stop_pass_entry(
+    ex: &mut Expansion,
+    at: crate::trie::TrieId,
+    site: &StopSite,
+    pass_node: NodeId,
+) {
+    let targets: Vec<NodeId> = match ex.trie.push_entry(at, site.seat, site.vul, pass_node) {
+        Ok(()) => ex
+            .trie
+            .entries_at(at)
+            .filter(|&(s, v, n)| {
+                n != pass_node
+                    && !(s == site.seat && v == site.vul)
+                    && crate::trie::condition_covers(site.seat, site.vul, s, v)
+            })
+            .map(|(_, _, n)| n)
+            .collect(),
+        Err(existing) => vec![existing],
+    };
+    let template = ex.nodes[pass_node.0 as usize].clone();
+    for target in targets {
+        let node = &mut ex.nodes[target.0 as usize];
+        if !node.description.is_empty() || node.is_synthesised() {
+            continue;
+        }
+        node.constraint = template.constraint.clone();
+        node.branch_weights = None;
+        node.priority = template.priority;
+        node.volume_log2 = template.volume_log2;
+        node.flags = crate::NodeFlags {
+            synthesised: false,
+            ..template.flags.clone()
+        };
+        node.description = template.description.clone();
+        ex.lints.push(
+            Lint::info(
+                LintCode::DuplicatePath,
+                "a system stop filled this node's empty description with the stop pass",
+            )
+            .with_span(site.span.clone())
+            .with_node(target),
+        );
     }
 }
 
@@ -154,6 +615,12 @@ struct Frame {
     /// variable are forbidden below one (`docs/design/06-system.md` §4.2 point 3), since neither
     /// has a real anchor once the opponents' actual call is unknown.
     under_wildcard: bool,
+    /// The table has `#ANYORDER` (`docs/design/06-system.md` §4.7): fresh `X`/`Y`/`Z` bindings
+    /// ignore the `X < Y < Z` order.
+    any_order: bool,
+    /// The `#EXACTPASS` directive in force for the table (`docs/design/06-system.md` §4.8):
+    /// the opponents' passes right before its rows of ours are guarded ([`GuardSite`]).
+    exact_pass: Option<Span>,
 }
 
 impl Frame {
@@ -168,6 +635,8 @@ impl Frame {
             last_by_seat: [None; 4],
             hcp_by_seat: [None, None, None, None],
             under_wildcard: false,
+            any_order: false,
+            exact_pass: None,
         }
     }
 
@@ -185,6 +654,23 @@ impl Frame {
             Edge::Call(Call::Bid(b)) => Some(*b),
             _ => None,
         })
+    }
+
+    /// Whether the last bid of the path is known: always above any wildcard; below one, when no
+    /// wildcard step after the last concrete bid could itself be a bid. A relative level (`c`,
+    /// `j`, §4.6) needs it.
+    fn last_bid_known(&self) -> bool {
+        if !self.under_wildcard {
+            return true;
+        }
+        for edge in self.edges.iter().rev() {
+            match edge {
+                Edge::Call(Call::Bid(_)) => return true,
+                Edge::Class(class) if class_admits_a_bid(*class) => return false,
+                _ => {}
+            }
+        }
+        true
     }
 
     /// Whether `call` can be the next call. Exact on the concrete auction; below a wildcard,
@@ -329,6 +815,18 @@ struct Candidate {
     binding: Binding,
 }
 
+/// [`generate_candidates_in_order`] with the `X < Y < Z` order applied (tests).
+#[cfg(test)]
+fn generate_candidates(
+    pattern: &CallPattern,
+    env: &Binding,
+    used: StrainSet,
+    last_bid: Option<Bid>,
+    under_wildcard: bool,
+) -> Vec<Candidate> {
+    generate_candidates_in_order(pattern, env, used, last_bid, under_wildcard, true)
+}
+
 /// Generates the candidate edges for `pattern` (`docs/design/06-system.md` §4.2 point 3), pure
 /// and independent of any particular auction position beyond `last_bid` (used by
 /// [`CallPattern::Step`]).
@@ -338,12 +836,16 @@ struct Candidate {
 /// caller can report `IllegalCall`. A `Level::Any` wildcard, by contrast, is explicitly "whatever
 /// level is needed" (`docs/design/06-system.md` §1.3), so only the minimum sufficient level per
 /// strain is generated; this cannot itself be illegal.
-fn generate_candidates(
+///
+/// The `X < Y < Z` order of fresh variables applies only when `ordered` is set (`false` in an
+/// `#ANYORDER` table, `docs/design/06-system.md` §4.7).
+fn generate_candidates_in_order(
     pattern: &CallPattern,
     env: &Binding,
     used: StrainSet,
     last_bid: Option<Bid>,
     under_wildcard: bool,
+    ordered: bool,
 ) -> Vec<Candidate> {
     match pattern {
         CallPattern::Exact(call) => vec![Candidate {
@@ -351,6 +853,14 @@ fn generate_candidates(
             binding: *env,
         }],
         CallPattern::Strains { level, strains } => match level {
+            Level::Cheapest | Level::Jump => strains
+                .iter()
+                .flat_map(|s| bids_at_level(*level, s, last_bid))
+                .map(|b| Candidate {
+                    edge: Edge::Call(Call::Bid(b)),
+                    binding: *env,
+                })
+                .collect(),
             Level::At(n) => strains
                 .iter()
                 .filter_map(|s| Bid::new(*n, s))
@@ -386,7 +896,7 @@ fn generate_candidates(
                 // A fresh variable only offers *sufficient* bids as candidates (bss.py's
                 // `check_vars` silently drops `bid <= last_bid`); an insufficient one is simply
                 // not a real choice here, not an authored call to flag as `IllegalCall`.
-                env.candidates(*var, used)
+                env.candidates_in_order(*var, used, ordered)
                     .into_iter()
                     .flat_map(|strain| {
                         bids_at_level(*level, strain, last_bid)
@@ -414,7 +924,9 @@ fn generate_candidates(
         }
         CallPattern::AnyOf(alts) => alts
             .iter()
-            .flat_map(|p| generate_candidates(p, env, used, last_bid, under_wildcard))
+            .flat_map(|p| {
+                generate_candidates_in_order(p, env, used, last_bid, under_wildcard, ordered)
+            })
             .collect(),
         CallPattern::Class(k) => vec![Candidate {
             edge: Edge::Class(*k),
@@ -427,12 +939,23 @@ fn generate_candidates(
 /// `Level::Any` (`docs/design/06-system.md` §4.2: `n` means "whatever level is needed", which is
 /// every level above the last bid, not only the lowest one -- real files write `(nX)-3N` meaning
 /// "over an opening at any level").
+///
+/// The relative levels (`c`, `j`, §4.6) give at most one bid: the minimum sufficient bid in
+/// `strain`, or one level above it; none past `7`. The caller has made sure `last_bid` is known
+/// ([`Frame::last_bid_known`]).
 fn bids_at_level(level: Level, strain: Strain, last_bid: Option<Bid>) -> Vec<Bid> {
     match level {
         Level::At(n) => Bid::new(n, strain).into_iter().collect(),
         Level::Any => (1..=7)
             .filter_map(|n| Bid::new(n, strain))
             .filter(|b| last_bid.is_none_or(|last| *b > last))
+            .collect(),
+        Level::Cheapest => minimum_sufficient_bid(strain, last_bid)
+            .into_iter()
+            .collect(),
+        Level::Jump => minimum_sufficient_bid(strain, last_bid)
+            .and_then(|b| Bid::new(b.level() + 1, strain))
+            .into_iter()
             .collect(),
     }
 }
@@ -629,7 +1152,11 @@ fn expand_table(table: &BidTable, meta: &SystemMeta, opts: &CompileOptions, ex: 
         return; // an empty table (parse recovery already dropped everything): nothing to expand.
     };
     let we_opened = first_side == Side::Us;
-    let root = Frame::root();
+    let root = Frame {
+        any_order: table.any_order,
+        exact_pass: table.exact_pass.clone(),
+        ..Frame::root()
+    };
 
     expand_history(
         &table.history,
@@ -641,8 +1168,9 @@ fn expand_table(table: &BidTable, meta: &SystemMeta, opts: &CompileOptions, ex: 
         opts,
         &root,
         None,
+        None,
         ex,
-        &mut |frame, parent, ex| {
+        &mut |frame, prev, parent, ex| {
             expand_children(
                 &table.rows,
                 we_opened,
@@ -651,18 +1179,42 @@ fn expand_table(table: &BidTable, meta: &SystemMeta, opts: &CompileOptions, ex: 
                 meta,
                 opts,
                 frame,
+                prev,
                 parent,
                 ex,
             );
+            let history_stop = table
+                .history_desc
+                .as_ref()
+                .is_some_and(|d| has_stop_annotation(&d.text));
+            if table.stop || history_stop {
+                if frame.edges.is_empty() {
+                    ex.lints.push(
+                        Lint::warning(
+                            LintCode::UnknownDirective,
+                            "#STOP at the top level of a table without a history row names no \
+                             position; ignored",
+                        )
+                        .with_span(table.span.clone()),
+                    );
+                } else {
+                    record_stop(frame, table.seat, table.vul, &table.span, ex);
+                }
+            }
         },
     );
 }
+
+/// The callback [`expand_history`] runs at the end of each history branch: the frame after the
+/// last history token, the frame before it, and that token's node.
+type HistoryDone<'a> = dyn FnMut(&Frame, Option<&Frame>, Option<NodeId>, &mut Expansion) + 'a;
 
 /// Expands the history row left to right; `on_done` runs once per resulting branch (normally one,
 /// but a bound variable in the history can itself have several candidates, e.g. `1M-` covering
 /// both majors, in which case the rest of the table is expanded once per branch), with `parent`
 /// set to the node for the last history token on that branch (`None` for an empty history), so
-/// the table's own rows can be linked in as its children.
+/// the table's own rows can be linked in as its children, and with the frame before that token
+/// (`prev`, `None` for an empty history).
 #[allow(clippy::too_many_arguments)]
 fn expand_history(
     tokens: &[CallToken],
@@ -673,12 +1225,13 @@ fn expand_history(
     meta: &SystemMeta,
     opts: &CompileOptions,
     frame: &Frame,
+    prev: Option<&Frame>,
     parent: Option<NodeId>,
     ex: &mut Expansion,
-    on_done: &mut dyn FnMut(&Frame, Option<NodeId>, &mut Expansion),
+    on_done: &mut HistoryDone<'_>,
 ) {
     let Some((tok, rest)) = tokens.split_first() else {
-        on_done(frame, parent, ex);
+        on_done(frame, prev, parent, ex);
         return;
     };
     let is_last = rest.is_empty();
@@ -690,6 +1243,7 @@ fn expand_history(
             Description::default()
         },
         children: Vec::new(),
+        stop: false,
         indent: 0,
         span: tok.span.clone(),
     };
@@ -721,6 +1275,7 @@ fn expand_history(
             meta,
             opts,
             &next,
+            Some(frame),
             Some(node_id),
             ex,
             on_done,
@@ -745,6 +1300,11 @@ fn expand_history(
 /// produced ([`Claimed`]): an exact row shadows it with [`LintCode::ShadowedByExact`], and an
 /// earlier pattern row (the `1M …` then catch-all `1X …` idiom) silently, as bss.py's
 /// `bid not in bids_processed` does.
+///
+/// `frame` is the frame of the call the rows follow (the parent row or the history's last
+/// token) and `prev` the frame before that call. In an `#EXACTPASS` table, when a row of ours
+/// follows the opponents' pass -- the implicit one after a call of ours, or a written `(P)` --
+/// the position the pass leaves is recorded for [`graft_exact_pass_guards`].
 #[allow(clippy::too_many_arguments)]
 fn expand_children(
     rows: &[BmlNode],
@@ -754,11 +1314,14 @@ fn expand_children(
     meta: &SystemMeta,
     opts: &CompileOptions,
     frame: &Frame,
+    prev: Option<&Frame>,
     parent: Option<NodeId>,
     ex: &mut Expansion,
 ) {
     let mut claimed = Claimed::default();
     let mut bids_processed: std::collections::HashSet<Edge> = std::collections::HashSet::new();
+    // Whether a row of ours was expanded here (each of its candidates follows the same pass).
+    let mut ours_expanded = false;
 
     for row in rows.iter().filter(|r| is_exact_row(r)) {
         for (node_id, next) in expand_row(
@@ -773,17 +1336,38 @@ fn expand_children(
             frame,
             ex,
         ) {
+            ours_expanded |= row.calls[0].side == Side::Us;
             let edge = *next
                 .edges
                 .last()
                 .expect("expand_row pushed this row's edge");
             if !bids_processed.insert(edge) {
-                continue; // this sibling list already produced `call`; skip the subtree.
+                // This sibling list already produced `call`: like `bss.py`'s `bids_processed`,
+                // the repeat's subtree is skipped (subtrees merge only across tables or sibling
+                // lists). Say so when there is a subtree to lose.
+                if !row.children.is_empty() {
+                    ex.lints.push(
+                        Lint::warning(
+                            LintCode::DuplicatePath,
+                            format!(
+                                "{}: repeated in the same sibling list; the repeat's subtree \
+                                 ({} row(s)) is dropped (write it under the first row)",
+                                row.calls[0].raw,
+                                row.children.len()
+                            ),
+                        )
+                        .with_span(row.span.clone()),
+                    );
+                }
+                continue;
             }
             if let Some(p) = parent {
                 if !ex.nodes[p.0 as usize].children.contains(&node_id) {
                     ex.nodes[p.0 as usize].children.push(node_id);
                 }
+            }
+            if row.stop || has_stop_annotation(&row.description.text) {
+                record_stop(&next, seat, vul, &row.span, ex);
             }
             expand_children(
                 &row.children,
@@ -793,6 +1377,7 @@ fn expand_children(
                 meta,
                 opts,
                 &next,
+                Some(frame),
                 Some(node_id),
                 ex,
             );
@@ -811,17 +1396,38 @@ fn expand_children(
             frame,
             ex,
         ) {
+            ours_expanded |= row.calls[0].side == Side::Us;
             let edge = *next
                 .edges
                 .last()
                 .expect("expand_row pushed this row's edge");
             if !bids_processed.insert(edge) {
-                continue; // this sibling list already produced `call`; skip the subtree.
+                // This sibling list already produced `call`: like `bss.py`'s `bids_processed`,
+                // the repeat's subtree is skipped (subtrees merge only across tables or sibling
+                // lists). Say so when there is a subtree to lose.
+                if !row.children.is_empty() {
+                    ex.lints.push(
+                        Lint::warning(
+                            LintCode::DuplicatePath,
+                            format!(
+                                "{}: repeated in the same sibling list; the repeat's subtree \
+                                 ({} row(s)) is dropped (write it under the first row)",
+                                row.calls[0].raw,
+                                row.children.len()
+                            ),
+                        )
+                        .with_span(row.span.clone()),
+                    );
+                }
+                continue;
             }
             if let Some(p) = parent {
                 if !ex.nodes[p.0 as usize].children.contains(&node_id) {
                     ex.nodes[p.0 as usize].children.push(node_id);
                 }
+            }
+            if row.stop || has_stop_annotation(&row.description.text) {
+                record_stop(&next, seat, vul, &row.span, ex);
             }
             expand_children(
                 &row.children,
@@ -831,9 +1437,24 @@ fn expand_children(
                 meta,
                 opts,
                 &next,
+                Some(frame),
                 Some(node_id),
                 ex,
             );
+        }
+    }
+    if ours_expanded && frame.exact_pass.is_some() {
+        match frame.path.last().map(|p| p.side) {
+            // The implicit pass of theirs between our call and our rows.
+            Some(Side::Us) => record_guard(frame.edges.clone(), frame, seat, vul, ex),
+            // A written `(P)` (one candidate of `(P/1S)` too): guarded from the call before it.
+            Some(Side::Them) if frame.edges.last() == Some(&Edge::Call(Call::Pass)) => {
+                if let Some(prev) = prev {
+                    let at = frame.edges[..frame.edges.len() - 1].to_vec();
+                    record_guard(at, prev, seat, vul, ex);
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -846,6 +1467,15 @@ struct Claimed {
     exact: Vec<Edge>,
     /// By earlier pattern rows.
     pattern: Vec<Edge>,
+}
+
+/// Whether `pattern` (or one of its alternatives) uses a relative level (`c`, `j`, §4.6).
+fn pattern_has_relative_level(pattern: &CallPattern) -> bool {
+    match pattern {
+        CallPattern::Strains { level, .. } | CallPattern::Var { level, .. } => level.is_relative(),
+        CallPattern::AnyOf(alts) => alts.iter().any(pattern_has_relative_level),
+        _ => false,
+    }
 }
 
 fn is_exact_row(row: &BmlNode) -> bool {
@@ -903,12 +1533,37 @@ fn expand_row(
     };
 
     let last_bid = frame.last_bid();
-    let candidates = generate_candidates(
+    if pattern_has_relative_level(&tok.pattern) && !frame.last_bid_known() {
+        // One authoring mistake, one lint: a row under a variable history expands once per
+        // binding, and every expansion lands here with the same source span.
+        let reported = ex
+            .lints
+            .iter()
+            .any(|l| l.code == LintCode::LevelWithoutAnchor && l.span.as_ref() == Some(&tok.span));
+        if reported {
+            return Vec::new();
+        }
+        ex.lints.push(
+            Lint::error(
+                LintCode::LevelWithoutAnchor,
+                format!(
+                    "{}: a relative level below an opponents' wildcard that may be a bid: the \
+                     last bid is unknown",
+                    tok.raw
+                ),
+            )
+            .with_span(tok.span.clone())
+            .with_row(row_id),
+        );
+        return Vec::new();
+    }
+    let candidates = generate_candidates_in_order(
         &tok.pattern,
         &frame.env,
         frame.used,
         last_bid,
         frame.under_wildcard,
+        !frame.any_order,
     );
 
     if candidates.is_empty() {
@@ -1103,11 +1758,54 @@ fn report_empty_candidates(
                 .with_span(tok.span.clone()),
             );
         }
-        CallPattern::Step(_) if last_bid.is_none() || frame.under_wildcard => {
+        CallPattern::Step(_) => {
+            // No anchor (no bid yet, or an opponents' wildcard before it), or a step that would
+            // pass 7NT: either way the row and its subtree are dropped, so say so.
+            let why = if last_bid.is_none() || frame.under_wildcard {
+                "no prior bid to step from"
+            } else {
+                "the step would pass 7NT"
+            };
             ex.lints.push(
-                Lint::error(
-                    LintCode::StepWithoutAnchor,
-                    format!("{}: no prior bid to step from", tok.raw),
+                Lint::error(LintCode::StepWithoutAnchor, format!("{}: {why}", tok.raw))
+                    .with_span(tok.span.clone()),
+            );
+        }
+        CallPattern::Strains { level, .. } if level_can_run_out(*level) => {
+            ex.lints.push(
+                Lint::info(
+                    LintCode::NoSufficientLevel,
+                    format!("{}: the level would pass 7", tok.raw),
+                )
+                .with_span(tok.span.clone()),
+            );
+        }
+        CallPattern::Var { level, var }
+            if level_can_run_out(*level) && frame.env.get(*var).is_some() =>
+        {
+            ex.lints.push(
+                Lint::info(
+                    LintCode::NoSufficientLevel,
+                    format!("{}: the level would pass 7", tok.raw),
+                )
+                .with_span(tok.span.clone()),
+            );
+        }
+        CallPattern::AnyOf(alts)
+            if alts.iter().all(|alt| match alt {
+                CallPattern::Strains { level, .. } => level_can_run_out(*level),
+                CallPattern::Var { level, var } => {
+                    level_can_run_out(*level) && frame.env.get(*var).is_some()
+                }
+                _ => false,
+            }) =>
+        {
+            // `jS/jN` over 7H: every alternative is a relative level with a known strain, and
+            // none has a level left.
+            ex.lints.push(
+                Lint::info(
+                    LintCode::NoSufficientLevel,
+                    format!("{}: the level would pass 7", tok.raw),
                 )
                 .with_span(tok.span.clone()),
             );
@@ -1123,6 +1821,13 @@ fn report_empty_candidates(
         }
         _ => {}
     }
+}
+
+/// Whether a row at `level` can be left with no candidate because no sufficient level is left
+/// below 8: the relative levels `c`/`j`, and `n` ("whatever level is needed") after 7NT or a
+/// bid too high for the strain.
+fn level_can_run_out(level: Level) -> bool {
+    level.is_relative() || matches!(level, Level::Any)
 }
 
 /// The last bid made by a seat of the partnership other than `seat_now`'s, scanning `auction`
@@ -1284,7 +1989,13 @@ fn build_or_reuse_node(
         } else {
             Alertability::Unspecified
         },
-        flags: compiled.flags,
+        // The alert marker makes the call artificial (`docs/design/16-extended-bml.md` §3.6), the
+        // same as a convention word does. The parser has already stripped the `!` from the text,
+        // so the description compiler cannot see it and the flag is set here.
+        flags: crate::NodeFlags {
+            artificial: compiled.flags.artificial || row.description.alert,
+            ..compiled.flags
+        },
         description: substituted,
         children: Vec::new(),
     };
@@ -1863,6 +2574,7 @@ mod tests {
             calls,
             description: some_desc(text),
             children,
+            stop: false,
             indent: 0,
             span: test_span(),
         }
@@ -1876,6 +2588,9 @@ mod tests {
             history,
             history_desc: None,
             rows,
+            stop: false,
+            any_order: false,
+            exact_pass: None,
             span: test_span(),
         }
     }

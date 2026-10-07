@@ -639,3 +639,843 @@ C8. **Phase-3 recheck: rows that caught every hand, or were shadowed by a siblin
       balanced (4-4-4-1), and every 25+ hand with no five-card suit, had no rebid and
       passed the forcing 2!d. 2NT now also takes 22--24 hands with no five-card suit,
       and 3NT takes 25+ hands with no five-card suit (or balanced).
+
+## Phase 4 tables (tasks 4.2-4.4)
+
+Phase 4 measures SAYC on auctions it generates itself (`cargo xtask coverage`, below): a
+position without rows is answered by natural inference, and an auction is *all-system* only
+when no call needed it. The booklet stops at the first round or two, so most of the phase-4
+text is this file's own limit-bidding interpolation, written per auction; none of it adds a
+convention. Every table ends with the partnership passing from then on.
+
+P1. **System stops** (`passes.bml`; docs/design/06-system.md §4.5). Our own pass is a trie
+    edge only where a row names it, so a partnership that stopped used to leave the system at
+    the partner's next turn. Phase 4 first wrote the stop out: the clipboards `pass-chain`
+    (our pass, then `(any)` of theirs, six rounds deep) and `after-chain` (starting with their
+    call, pasted under a row whose call ends our bidding), 2,543 pastes and about 87% of the
+    38,737 rows. They are now replaced by stop markers at the same places:
+    `P = {prio:-100} {stop} any hand` for each `#PASTE pass-chain` (1,146) and `#STOP` at the
+    paste's indentation for each `#PASTE after-chain` (1,397). The compiler grafts every stop
+    onto the trie: from the stop it follows the opponents' `(any)` and our `P` alternately,
+    through any edge a table writes there itself, and links the first missing edge to one
+    shared pair of nodes that loop. The stop pass is an ordinary `{prio:-100}` `any hand` node,
+    so under the phase-4 rank policy it is still chosen exactly when no other listed call
+    applies, and every consumer sees what it saw of the chain rows. Unlike the chains a stop
+    never runs out (the chains stopped after six rounds; with four the generated all-system
+    rate fell from 0.883 to 0.824, with three to 0.614). With the graft cut at six rounds the
+    stop-based file is indistinguishable from the chains (every `cargo xtask coverage` number,
+    and `choose_bid`, `call_distribution` and `interpret` on 24,269 generated positions);
+    unbounded, only positions past the sixth round differ.
+    **Caveat (review of lane D), unchanged by the stops.** Once one of us has passed, the
+    partner passes with *any* hand whatever the opponents do, and the stop pass is the only
+    row of those positions. They count as system positions, so the stop also suppresses the
+    natural completion that would mark them as holes: without chains or stops the generated
+    all-system rate is 0.044, not 0.896. At many of them SAYC has a real decision (a
+    reopening double, competing after a negative double and their raise, a penalty double of
+    a balancing bid). `cargo xtask coverage` therefore reports the *strict* rate as well: a
+    position whose only rows are default passes (priority -100 or lower, the stop pass
+    included) counts as a departure whenever the natural choice there is not `Pass` (see P4'
+    below). The fitted `(ε, δ)` depends on the stops too (without them ε 0.361, δ 0.412). A
+    chain that continued only over the opponents' pass (`(P)` for `(any)`) was measured and
+    rejected: all-system 0.333, because the partnership then leaves the system in every
+    auction the opponents keep bidding in, mostly where the natural choice is a pass as well.
+P2. **Defense to their two-level and higher openings** (`defense.bml`): the one-level methods
+    one level higher (takeout double short in their suit, 12--16 or any 17+; a natural
+    overcall with five cards at the two level and six at the three level; 2NT 15--18 with a
+    stopper over a weak two; 3NT to play), with the advances of the double and of the
+    overcall. Over a four-level preempt double with 16+, else pass; over their strong 2!c and
+    2NT a natural overcall needs a good hand and a long suit.
+P3. **Continuations after our pass** (`continuations.bml`): the stop pass
+    (`P = {prio:-100} {stop} any hand`, the `pass-chain` paste before the system stops) as the
+    lowest-ranked call of every table that has no pass of its own, and opener's reopening
+    after an overcall and responder's pass (double short in their suit with 12+, rebid a
+    six-card suit; responder then passes for penalty with four cards in their suit, bids
+    notrump with a stopper, or returns to opener's suit).
+P4. **Opener after a negative double** (`competitive-rebids.bml`): the unbid four-card major at
+    the cheapest level with 12--15, a jump with 16--18, game with 19--21; notrump with a
+    stopper; else the cheapest rebid of the opening suit (the double is forcing). Responder
+    raises to game with 12+, invites with 10--11, and so on.
+P5. **Later uncontested rounds** (`later-rounds.bml`, the weak-two 2NT inquiry in
+    `weak-twos.bml`): responder adds opener's shown range to his own and bids game with enough
+    for 25--26, invites a point or two below, else stops; opener accepts an invitation with
+    the top of his range. An eight-card major fit plays in the major, anything else in
+    notrump. Neither slam bidding nor a second-round forcing new suit is written.
+P6. **Later competitive rounds** (`competitive-later.bml`): opener's answer to a negative
+    double of a two-level overcall, opener after responder's raise or notrump over an
+    overcall, the overcaller's side after the advance, two-level and weak jump overcalls,
+    Michaels and the unusual notrump, the balancing seat, and the takeout doubler's rebid.
+P7. **Further competitive continuations** (`competitive-extra.bml`, the doubled preempt in
+    `preempts.bml`): tables generated once from the most frequent departures of a 5000-replay
+    coverage run and checked against the compiled system (every one of our header calls an
+    unshadowed sibling, the position still empty); each table gets an `(any)` sibling so
+    that `resolve_lenient` does not read their double or bid as a pass (the corpus lenient
+    count had risen from 5 to 66 of 8169 calls and is 1 now). The calls are natural: a raise
+    with the stated support at the cheapest level, a rebid of a six-card suit, notrump with a
+    stopper.
+P8. **Advances after they raise over Michaels, and of the sandwich overcall over their 1NT
+    response** (end of `competitive-later.bml`): over a minor-suit cuebid game in a major with
+    11+ and three-card support, else the cheapest major with support; over a major-suit
+    cuebid game in the known major (11+ over 2!h, 8+ over 2!s), else 3!s with 0--10 over 2!h;
+    over `(1X)-P-(1N)-2Y` and opener's pass a raise with 8--11 and three-card support. These
+    were the most frequent off-system `NoCandidate` positions of the 10^6 forward-consistency
+    generator after P1-P7 (for example `(1S)-P-(1NT)-2H` advancer 73 and `(1S)-2S-(3S)`
+    advancer 67 per 10^6). Also the advancer after our balancing two-level overcall of their
+    raise and opener's pass (`(1X)-P-(2X)-2Y-`, a raise with 8--11 and three-card support).
+P9. **Advancing our one-level overcall after a negative double** (`competition.bml`, the
+    overcaller's continuations at the end of `competitive-later.bml`). The phase-3 header
+    `(1X)-1Y-(D)-2X-(P)-` named advancer's cuebid with no row behind it, so at `(1X)-1Y-(D)`
+    the cuebid was an unconstrained trie edge: `choose_bid` cuebid with any hand and never
+    passed, and the implicit pass had an empty complement (the corpus's one default-mode
+    `EmptySupport` seat, `P P 1C 1S X P ...`). The advance is now the table over opener's
+    partner's pass (the double changes nothing in SAYC), with the two-level new suit and the
+    pass chain, and the overcaller's continuations after it are copies of the `(P)` ones
+    (raise, jump raise, new suit, notrump; 70 tables, generated from the `(P)` headers and
+    checked to name only calls the advance table defines). `cargo xtask coverage` now counts
+    our own non-pass calls without a requirement (`lints.unconstrained_own_calls`); it is 0.
+
+P10. **Competitive decisions where the chain pass was the only row** (end of
+    `continuations.bml`): opener after a negative double of a two-level overcall and their
+    raise (support for the doubler's major, game with 17+; over their raise of a major, a
+    four-card minor at the four level with 15+; a six-card rebid with 15+); opener's
+    reopening over a three-level overcall (takeout double with 12+ and 0--1 cards in their
+    suit, a six-card rebid with 15+; responder passes for penalty with four trumps, bids
+    3NT with a stopper, else returns to opener's suit); opener after their takeout double,
+    responder's pass and advancer's 1NT (penalty double 16+, a six-card rebid 12--15);
+    opener after responder's pass and their raise of a one-level overcall (takeout double
+    13+ short in their suit, answered in an unbid major, else opener's suit; a six-card
+    rebid 15+); responder's penalty double with 10+ when a passed hand balances over
+    1NT-3NT at the four level. These were the reviewer's examples of strong hands the
+    chains made pass (`sayc_content::phase4_tables::acting_after_they_compete_over_our_stop`).
+    The strict all-system rate rises from 0.540 to 0.550; the positions left are a long tail
+    (the top one, opener after `1S-(P)-P-(X)`, has 9 of 461 overrides in 1000 auctions), and
+    many overrides are the natural engine competing with hands SAYC passes with.
+
+Lints: the phase-4 rows add no `ShadowedBranch` warning on our side (18 before and after,
+all phase-3 rows). They add 129 on the opponents' side, every one on a table-header node:
+a header such as `1C-(1D)-1H-(1N)-` names their call with no constraint, next to the row that
+defines that call (here `competition.bml`'s advance of the overcall), so the header node is a
+second, lower-ranked member with the same call and is never the first satisfied one. The call
+itself keeps its pieces; the base system has 231 lints of exactly this kind. P10's headers add
+22 more of the same kind (theirs 382, ours still 18). Opponents' calls are trie edges only, so
+the lint now skips `Side::Them` nodes (phase-4 integration): SAYC reports `ShadowedBranch` 18,
+all on our side, and `OverlappingBranches` 268. The "theirs" counts below predate that change.
+
+Cost: with the pass chains the system grew from 1,611 rows / 2,415 nodes to 38,737 rows /
+49,800 nodes (the chains about 87% of them); release compile 0.91--0.94 s best of 3 and
+`tests/compile_time.rs`' release-only `< 1 s` assertion on `sayc.bml` failed on some runs
+(1.03--1.49 s at loadavg 3.3--5.9); the exclusive index took
+44.7--47.5 ms to rebuild (24,067 groups); the postcard IR was 16,415,084 bytes (845,860 before
+phase 4); one compile peaked at 158 MB RSS. With the system stops (phase-4 integration,
+stage 2; release, best of 3, loadavg 3.2--3.5): 6,496 rows / 7,174 nodes (2 of them the
+synthesised stop pair), compile 437--441 ms, `compiling_sayc_is_fast` 436--474 ms, index
+rebuild 12.8--13.0 ms (2,754 groups; 21.8 ms before three build-time shortcuts that leave the
+index byte-identical), postcard IR 2,524,018 bytes, one compile peaks at 33 MB RSS, and a
+default-sizing `cargo xtask coverage` run at 65 MB (241 MB with the chains).
+
+## Phase 4 coverage (`cargo xtask coverage`)
+
+`cargo xtask coverage` (`xtask/src/coverage.rs`) writes `target/coverage_report.json`; the
+fields are described in its module doc. The numbers below are the rows this file is
+measured against in phase 4 (docs/design/15-phase4-plan.md, lane D; 12-roadmap tasks
+4.1-4.4). "Positions" is the forward-consistency generator (seed `0x5a1c0002`, 5% random
+calls), run here with `COVERAGE_POSITIONS=1000000`; the other sections use their defaults.
+
+P0. **Baseline, before any phase-4 SAYC change** (wip/p4-api 4b131db; release; 52.5 s,
+    loadavg 9.27 -> 10.22; positions 49.4 s of it).
+    - Lints: Error 0, Warning 1167, Info 3009. Exclusive index: 714 groups, 2270 nodes,
+      2794 branches; 238 calls and 249 branches are never chosen (shadowed) in any group
+      they appear in.
+    - Generated (1000 replays with natural completion, seed `0xC0FE4001`): all-system
+      27/1000 (0.027); 973 auctions contain a natural completion, 26 a gap. Calls: system
+      3183, system implicit pass 1602, natural 12490, gap 37. First departure from the
+      system: our own pass has no trie edge 385, the system is exhausted (no legal
+      child) 198, no rows for their opening (weak twos, preempts) 184, their call not in
+      the trie 127, their pass 79. Final contract level `[passout, 1..7]`:
+      `[14, 21, 94, 143, 79, 29, 9, 611]` (the natural escalation fixed by the level
+      floor, lane S).
+    - Positions (10^6): chosen by the system 269,948, natural 581,628, implicit pass
+      144,309, `NoCandidate` 4,115 (410 of them on-system, all at lenient matches). The
+      phase-3 tops, keyed like the phase-3 report (trie position + role): `1D-(3C)`
+      responder 27, `1D-(1H)` responder 22, `1C-(1H)` responder 15 (the roadmap's
+      36 / 31 / 25 were measured before the phase-3 rechecks).
+    - Corpus (724 auctions: 27 files, PBN then LIN; even index = tune, odd = eval):
+      all-Exact 30/724 (0.041), eval 14/362 (0.039), SAYC-compatible-opening subset
+      13/384 (0.034). Call-level system resolution (Exact or Partial): all 0.405, eval
+      0.409, subset 0.424. `resolve_lenient` used by 5 of 8169 calls (0.0006). Seats with
+      empty strict support 30; seats whose default-mode support is empty 1.
+    - True-deal policy agreement (human call == `choose_bid`'s, or the natural choice
+      off-system): system positions 2090/3485 (0.600), natural positions 2077/4684
+      (0.443); eval split 0.616 / 0.456.
+    - `(ε, δ)` MLE on the tune split (4135 calls): ε = 0.490, δ = 0.309, ln L = -9351.0
+      (-2.261 per call); at the placeholder `human()` (0.01, 0.3) ln L = -15390.1, at
+      `system_players()` -21012.9. Eval split at the MLE: -8801.9 over 4034 calls.
+
+P1'. **The same base SAYC under the phase-4 engine** (the base files of P0, compiled and
+    replayed with this branch's code, i.e. after the wip/p4-S merge: natural level floor,
+    SAYC-shaped natural rules; release, `COVERAGE_POSITIONS=1000000`, loadavg 8.2). It
+    separates the effect of the rows below from the engine's: generated all-system 27/1000;
+    positions `NoCandidate` 8,826 per 10^6 (on-system 203), phase-3 tops `1D-(3C)` 19,
+    `1D-(1H)` 146, `1C-(1H)` 101; corpus all-Exact 0.041 / eval 0.039 / subset 0.034,
+    system resolution 0.405 / 0.409 / 0.424, `resolve_lenient` 5 of 8169 calls; agreement
+    0.600 (system) / 0.627 (natural); MLE ε = 0.375, δ = 0.460. ShadowedBranch 249 (ours 18,
+    theirs 231, all on table headers).
+
+P2'. **After P1-P8** (this branch; release; `COVERAGE_POSITIONS=1000000`, 17.0 s at loadavg
+    3.5; the default sizing takes 5.8 s):
+    - Compile 855 ms (35,856 rows, 45,749 nodes); lints Error 0, ShadowedBranch 378 (ours 18,
+      theirs 360; the 129 new ones are table headers, see "Lints" above); exclusive index
+      22,088 groups, fresh build 43 ms best of 3; postcard IR 15,118,747 bytes.
+    - Generated (seed `0xC0FE4001`): all-system **894/1000 (0.894)**; 104 auctions with a
+      natural completion, 2 with a gap. Calls: system 7515 (4125 of them default chain
+      passes), system implicit pass 938, natural 214, gap 2. First departures: their pass not
+      in the trie 74, the system exhausted 18, their call not in the trie 14. Final contract
+      level `[passout, 1..7]`: `[14, 81, 324, 436, 141, 3, 1, 0]`. Held-out seeds (2000
+      replays each): `0x1234` 0.895, `0xBEEF0001` 0.875, `0xD00D` 0.8755.
+    - Positions (10^6): `NoCandidate` 3,069 (on-system 138); the phase-3 tops `1D-(3C)`,
+      `1D-(1H)` and `1C-(1H)` responder are 0 / 0 / 0. The remaining tops are off-system
+      positions after the generator's random jumps (`1D-(5D)` responder 36 per 10^6) and a
+      few advances; the natural implicit pass (lane B) answers most of them.
+    - Forward consistency (release, seed `0x5a1c0002`): 10^5 positions 0 non-gap violations,
+      31 gap-induced; 10^6 0 non-gap, 401 gap-induced (phase 3: 2,645).
+    - Corpus (724 auctions): all-Exact 206/724 (0.285), eval 105/362 (0.290), subset
+      112/384 (0.292). System resolution (Exact or Partial): all 0.632, eval 0.654, subset
+      **0.653** (target 0.80), subset eval 0.681. `resolve_lenient` 1 of 8169 calls. Seats
+      with empty strict support 27; sampler `EmptySupport` 1 (a tune-split auction). In the
+      subset, 273 of 384 auctions leave the system; the first natural call is a recorded call
+      that is not a row at an on-system position in 221 of them (`call_not_a_row`: the
+      players' own methods, for example 1!c-2!d, or a 2/1 continuation), a hole of ours in 52
+      (their pass not in the trie 19, the system exhausted 18, our pass 9, their call 5), and
+      875 of the subset's 1511 natural calls follow an earlier call of ours that was off the
+      system.
+    - True-deal agreement: system positions 3851/5739 (0.671), natural positions 1438/2430
+      (0.592); eval 0.688 / 0.599.
+    - MLE on the tune split (4135 calls): **ε = 0.3373, δ = 0.3516**, ln L = -7347.0 (-1.777
+      per call); profile 95% intervals ε 0.322--0.349, δ 0.31--0.395. ln L at δ = 0 / 0.1 /
+      0.2 / 0.3 / 0.4 / 0.5 (ε at the MLE): -7722.1 / -7440.6 / -7373.6 / -7349.7 / -7349.2 /
+      -7367.0; at ε = 0.001 / 0.01 / 0.1 / 0.2 / 0.3 / 0.4 / 0.5 (δ at the MLE): -13800.7 /
+      -10858.0 / -8134.4 / -7541.6 / -7359.0 / -7378.7 / -7548.9. The placeholder `human()`
+      (0.01, 0.3) gives -10866.0, `system_players()` -15412.7. Eval split at the MLE:
+      -6718.9 over 4034 calls.
+
+P3'. **After P9** (this branch; release; `COVERAGE_POSITIONS=1000000`, 17.3 s at loadavg 5.6):
+    - Compile 909 ms (37,535 rows, 47,611 nodes); lints Error 0, ShadowedBranch 378 (ours 18,
+      theirs 360, unchanged by P9), unconstrained own calls 0 (6 before P9, all from the
+      `(1X)-1Y-(D)-2X-(P)-` header); exclusive index 22,999 groups, fresh build 44.6 ms best of
+      3; postcard IR 15,768,137 bytes.
+    - Generated (seed `0xC0FE4001`): all-system **894/1000 (0.894)** (0.869 with only the P9
+      advance table, before its continuations); 104 with a natural completion, 2 with a gap;
+      calls system 7443 (4112 default chain passes), system implicit pass 938, natural 214,
+      gap 2. Final contract level `[passout, 1..7]`: `[14, 92, 307, 449, 134, 3, 1, 0]`.
+    - Positions (10^6): `NoCandidate` 2,995 (on-system 143); phase-3 tops 0 / 0 / 0.
+    - Forward consistency (release, seed `0x5a1c0002`): 10^5 0 non-gap / 36 gap-induced
+      (3.3 s, loadavg 4.6); 10^6 0 non-gap / 424 gap-induced (20.6 s, loadavg 4.6 -> 4.1).
+    - Corpus: all-Exact 211/724 (0.291), eval 107/362 (0.296), subset 116/384 (0.302).
+      System resolution all 0.639, eval 0.659, subset **0.661** (target 0.80), subset eval
+      0.688. `resolve_lenient` 1 of 8169 calls. Seats with empty strict support 15 (27
+      before P9); sampler `EmptySupport` **0** (1 before). Subset first natural calls:
+      `call_not_a_row` 226, the system exhausted 18, their pass 19, their call 5 (our pass 0,
+      9 before).
+    - True-deal agreement: system positions 3906/5794 (0.674), natural 1397/2375 (0.588); eval
+      0.690 / 0.597.
+    - MLE on the tune split (4135 calls): **ε = 0.3357, δ = 0.341**, ln L = -7330.8 (-1.773
+      per call); δ within 1.92 of the maximum for 0.30--0.38, ε between the grid points 0.316
+      and 0.355. ln L at δ = 0 / 0.1 / 0.2 / 0.3 / 0.4 / 0.5 (ε at the MLE): -7686.5 / -7416.8 /
+      -7353.8 / -7332.5 / -7334.1 / -7353.7; at ε = 0.001 / 0.01 / 0.1 / 0.224 / 0.316 /
+      0.355 / 0.501 (δ at the MLE): -13772.7 / -10834.5 / -8115.5 / -7456.2 / -7334.3 /
+      -7333.6 / -7537.1. The placeholder `human()` (0.01, 0.3) gives -10840.5,
+      `system_players()` -15326.0. Eval split at the MLE: -6706.5 over 4034 calls.
+
+P4'. **After P10, with the strict accounting** (this branch; release; `COVERAGE_POSITIONS=1000000`,
+    17.6 s at loadavg 2.6 -> 2.9):
+    - Compile 957--983 ms (38,737 rows, 49,800 nodes; loadavg about 5); lints Error 0,
+      ShadowedBranch ours 18, theirs 382; unconstrained own calls 0; exclusive index 24,067
+      groups, fresh build 45.7--49.2 ms; postcard IR 16,438,261 bytes; peak RSS of a default
+      coverage run 241 MB. `tests/compile_time.rs`' release `< 1 s` on `sayc.bml` now fails
+      (1.24 s alone, 1.42 s with the other tests; loadavg 3.8--4.6).
+    - Generated (seed `0xC0FE4001`): all-system 894/1000 (0.894), **strict 550/1000 (0.550)**
+      (0.540 before P10). 2,706 positions offered only default passes; at 461 of them the
+      natural choice was a call (366 auctions, 344 of them otherwise all-system). Strict first
+      departures: default-pass override 357, their pass not in the trie 61, the system
+      exhausted 18, their call not in the trie 14. Final contract level `[passout, 1..7]`:
+      `[14, 92, 304, 450, 136, 3, 1, 0]`.
+    - Positions (10^6): `NoCandidate` 3,009 (on-system 142); phase-3 tops 0 / 0 / 0.
+      Forward consistency (release, seed `0x5a1c0002`): 10^5 0 non-gap / 26 gap-induced (3.4 s,
+      loadavg 4.0); 10^6 0 non-gap / 426 gap-induced (20.1 s, loadavg 4.4 -> 4.2).
+    - Corpus: all-Exact 0.305 / eval 0.309 / subset 0.326; system resolution 0.641 / 0.661 /
+      **0.665** (subset eval 0.692); `resolve_lenient` 1 of 8169 calls; strict-empty seats 18;
+      sampler `EmptySupport` 0. Subset first natural calls: `call_not_a_row` 137,
+      `call_not_a_row_default_pass_only` 80 (91 before P10: a recorded call at a position the
+      system answers only with a chain pass, i.e. a SAYC decision the file does not write,
+      not a method of the players), their pass 19, the system exhausted 18, their call 5.
+    - Agreement: system positions 0.675, natural 0.588 (eval 0.691 / 0.597).
+    - MLE on the tune split: **ε = 0.3357, δ = 0.335**, ln L = -7320.7 (-1.770 per call); δ
+      within 1.92 of the maximum for 0.30--0.38. ln L at δ = 0 / 0.1 / 0.2 / 0.3 / 0.4 / 0.5:
+      -7666.3 / -7402.7 / -7341.8 / -7321.9 / -7324.6 / -7345.2; at ε = 0.001 / 0.01 / 0.1 /
+      0.2 / 0.316 / 0.398 / 0.501: -13750.6 / -10817.0 / -8102.6 / -7514.2 / -7324.0 / -7351.6
+      / -7528.2. `human()` placeholder -10822.0, `system_players()` -15274.7; eval split at
+      the MLE -6707.5.
+    - The same files with every chain paste removed (release, default sizing, loadavg 3.2):
+      5,010 rows / 5,499 nodes, compile 396 ms, index 17.9 ms, IR 1,913,553 bytes;
+      all-system 0.044 (strict 0.044); corpus all-Exact 0.047 / 0.047 / 0.044, system
+      resolution 0.443 / 0.450 / 0.463; MLE ε 0.361, δ 0.412.
+
+P11. **Phase-4 integration: the chains replaced by system stops** (P1; default sizing,
+    release). Stage 1 (0928a7b, the merged lanes with the chains; loadavg 6.2) against
+    stage 2 (the stops; loadavg 6.9--7.4); every difference comes from the stop not running
+    out after six rounds (with the graft cut at six rounds every number below is identical to
+    stage 1):
+    - System: 38,737 rows / 49,800 nodes -> 6,496 / 7,174; compile 1028 -> 471 ms (single
+      run inside the coverage tool); index 24,067 -> 2,754 groups, fresh build 47.5 -> 12.5 ms;
+      IR 16,415,084 -> 2,524,018 bytes; peak RSS of the whole run 65 MB. Lints:
+      `EmptyDescription` 23,017 -> 1,703, `NonStandardToken` 37,998 -> 734, warning
+      `SiblingSubset` 2,318 -> 2,271, `ShadowedBranch` 18 (all ours) and `OverlappingBranches`
+      268 unchanged, `DuplicatePath` 5 (the placeholders the stop pass fills).
+    - Generated: all-system 0.894 -> 0.896, strict 0.550 -> 0.552; default-pass-only
+      positions 2,706 -> 2,710 with 461 overrides both times; 2,463 calls are the synthesised
+      stop pass (`generated.system_stop_passes`).
+    - Corpus: all-Exact 0.305 / 0.309 / 0.326 unchanged; system resolution 0.641 -> 0.658,
+      eval 0.661 -> 0.675, subset 0.665 -> 0.683 (subset eval 0.692 -> 0.707); subset first
+      natural calls unchanged (`call_not_a_row` 137, `..._default_pass_only` 80); subset
+      natural calls because their call / their pass is not in the trie 154 -> 85 / 99 -> 85.
+      MLE ε 0.3483 unchanged, δ 0.3253 -> 0.3246, ln L -7418.7 -> -7416.2.
+      The +0.016 to +0.019 of system resolution is entirely stop passes: +133 resolved calls,
+      all human passes at default-pass-only positions (rounds 3-6). It is not authored
+      coverage, so the [C] baseline is not restated upwards. Strict [C] (an Exact or Partial
+      call where the caller's system offers only default passes does not count;
+      `system_resolution_strict_rate`, `resolved_at_default_pass`) is identical at both
+      stages: all 0.442, eval 0.449, tune 0.436, subset 0.462, subset eval 0.473. The 0.80
+      criterion applies to the strict value.
+    - Forward consistency (release, seed `0x5a1c0002`): 10^5 0 non-gap / 2 gap-induced,
+      10^6 0 / 14, `NoCandidate` 149 per 10^6, the same at stage 1 (0928a7b): the stops did
+      not change them. The improvement over lane D before the merge (wip/p4-D: 26, 426,
+      3,009) came from merging the other lanes.
+    - Review fixes (stage 3; the SAYC trie and nodes are unchanged apart from the synthesised
+      nodes' flag and text; IR 2,531,202 bytes): stops under different `#SEAT`/`#VUL`
+      conditions meeting at one edge now share a loop of the union (before, only the first
+      condition kept the stop pass; SAYC has no such conditions); written rows and wildcard
+      edges take precedence over a stop whatever the file order (documented, tested);
+      `{ stop }` is a stop; `Node::is_synthesised()` reads `NodeFlags::synthesised`;
+      explanations drop the `{prio}`/`{w}`/`{stop}` annotations, so every stop pass explains
+      itself as `any hand`. `compile()` strips them once from every node's description
+      (`COMPILE_REVISION` 6 on the integration line, 9 after lane D2 merged; IR 2,476,329
+      bytes; `interpret/sayc-12-call-auction` about 3% faster than stripping per call).
+
+P12. **Lane D2: thickening SAYC and extending BML** (wip/p4-D2; default sizing, release;
+    `COVERAGE_OUT` per batch). Ten batches of rows (`continuations-p12.bml`,
+    `later-rounds-extra.bml`, `competitive-extra.bml`, `competitive-later.bml`,
+    `continuations.bml`) and three BML extensions, measured against the stage-2 stops of
+    P11 with the strict accounting. Criteria: strict [G] >= 0.80 and strict [C] subset
+    >= 0.80. **Neither is met**: strict [G] 0.552 -> **0.751**, strict [C] subset 0.462 ->
+    **0.489**.
+    - Survey (batch 7's dump; the classes are (i) a SAYC decision the file does not write,
+      (ii) a SAYC decision BML cannot express, (iii) our passed hand in the opponents'
+      constructive auction, (iv) a method of the players or an off-system position, (v) a
+      convention SAYC has and the file lacks, (vi) other; a heuristic classification by
+      position and call, checked by hand on the tops):
+      [G] `default_pass_override_top50` 82 overrides: (i) 42, (iii) 33, (iv) 7;
+      `first_strict_departure_top50` 80: (i) 48, (ii) 3, (iii) 23, (iv) 6;
+      `natural_completion_top50` 64: (i) 43, (ii) 10, (iv) 11.
+      [C] `first_natural_top50` 109: (i) 90, (iii) 11, (iv) 8. The subset's 4,355 calls:
+      system 2,105, natural 1,261 ((i) 874, (ii) 123, (iii) 88, (iv) 95, (v) 81), resolved
+      only by a default pass 989 ((i) 328, (iii) 604, (iv) 57). By class: they opened and we
+      passed, default pass only, 604; we opened, uncontested, natural 365; we opened,
+      contested, natural 416; they opened and we acted, natural 357.
+      Class (ii) led to the extensions below; class (v) is mostly Blackwood responses, which
+      need an ace-count vocabulary (the description language has no ace metric), not added.
+    - BML extensions (06-system.md §4.6, §4.7, §7.4; 13-decisions.md D16 amendment items
+      1-4): relative levels `cS`/`jY`/`cN` (the cheapest sufficient level of a strain and
+      one above it; `LevelWithoutAnchor` Error, `NoSufficientLevel` Info); suit-length
+      comparisons in descriptions (`!s>=!h`, `M>oM`, `!h>!s`); the `#ANYORDER` table
+      directive (the table's fresh X/Y/Z drop the X<Y<Z order; `AnyOrderWithoutVariables`
+      Info). `COMPILE_REVISION` 7. P10's twelve literal negative-double tables and six
+      reopening tables became five variable tables with an identical compiled node set
+      (8,834 positions compared field by field).
+    - Rows by batch: 1 competing after their raise and over passed preempts (relative
+      levels); 2 opener's second turn when they come in again; 3 over their notrump and
+      weak-two responses, escapes; 4 advancing after their bid over our double or overcall;
+      5 responder's second call and opener's rebids over overcalls; 6 competitive decisions
+      after they raise or reopen; 7 continuations after rows that stopped short (Jacoby 2NT,
+      weak twos, preference, cue-bid raise); 8 uncontested rebids (1X-1Y-1Z-1NT, 1m-1NT-2m,
+      reverses, jump shifts), penalty sits (weak two, 1NT overcall) and takeout doubles of
+      three-level preempts; 9 advancing a raised weak jump overcall and a takeout double
+      over their jump raise, opener after our double of their Michaels cue bid and after a
+      two-over-one and their overcall, passes that end limited auctions; 10 opener passes
+      partner's game sign-off (12--15; hands with slam values have no row there and go to
+      the natural engine). Every explicit pass describes the hands that pass (a range the
+      earlier bidding leaves room above or below, or a shape); no row is `any hand`. A
+      position an earlier file already ends with `#STOP` keeps that stop pass: an explicit
+      pass written later is a `DuplicatePath` and never chosen (batch 9 removed 18 such).
+    - Curve (strict [G] / raw [G] / strict [C] subset / [C] subset / nodes / compile /
+      index / loadavg at the start of the run; strict [C] exists from the p4int merge on):
+
+      | batch | strict [G] | raw [G] | strict [C] sub | [C] sub | nodes | compile | index | loadavg |
+      | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+      | 0 (P11 stage 2) | 0.552 | 0.896 | 0.462 | 0.683 | 6,477 | 456 ms | 12.6 ms | 4.1 |
+      | 1 | 0.582 | 0.896 | — | 0.685 | 6,770 | 495 ms | 13.8 ms | 3.7 |
+      | 2 | 0.637 | 0.896 | — | 0.691 | 7,231 | 489 ms | 14.7 ms | 3.6 |
+      | 3 | 0.663 | 0.897 | — | 0.692 | 7,580 | 678 ms | 19.5 ms | 5.4 |
+      | 4 | 0.665 | 0.901 | — | 0.700 | 7,854 | 558 ms | 16.0 ms | 3.5 |
+      | 5 | 0.669 | 0.909 | — | 0.708 | 8,047 | 550 ms | 16.5 ms | 4.0 |
+      | 6 (+ p4int) | 0.684 | 0.910 | 0.482 | 0.708 | 8,137 | 590 ms | 16.7 ms | 6.4 |
+      | 7 | 0.704 | 0.938 | 0.483 | 0.710 | 8,439 | 717 ms | 17.4 ms | 5.5 |
+      | 8 | 0.727 | 0.960 | 0.487 | 0.716 | 8,721 | 617 ms | 17.5 ms | 2.1 |
+      | 9 | 0.739 | 0.974 | 0.489 | 0.717 | 8,939 | 633 ms | 18.3 ms | 3.1 |
+      | 10 | **0.751** | 0.969 | **0.489** | 0.717 | 9,021 | 670 ms | 18.9 ms | 2.4 |
+      | review fixes | 0.745 | 0.957 | **0.491** | 0.716 | 9,524 | 708 ms | 19.9 ms | 2.8 |
+
+      Compile and index are single measurements inside the coverage run (one compile, one
+      fresh build). The index build is above the 15 ms target from batch 3 on (the node
+      count grew 39%); `sayc_exclusive_index_build_is_bounded` (< 30 ms) holds.
+    - Final (batch 10): lints Error 0, `ShadowedBranch` 18 (all ours, the phase-3 rows),
+      `DuplicatePath` warnings 23, unconstrained own calls 0. Generated: 2,495 positions
+      offer only default passes, 276 overrides in 229 auctions; strict first departures:
+      default-pass override 227, their pass not in the trie 7, their call 7, the system
+      exhausted 8 (P11: 357 / 60 / 13 / 18). Corpus: all-Exact 0.322 / 0.326 / 0.344 (all /
+      eval / subset); system resolution 0.689 / 0.707 / 0.717 (subset eval 0.742); strict
+      0.471 / 0.477 / 0.489 (subset eval 0.502), `resolved_at_default_pass` 992 in the
+      subset. Agreement: system positions 0.679, natural 0.543. MLE on the tune split: ε
+      0.345, δ 0.327, ln L -7378.6. Forward consistency (release, seed `0x5a1c0002`, 10^5):
+      0 non-gap violations after every batch; gap-induced 2 / 2 / 3 and `NoCandidate` 28 /
+      28 / 47 after batches 8 / 9 / 10 (batch 10's explicit passes leave slam-going hands
+      without a row).
+    - Why strict [G] stops at 0.751: 227 of the 249 departing auctions leave at a
+      default-pass override. The 276 overrides: 119 in auctions they opened with our side
+      silent (balancer 70, overcaller 49; e.g. `(2D)-P-(3C)-P-(3D)-P-(P)` 3H,
+      `(1H)-P-(2C)-P-(2H)-P-(4H)` 6D with 5 hcp, `(3H)-P-(4NT)` 6C), 78 in our contested
+      auctions (opener 43, responder 35; e.g. `1C-(1D)-1H-(1NT)-2H-(P)` 3C with 7 hcp), 38
+      uncontested (opener 30, mostly slam moves after partner's game or 3NT, responder 8)
+      and 41 after we competed (balancer 16, overcaller 15, advancer 10); by call kind 135
+      low suit bids, 63 suit bids at the five level or higher, 50 doubles, 28 notrump bids.
+      Most are the natural engine acting where SAYC passes. Writing an explicit pass there
+      would be a row that accepts every hand our earlier pass left (class (iii)) or would
+      stand in for slam methods the file does not have (Blackwood responses, cue bids); the
+      natural engine's appetite is a NaturalParams question (not tuned in this lane).
+    - Why strict [C] stops at 0.489: 604 of the subset's 989 calls (batch 7; 992 at batch 10) resolved only by a
+      default pass are our passes in the opponents' constructive auctions after our own
+      pass; every acting row there contradicts that pass (`ContradictsOwnHistory`), and the
+      SAYC answer is the stop pass itself, which the strict count excludes by definition.
+      Counting them would need a pass row describing every hand the earlier pass allows,
+      i.e. a sink. The natural calls left in the subset are a long tail (the most frequent
+      position has 5 calls).
+    - Review fixes (after batch 10). The review found that several of the lane's stops
+      swallowed hands SAYC does not pass: a strong takeout doubler after advancer's
+      cheapest-suit answer, a 12+ advancer, opener after responder's forcing new suit over
+      their double, and positions below game after a game force. Fixes:
+      - `competing.bml`: after advancer's cheapest-suit answer the doubler passes only with
+        the double's minimum range (0--15/16/17 by table) and cue-bids with more; a 12+
+        advancer has game, 3NT and cue-bid rows; after advancer's pass over their response
+        the strong doubler doubles again (legal also when they bid on, where the cue bid
+        was not); a 10+ advance of a double of their raised weak two or of a balancing
+        double of a preempt with no stopper and no major cue-bids (the explicit pass rows
+        had dropped the table stop, so those hands had no call); the free-advance and
+        two-level-overcall advances take their suit as a parameter, so the cue bid is the
+        opener's suit; opener's rebid after responder's forcing new suit over a takeout
+        double covers every hand and stops only after limited calls.
+      - Game forces: the jump shifts (`responses-major.bml`, `continuations-p12.bml`) and
+        the 13+ new suits of `rebids.bml` are `GF` (were `F`); nothing stops below game
+        after the jump shift or 1m-1X-1NT-2S. Opener never passes 1NT-(2x)-3y (forcing):
+        the missing majors and a no-stopper cue bid were added, and only 3NT and the major
+        game raise stop. The any-hand sinks under those positions and under
+        1H-(1S)-2C-(any) (`competitive-extra.bml`) are gone.
+      - Prose: opener's one-level new suit is 12--18 unbalanced (batch 10's 3NT pass is for
+        its minimum only), Blackwood is in the system but not written as rows, and no row
+        at 1M-1NT-2m compares suit lengths.
+      - A new Warning lint, `StopUnderForcing` (06-system.md §9.3 check 9), reports a stop
+        pass that is a live candidate (an unshadowed member of some exclusive-index group)
+        after partner's forcing call and the opponents' pass, or below game after our game
+        force. SAYC has 27, all phase 4 lane D's opener-rebid sinks in `continuations.bml`
+        (rebids after one-level and two-over-one responses, 1M-2NT, 1S-2C-2H-3D/3S,
+        1H-1S-2C-2D, free bids after their overcall). Those tables do not cover every hand
+        yet, so removing the sinks would only turn the hands into implicit passes hidden
+        from the audit; they are kept as known warnings and
+        `crates/bridge-system/tests/sayc.rs::sayc_stops_under_forcing_calls_are_only_the_known_rebid_sinks`
+        pins the set.
+      - `xtask coverage` also reports a stop-audited strict [G]: a default pass chosen at a
+        position that is not default-pass-only, where the natural engine would not pass, is
+        a swallow. Before / after the fixes: strict [G] 0.751 / 0.745, raw [G] 0.969 /
+        0.957, stop-audited [G] 0.526 / 0.521, swallows 370 in 307 auctions both times (by
+        the natural call: suit 278, notrump 68, double 24; the tops are phase 3's tables:
+        the (2S) and (2H) overcaller, 1D-(1H) responder, 1S-(P)-P-(X) opener). The raw and
+        strict values fall because the removed stops now go to the natural engine
+        (auctions with a natural call 26 -> 38); it does not yet carry a game force forward,
+        so responder's own continuation after a jump shift is still a natural pass. Corpus:
+        all-Exact 0.320 / 0.323 / 0.341; system resolution 0.688 / 0.708 / 0.716 (subset eval
+        0.743); strict 0.472 / 0.479 / 0.491 (subset eval 0.503). MLE: epsilon 0.344, delta
+        0.327, ln L -7377.4. Generated positions with no candidate 75 (86 before, 118 before
+        the no-candidate fixes). Lints: Error 0, `ShadowedBranch` 18, `DuplicatePath`
+        warnings 23, `StopUnderForcing` 27, unconstrained own calls 0; 7,397 rows, 10,220
+        trie nodes, 9,524 index nodes. Compile 708 ms and index 19.9 ms in the coverage run
+        (loadavg 2.8); `compile_time` best of 3: 690 ms, index 19.8--20.0 ms (loadavg 3.7--3.9).
+        Forward consistency (release, seed `0x5a1c0002`, 10^5): 0 non-gap violations, 3
+        gap-induced, `NoCandidate` 42, chosen 88,492, implicit pass 11,466 (2.1 s, loadavg
+        4.2).
+
+P13. **Final phase-4 integration** (wip/p4int after merging lane D2 as 3c57c37;
+    `COMPILE_REVISION` 9, `IR_FORMAT` 3; default sizing, release, 2.9 s at loadavg 6.1 ->
+    5.8). These were the current numbers at 3c57c37; P0-P12 record the earlier stages and
+    P14-P18 the later ones.
+    - The SAYC data is lane D2's after its review fixes, so the coverage numbers equal
+      P12's review-fix numbers: strict [G] 0.745 (745/1000), raw [G] 0.957, stop-audited
+      [G] 0.521, 370 swallows in 307 auctions (suit 278, notrump 68, double 24; tops: the
+      (2S) overcaller 14, 1D-(1H) responder 9, (2H) overcaller 8, 1S-(P)-P-(X) opener 6),
+      `StopUnderForcing` 27. Corpus: all-Exact 0.320 / 0.323 / 0.341 (all / eval / subset);
+      system resolution 0.688 / 0.708 / 0.716 (subset eval 0.743); strict 0.472 / 0.479 /
+      0.491 (subset eval 0.503); `resolve_lenient` 61 of 8,169 calls; empty strict support
+      41 seats, sampler `EmptySupport` 0. MLE on the tune split: epsilon 0.3436, delta
+      0.3267, ln L -7377.4 (delta within 1.92 of the maximum: 0.29-0.37). Generated
+      positions (2x10^5) with no candidate 75, all on-system (top: opener at
+      1D-P-1H-P-1S-P-3NT-P, 9); the phase-3 tops are 0 / 0 / 0. Lints: Error 0,
+      `ShadowedBranch` 18, `DuplicatePath` warnings 23, unconstrained own calls 0.
+    - Only the postcard IR and the timings changed with the merge: IR 3,462,271 bytes
+      (3,537,836 on wip/p4-D2, which lacked the compile-time annotation strip); compile
+      674-680 ms (`sayc_exclusive_index_share`, best of 3, twice; `compiling_sayc_is_fast`
+      685 ms), exclusive-index rebuild 18.9-20.0 ms best of 3 (loadavg 2.3-2.5; 4,070
+      groups, 9,524 index nodes; still above lane S's 15 ms, under the 30 ms guard). One
+      compile peaks at 45 MB RSS (44 MB footprint), a default coverage run at 75 MB.
+    - Forward consistency (seed `0x5a1c0002`): 10^5 0 non-gap / 3 gap-induced,
+      `NoCandidate` 42; 10^6 0 / 29, `NoCandidate` 394. Level floor on 2000 generated deals:
+      no 7-level contract, 6 at the 6 level or higher.
+    - The reproduction fixture (`crates/bridge-bidding/tests/data/repro_generated.txt`) was
+      re-frozen on this SAYC: 8 of 100 auctions changed. Generated reproduction median
+      1.000; the corpus SAYC-reproducible subset has 14 of 312 eval games, median 0.872.
+    - Open: both 0.80 criteria (strict [G], strict [C] subset), the index-build budget, and
+      `PolicyParams::human()` still at its placeholder (0.01, 0.3) until the fit above is
+      adopted before lane P's ESS freeze. Details and the full table: 12-roadmap.md,
+      "フェーズ 4 の最終統合".
+    - Since closed (open as of 3c57c37 only): strict [G] by lane D3 (P14, then P17 for
+      lane N's revision), the index-build budget by the phase-4 performance lane (about
+      8.4 ms; 12-roadmap.md, "フェーズ 4 の性能レーン"), and `PolicyParams::human()` by the
+      fit in P15. Strict [C] subset stays open. The phase-4 closing numbers are in
+      12-roadmap.md, "フェーズ 4 の完了".
+
+P14. **Lane D3: strict [G] through the natural engine's later-round limits** (wip/p4-D3
+    from wip/p4int 9ac0b40; default sizing, release, `COVERAGE_OUT` and the new
+    `COVERAGE_DUMP` per batch). Criteria: strict [G] >= 0.80 with legitimate content;
+    strict [C] secondary. Strict [G] 0.745 -> **0.861** (met); strict [C] subset 0.491,
+    unchanged. No SAYC row and no BML extension changed: the five batches are fixes to
+    `crates/bridge-system/src/natural.rs` (06-system.md §8.6, "後の巡の制限").
+    - Survey. `COVERAGE_DUMP=<file>` (xtask authoring aid) writes each generated first
+      strict departure and stop swallow with the natural call and the natural rule behind
+      it. At the start 255 auctions departed (default-pass override 225, their pass not in
+      the trie 15, exhausted 8, their call not in the trie 7; 276 overrides in 228
+      auctions). Read by rule and checked by hand, the large classes were not SAYC
+      decisions missing from the file but natural rules applying a first action's range at
+      a later turn, where SAYC's pass is the bridge answer: entries at the four to six level
+      over the opponents' game after both had bid (`(1S)-P-(3S)-P-(4S)-P-(P)` 5H with 7 hcp,
+      `(3H)-P-(4NT)` 6C), bids past partner's game (the weak-two opener pulling 3NT,
+      `2S-P-2NT-P-3S-P-3NT-P-4S`), responder's later doubles read as negative doubles
+      (`2D-(P)-P-(2H)-P-(P)-X`), opener's notrump range rebid at later turns
+      (`1D-P-1S-P-1NT-P-2S-P-2NT`) and over their notrump, and a defender's second takeout
+      double with a minimum (`(1C)-1S-(X)-P-(2H)-X`, 12 hcp). P12 had left these as "the
+      natural engine's appetite". Writing SAYC passes there would only restate the pass
+      with rows that accept every hand (P12's class (iii)), so each class is a principled
+      limit on the natural rule instead, with regression tests
+      (`crates/bridge-system/tests/natural_later_rounds.rs`). Each limit either stops the
+      rule from firing (the natural policy passes) or raises its minimum; no first-action
+      constraint changed.
+    - Batches (coverage run's compile ms and loadavg; raw [G] 0.957 throughout):
+
+      | Batch (commit) | Class | strict / stop-audited [G] | overrides (auctions) | swallows | NoCandidate | compile ms (loadavg) |
+      | --- | --- | --- | --- | --- | --- | --- |
+      | start (9ac0b40) | -- | 0.745 / 0.521 | 276 (228) | 370 | 75 | 686 (3.8) |
+      | 1 (c936bfb) | first entry after their exchange: none over their game, 4-level needs 6 cards and opening values, weak jump overcall up to the 3 level | 0.798 / 0.567 | 188 (169) | 321 | 76 | 702 (4.0) |
+      | 2 (3d59aeb) | a bid past partner's game needs slam values (level floor at the 6 level) | 0.826 / 0.592 | 160 (141) | 321 | 76 | 701 (4.2) |
+      | 3 (d39f175) | negative double only on responder's first turn | 0.839 / 0.598 | 146 (128) | 319 | 76 | 781 (20.5) |
+      | 4 (7add2e5) | notrump range rebid only as opener's rebid proper | 0.852 / 0.619 | 128 (114) | 296 | 76 | 714 (17.4) |
+      | 5 (c3216ab) | a defender's second takeout double needs 3 hcp more | 0.861 / 0.625 | 115 (105) | 294 | 76 | 735 (17.5) |
+
+    - Unchanged by construction (the SAYC data did not change): corpus all-Exact 0.320 /
+      0.323 / 0.341 (all / eval / subset); system resolution 0.688 / 0.708 / 0.716; strict
+      0.472 / 0.479 / 0.491; `resolve_lenient` 61 of 8,169 calls; lints Error 0,
+      `ShadowedBranch` 18, `StopUnderForcing` 27, `DuplicatePath` warnings 23; postcard IR
+      3,462,232 bytes in this worktree before and after (P13's 3,462,271 is the same IR
+      built in another checkout); 4,070 groups, 9,524 index nodes.
+    - Changed through the natural engine: corpus natural agreement 0.541 -> 0.555; MLE on
+      the tune split epsilon 0.3436 -> 0.3404, delta 0.3267 -> 0.3953, ln L -7377.4 ->
+      -7285.9 (`PolicyParams::human()` untouched; the integration refit sees the new
+      natural engine). Generated positions with no candidate 75 -> 76 per 2x10^5. The
+      06-system.md §8.5 measurements: measurement 1 SAYC recall / precision 0.7262 / 0.7167
+      -> 0.7274 / 0.7213, vendor 0.5793 / 0.5966 -> 0.5831 / 0.5966; measurement 2 0.2812
+      -> 0.2737 (contextual 0.3357 -> 0.3286, 8,597 -> 8,474 candidates: the rules no longer
+      offer the calls above); measurement 3 0.7981 -> 0.8005. Level floor on 2000 generated
+      deals: six level or higher 6 -> 5, no seven-level contract.
+    - Held-out replay seeds (same sizing, start -> batch 5): `0x1234` 0.705 -> 0.819,
+      `0xBEEF0001` 0.688 -> 0.794, `0xD00D` 0.680 -> 0.787. The gain (+0.10 to +0.11) is
+      the same on every seed; the default seed sits about 0.05 above the others before and
+      after, so two of the three held-out seeds stay just under 0.80.
+    - Forward consistency (release, seed `0x5a1c0002`, 10^5): 0 non-gap violations, 4
+      gap-induced (3 before), `NoCandidate` 41 (42), 2.0 s at loadavg 15. Compile best of 3
+      (`sayc_exclusive_index_share`, back to back at loadavg 9-10): 738-742 ms before,
+      744-762 ms after, index 21-24 ms both; no growth beyond noise (P13's 674-680 ms was at
+      loadavg 2.3). The generated reproduction fixture did not change.
+    - Left: 105 departing auctions (115 overrides; their pass not in the trie 19, exhausted
+      8, their call not in the trie 7). By natural rule: responder `raise` 20 (later-turn
+      raises; some are sound sign-offs such as `1H-P-1S-P-2D-P-2H-P-2NT-P-3H`, some not,
+      such as `1C-(1D)-1H-(1NT)-2H-(P)-3C` with 7 hcp), opener `rebid_own` 14 (mostly sound
+      extras after a two-over-one or in competition: class (i), no rows), balancer
+      `overcall` 13 and `takeout_x` 8 (balancing after they stop low behind our pass: class
+      (iii)), opener `rebid_new_suit` 8, overcaller `takeout_x` 6 (15+ now), responder
+      `resp_nt` 6. Their pass not in the trie includes Blackwood responses (`3H-(P)-4NT`),
+      which still need an ace-count vocabulary. Strict [C] does not move for P12's reason:
+      604 of the subset's 989 default-pass calls are our passes after our own pass in their
+      auctions, which only a sink row would count.
+    - Addendum (lane N, 2026-10-02; the entry above is kept as written). Two statements
+      above are wrong. (1) The survey bullet's "no first-action constraint changed":
+      `overcall` and `jump_overcall` apply only to the overcaller's and balancer's first
+      action (`!owner_acted`), so batch 1 changed first-action constraints throughout. The
+      four-level entry after their exchange went from 5 cards and 10-16 hcp to 6 cards and
+      12-16, and first entries over their game and first-round single jumps to the four
+      level or higher lost their rule (lane N describes the four-level ones again, P17).
+      (2) "Left: 105 departing auctions" counts only the default-pass-override category:
+      strict [G] 0.861 means 139 departing auctions (default-pass override 105 with 115
+      overrides; their pass not in the trie 19, exhausted 8, their call not in the trie 7).
+
+P15. **Phase-4 integration after lanes D3, len and perf** (wip/p4int 8669ffd; default
+    sizing, release). The merged head passes the six-step gate (debug tests: 818 passed,
+    0 failed, 26 ignored) with no fix between the lanes and no pinned value changed by
+    their combination; the generated reproduction fixture still matches the generator (0
+    of 100 differ), so it was not re-frozen.
+    - Strict / raw / stop-audited [G] 0.857 / 0.953 / 0.621 (D3 alone 0.861; len's
+      guards move post-interference calls from the lenient system reading to the natural
+      engine, -0.004 as in len alone). Strict [C] 0.487 / 0.469 / 0.475 (subset / all /
+      eval), raw 0.709 / 0.681 / 0.699, all-Exact 0.320 / 0.323 / 0.341: len alone's
+      values. `resolve_lenient` 1 call, 1 entry; Partial 1; generated `NoCandidate` 58;
+      lints Error 0, `SiblingSubset` warnings 3,588, `StopUnderForcing` 27,
+      `DuplicatePath` 23, `ShadowedBranch` 18; postcard IR 3,553,923 bytes.
+    - MLE on the tune split: epsilon 0.3404, delta 0.3959, ln L -7295.9 (eval -6663.2).
+      `PolicyParams::human()` is now set to these values (93506bb), closing P13's open
+      item; the placeholder (0.01, 0.3) gives -10973.3. Full table: 12-roadmap.md,
+      "フェーズ 4 の統合 (D3・len・perf のマージ後)".
+P16. **Lane guard: `#EXACTPASS FILE` replaces `interference-guards.bml`** (wip/p4-guard from
+    wip/p4int f37ccad; `COMPILE_REVISION` 10, `IR_FORMAT` 3). The 121 machine-selected
+    `...-(any)-` history lines that kept lane D2's tables from being applied to a contested
+    auction (the device of C4 and P7, applied to lane D2; 12-roadmap.md, "フェーズ 4 の resolve_lenient 調査") are now a
+    BML directive (06-system.md §4.8, 16-extended-bml.md §4.8): `#EXACTPASS` in a table, or
+    `#EXACTPASS FILE` as a paragraph of its own before a file's tables, makes the opponents'
+    pass right before each row of ours exact. After every table and every stop, each such
+    position where some other call of theirs has no edge (concrete, a written class, or a
+    stop's `(any)`) gets an empty `(any)` sibling, tried after every other edge there, so the
+    call leaves the system instead of being read as a pass. `competing.bml`,
+    `continuations-p12.bml` and `later-rounds-extra.bml` open with `#EXACTPASS FILE`; the
+    guard file and its `#INCLUDE` are gone.
+    - Equivalence (`xtask coverage`, f37ccad against this lane): every metric is identical
+      (strict / raw / stop-audited [G] 0.857 / 0.953 / 0.621, corpus all-Exact 0.320,
+      `resolve_lenient` 1 call and 1 entry, Partial 1, generated positions, NoCandidate,
+      MLE, exclusive groups and nodes). The structural test
+      (`sayc_tables_after_their_pass_have_an_edge_for_their_other_calls`) still passes on
+      the compiled trie.
+    - Structure only: six expansions of the guard file's variable lines
+      `1Y-(P)-1Z-(P)-2X-(P)-2Y-(any)-` / `...-2Z-(any)-` (after 1D-1H-2C-2D/2H,
+      1D-1S-2C-2D/2S, 1H-1S-2D-2H/2S) sat where a stop on our 2Y/2Z already covers every call
+      of theirs; the old lines were expanded before the stops, which then walked through
+      them, while the directive leaves those positions to the stop's own `(any)`. All 2,960
+      probes below them (8 seat/vulnerability combinations each) resolve identically. Hence
+      nodes 10,494 -> 10,488, trie 11,122 -> 11,116, exclusive keys 65,216 -> 65,120, rows
+      7,518 -> 7,400 (121 guard lines become three directive lines), postcard IR 3,553,923 ->
+      3,537,665 bytes.
+    - Lints: the guard file's own lints go (`NonStandardToken` 122: 121 `(any)` and one
+      `1D/H`; `VariableNoCandidate` 31 for bindings with no candidate; `IllegalCall` Info 1),
+      and the six expansions above take one `EmptyDescription` and one `SiblingSubset`
+      warning each with them (2,767 -> 2,761, 3,588 -> 3,582). The guards that remain still
+      report `SiblingSubset` against an undescribed `(P)` of theirs, at the directive's line,
+      exactly as the `(any)` lines did.
+P17. **Lane N: the natural engine's later-round limits revisited** (wip/p4-fixN from wip/p4int
+    441a4e4; default sizing, release). The integration review of lane D3 (natural-1 to
+    natural-9) ruled that the natural choice is both the strict [G] hole detector and the M of
+    `human()`'s mixture, so a call with a sound natural meaning is re-described with the right
+    range rather than silenced. No SAYC row and no BML changed; the fixes are in
+    `crates/bridge-system/src/natural.rs` (06-system.md §8.6, "後の巡の制限の見直し").
+    - Slam floor only for real overrides of partner's final game choice
+      (`overrides_partners_game`): answers to and follow-ups of 4NT/5NT, bids over a forcing
+      game call, and ordinary corrections of partner's 3NT (four of a major, five of a minor
+      in a suit our side bid; five of a minor needs a singleton or void) keep the ordinary
+      floor. A correction to a raise, a notrump opener's suit or the agreed suit needs an
+      eight-card fit with the length partner has shown, so `1NT-P-2H-P-2S-P-3NT-P-4S` is
+      15-17 with three spades while the same pull after Stayman describes no hand. The
+      notrump opener's `rebid_own` is now balanced, its notrump range, 3+ cards.
+    - Four-level entries: `(1H)-P-(4H)-4S` (also over their 3NT) and first-round single
+      jumps to the four level (`(2S)-4H`, `(3C)-4H`, `(3D)-4S`) are described like the
+      four-level entry below game: 6+ cards, 12-16 hcp, 9-16 in the balancing seat below
+      their game. The jump ranks with the overcall (0.35), so the cheaper overcall wins for
+      the same hand. Five-level entries and jumps stay undescribed. (Round 2 corrects what the
+      jump's range is for, and leaves the pass-out seat's entry over their game undescribed;
+      round 3 keys that on an earlier pass instead of the seat.)
+    - Responder's later double after its own call is `competitive_x` (negative double's
+      minimum + 3: 9+ over a one-level bid, 11+ over a two-level bid); after a first pass it
+      stays undescribed, as does the reopening 1NT (old range 12-14). (Round 2: only after an
+      unlimited first call; round 3 lists them: a new suit, a cue bid, a double or a
+      redouble.)
+    - The advancer's second takeout double keeps the ordinary 12+ (the +3 is for the
+      overcaller and the balancer: 15+, 12+ in the balancing seat; round 2 exempts by the
+      owner's history instead, since an advancer in the pass-out seat is a balancer). Corpus
+      check of the +3: 8 such doubles, 3 satisfy +3 and 6 would satisfy +0, but +0 is worse
+      on the whole corpus (agreement 1136 -> 1135, ln L -7299.4 -> -7300.7) and on strict [G]
+      (0.848 -> 0.839).
+    - Tests pin every new threshold (`tests/natural_later_rounds.rs`); the natural shadow
+      test allows `[2S] jump_overcall` (every four-level jump there ranks behind the cheaper
+      overcall).
+    - Numbers (441a4e4 -> lane head): strict / raw / stop-audited [G] 0.857 / 0.953 /
+      0.621 -> 0.848 / 0.953 / 0.614 (overrides 115 -> 124: the 3NT-correction exemptions
+      -0.004, the new `competitive_x` -0.005, which finds responders with 11-13 hcp at SAYC
+      default passes); strict [C] 0.487 / 0.469 / 0.475 and raw [C] unchanged. Corpus natural
+      agreement 1136 unchanged; MLE on the tune split epsilon 0.3404 -> 0.3420, delta 0.3959
+      -> 0.3943 (both under 0.01; `PolicyParams::human()` untouched), ln L -7295.9 ->
+      -7299.4. Generated `NoCandidate` 58 -> 59. The 06-system.md §8.5 measurements:
+      measurement 1 SAYC recall / precision 0.7212 / 0.7255 -> 0.7224 / 0.7266, vendor
+      0.5827 / 0.5966 -> 0.5825 / 0.5921; measurement 2 0.2858 -> 0.2835 (contextual 0.3448
+      -> 0.3421, 8,589 -> 8,656 candidates; 9ac0b40 had 0.2812 / 0.3357); measurement 3
+      0.8005 -> 0.8003 (`competitive_x` satisfies 6 of its 10 corpus calls). Level floor on
+      2000 deals: six level or higher 5 -> 6 (0.3%), no seven-level contract. Forward
+      consistency (release, seed `0x5a1c0002`, 10^5): 0 non-gap violations, 4 gap-induced
+      (4 before), 2.0 s at loadavg 9-10. The reproduction fixture did not change.
+    - Held-out seeds (strict [G]): `0x1234` 0.812 -> 0.810, `0xBEEF0001` 0.789 -> 0.786,
+      `0xD00D` 0.782 -> 0.775 (two of three stay under 0.80, as after lane D3).
+    - How much of the limits' strict [G] gain is removed candidates (scratch toggles on the
+      lane head, not committed): all limits off 0.742 (gain +0.106). Restoring only the removed
+      candidates gives 0.791 (-0.057: five-level-and-higher single jumps 0.030, five-level
+      entries after their exchange 0.014, notrump rebids other than opener's rebid 0.013,
+      responder's double after a first pass 0.005; corpus ln L -18.5, agreement +1).
+      Restoring only the re-described ranges gives 0.787 (-0.061: four-level entries 0.030,
+      slam floor 0.022, the second takeout double's +3 0.009, `competitive_x` 0.003; corpus
+      ln L -78.6, agreement -31). So about half the gain comes from removed candidates, all
+      of them either wrong as bridge (a "weak jump" to the five or six level) or without a
+      range that can be fixed; most of the corpus gain comes from the re-described ranges.
+    - Round 2 (lane N2, wip/p4-fixN from wip/p4int 3f53aa4; default sizing, release; review
+      findings N-A to N-I; 06-system.md §8.6, "後の巡の制限の見直し (2)"):
+      - N-A: a weak two or a preempt pulling partner's 3NT to its own suit (`2S-P-3NT-P-4S`,
+        `2H-P-3NT-P-4H`, `3H-P-3NT-P-4H`) is no longer a correction and keeps the slam floor
+        (`opened_preemptively_in`).
+      - N-B: a one-level opener that has rebid its suit and pulls 3NT to it
+        (`1S-P-2C-P-2S-P-3NT-P-4S`, `1H-P-1S-P-2H-P-3NT-P-4H`) corrects under the ordinary
+        floor: seven cards (`REBID_SUIT_PULL_LEN`; the natural rules read the rebid as six),
+        12-15 after a non-jump rebid, 16-18 after a jump rebid (round 3: only while the rebid
+        limits the hand). Six cards with a singleton or void cost two corpus agreements and
+        3.8 of ln L (two tables passed 3NT with six hearts and a void); six with a singleton
+        only was not worse (tune unchanged, eval +2.8); seven cards changes no number. (Round
+        3 corrects the reason given here: seven is a modelling choice, not SAYC, whose minimum
+        rebid after a two-over-one response does not promise six.) The test pinning 21 is
+        replaced.
+      - N-C (docs only, ranking unchanged): the four-level jump's range is used by
+        explanation text, the Legacy interpretation, direct `infer` callers and the jumper's
+        partner's context; the default Mirror interpretation reads the shadowed jump itself as
+        ANY, so natural-3 stays open there as a known limit.
+      - N-D: `competitive_x` applies only after an unlimited first call (a new suit or a
+        negative double; round 3 adds the cue bid, any other double and the redouble, which
+        the code already treated so). After a raise
+        or 1NT the double stays undescribed; describing it as the top of the response's range
+        was measured and dropped (strict [G] 0.847 -> 0.841, agreement 1131 -> 1130, ln L
+        -7307.1 -> -7312.5).
+      - N-E: responder's raise correcting opener's 3NT (`1H-P-1S-P-3NT-P-4H`,
+        `1S-P-2C-P-3NT-P-4S`) shows the range of responder's first call
+        (`responders_first_call_hcp`), not the 13+ game raise. (Round 3: a three-level
+        non-jump new suit, a negative double and a redouble had fallen to the simple raise's
+        6-9; first calls without a range get no correction rule.)
+      - N-F: responder's own six-card suit over opener's 3NT (`1C-P-1S-P-3NT-P-4S`) is now
+        described (6+ cards, the first call's range). Lane N had replaced this ruled test with
+        `1C-P-1S-P-1NT-P-3NT-P-4S`; the original auction is now tested.
+      - N-G: the pass-out seat's four-level entry over their game is `fallback` again (that
+        seat passed an overcall in the same suit at an earlier turn). (Round 3: keyed on that
+        earlier pass, whatever the seat's role, so the direct seat's `1H-P-2H-P-4H-4S` falls
+        back too.)
+      - N-H: the second takeout double's +3 is waived by history
+        (`owner_answered_partners_double`), so `1H-X-P-1S-2H-P-P-X` needs 9+.
+      - N-I: the five-level test now has a real single jump (`1H-P-3H-5C`, jump 1); the old
+        `1H-P-2NT-P-4H-5C` case is labelled as the cheapest club (jump 0).
+      - Numbers (3f53aa4 -> lane head; before at loadavg 9-10, after at 5-6): strict / raw /
+        stop-audited [G] 0.848 / 0.953 / 0.614 -> 0.847 / 0.953 / 0.613 (overrides 124 ->
+        125); strict [C] 0.487 / 0.469 / 0.475 and raw [C] 0.709 / 0.681 / 0.699 unchanged;
+        corpus natural agreement 1136 (0.5588) -> 1131 (0.5563); MLE epsilon 0.3420 and delta
+        0.3943 unchanged; ln L at `human()` -7299.4 -> -7307.1 (tune), -6663.7 -> -6675.1
+        (eval); `NoCandidate` 59 unchanged. Forward consistency (10^5, seed `0x5a1c0002`): 0
+        non-gap violations, 4 gap-induced (4 before), 1.9 s.
+      - Per stage (default seed): N-A, N-B, N-D, N-G, N-H and N-I change no number. Measured
+        after N-B and before N-D: N-E alone keeps [G] 0.848, agreement 1132, ln L -7306.9
+        (four corpus positions where the players passed 3NT with a fit); N-F alone gives [G]
+        0.847 (one override: `P 1C P 1H P 2C P 3C P 3NT P` with Q5.AKQT63.84.J72 bids 4H),
+        agreement 1135, ln L -7299.6; both give 0.847, 1131, -7307.1.
+      - Held-out seeds (strict [G]): `0x1234` 0.810 -> 0.807 (overrides 145 -> 148),
+        `0xBEEF0001` 0.786 -> 0.785 (145 -> 146), `0xD00D` 0.775 -> 0.772 (174 -> 177). N-F
+        accounts for 3, 1 and 1 of the new overrides; N-B for 2 on `0xD00D`
+        (`P 1S P 2C P 2S P 3NT P` with KQJT963.A.Q3.975 bids 4S at a SAYC default pass).
+    - Round 3 (lane N3, wip/p4-fixN from wip/p4int 466b045; default sizing, release; review
+      findings N2-1 to N2-5 and vn2-1 to vn2-6; 06-system.md §8.6, "後の巡の制限の見直し (3)"):
+      - N2-1: the 3NT pull to a rebid opened suit shows 12-15 / 16-18 only while the rebid
+        limits the hand (opener's only non-pass calls are the opening and bids of that suit,
+        `opener_other_calls` empty). After a reverse, a jump shift, a 2NT rebid or a non-jump
+        new suit it shows opener's strongest earlier call (`openers_strongest_call_hcp`:
+        17-21, 19-21, 18-19, 12-18), still seven cards and the ordinary floor; these were
+        unsatisfiable (e.g. 18-15). In the jump-shift auction the Mirror seat's top piece
+        (19-21) is unsatisfiable by shape, because SAYC's 3C row caps hearts at five while
+        the natural 3H rebid shows six (a known limit).
+      - N2-2 / vn2-1: `responders_first_call_hcp` has no catch-all. A three-level non-jump new
+        suit is 10+ like the two-level one, a redouble 10+, a first-turn negative double its
+        own minimum (8+ at the two level), all open-ended; any other first call (a penalty
+        double, say) gets no correction rule. They had fallen to the simple raise's 6-9.
+      - N2-3 / vn2-2: the entry over their game is `fallback` for anyone who passed at a turn
+        after the opening (`passed_after_opening`), whatever the role: the direct seat's
+        `1H-P-2H-P-4H-4S` too. First-chance entries stay 6+ cards, 12-16. Known limits: a
+        pass before the opening (`P-1H-P-4H-4S`) still allows 12-16, and the delayed first
+        entry below their game (`1H-P-2H-P-3H-3S`) is unchanged.
+      - N2-4: a weak two's or a preempt's five of its minor over partner's 3NT
+        (`2D-P-3NT-P-5D`, `3C-P-3NT-P-5C`) is read with jump 0, so the slam floor leaves no
+        hand (it described the jump rebid's 16-18).
+      - N2-5: agreed suits are every suit both partners bid (`CallContext::agreed_suits`),
+        tested in responder's correction branch, `rebid_opened_suit` and (for consistency,
+        beyond the ruling's two sites) opener's re-raise branch. `1C-P-1H-P-2H-P-3C-P-3NT-P-4H`
+        now falls back like the single-agreed auction; opener's pull to an agreed 5D
+        re-raises it (16-21, was 16-15).
+      - vn2-3 (fixed): a one-level opener that has bid an agreed suit twice and pulls 3NT to
+        it (`1S-P-2S-P-3S-P-3NT-P-4S`) corrects (`repeated_agreed_suit`): opening values,
+        ordinary floor (14-21 opposite 8+, was 23-18).
+      - Side effect of N2-5, fixed (not a review finding): the re-raise branch read every
+        uncontested non-jump re-raise as a 16-18 game try, also after a slam ask; with both
+        majors agreed a corpus opener's 5S sign-off after 4NT and a 5H follow-up
+        (AKT963.K.874.A72, 14 hcp) took that range. After a slam ask (`our_slam_ask`) the
+        re-raise now shows the opening range with the ordinary floor
+        (`1H-P-3H-P-4NT-P-5D-P-5H`: 16-18 -> 16-21).
+      - vn2-4 (docs): `REBID_SUIT_PULL_LEN` stays 7. It is a modelling choice resting on the
+        natural rules' six-card reading of a rebid, not SAYC (whose minimum rebid after a
+        two-over-one response does not promise six); six cards with a singleton only was not
+        worse on the corpus.
+      - vn2-5 (docs): the level-floor table's "(現行)" rows are relabelled by when they were
+        measured (84ea6a0, 2026-09-28). On the lane head, 2000 deals: default table [32, 199,
+        634, 847, 279, 3, 6, 0] (six level or higher 0.3%, no seven), as at 466b045; no floor
+        [32, 199, 632, 837, 276, 4, 5, 15] (466b045: ... 278, 4, 5, 13); 5 replays with gaps
+        each.
+      - vn2-6 (docs): `competitive_x` follows any unlimited first call: a new suit, a cue bid,
+        a double (negative or not) or a redouble. The code already did; tests now pin the cue
+        bid, the redouble and the penalty double.
+      - Numbers (466b045 -> lane head; before at loadavg 3.7-4.2, after at 8-9): strict / raw
+        / stop-audited [G] 0.847 / 0.953 / 0.613 (overrides 125), strict [C] 0.487 / 0.469 /
+        0.475, raw [C] 0.709 / 0.681 / 0.699, corpus natural agreement 1131 (0.5563), MLE
+        epsilon 0.3420 and delta 0.3943, ln L at `human()` -7307.1 (tune) and -6675.1 (eval),
+        `NoCandidate` 59: all unchanged. Forward consistency (10^5, seed `0x5a1c0002`): 0
+        non-gap violations, 4 gap-induced, 1.9 s.
+      - Per stage: N2-1 to N2-4 change no headline number on any seed (natural choices among
+        the 200,000 generated positions 15206 -> 15205 after N2-2, 15208 after N2-3). N2-5
+        with vn2-3 alone: agreement 1131 -> 1130, eval ln L -6675.1 -> -6678.3 (the 5S
+        sign-off); the side-effect fix restores 1131 and -6675.1.
+      - Held-out seeds (strict [G]) unchanged: `0x1234` 0.807 (overrides 148), `0xBEEF0001`
+        0.785 (146), `0xD00D` 0.772 (177).
+
+P18. **Phase 4 closed** (wip/p4int 5aa82e6, then 026ad30 and 67c48d2, which change tests and
+    docs and add a doc-hidden wrapper, `bridge_bidding::natural_partner_context`, with no change
+    in behaviour; docs/design/12-roadmap.md 「フェーズ 4 の完了」 has the full table).
+    - The final numbers are P17's round-3 numbers (unchanged by N3): strict / raw /
+      stop-audited [G] 0.847 / 0.953 / 0.613, held-out 0.807 / 0.785 / 0.772, strict [C]
+      0.487 / 0.469 / 0.475 (subset-eval 0.500), raw [C] 0.709 / 0.681 / 0.699, all-call Exact
+      0.320 / 0.323 / 0.341, `resolve_lenient` 1 / 8,169, `NoCandidate` 59, corpus natural
+      agreement 1131 / 2033.
+    - `PolicyParams::human()` stays (0.3404, 0.3959): the head's MLE (0.3420, 0.3943) is only
+      0.02 higher in tune ln L (-7307.07 vs -7307.09; the epsilon is one fine-grid step below
+      the new MLE, well inside the 1.92 interval), and `human()` is higher on the eval split
+      (-6675.07 vs -6675.70).
+    - `natural_tuning` had failed under the STANDARD floor since at least 3c57c37: it predicted
+      `choose_bid` with the legacy partner context. It now uses the function `choose_bid` uses
+      (`bridge_bidding::natural_partner_context`, doc-hidden) and passes; nothing in the SAYC or
+      the engines changed. A fresh coordinate descent would move six natural priorities for an
+      objective of 0.4763 -> 0.4824; not adopted in phase 4 (it would move the `human()` fit
+      and the fixtures).
+    - Not met: strict [C] on the SAYC-compatible opening subset (0.487 < 0.80). Its first
+      natural calls are 137 calls with no row, 87 at default-pass-only positions, 16 after
+      their pass with no edge, 11 at exhausted tables and 2 after their call with no edge.

@@ -20,6 +20,7 @@ pub mod ast;
 #[cfg(feature = "cache")]
 pub mod cache;
 pub mod compile;
+pub mod exclusive;
 pub mod lexer;
 pub mod lint;
 pub mod natural;
@@ -30,16 +31,49 @@ pub mod trie;
 mod ir;
 
 pub use compile::{CompileOptions, compile};
+pub use exclusive::{ExclusiveGroup, ExclusiveIndex, ExclusivePiece};
 pub use ir::{
     Alertability, BalancedDef, ConventionDefaults, Forcing, Node, NodeFlags, NodeId, Recognition,
     Row, RowId, StrengthVocab, SystemIR, SystemMeta, TieBreak,
 };
 pub use lint::{Lint, LintCode, Severity};
-pub use natural::{CallContext, CallKind, Inference, NaturalInference, NaturalParams, Role};
+pub use natural::{
+    CallContext, CallKind, Inference, LevelFloor, NaturalCandidate, NaturalInference,
+    NaturalParams, PartnerContext, Role,
+};
 pub use pattern::{Binding, CallPattern, Level, OppClass, Side, SidedPattern, StrainSet, Var};
 pub use trie::{AuctionTrie, Lookup, LookupKey, RelVul, Resolution};
 
 /// Compiler version stamped into every [`SystemMeta`].
 pub const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Bumped on every breaking change of the serialised IR.
-pub const IR_FORMAT: u32 = 1;
+///
+/// 1: phase 3. 2: phase 4 (`NodeFlags::stop`; the trie links system stops to shared detached
+/// nodes). 3: `NodeFlags::synthesised`.
+pub const IR_FORMAT: u32 = 3;
+/// Revision of what [`crate::compile()`] produces for a given source and options, bumped
+/// whenever that output changes without a format change (so without an [`IR_FORMAT`] bump):
+/// new lints, a different expansion. It is part of the `cache::SystemCache` key (feature
+/// `cache`), so an entry written by an older compiler of the same crate version is a miss
+/// rather than a silently stale IR.
+///
+/// 1: phase 3. 2: phase 4 (the exclusive-index lints `ShadowedBranch` and
+/// `OverlappingBranches` are stored in `SystemIR::lints`). 3: system stops (`#STOP`, `{stop}`).
+/// 4: stops under different `#SEAT`/`#VUL` conditions that meet at one edge share a loop
+/// carrying every condition's entries. 5: the synthesised stop pass's description is the row it
+/// stands for, `{prio:-100} {stop} any hand`. 6: relative levels (`cS`, `jY`) and the lints
+/// `LevelWithoutAnchor` / `NoSufficientLevel`; suit-length comparisons in descriptions. 7: the
+/// `#ANYORDER` table directive and the lint `AnyOrderWithoutVariables`. 8: lane D2's review
+/// fixes: a directive-only paragraph (`#ANYORDER`/`#STOP`) and a table led by a relative-level
+/// row are reported, `NoSufficientLevel` covers relative alternations, `LevelWithoutAnchor` is
+/// reported once per row, `!h>=!s+1` is not read as a comparison, and the lint
+/// `StopUnderForcing`. 9: every node's description is stored without its `{prio:N}` /
+/// `{w:X}` / `{stop}` annotations (`Row::description_raw` keeps them); this was revision 6 on
+/// the integration line before lane D2 merged. 10: the `#EXACTPASS` table directive and its
+/// file form `#EXACTPASS FILE` (an empty `(any)` sibling of the opponents' pass right before a
+/// row of ours), and the lint `ExactPassWithoutPass`. 11: a position that `#EXACTPASS` tables
+/// under different `#SEAT`/`#VUL` conditions guard gets one guard entry per condition, as a
+/// hand-written `(any)` in each table would (revision 10 kept the first table's condition only).
+/// 12: a `#EXACTPASS FILE` line after the first line of a `#SEAT` / `#VUL` paragraph is reported
+/// as `UnknownDirective` (it was dropped silently).
+pub const COMPILE_REVISION: u32 = 12;

@@ -1,0 +1,513 @@
+* Responder's second call, filled in (NOTES.md #P12)
+
+Phase 4 (lane D2). `later-rounds.bml` writes responder's second call with few
+rows; the positions below get the rest of the booklet's methods, so that a
+responder who invites, prefers or shows a long suit stays on the system.
+
+The opponents' passes in this file's tables are exact (`#EXACTPASS FILE`,
+NOTES.md #P16): where a row of ours follows their pass, any other call of theirs
+that no table names leaves the system (natural bidding, #C4) instead of being read
+as a pass.
+
+#EXACTPASS FILE
+
+** After 1M-1NT and opener's new suit
+
+The 1NT response is 6--10. Responder passes with a fit for the new suit, gives
+preference to opener's major with two cards (`later-rounds.bml`), raises the
+new suit with five cards (four in hearts) and 8--10, invites with 2NT on a
+maximum, and shows a six-card suit of his own at the two level with a weak
+hand. A hand no row takes passes the new suit (the complement): no row
+compares the lengths of opener's two suits here.
+
+1M-1N-2m-
+3m = {prio:2} 8--10 hcp, 5+m
+  #STOP
+2N = {prio:2} 10 hcp, 0--2M, 0--3m
+  #STOP
+
+1S-1N-2H-
+3H = {prio:2} 8--10 hcp, 4+!h
+  #STOP
+2N = {prio:2} 10 hcp, 0--2!s, 0--3!h
+  #STOP
+
+1H-1N-2C-
+2D = {prio:1} 6--9 hcp, 6+!d, 0--1!h
+  #STOP
+
+1S-1N-2C-
+2D = {prio:1} 6--9 hcp, 6+!d, 0--1!s
+  #STOP
+2H = {prio:1} 6--9 hcp, 6+!h, 0--1!s
+  #STOP
+
+1S-1N-2D-
+2H = {prio:1} 6--9 hcp, 6+!h, 0--1!s
+  #STOP
+
+** After a two-over-one response and opener's new suit
+
+The two-over-one response is 10+ and forcing one round; with 10--12 responder
+now gives preference to opener's major with a doubleton, raises the new suit
+with four cards, rebids a six-card suit, or bids 2NT; with 13+ or three-card
+support the game rows of `later-rounds.bml` apply.
+
+1M-2X-2Y-
+2M = {prio:3} 10--12 hcp, 2+M, 0--2M, 0--3Y, 0--5X
+  #STOP
+3Y = {prio:3} 10--12 hcp, 4+Y, 0--2M
+  #STOP
+3X = {prio:3} 10--12 hcp, 6+X, 0--2M
+  #STOP
+2N = {prio:2} 10--12 hcp, 0--2M
+  #STOP
+
+** After a one-level response and opener's lower new suit
+
+`later-rounds.bml` (`after-low-new-suit`) and `rebids.bml` pass with a fit for
+the new suit, prefer opener's first suit and invite with 2NT; responder with
+four cards in the new suit and 10--12 (no three-card support for opener's
+first suit) raises it to the three level instead, the booklet's invitational
+raise.
+
+1Y-1Z-2X-
+3X = {prio:2} 10--12 hcp, 4+X, 0--2Y
+  #STOP
+
+** Opener's rebid after responder's forcing new suit over an overcall (P12 batch 5)
+
+`competition.bml` pastes `rebid-over-new-suit` for some of these auctions; the
+rest (the major openings, the two-level overcalls) get the same rebid here:
+raise, notrump with a stopper, or the cheapest rebid of the opening suit.
+
+1H-(1S)-2D-(P)-
+#PASTE rebid-over-new-suit \N=D \n=d \L=4 \R=2H
+
+1H-(2C)-2S-(P)-
+#PASTE rebid-over-new-suit \N=S \n=s \L=3 \R=3H
+
+1S-(2C)-2H-(P)-
+#PASTE rebid-over-new-suit \N=H \n=h \L=3 \R=2S
+
+1H-(2D)-2S-(P)-
+#PASTE rebid-over-new-suit \N=S \n=s \L=3 \R=3H
+
+1S-(2D)-2H-(P)-
+#PASTE rebid-over-new-suit \N=H \n=h \L=3 \R=2S
+
+1D-(2C)-2H-(P)-
+#PASTE rebid-over-new-suit \N=H \n=h \L=3 \R=3D
+
+1D-(2C)-2S-(P)-
+#PASTE rebid-over-new-suit \N=S \n=s \L=3 \R=3D
+
+1C-(2D)-2H-(P)-
+#PASTE rebid-over-new-suit \N=H \n=h \L=3 \R=3C
+
+1C-(2D)-2S-(P)-
+#PASTE rebid-over-new-suit \N=S \n=s \L=3 \R=3C
+
+After a double of our opening and responder's non-forcing two-level suit (6--10,
+six cards) opener passes, or raises with three-card support and 16+; after
+the single raise of a major he bids game with 17+.
+
+1D-(D)-2C-(P)-
+3C = {prio:1} 16+ hcp, 4+!c
+  #STOP
+#STOP
+
+1D-(D)-2M-(P)-
+3M = {prio:1} 16+ hcp, 3+M
+  #STOP
+#STOP
+
+1M-(D)-2m-(P)-
+3m = {prio:1} 16+ hcp, 4+m
+  #STOP
+#STOP
+
+1S-(D)-2H-(P)-
+3H = {prio:1} 16+ hcp, 3+!h
+  #STOP
+#STOP
+
+1M-(D)-2M-(P)-
+4M = {prio:1} 17+ hcp
+  #STOP
+#STOP
+
+Responder after that rebid: over 2NT (12--14) he bids 3NT with 13+; over the
+cheapest rebid of the opening suit 3NT with 13+ and a stopper; over the raise
+of his major, game with 13+. Otherwise he passes.
+
+1C-(1D)-2H-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1C-(1D)-2H-(P)-3C-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1C-(1D)-2H-(P)-3H-(P)-
+4H = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1C-(1D)-2S-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1C-(1D)-2S-(P)-3C-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1C-(1D)-2S-(P)-3S-(P)-
+4S = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1C-(1H)-2D-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1C-(1H)-2D-(P)-3C-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1C-(1S)-2D-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1C-(1S)-2D-(P)-3C-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1C-(1S)-2H-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1C-(1S)-2H-(P)-3C-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1C-(1S)-2H-(P)-3H-(P)-
+4H = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1D-(1H)-2C-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1D-(1H)-2C-(P)-2D-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1D-(1S)-2C-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1D-(1S)-2C-(P)-2D-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1D-(1S)-2H-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1D-(1S)-2H-(P)-3D-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1D-(1S)-2H-(P)-3H-(P)-
+4H = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1H-(1S)-2D-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1H-(1S)-2D-(P)-2H-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1H-(2C)-2S-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1H-(2C)-2S-(P)-3H-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1H-(2C)-2S-(P)-3S-(P)-
+4S = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1S-(2C)-2H-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1S-(2C)-2H-(P)-2S-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1S-(2C)-2H-(P)-3H-(P)-
+4H = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1H-(2D)-2S-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1H-(2D)-2S-(P)-3H-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1H-(2D)-2S-(P)-3S-(P)-
+4S = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1S-(2D)-2H-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1S-(2D)-2H-(P)-2S-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1S-(2D)-2H-(P)-3H-(P)-
+4H = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1D-(2C)-2H-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1D-(2C)-2H-(P)-3D-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1D-(2C)-2H-(P)-3H-(P)-
+4H = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1D-(2C)-2S-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1D-(2C)-2S-(P)-3D-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1D-(2C)-2S-(P)-3S-(P)-
+4S = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1C-(2D)-2H-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1C-(2D)-2H-(P)-3C-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1C-(2D)-2H-(P)-3H-(P)-
+4H = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1C-(2D)-2S-(P)-2N-(P)-
+3N = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+1C-(2D)-2S-(P)-3C-(P)-
+3N = {prio:1} 13+ hcp, stopper
+  #STOP
+#STOP
+
+1C-(2D)-2S-(P)-3S-(P)-
+4S = {prio:1} 13+ hcp
+  #STOP
+#STOP
+
+** Opener when they raise after responder's forcing new suit (P12 batch 6)
+
+Their jump raise takes away opener's rebid, so the new suit is no longer
+forcing: opener raises it with support (four cards for a minor, three for a
+major, at the four level), bids 3NT with a stopper and 15+, rebids a six-card
+suit with extras, or passes.
+
+1C-(1D)-2H-(3D)-
+4H = {prio:3} 12+ hcp, 3+!h
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1C-(1D)-2S-(3D)-
+4S = {prio:3} 12+ hcp, 3+!s
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1C-(1H)-2D-(3H)-
+4D = {prio:3} 12+ hcp, 4+!d
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1C-(1S)-2D-(3S)-
+4D = {prio:3} 12+ hcp, 4+!d
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1C-(1S)-2H-(3S)-
+4H = {prio:3} 12+ hcp, 3+!h
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1D-(1H)-2C-(3H)-
+4C = {prio:3} 12+ hcp, 4+!c
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1D-(1S)-2C-(3S)-
+4C = {prio:3} 12+ hcp, 4+!c
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1D-(1S)-2H-(3S)-
+4H = {prio:3} 12+ hcp, 3+!h
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1H-(1S)-2D-(3S)-
+4D = {prio:3} 12+ hcp, 4+!d
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+1H-(1S)-2C-(3S)-
+4C = {prio:3} 12+ hcp, 4+!c
+  #STOP
+3N = {prio:2} 15+ hcp, stopper
+  #STOP
+#STOP
+
+** More competitive decisions (P12 batch 6)
+
+The notrump opener reopens with a double when their two-level overcall is
+passed round to him and he is short in their suit (a common agreement: the
+responder may have passed with a penalty double of his own).
+
+1N-(2X)-P-(P)-
+D = {prio:1} 0--2X, 15--17 hcp
+  #STOP
+#STOP
+
+Opener after responder's preemptive raise over an overcall (5--9): game in the
+major with 16+, 3NT with a stopper and 17+ after a minor.
+
+1H-(1S)-3H-(P)-
+4H = {prio:1} 16+ hcp
+  #STOP
+#STOP
+
+1m-(1Y)-3m-(P)-
+3N = {prio:1} 17+ hcp, stopper
+  #STOP
+#STOP
+
+After our single raise and their competing bid, passed back to responder, a
+responder with a fourth trump competes to the three level.
+
+1M-(P)-2M-(2X)-P-(P)-
+3M = {prio:1} 6--9 hcp, 4+M
+  #STOP
+#STOP
+
+1M-(P)-2M-(3m)-P-(P)-
+3M = {prio:1} 6--9 hcp, 4+M
+  #STOP
+#STOP
+
+When their overcall of our one-level response is passed back, responder
+reopens with notrump (8--10 and a stopper) or rebids a six-card suit.
+
+1X-(P)-1Y-(1Z)-P-(P)-
+1N = {prio:1} 8--10 hcp, stopper
+  #STOP
+2Y = {prio:2} 6--10 hcp, 6+Y
+  #STOP
+#STOP
+
+After our sandwich-seat overcall is passed out at their raise, the overcaller
+competes with a double (12+, short in their suit) or rebids a six-card suit.
+
+(1X)-P-(1Y)-1Z-(2X)-P-(P)-
+D = {prio:1} 12+ hcp, 0--2X
+  #STOP
+2Z = {prio:2} 11--16 hcp, 6+Z
+  #STOP
+#STOP
+
+(1X)-P-(1Y)-1Z-(2Y)-P-(P)-
+D = {prio:1} 12+ hcp, 0--2Y
+  #STOP
+2Z = {prio:2} 11--16 hcp, 6+Z
+  #STOP
+#STOP

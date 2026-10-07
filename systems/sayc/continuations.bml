@@ -1,0 +1,846 @@
+* After our pass: continuations
+
+Phase 4 (NOTES.md #P3). Wherever one of the tables of the other files leaves a
+player to pass (the table's implicit pass, NOTES.md #C2), the auction used to
+leave the system at the partner's next turn: our own pass is a trie edge only
+where a history line names it. This file names it. Its default, written below
+for every table that has no pass of its own, as the table's lowest-ranked call
+(`{prio:-100}`, chosen exactly when no other row applies), is the simplest reading of a
+partnership that has stopped: after one of us passes, and whatever the
+opponents do next, the partner passes too (a `{stop}` pass, `passes.bml`). Only
+the frequent opener's reopening after an overcall and responder's pass is
+written out with real calls.
+
+** The partnership stops after a pass
+
+1N-
+P = {prio:-100} {stop} any hand
+
+1N-(D)-
+P = {prio:-100} {stop} any hand
+
+1N-(2X)-
+P = {prio:-100} {stop} any hand
+
+1N-(2D)-
+P = {prio:-100} {stop} any hand
+
+1N-(2H)-
+P = {prio:-100} {stop} any hand
+
+1N-(2S)-
+P = {prio:-100} {stop} any hand
+
+1N-(3X)-
+P = {prio:-100} {stop} any hand
+
+1N-(4X)-
+P = {prio:-100} {stop} any hand
+
+1N-(bid)-
+P = {prio:-100} {stop} any hand
+
+1N-2C-(2D)-
+P = {prio:-100} {stop} any hand
+
+1N-2C-(2H)-
+P = {prio:-100} {stop} any hand
+
+1N-2C-(2S)-
+P = {prio:-100} {stop} any hand
+
+1N-2D-(D)-
+P = {prio:-100} {stop} any hand
+
+1N-2D-(2S)-
+P = {prio:-100} {stop} any hand
+
+1N-2D-(3C)-
+P = {prio:-100} {stop} any hand
+
+1N-2D-(3D)-
+P = {prio:-100} {stop} any hand
+
+1N-2H-(D)-
+P = {prio:-100} {stop} any hand
+
+1N-2H-(3C)-
+P = {prio:-100} {stop} any hand
+
+1N-2H-(3D)-
+P = {prio:-100} {stop} any hand
+
+1N-2H-(3H)-
+P = {prio:-100} {stop} any hand
+
+1N-2D-(2H)-
+P = {prio:-100} {stop} any hand
+
+1N-2H-(2N)-
+P = {prio:-100} {stop} any hand
+
+1N-2D-(2N)-
+P = {prio:-100} {stop} any hand
+
+1N-2H-(2S)-
+P = {prio:-100} {stop} any hand
+
+1N-2D-2H-(bid)-
+P = {prio:-100} {stop} any hand
+
+1N-2H-2S-(bid)-
+P = {prio:-100} {stop} any hand
+
+1N-2N-(bid)-
+P = {prio:-100} {stop} any hand
+
+2N-
+P = {prio:-100} {stop} any hand
+
+2N-(D)-
+P = {prio:-100} {stop} any hand
+
+2N-3D-3H-(bid)-
+P = {prio:-100} {stop} any hand
+
+2N-3C-(3D)-
+P = {prio:-100} {stop} any hand
+
+2N-3H-3S-(bid)-
+P = {prio:-100} {stop} any hand
+
+2N-(3X)-
+P = {prio:-100} {stop} any hand
+
+2N-(4X)-
+P = {prio:-100} {stop} any hand
+
+2N-(bid)-
+P = {prio:-100} {stop} any hand
+
+3N-
+P = {prio:-100} {stop} any hand
+
+2D-
+P = {prio:-100} {stop} any hand
+
+2H-
+P = {prio:-100} {stop} any hand
+
+2S-
+P = {prio:-100} {stop} any hand
+
+2D-(D)-
+P = {prio:-100} {stop} any hand
+
+2H-(D)-
+P = {prio:-100} {stop} any hand
+
+2S-(D)-
+P = {prio:-100} {stop} any hand
+
+2D-(2HS)-
+P = {prio:-100} {stop} any hand
+
+2D-(3C)-
+P = {prio:-100} {stop} any hand
+
+2H-(2S)-
+P = {prio:-100} {stop} any hand
+
+2H-(3CD)-
+P = {prio:-100} {stop} any hand
+
+2S-(3CDH)-
+P = {prio:-100} {stop} any hand
+
+2D-(bid)-
+P = {prio:-100} {stop} any hand
+
+2H-(bid)-
+P = {prio:-100} {stop} any hand
+
+2S-(bid)-
+P = {prio:-100} {stop} any hand
+
+2D-2N-(bid)-
+P = {prio:-100} {stop} any hand
+
+2H-2N-(bid)-
+P = {prio:-100} {stop} any hand
+
+2S-2N-(bid)-
+P = {prio:-100} {stop} any hand
+
+2D-2H-(bid)-
+P = {prio:-100} {stop} any hand
+
+2D-2S-(bid)-
+P = {prio:-100} {stop} any hand
+
+2D-3C-(bid)-
+P = {prio:-100} {stop} any hand
+
+2H-2S-(bid)-
+P = {prio:-100} {stop} any hand
+
+2H-3C-(bid)-
+P = {prio:-100} {stop} any hand
+
+2H-3D-(bid)-
+P = {prio:-100} {stop} any hand
+
+2S-3C-(bid)-
+P = {prio:-100} {stop} any hand
+
+2S-3D-(bid)-
+P = {prio:-100} {stop} any hand
+
+2S-3H-(bid)-
+P = {prio:-100} {stop} any hand
+
+3C-
+P = {prio:-100} {stop} any hand
+
+3D-
+P = {prio:-100} {stop} any hand
+
+3H-
+P = {prio:-100} {stop} any hand
+
+3S-
+P = {prio:-100} {stop} any hand
+
+4C-
+P = {prio:-100} {stop} any hand
+
+4D-
+P = {prio:-100} {stop} any hand
+
+4H-
+P = {prio:-100} {stop} any hand
+
+4S-
+P = {prio:-100} {stop} any hand
+
+3C-(bid)-
+P = {prio:-100} {stop} any hand
+
+3D-(bid)-
+P = {prio:-100} {stop} any hand
+
+3H-(bid)-
+P = {prio:-100} {stop} any hand
+
+3S-(bid)-
+P = {prio:-100} {stop} any hand
+
+4C-(bid)-
+P = {prio:-100} {stop} any hand
+
+4D-(bid)-
+P = {prio:-100} {stop} any hand
+
+4H-(bid)-
+P = {prio:-100} {stop} any hand
+
+4S-(bid)-
+P = {prio:-100} {stop} any hand
+
+1H-
+P = {prio:-100} {stop} any hand
+
+1S-
+P = {prio:-100} {stop} any hand
+
+1C-
+P = {prio:-100} {stop} any hand
+
+1D-
+P = {prio:-100} {stop} any hand
+
+1H-1S-
+P = {prio:-100} {stop} any hand
+
+1C-1D-
+P = {prio:-100} {stop} any hand
+
+1C-1H-
+P = {prio:-100} {stop} any hand
+
+1C-1S-
+P = {prio:-100} {stop} any hand
+
+1D-1H-
+P = {prio:-100} {stop} any hand
+
+1D-1S-
+P = {prio:-100} {stop} any hand
+
+1H-1S-2C-2D-
+P = {prio:-100} {stop} any hand
+
+1H-1S-1N-
+P = {prio:-100} {stop} any hand
+
+1C-1D-1N-
+P = {prio:-100} {stop} any hand
+
+1C-1H-1N-
+P = {prio:-100} {stop} any hand
+
+1C-1S-1N-
+P = {prio:-100} {stop} any hand
+
+1D-1H-1N-
+P = {prio:-100} {stop} any hand
+
+1D-1S-1N-
+P = {prio:-100} {stop} any hand
+
+1H-2C-
+P = {prio:-100} {stop} any hand
+
+1H-2D-
+P = {prio:-100} {stop} any hand
+
+1S-2C-
+P = {prio:-100} {stop} any hand
+
+1S-2D-
+P = {prio:-100} {stop} any hand
+
+1S-2H-
+P = {prio:-100} {stop} any hand
+
+1D-2C-
+P = {prio:-100} {stop} any hand
+
+1S-2C-2H-
+P = {prio:-100} {stop} any hand
+
+1S-2C-2H-3D-
+P = {prio:-100} {stop} any hand
+
+1S-2C-2H-3S-
+P = {prio:-100} {stop} any hand
+
+1H-2H-
+P = {prio:-100} {stop} any hand
+
+1S-2S-
+P = {prio:-100} {stop} any hand
+
+1H-3H-
+P = {prio:-100} {stop} any hand
+
+1S-3S-
+P = {prio:-100} {stop} any hand
+
+1H-2N-
+P = {prio:-100} {stop} any hand
+
+1S-2N-
+P = {prio:-100} {stop} any hand
+
+1H-1N-
+P = {prio:-100} {stop} any hand
+
+1S-1N-
+P = {prio:-100} {stop} any hand
+
+1C-1N-
+P = {prio:-100} {stop} any hand
+
+1D-1N-
+P = {prio:-100} {stop} any hand
+
+(1X)-
+P = {prio:-100} {stop} any hand
+
+(1m)-
+P = {prio:-100} {stop} any hand
+
+(1H)-
+P = {prio:-100} {stop} any hand
+
+(1S)-
+P = {prio:-100} {stop} any hand
+
+(1C)-
+P = {prio:-100} {stop} any hand
+
+(1D)-
+P = {prio:-100} {stop} any hand
+
+(1X)-1N-
+P = {prio:-100} {stop} any hand
+
+(1X)-D-
+P = {prio:-100} {stop} any hand
+
+(1C)-D-
+P = {prio:-100} {stop} any hand
+
+(1D)-D-
+P = {prio:-100} {stop} any hand
+
+(1H)-D-
+P = {prio:-100} {stop} any hand
+
+(1S)-D-
+P = {prio:-100} {stop} any hand
+
+1C-(1D)-
+P = {prio:-100} {stop} any hand
+
+1C-(1H)-
+P = {prio:-100} {stop} any hand
+
+1C-(1S)-
+P = {prio:-100} {stop} any hand
+
+1D-(1H)-
+P = {prio:-100} {stop} any hand
+
+1D-(1S)-
+P = {prio:-100} {stop} any hand
+
+1H-(1S)-
+P = {prio:-100} {stop} any hand
+
+1m-(1Y)-
+P = {prio:-100} {stop} any hand
+
+1C-(1D)-1H-(P)-
+P = {prio:-100} {stop} any hand
+
+1C-(1D)-1S-(P)-
+P = {prio:-100} {stop} any hand
+
+1C-(1H)-1S-(P)-
+P = {prio:-100} {stop} any hand
+
+1D-(1H)-1S-(P)-
+P = {prio:-100} {stop} any hand
+
+1C-(1D)-2H-(P)-
+P = {prio:-100} {stop} any hand
+
+1C-(1D)-2S-(P)-
+P = {prio:-100} {stop} any hand
+
+1C-(1H)-2D-(P)-
+P = {prio:-100} {stop} any hand
+
+1C-(1S)-2D-(P)-
+P = {prio:-100} {stop} any hand
+
+1C-(1S)-2H-(P)-
+P = {prio:-100} {stop} any hand
+
+1D-(1H)-2C-(P)-
+P = {prio:-100} {stop} any hand
+
+1D-(1S)-2C-(P)-
+P = {prio:-100} {stop} any hand
+
+1D-(1S)-2H-(P)-
+P = {prio:-100} {stop} any hand
+
+1M-(2m)-
+P = {prio:-100} {stop} any hand
+
+1S-(2H)-
+P = {prio:-100} {stop} any hand
+
+1D-(2C)-
+P = {prio:-100} {stop} any hand
+
+1C-(2Y)-
+P = {prio:-100} {stop} any hand
+
+1D-(2M)-
+P = {prio:-100} {stop} any hand
+
+1H-(2S)-
+P = {prio:-100} {stop} any hand
+
+1S-(3Y)-
+P = {prio:-100} {stop} any hand
+
+1H-(3m)-
+P = {prio:-100} {stop} any hand
+
+1H-(3S)-
+P = {prio:-100} {stop} any hand
+
+1m-(3Y)-
+P = {prio:-100} {stop} any hand
+
+1D-(3C)-
+P = {prio:-100} {stop} any hand
+
+1X-(1N)-
+P = {prio:-100} {stop} any hand
+
+1D-(D)-
+P = {prio:-100} {stop} any hand
+
+1C-(D)-
+P = {prio:-100} {stop} any hand
+
+1H-(D)-
+P = {prio:-100} {stop} any hand
+
+1S-(D)-
+P = {prio:-100} {stop} any hand
+
+(1X)-1Y-(P)-
+P = {prio:-100} {stop} any hand
+
+(1X)-1Z-(P)-
+P = {prio:-100} {stop} any hand
+
+(1Y)-1Z-(P)-
+P = {prio:-100} {stop} any hand
+
+(1X)-1Y-(1Z)-
+P = {prio:-100} {stop} any hand
+
+(1X)-1Y-(1N)-
+P = {prio:-100} {stop} any hand
+
+(1X)-1Y-(2X)-
+P = {prio:-100} {stop} any hand
+
+(1Y)-2X-(P)-
+P = {prio:-100} {stop} any hand
+
+(1X)-2Y-(P)-
+P = {prio:-100} {stop} any hand
+
+(1Y)-2X-(2Y)-
+P = {prio:-100} {stop} any hand
+
+(1X)-2Y-(3X)-
+P = {prio:-100} {stop} any hand
+
+(1X)-1Y-(2N)-
+P = {prio:-100} {stop} any hand
+
+(1X)-1Y-(2Y)-
+P = {prio:-100} {stop} any hand
+
+(1X)-1Y-(3X)-
+P = {prio:-100} {stop} any hand
+
+(1X)-1Z-(2Y)-
+P = {prio:-100} {stop} any hand
+
+(1Y)-1Z-(2X)-
+P = {prio:-100} {stop} any hand
+
+(1X)-1Y-(2Z)-
+P = {prio:-100} {stop} any hand
+
+(1X)-1N-(2Y)-
+P = {prio:-100} {stop} any hand
+
+(1X)-1N-(2X)-
+P = {prio:-100} {stop} any hand
+
+(1Y)-2X-(D)-
+P = {prio:-100} {stop} any hand
+
+(1X)-2Y-(D)-
+P = {prio:-100} {stop} any hand
+
+1H-(2H)-
+P = {prio:-100} {stop} any hand
+
+1S-(2S)-
+P = {prio:-100} {stop} any hand
+
+1C-(2C)-
+P = {prio:-100} {stop} any hand
+
+1D-(2D)-
+P = {prio:-100} {stop} any hand
+
+1X-(2N)-
+P = {prio:-100} {stop} any hand
+
+(1X)-P-(1Y)-1Z-(2Y)-
+P = {prio:-100} {stop} any hand
+
+(1X)-P-(1Y)-1Z-(2X)-
+P = {prio:-100} {stop} any hand
+
+(1X)-P-(1Y)-1Z-(1N)-
+P = {prio:-100} {stop} any hand
+
+(1X)-P-(1Z)-2Y-(2Z)-
+P = {prio:-100} {stop} any hand
+
+(1Y)-P-(1Z)-2X-(2Z)-
+P = {prio:-100} {stop} any hand
+
+(1X)-P-(2X)-2Y-(3X)-
+P = {prio:-100} {stop} any hand
+
+(1N)-
+P = {prio:-100} {stop} any hand
+
+(1N)-2X-(P)-
+P = {prio:-100} {stop} any hand
+
+(1N)-2M-(P)-
+P = {prio:-100} {stop} any hand
+
+(1N)-2m-(P)-
+P = {prio:-100} {stop} any hand
+
+(1N)-2X-(2Y)-
+P = {prio:-100} {stop} any hand
+
+(1N)-2Y-(3X)-
+P = {prio:-100} {stop} any hand
+
+(1N)-P-(P)-
+P = {prio:-100} {stop} any hand
+
+(1N)-P-(P)-2X-(P)-
+P = {prio:-100} {stop} any hand
+
+(1N)-P-(P)-2M-(P)-
+P = {prio:-100} {stop} any hand
+
+(1N)-P-(P)-2m-(P)-
+P = {prio:-100} {stop} any hand
+
+(1N)-P-(P)-2X-(2Y)-
+P = {prio:-100} {stop} any hand
+
+(1X)-P-(P)-
+P = {prio:-100} {stop} any hand
+
+** Opener's reopening after an overcall and responder's pass
+
+Responder's pass over a one-level overcall is often a trap pass with length in
+their suit (a negative double would have shown the other suits), so opener,
+short in their suit, reopens with a double; opener rebids a six-card suit;
+otherwise opener passes. After the reopening double responder passes for
+penalty with four cards in their suit, bids notrump with a stopper, and
+otherwise returns to opener's suit, which carries no requirement of its own.
+The partnership then stops.
+
+#CUT reopen-answer
+P = {prio:3} 6+ hcp, 4+\Y
+  #STOP
+3N = {prio:2} 13+ hcp
+  #STOP
+2N = {prio:2} 11--12 hcp
+  #STOP
+\R = {prio:-1} any hand
+  #STOP
+#ENDCUT
+
+1X-(1Y)-P-(P)-
+D = {prio:2} 12+ hcp, 0--2Y
+2X = {prio:1} 12--16 hcp, 6+X
+  #STOP
+P = {prio:-100} {stop} any hand
+
+1X-(1Y)-P-(P)-D-(P)-
+1N = {prio:2} 6--10 hcp
+  #STOP
+#PASTE reopen-answer \Y=Y \R=2X
+
+1X-(1Y)-P-(P)-D-(any)-
+P = {prio:-100} {stop} any hand
+
+1Y-(2X)-P-(P)-
+D = {prio:2} 12+ hcp, 0--2X
+2Y = {prio:1} 12--16 hcp, 6+Y
+  #STOP
+P = {prio:-100} {stop} any hand
+
+1Y-(2X)-P-(P)-D-(P)-
+#PASTE reopen-answer \Y=X \R=2Y
+
+1Y-(2X)-P-(P)-D-(any)-
+P = {prio:-100} {stop} any hand
+
+1X-(2Y)-P-(P)-
+D = {prio:2} 12+ hcp, 0--2Y
+3X = {prio:1} 12--16 hcp, 6+X
+  #STOP
+P = {prio:-100} {stop} any hand
+
+1X-(2Y)-P-(P)-D-(P)-
+#PASTE reopen-answer \Y=Y \R=3X
+
+1X-(2Y)-P-(P)-D-(any)-
+P = {prio:-100} {stop} any hand
+
+** Opener after they compete over our stop (NOTES.md #P10)
+
+The system stops let the partnership pass with any hand once one of us has passed,
+whatever the opponents do. At the positions below that answer is not SAYC's, so
+they get real rows; the stop pass stays as the lowest-ranked call for the rest.
+
+*** After the negative double of a two-level overcall and their raise
+
+Opener is no longer forced to bid. With four cards in the major the double
+promised he competes (game with 17+); without a major to show over their raise of
+a major, the double showed the minors and opener bids a four-card minor at the
+four level with 15+; he rebids a six-card suit with 15+ (game in a major with
+18+). Otherwise he passes.
+
+After a minor opening (M is the doubler's unbid major, `cM` its cheapest level:
+3H/3S, or 4H over their 3S where only game remains):
+
+1m-(2Y)-D-(3Y)-
+4M = {prio:3} 17+ hcp, 4+M
+  #STOP
+cM = {prio:1} 4+M
+  #STOP
+cm = {prio:0} 15+ hcp, 6+m
+  #STOP
+P = {prio:-100} {stop} any hand
+
+After a major opening and their minor overcall:
+
+1M-(2m)-D-(3m)-
+4oM = {prio:3} 17+ hcp, 4+oM
+  #STOP
+3oM = {prio:1} 4+oM
+  #STOP
+4M = {prio:2} 18+ hcp, 6+M
+  #STOP
+3M = {prio:0} 15+ hcp, 6+M
+  #STOP
+P = {prio:-100} {stop} any hand
+
+After a major opening and their overcall in the other major the double showed
+the minors:
+
+1H-(2S)-D-(3S)-
+4C = {prio:2} 15+ hcp, 4+!c
+  #STOP
+4D = {prio:2} 15+ hcp, 4+!d
+  #STOP
+4H = {prio:0} 15+ hcp, 6+!h
+  #STOP
+P = {prio:-100} {stop} any hand
+
+1S-(2H)-D-(3H)-
+4C = {prio:2} 15+ hcp, 4+!c
+  #STOP
+4D = {prio:2} 15+ hcp, 4+!d
+  #STOP
+4S = {prio:2} 18+ hcp, 6+!s
+  #STOP
+3S = {prio:0} 15+ hcp, 6+!s
+  #STOP
+P = {prio:-100} {stop} any hand
+
+*** Opener's reopening over a three-level overcall
+
+Responder's pass over a three-level overcall may be a penalty pass, so opener,
+short in their suit, reopens with a takeout double (12+); he rebids a six-card
+suit with 15+. Responder then passes for penalty with four cards in their suit,
+bids 3NT with 9+ and a stopper, and otherwise returns to opener's suit.
+
+1Y-(3X)-P-(P)-
+D = {prio:2} 12+ hcp, 0--1X
+3Y = {prio:1} 15+ hcp, 6+Y
+  #STOP
+P = {prio:-100} {stop} any hand
+
+1Y-(3X)-P-(P)-D-(P)-
+P = {prio:3} 6+ hcp, 4+X
+  #STOP
+3N = {prio:2} 9+ hcp, stopper, 0--3X
+  #STOP
+3Y = {prio:-1} any hand
+  #STOP
+
+1Y-(3X)-P-(P)-D-(any)-
+P = {prio:-100} {stop} any hand
+
+1X-(3Y)-P-(P)-
+D = {prio:2} 12+ hcp, 0--1Y
+4X = {prio:1} 15+ hcp, 6+X
+  #STOP
+P = {prio:-100} {stop} any hand
+
+1X-(3Y)-P-(P)-D-(P)-
+P = {prio:3} 6+ hcp, 4+Y
+  #STOP
+3N = {prio:2} 9+ hcp, stopper, 0--3Y
+  #STOP
+4X = {prio:-1} any hand
+  #STOP
+
+1X-(3Y)-P-(P)-D-(any)-
+P = {prio:-100} {stop} any hand
+
+*** Opener after their takeout double, responder's pass and advancer's 1NT
+
+Advancer's 1NT is natural (6--10); opener doubles it for penalty with 16+ and
+rebids a six-card suit with less.
+
+1X-(D)-P-(1N)-
+D = {prio:2} 16+ hcp
+  #STOP
+2X = {prio:1} 12--15 hcp, 6+X
+  #STOP
+P = {prio:-100} {stop} any hand
+
+*** Opener after responder's pass and their raise of a one-level overcall
+
+Responder's pass denied a negative double, but opener, short in their suit, may
+still reopen with a takeout double (13+); he rebids a six-card suit with 15+.
+After the double responder bids an unbid major with four cards at the cheapest
+level (a minor when both majors are gone), and otherwise returns to opener's
+suit, which carries no requirement.
+
+The six opener/overcall pairs share one table: X is opener's suit, Y the
+one-level overcall above it (1C-(1D) up to 1H-(1S)). Responder's cheapest unbid
+major is `cM` (2H/2S over their raise of a minor, 3H over their raise of
+spades); when both majors are gone (1H-(1S)) he bids a four-card minor instead.
+Before phase 4's relative levels this was six literal tables (NOTES.md #P12,
+"P10 refactor").
+
+1X-(1Y)-P-(2Y)-
+D = {prio:2} 13+ hcp, 0--1Y
+3X = {prio:1} 15+ hcp, 6+X
+  #STOP
+P = {prio:-100} {stop} any hand
+
+1X-(1Y)-P-(2Y)-D-(P)-
+cM = {prio:2} 4+M
+  #STOP
+3X = {prio:-1} any hand
+  #STOP
+
+1H-(1S)-P-(2S)-D-(P)-
+3C = {prio:2} 4+!c
+  #STOP
+3D = {prio:2} 4+!d
+  #STOP
+
+1X-(1Y)-P-(2Y)-D-(any)-
+P = {prio:-100} {stop} any hand
+
+*** Responder after 1NT-3NT when a passed hand bids on
+
+Responder's 10--15 opposite 15--17 is the balance of power: he doubles a
+balancing four-level suit bid for penalty with 10+.
+
+1N-(P)-3N-(P)-P-(4X)-
+D = {prio:1} 10+ hcp
+  #STOP
+P = {prio:-100} {stop} any hand

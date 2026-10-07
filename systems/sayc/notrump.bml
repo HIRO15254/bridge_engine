@@ -29,164 +29,256 @@ natural inference.
   2D = 0--3!s, 0--3!h
     2N = 8--9 hcp
       P = 15 hcp
+        #STOP
       3N = 16--17 hcp
+        #STOP
     3N = 10--15 hcp
       P = unlimited
+        #STOP
     4N = 16--17 hcp
       P = 15 hcp
+        #STOP
       6N = 16--17 hcp
+        #STOP
     6N = 18+ hcp
       P = unlimited
+        #STOP
   2H = {prio:1} 4+!h
     3H = 8--9 hcp, 4+!h
       P = 15 hcp
+        #STOP
       4H = 16--17 hcp
+        #STOP
     4H = 10--15 hcp, 4+!h
       P = unlimited
+        #STOP
     4C = !BW, 16+ hcp, 4+!h
     2N = 8--9 hcp
       3S = 15 hcp, 4+!s
       4S = 16--17 hcp, 4+!s
+        #STOP
       P = 15 hcp
+        #STOP
       3N = 16--17 hcp
+        #STOP
     3N = 10--15 hcp
       4S = 4+!s
+        #STOP
       P = unlimited
+        #STOP
     4N = 16--17 hcp
       P = 15 hcp
+        #STOP
       6N = 16--17 hcp
+        #STOP
     6N = 18+ hcp
       P = unlimited
+        #STOP
   2S = {prio:0} 4+!s, not 4+!h
     3S = 8--9 hcp, 4+!s
       P = 15 hcp
+        #STOP
       4S = 16--17 hcp
+        #STOP
     4S = 10--15 hcp, 4+!s
       P = unlimited
+        #STOP
     4C = !BW, 16+ hcp, 4+!s
     2N = 8--9 hcp
       P = 15 hcp
+        #STOP
       3N = 16--17 hcp
+        #STOP
     3N = 10--15 hcp
       P = unlimited
+        #STOP
     4N = 16--17 hcp
       P = 15 hcp
+        #STOP
       6N = 16--17 hcp
+        #STOP
     6N = 18+ hcp
       P = unlimited
+        #STOP
 2D = {prio:1} !TRF, 5+!h
   2H = {prio:0} unlimited
     P = 0--7 hcp
+      #STOP
     2N = 8--9 hcp, 5=!h
       3H = 15 hcp, 3+!h
       P = 15 hcp
+        #STOP
       4H = 16--17 hcp, 3+!h
+        #STOP
       3N = 16--17 hcp
+        #STOP
     3H = 8--9 hcp, 6+!h
       P = 15 hcp
+        #STOP
       4H = 16--17 hcp
+        #STOP
     3C = F, 10+ hcp, 5+!c
       4H = 3+!h
+        #STOP
       3N = unlimited
+        #STOP
     3D = F, 10+ hcp, 5+!d
       4H = 3+!h
+        #STOP
       3N = unlimited
+        #STOP
     3S = F, 10+ hcp, 5+!s
       4H = 3+!h
+        #STOP
       4S = 3+!s
+        #STOP
       3N = unlimited
+        #STOP
     3N = CoG, 10--15 hcp, 5=!h
       4H = 3+!h
+        #STOP
       P = unlimited
+        #STOP
     4H = 10--15 hcp, 6+!h
       P = unlimited
+        #STOP
     4N = 16--17 hcp, 5=!h
       6H = 16--17 hcp, 3+!h
+        #STOP
       6N = 16--17 hcp
+        #STOP
       P = 15 hcp
+        #STOP
     5H = 16--17 hcp, 6+!h
       6H = 16--17 hcp
+        #STOP
       P = 15 hcp
+        #STOP
     6N = 18+ hcp, 5=!h
       P = unlimited
+        #STOP
     6H = 18+ hcp, 6+!h
       P = unlimited
+        #STOP
   3H = {prio:1} MAX, 17 hcp, 4+!h
     P = 0--5 hcp
+      #STOP
     4H = 6--15 hcp
       P = unlimited
+        #STOP
     6H = 16+ hcp
       P = unlimited
+        #STOP
 2H = {prio:1} !TRF, 5+!s
   2S = {prio:0} unlimited
     P = 0--7 hcp
+      #STOP
     2N = 8--9 hcp, 5=!s
       3S = 15 hcp, 3+!s
       P = 15 hcp
+        #STOP
       4S = 16--17 hcp, 3+!s
+        #STOP
       3N = 16--17 hcp
+        #STOP
     3S = 8--9 hcp, 6+!s
       P = 15 hcp
+        #STOP
       4S = 16--17 hcp
+        #STOP
     3C = F, 10+ hcp, 5+!c
       4S = 3+!s
+        #STOP
       3N = unlimited
+        #STOP
     3D = F, 10+ hcp, 5+!d
       4S = 3+!s
+        #STOP
       3N = unlimited
+        #STOP
     3H = F, 10+ hcp, 5+!h
       4S = 3+!s
+        #STOP
       4H = 3+!h
+        #STOP
       3N = unlimited
+        #STOP
     3N = CoG, 10--15 hcp, 5=!s
       4S = 3+!s
+        #STOP
       P = unlimited
+        #STOP
     4S = 10--15 hcp, 6+!s
       P = unlimited
+        #STOP
     4N = 16--17 hcp, 5=!s
       6S = 16--17 hcp, 3+!s
+        #STOP
       6N = 16--17 hcp
+        #STOP
       P = 15 hcp
+        #STOP
     5S = 16--17 hcp, 6+!s
       6S = 16--17 hcp
+        #STOP
       P = 15 hcp
+        #STOP
     6N = 18+ hcp, 5=!s
       P = unlimited
+        #STOP
     6S = 18+ hcp, 6+!s
       P = unlimited
+        #STOP
   3S = {prio:1} MAX, 17 hcp, 4+!s
     P = 0--5 hcp
+      #STOP
     4S = 6--15 hcp
       P = unlimited
+        #STOP
     6S = 16+ hcp
       P = unlimited
+        #STOP
 2S = !TRF, 0--7 hcp, 6+!c or 6+!d
   3C = unlimited
     P = 6+!c
+      #STOP
     3D = {prio:1} 6+!d
       P = unlimited
+        #STOP
 2N = 8--9 hcp, not 4+!h, not 4+!s
   P = 15 hcp
+    #STOP
   3N = 16--17 hcp
+    #STOP
 3C = INV, 6+!c
   3N = 16--17 hcp
+    #STOP
   P = 15 hcp
+    #STOP
 3D = INV, 6+!d
   3N = 16--17 hcp
+    #STOP
   P = 15 hcp
+    #STOP
 3H = {prio:2} S/T, 6+!h
   4N = !BW, 17 hcp
   4H = 15--16 hcp
+    #STOP
 3S = {prio:2} S/T, 6+!s
   4N = !BW, 17 hcp
   4S = 15--16 hcp
+    #STOP
 3N = 10--15 hcp, not 4+!h, not 4+!s
   P = unlimited
+    #STOP
 4N = 16--17 hcp, not 4+!h, not 4+!s
   P = 15 hcp
+    #STOP
   6N = 16--17 hcp
+    #STOP
 6N = 18--19 hcp, not 4+!h, not 4+!s
   P = unlimited
+    #STOP
 4C = !BW, 20+ hcp
 
 *** Interference over 1NT
@@ -227,9 +319,11 @@ expand to anything).
   3H = 4+!h
   3S = 4+!s
   3N = unlimited
+    #STOP
 D = 8+ hcp, 4+#
 2N = 8--9 hcp, stopper
 3N = 10--15 hcp, stopper
+  #STOP
 
 A new suit at the 3 level is forcing (10+, 5+ cards; NOTES.md #C8) and is
 preferred to the suitless cuebid; with less, responder competes at the 2 level
@@ -254,6 +348,7 @@ his own at the 3 level; anything else passes (NOTES.md "Notrump lane" #N3).
 1N-(3X)-
 3Y = {prio:1} 8+ hcp, 5+#
 3N = 10+ hcp, stopper
+  #STOP
 D = 8+ hcp
 
 1N-(4X)-
@@ -347,81 +442,124 @@ for it. A hand with 0--3 hcp passes.
   3D = 0--3!s, 0--3!h
     3N = 4--10 hcp
       P = unlimited
+        #STOP
     4N = 11--12 hcp
       P = 20 hcp
+        #STOP
       6N = 21 hcp
+        #STOP
     6N = 13+ hcp
       P = unlimited
+        #STOP
   3H = {prio:1} 4+!h
     4H = 4--10 hcp, 4+!h
       P = unlimited
+        #STOP
     6H = 11+ hcp, 4+!h
       P = unlimited
+        #STOP
     3N = 4--10 hcp
       4S = 4+!s
+        #STOP
       P = unlimited
+        #STOP
     4N = 11--12 hcp
       P = 20 hcp
+        #STOP
       6N = 21 hcp
+        #STOP
     6N = 13+ hcp
       P = unlimited
+        #STOP
   3S = {prio:0} 4+!s, not 4+!h
     4S = 4--10 hcp, 4+!s
       P = unlimited
+        #STOP
     6S = 11+ hcp, 4+!s
       P = unlimited
+        #STOP
     3N = 4--10 hcp
       P = unlimited
+        #STOP
     4N = 11--12 hcp
       P = 20 hcp
+        #STOP
       6N = 21 hcp
+        #STOP
     6N = 13+ hcp
       P = unlimited
+        #STOP
 3D = {prio:1} !TRF, 5+!h
   3H = unlimited
     P = 0--3 hcp
+      #STOP
     3N = 4--10 hcp, 5=!h
       4H = 3+!h
+        #STOP
       P = unlimited
+        #STOP
     4H = 4--10 hcp, 6+!h
       P = unlimited
+        #STOP
     4N = 11--12 hcp, 5=!h
       6H = 21 hcp, 3+!h
+        #STOP
       6N = 21 hcp
+        #STOP
       P = 20 hcp
+        #STOP
     5H = 11--12 hcp, 6+!h
       6H = 21 hcp
+        #STOP
       P = 20 hcp
+        #STOP
     6N = 13+ hcp, 5=!h
       P = unlimited
+        #STOP
     6H = 13+ hcp, 6+!h
       P = unlimited
+        #STOP
 3H = {prio:1} !TRF, 5+!s
   3S = unlimited
     P = 0--3 hcp
+      #STOP
     3N = 4--10 hcp, 5=!s
       4S = 3+!s
+        #STOP
       P = unlimited
+        #STOP
     4S = 4--10 hcp, 6+!s
       P = unlimited
+        #STOP
     4N = 11--12 hcp, 5=!s
       6S = 21 hcp, 3+!s
+        #STOP
       6N = 21 hcp
+        #STOP
       P = 20 hcp
+        #STOP
     5S = 11--12 hcp, 6+!s
       6S = 21 hcp
+        #STOP
       P = 20 hcp
+        #STOP
     6N = 13+ hcp, 5=!s
       P = unlimited
+        #STOP
     6S = 13+ hcp, 6+!s
       P = unlimited
+        #STOP
 3N = 4--10 hcp
   P = unlimited
+    #STOP
 4N = 11--12 hcp
   P = 20 hcp
+    #STOP
   6N = 21 hcp
+    #STOP
 6N = 13+ hcp
   P = unlimited
+    #STOP
 
 Interference over 2NT: over a double, Stayman and transfers stay on (as over
 1NT) and a redouble shows slam interest; over an overcall, with game values
@@ -435,6 +573,7 @@ a completed transfer, a further overcall is doubled with game values.
 3H = {prio:1} !TRF, 5+!s
   3S = unlimited
 3N = 4--10 hcp
+  #STOP
 R = 11+ hcp
 
 2N-3D-3H-(bid)-
@@ -449,6 +588,7 @@ D = 4+ hcp
 
 2N-(3X)-
 3N = 4+ hcp, stopper
+  #STOP
 D = 4+ hcp
 
 2N-(4X)-
@@ -461,10 +601,14 @@ D = 4+ hcp
 4C = !STAY, 4+!h or 4+!s
   4D = 0--3!s, 0--3!h
   4H = {prio:1} 4+!h
+    #STOP
   4S = {prio:0} 4+!s, not 4+!h
+    #STOP
 4D = {prio:1} !TRF, 5+!h
   4H = unlimited
     P = unlimited
+      #STOP
 4H = {prio:1} !TRF, 5+!s
   4S = unlimited
     P = unlimited
+      #STOP

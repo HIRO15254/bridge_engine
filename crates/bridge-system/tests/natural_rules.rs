@@ -175,6 +175,20 @@ fn rule_new_suit_resp_1() {
 }
 
 #[test]
+fn rule_new_suit_resp_1_over_an_overcall_shows_five() {
+    // 1C (1H) 1S: with four spades responder makes the negative double instead.
+    let (_, inf) = infer("1C 1H 1S", 2, Seat::South);
+    assert_eq!(inf.rule, "new_suit_resp_1");
+    let five = hand(LOW, "K32", "32", "AJ432"); // 5 spades, 8 hcp
+    let four = hand(LOW, "K432", "32", "AJ32"); // 4 spades
+    assert!(inf.constraint.satisfies(five));
+    assert!(!inf.constraint.satisfies(four));
+    let (_, x) = infer("1C 1H X", 2, Seat::South);
+    assert_eq!(x.rule, "negative_x");
+    assert!(x.constraint.satisfies(four));
+}
+
+#[test]
 fn rule_new_suit_resp_2() {
     // 1S (a suit that outranks clubs) - P - 2C is a plain (non-jump) 2-level new suit.
     let (_, inf) = infer("1S P 2C", 2, Seat::South);
@@ -189,10 +203,55 @@ fn rule_new_suit_resp_2() {
 fn rule_resp_nt() {
     let (_, inf) = infer("1S P 1NT", 2, Seat::South);
     assert_eq!(inf.rule, "resp_nt");
-    let good = hand(LOW, LOW, LOW, "AQJ2"); // 7 hcp (within 6-10)
+    let good = hand(LOW, "AQJ32", LOW, "32"); // 7 hcp (within 6-10), 2 spades
     let too_strong = hand("AK32", "32", LOW, "AQ32"); // 13 hcp
     assert!(inf.constraint.satisfies(good));
     assert!(!inf.constraint.satisfies(too_strong));
+    // A simple raise (3+ spades, 6-9) is not a 1NT response; with 10 hcp it may be.
+    let raise = hand(LOW, "AQ32", LOW, "J32"); // 7 hcp, 3 spades
+    let strong_support = hand(LOW, "AQ32", "K32", "Q32"); // 11 hcp: above 1NT
+    let ten_support = hand(LOW, "AQ32", "Q32", "Q32"); // 10 hcp, 3 spades
+    assert!(!inf.constraint.satisfies(raise));
+    assert!(!inf.constraint.satisfies(strong_support));
+    assert!(inf.constraint.satisfies(ten_support));
+}
+
+#[test]
+fn rule_resp_nt_denies_a_minor_raise() {
+    // 1D P 1NT: no 5-card diamond raise at 6-9 (SAYC 1D-1NT); a 4-card major is left to the
+    // rank order (1H/1S tie with 1NT and win by call order).
+    let (_, inf) = infer("1D P 1NT", 2, Seat::South);
+    assert_eq!(inf.rule, "resp_nt");
+    let plain = hand("K432", "Q32", "J32", "Q32"); // 8 hcp, 4-3-3-3 with four clubs
+    let four_diamonds = hand("K32", "Q432", "J32", "Q32"); // 8 hcp, 4 diamonds: still 1NT
+    let five_diamonds = hand("K3", "Q5432", "J32", "Q32"); // 8 hcp, 5 diamonds: raise
+    assert!(inf.constraint.satisfies(plain));
+    assert!(inf.constraint.satisfies(four_diamonds));
+    assert!(!inf.constraint.satisfies(five_diamonds));
+    // A later 1NT by responder (1C P 1D P 1S P 1NT) keeps the plain HCP range.
+    let (_, rebid) = infer("1C P 1D P 1S P 1NT", 6, Seat::South);
+    assert_eq!(rebid.rule, "resp_nt");
+    assert!(
+        rebid
+            .constraint
+            .satisfies(hand("K3", "Q5432", "J32", "Q32"))
+    );
+}
+
+#[test]
+fn rule_negative_x_over_a_minor_shows_both_majors() {
+    // 1C (1D) X: both majors (1H/1S show one four-card major).
+    let (_, inf) = infer("1C 1D X", 2, Seat::South);
+    assert_eq!(inf.rule, "negative_x");
+    let both = hand("32", "432", "K432", "A432"); // 4-4 majors, 7 hcp
+    let one = hand("32", "5432", "K32", "A432"); // four spades only, 7 hcp
+    assert!(inf.constraint.satisfies(both));
+    assert!(!inf.constraint.satisfies(one));
+    let (_, one_s) = infer("1C 1D 1S", 2, Seat::South);
+    assert!(
+        one_s.constraint.satisfies(one),
+        "1S stays 4+ over a minor overcall"
+    );
 }
 
 #[test]

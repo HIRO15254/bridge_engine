@@ -1,51 +1,424 @@
-//! Reproduction-rate property (07-bidding.md §10's reverse direction; 11-testing.md §3):
-//! `consistency.rs` checks that `interpret` can always explain whatever `choose_bid` picked
-//! (definitions too *tight*); this harness checks the opposite direction over real tournament
-//! auctions -- does a deal `interpret` accepts for an auction actually *replay* into that same
-//! auction via `choose_bid`? A node whose reproduction rate is low is a node whose constraint is
-//! too *loose* (accepts hands that would never actually have produced that call).
+//! Reproduction harness (07-bidding.md §10's reverse direction; 11-testing.md §3).
 //!
-//! 11-testing.md §3's pseudocode samples deals from the auction's own interpretation and counts
-//! the raw fraction that replays. `ConstraintProposal` is still `todo!()` (phase 5), so the
-//! headline statistic here gets the same distribution by rejection: uniformly random deals are
-//! kept only when every seat's hand strictly satisfies the auction's interpretation
-//! (`Interpretation::satisfied_by` under `InterpretOptions { strict: true, .. }`), up to
-//! [`TARGET_ACCEPTED`] kept deals out of at most [`MAX_DRAWS`] draws, and the rate is the raw
-//! fraction of kept deals whose `replay` reproduces the auction. Which auctions enter the headline
-//! median depends only on how many deals were kept (at least [`MIN_ACCEPTED`]), never on whether
-//! they replay, so the statistic is not tied to the rate by construction.
+//! `consistency.rs` checks that `interpret` can explain whatever `choose_bid` picked (definitions
+//! too *tight*). This harness checks the opposite direction: does a deal the interpretation of an
+//! auction accepts actually *replay* into that same auction via `choose_bid`? A low rate means an
+//! interpretation that is too *loose*, or an auction the system would not bid.
 //!
-//! The earlier headline (phase 3 recheck finding) weighted uniform deals by
-//! `sequence_log_likelihood` and took the median over auctions with ESS >= 30. A call `choose_bid`
-//! would not make gets only `epsilon / n_legal` of the policy's mass, so one reproducing deal
-//! carries almost all the weight (ESS about 1): a high ESS meant that *no* deal reproduced, and the
-//! ESS filter selected exactly the auctions whose rate was 0. That likelihood-weighted rate is
-//! still reported per auction, next to an `any_reproduced` flag, as a near-0/1 statistic -- it is
-//! no longer used as a headline.
+//! Phase 4 reports four numbers (docs/design/15-phase4-plan.md, criteria (b)):
+//!
+//! - **(i) generated**: 100 SAYC auctions frozen in `tests/data/repro_generated.txt`, made by
+//!   replaying fixed-seed random deals with [`PolicyParams::system_players`]. SAYC is the right
+//!   model for them by construction, so this is the headline set. `write_generated_fixture`
+//!   regenerates the file (`SAYC_REPRO_WRITE_FIXTURE=1`) and otherwise reports how far the file
+//!   has drifted from what the current system generates.
+//! - **(ii) corpus SAYC-reproducible subset**: corpus games of the eval split (odd enumeration
+//!   index, [`is_eval`]) whose true deal replays to the recorded auction. Its size is reported
+//!   next to the rate.
+//! - **(iii) legacy**: the phase-3 definition, kept for continuity: the first 500 corpus auctions
+//!   of both splits, read with [`InterpretOptions::legacy`] and sampled with the phase-3
+//!   rejection sampler ([`LEGACY_SAMPLER`]), plus the likelihood-weighted uniform rate and its
+//!   `any_reproduced` flag.
+//! - **(iv) per-call true-deal agreement**: on the eval split, how often `choose_bid` with the
+//!   owner's true hand makes the recorded call, split into system and natural positions.
+//!
+//! ## Samplers
+//!
+//! Deals come from a [`Sampler`]. On the phase-4 line `ConstraintProposal` is still `todo!()`, so
+//! the headline sampler is [`Sampler::StrictRejection`] with [`RejectionWeight::Policy`]: uniform
+//! deals are kept when every seat's hand satisfies the strict (non-`Fallback`) interpretation, up
+//! to a kept target and a draw cap, and each kept deal is weighted by the policy likelihood
+//! `AuctionPolicy::log_likelihood` of the auction. A uniform proposal restricted to the strict
+//! support has a constant density there, so this weight is the exact importance weight of the
+//! posterior `p(deal | auction) ∝ L(deal)` restricted to that support (the dropped mass is the
+//! `Fallback` pieces'). Under `system_players` the likelihood is flat on the strict support and
+//! the weights are all equal; under `human` the natural deviation pieces `Y_c` carry the smaller
+//! weight `δ`, which unit weights would overcount. The rate is the weighted fraction that
+//! replays (the unit-weight fraction is reported next to it as `unweighted_rate`), and an auction
+//! enters the median when its ESS `(Σw)² / Σw²` is at least [`MIN_ESS`]. The filter looks only at
+//! the weights, never at the replay outcome. [`RejectionWeight::Unit`] (every kept deal weight 1)
+//! is the phase-3 definition and is used only by the legacy part.
+//!
+//! [`Sampler::Weighted`] draws with `sample_deals` from a proposal and weights each deal by the
+//! policy likelihood (`BiddingLikelihood`) over the proposal density; its rate is the weighted
+//! fraction that replays and its filter is ESS >= [`MIN_ESS`]. With [`ProposalKind::Uniform`] it is
+//! the phase-3 likelihood-weighted statistic, which is near 0/1 because every off-policy call gets
+//! only the `epsilon / n` floor (phase-3 recheck 3), so it is not a headline.
+//!
+//! **Phase 5 swap.** Once `ConstraintProposal` and `AuctionPolicy` weighting land, the headline
+//! becomes `Sampler::Weighted { proposal: ProposalKind::Constraint, n: 1000 }`: change
+//! [`headline_sampler`]'s default (or run with `SAYC_REPRO_SAMPLER=constraint` first). Nothing else
+//! changes: the mirror interpretation is already built with [`InterpretOptions::for_context`]
+//! from the same `BidContext` the likelihood uses, [`evaluate`] already handles weights, and the
+//! reports already carry ESS and attempts. `BiddingLikelihood` switches to `AuctionPolicy` inside
+//! `bridge-sample` (lane P), not here. On this line `SAYC_REPRO_SAMPLER=constraint` panics in
+//! `ConstraintProposal::prepare`.
 
 mod common;
 
 use std::path::{Path, PathBuf};
 
 use bridge_bidding::{
-    BidContext, ImplicitPass, InterpretOptions, Interpretation, NodeId, PolicyParams,
-    ResolutionKind, Scoring, interpret, replay,
+    AuctionPolicy, BidChoice, BidContext, ChoiceSource, ImplicitPass, InterpretOptions,
+    Interpretation, NodeId, PolicyParams, Rejected, ResolutionKind, Scoring, Table, choose_bid,
+    interpret, replay,
 };
 use bridge_constraint::{HandConstraint, KnownCards};
-use bridge_core::Auction;
+use bridge_core::{Auction, Call, Deal, Seat, Vulnerability};
 use bridge_sample::{
-    BiddingLikelihood, SampleContext, SampleOptions, UniformProposal, sample_deals,
+    BiddingLikelihood, ConstraintProposal, Proposal, SampleContext, SampleOptions, Threads,
+    UniformProposal, sample_deals,
 };
 use rand_xoshiro::Xoshiro256PlusPlus;
 use rand_xoshiro::rand_core::SeedableRng;
-use serde_json::json;
+use serde_json::{Value, json};
 
-/// Deals kept per auction by the rejection sampler.
+/// The generated fixture, relative to this crate's manifest directory.
+const GENERATED_FIXTURE: &str = "tests/data/repro_generated.txt";
+/// Auctions in the generated fixture.
+const GENERATED_COUNT: usize = 100;
+/// Seed of the generated fixture's random deals (deal `i` uses `auction_seed(GEN_SEED, i)`).
+const GEN_SEED: u64 = 0x5A1C_4001;
+/// Highest final-contract level a generated auction may reach (the natural fallback's runaway
+/// escalation to the 7 level is a replay artefact until the level floor lands; 09-sample.md
+/// §10.2 applies the same rule to the ESS suite).
+const MAX_GENERATED_LEVEL: u8 = 5;
+/// Kept deals (or ESS) an auction needs for its rate to enter a headline median.
+const MIN_ESS: f64 = 30.0;
+/// Default kept-deal target of the rejection sampler (`SAYC_REPRO_TARGET`).
 const TARGET_ACCEPTED: usize = 1000;
-/// Uniform draws per auction before the rejection sampler gives up.
-const MAX_DRAWS: usize = 200_000;
-/// Kept deals an auction needs for its raw rate to enter the headline median.
-const MIN_ACCEPTED: usize = 30;
+/// Default uniform-draw cap per auction of the rejection sampler (`SAYC_REPRO_MAX_DRAWS`). A
+/// strict SAYC interpretation of a whole auction accepts about 1e-4 of uniform deals, so the
+/// phase-3 cap of 200,000 left 44 of the 100 generated auctions under 30 kept deals. A draw with
+/// its check costs about 125 ns on one thread (release, measured on one generated auction), so a
+/// capped auction takes about 0.6 s per thread; with 8 threads on a shared machine the per-draw
+/// cost rose to 200-400 ns, and part (i), where most auctions hit the cap, takes 12-25 s.
+const MAX_DRAWS: usize = 5_000_000;
+/// The legacy part's sampler: the phase-3 definition (1000 kept deals, at most 200,000 draws),
+/// fixed so that its numbers stay comparable across phases whatever the headline sampler is.
+const LEGACY_SAMPLER: Sampler = Sampler::StrictRejection {
+    target: 1000,
+    max_draws: 200_000,
+    weight: RejectionWeight::Unit,
+};
+/// Deals per auction of the weighted samplers.
+const WEIGHTED_N: usize = 1000;
+/// Default number of corpus auctions of the legacy part (`SAYC_REPRO_LIMIT`).
+const LEGACY_LIMIT: usize = 500;
+
+// ------------------------------------------------------------------------------------------------
+// Samplers
+// ------------------------------------------------------------------------------------------------
+
+/// The proposal a [`Sampler::Weighted`] draws from.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ProposalKind {
+    /// Uniformly random deals ([`UniformProposal`]).
+    Uniform,
+    /// The interpretation-driven proposal ([`ConstraintProposal`], phase 5).
+    Constraint,
+}
+
+/// The weight a [`Sampler::StrictRejection`] gives each kept deal.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RejectionWeight {
+    /// Every kept deal weighs 1 (the phase-3 definition; the legacy part only).
+    Unit,
+    /// `exp(ln L(deal) - max)` with `L` = `AuctionPolicy::log_likelihood` under the evaluated
+    /// context: the importance weight of the posterior restricted to the strict support.
+    Policy,
+}
+
+/// How deals are drawn for one auction.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Sampler {
+    /// Uniform deals kept when every seat strictly satisfies the interpretation, until `target`
+    /// are kept or `max_draws` were drawn, weighted by `weight`.
+    StrictRejection {
+        target: usize,
+        max_draws: usize,
+        weight: RejectionWeight,
+    },
+    /// `n` deals from `sample_deals` with `proposal`, weighted by the policy likelihood of the
+    /// auction over the proposal density.
+    Weighted { proposal: ProposalKind, n: usize },
+}
+
+impl Sampler {
+    fn label(&self) -> String {
+        match self {
+            Sampler::StrictRejection {
+                target,
+                max_draws,
+                weight,
+            } => format!(
+                "strict rejection: uniform deals kept when every seat satisfies the strict \
+                 interpretation (target {target}, cap {max_draws} draws), {}",
+                match weight {
+                    RejectionWeight::Unit => "every kept deal weight 1",
+                    RejectionWeight::Policy =>
+                        "each kept deal weighted by the policy likelihood (AuctionPolicy)",
+                }
+            ),
+            Sampler::Weighted { proposal, n } => format!(
+                "{proposal:?} proposal, {n} deals weighted by the policy likelihood \
+                 (BiddingLikelihood)"
+            ),
+        }
+    }
+
+    /// Draws deals for `auction`. `opts` is the interpretation the proposal reads (the rejection
+    /// sampler makes it strict itself); `ctx` is the policy the weights use (for the rejection
+    /// sampler, only with [`RejectionWeight::Policy`]).
+    fn draw(
+        &self,
+        table: &Table,
+        ctx: &BidContext<'_>,
+        auction: &Auction,
+        opts: &InterpretOptions,
+        seed: u64,
+    ) -> Drawn {
+        match *self {
+            Sampler::StrictRejection {
+                target,
+                max_draws,
+                weight,
+            } => {
+                let strict = InterpretOptions {
+                    strict: true,
+                    ..*opts
+                };
+                let interp = interpret(table, auction, &strict);
+                let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+                let mut deals = Vec::new();
+                let mut attempts = 0usize;
+                while deals.len() < target && attempts < max_draws {
+                    attempts += 1;
+                    let deal = common::random_deal(&mut rng);
+                    if Seat::ALL
+                        .iter()
+                        .all(|&seat| interp.satisfied_by(seat, deal.hand(seat)))
+                    {
+                        deals.push((deal, 1.0));
+                    }
+                }
+                if weight == RejectionWeight::Policy && !deals.is_empty() {
+                    let policy = AuctionPolicy::new(table, auction, ctx);
+                    let log_l: Vec<f64> = deals
+                        .iter()
+                        .map(|(d, _)| policy.log_likelihood(d))
+                        .collect();
+                    let max = log_l.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                    for ((_, w), l) in deals.iter_mut().zip(&log_l) {
+                        *w = (l - max).exp();
+                    }
+                }
+                Drawn {
+                    deals,
+                    attempts,
+                    error: None,
+                }
+            }
+            Sampler::Weighted { proposal, n } => {
+                let interp = interpret(table, auction, opts);
+                let sample_ctx = SampleContext {
+                    known: KnownCards::EMPTY,
+                    interpretation: &interp,
+                    play_constraints: &[HandConstraint::ANY; 4],
+                    play_soft: None,
+                    bidding: Some(BiddingLikelihood {
+                        table,
+                        auction,
+                        ctx,
+                    }),
+                };
+                let sample_opts = SampleOptions {
+                    seed,
+                    threads: Threads::Single,
+                    ..SampleOptions::default()
+                };
+                let uniform = UniformProposal;
+                let constraint = ConstraintProposal::default();
+                let proposal: &dyn Proposal = match proposal {
+                    ProposalKind::Uniform => &uniform,
+                    ProposalKind::Constraint => &constraint,
+                };
+                match sample_deals(&sample_ctx, proposal, n, &sample_opts) {
+                    Ok((weighted, report)) => {
+                        let max = weighted
+                            .iter()
+                            .map(|d| d.log_weight)
+                            .fold(f64::NEG_INFINITY, f64::max);
+                        Drawn {
+                            deals: weighted
+                                .into_iter()
+                                .map(|d| (d.deal, (d.log_weight - max).exp()))
+                                .collect(),
+                            attempts: report.attempts as usize,
+                            error: None,
+                        }
+                    }
+                    Err(e) => Drawn {
+                        deals: Vec::new(),
+                        attempts: 0,
+                        error: Some(format!("{e:?}")),
+                    },
+                }
+            }
+        }
+    }
+}
+
+/// The headline sampler: `SAYC_REPRO_SAMPLER` = `rejection` (default on the phase-4 line),
+/// `constraint` (phase 5: `ConstraintProposal` + policy weights) or `uniform`. The kept target
+/// and the draw cap of the rejection sampler come from `SAYC_REPRO_TARGET` and
+/// `SAYC_REPRO_MAX_DRAWS`.
+fn headline_sampler() -> Sampler {
+    match std::env::var("SAYC_REPRO_SAMPLER").as_deref() {
+        Ok("constraint") => Sampler::Weighted {
+            proposal: ProposalKind::Constraint,
+            n: WEIGHTED_N,
+        },
+        Ok("uniform") => Sampler::Weighted {
+            proposal: ProposalKind::Uniform,
+            n: WEIGHTED_N,
+        },
+        Ok("rejection") | Err(_) => Sampler::StrictRejection {
+            target: env_usize("SAYC_REPRO_TARGET", TARGET_ACCEPTED),
+            max_draws: env_usize("SAYC_REPRO_MAX_DRAWS", MAX_DRAWS),
+            weight: RejectionWeight::Policy,
+        },
+        Ok(other) => {
+            panic!("SAYC_REPRO_SAMPLER={other}: expected rejection, constraint or uniform")
+        }
+    }
+}
+
+/// The deals drawn for one auction, with weights relative to the largest.
+struct Drawn {
+    deals: Vec<(Deal, f64)>,
+    /// Uniform draws (rejection) or proposal attempts (weighted).
+    attempts: usize,
+    /// `sample_deals` failed (for example `EmptySupport`).
+    error: Option<String>,
+}
+
+/// One auction under one sampler.
+#[derive(Clone, Debug)]
+struct Outcome {
+    /// Deals drawn (kept, for rejection).
+    kept: usize,
+    attempts: usize,
+    /// `(sum w)^2 / sum w^2`; equals `kept` when every weight is equal.
+    ess: f64,
+    /// Weighted fraction of the deals whose replay reproduces the auction; `None` if none drawn.
+    rate: Option<f64>,
+    /// The same fraction with every drawn deal weighing 1 (the phase-3 statistic).
+    unweighted_rate: Option<f64>,
+    any_reproduced: bool,
+    error: Option<String>,
+}
+
+/// Draws deals for `auction` with `sampler` and replays each with `choose_bid`.
+fn evaluate(
+    sampler: &Sampler,
+    table: &Table,
+    ctx: &BidContext<'_>,
+    auction: &Auction,
+    opts: &InterpretOptions,
+    seed: u64,
+) -> Outcome {
+    let drawn = sampler.draw(table, ctx, auction, opts, seed);
+    let (mut sum, mut sum_sq, mut reproduced) = (0.0f64, 0.0f64, 0.0f64);
+    let mut reproduced_count = 0usize;
+    for (deal, w) in &drawn.deals {
+        sum += w;
+        sum_sq += w * w;
+        let replayed = replay(table, deal, auction.dealer(), auction.vulnerability(), ctx);
+        if replayed.auction == *auction {
+            reproduced += w;
+            reproduced_count += 1;
+        }
+    }
+    let kept = drawn.deals.len();
+    Outcome {
+        kept,
+        attempts: drawn.attempts,
+        ess: if sum_sq > 0.0 {
+            sum * sum / sum_sq
+        } else {
+            0.0
+        },
+        rate: (sum > 0.0).then(|| reproduced / sum),
+        unweighted_rate: (kept > 0).then(|| reproduced_count as f64 / kept as f64),
+        any_reproduced: reproduced_count > 0,
+        error: drawn.error,
+    }
+}
+
+// ------------------------------------------------------------------------------------------------
+// Contexts
+// ------------------------------------------------------------------------------------------------
+
+/// The policy context for `preset`: IMPs, the table's natural fallback, the implicit pass.
+fn bid_ctx(table: &Table, preset: PolicyParams) -> BidContext<'_> {
+    BidContext {
+        scoring: Scoring::Imp,
+        natural: Some(table.natural.as_ref()),
+        implicit_pass: ImplicitPass::Complement,
+        policy: preset,
+    }
+}
+
+fn env_usize(name: &str, default: usize) -> usize {
+    match std::env::var(name) {
+        Ok(v) => v
+            .parse()
+            .unwrap_or_else(|_| panic!("{name}={v} is not a usize")),
+        Err(_) => default,
+    }
+}
+
+/// A distinct sub-seed per auction, so every auction's draws are an independent, reproducible
+/// random stream.
+fn auction_seed(base: u64, index: usize) -> u64 {
+    base.wrapping_add((index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15))
+}
+
+/// Runs `f` over `items` on up to 8 threads; results come back in `items` order, so nothing
+/// reported depends on the thread count.
+fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(usize, &T) -> R + Sync) -> Vec<R> {
+    let threads = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .clamp(1, 8);
+    let mut slots: Vec<Option<R>> = (0..items.len()).map(|_| None).collect();
+    std::thread::scope(|scope| {
+        let f = &f;
+        let handles: Vec<_> = (0..threads)
+            .map(|t| {
+                scope.spawn(move || {
+                    (t..items.len())
+                        .step_by(threads)
+                        .map(|i| (i, f(i, &items[i])))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        for h in handles {
+            for (i, r) in h.join().expect("reproduction worker panicked") {
+                slots[i] = Some(r);
+            }
+        }
+    });
+    slots
+        .into_iter()
+        .map(|r| r.expect("every item processed"))
+        .collect()
+}
+
+// ------------------------------------------------------------------------------------------------
+// Corpus
+// ------------------------------------------------------------------------------------------------
 
 /// Every `.pbn` file under `dir`, recursively, in a stable (sorted) order.
 fn pbn_files(dir: &Path) -> Vec<PathBuf> {
@@ -68,67 +441,177 @@ fn pbn_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// Extracts up to `limit` validated [`Auction`]s from every `.pbn` game under `<dir>/pbn`, in file
-/// order. A game contributes an auction only when its view resolves one (`GameView::auction`);
-/// the two `Optimum*Table.pbn` reference files (no `Auction` section) and any truncated/`-` game
-/// contribute none. The vendored tournament corpus (four 2019 world-championship finals, ~600
-/// boards across both rooms) comfortably exceeds `limit` on its own, so LIN is not also needed
-/// here.
-fn corpus_auctions(dir: &Path, limit: usize) -> Vec<Auction> {
-    let mut auctions = Vec::new();
-    'files: for path in pbn_files(&dir.join("pbn")) {
+/// One corpus game with a validated auction.
+struct CorpusGame {
+    /// Enumeration index: the split key ([`is_eval`]).
+    index: usize,
+    label: String,
+    auction: Auction,
+    /// The true deal, when all 52 cards are recorded.
+    deal: Option<Deal>,
+}
+
+/// Every PBN game under `<dir>/pbn` whose view resolves an auction, in sorted-path then file
+/// order. This enumeration order defines the corpus split (D20): even index = tune, odd = eval.
+/// The two `Optimum*Table.pbn` reference files (no `Auction` section) and any truncated/`-` game
+/// contribute nothing. A view that fails to interpret resets `#` inheritance.
+fn corpus_auctions(dir: &Path) -> Vec<CorpusGame> {
+    let mut games = Vec::new();
+    for path in pbn_files(&dir.join("pbn")) {
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
         let (file, _warnings) = bridge_format::pbn::parse_lenient(&bytes);
+        let name = path
+            .file_stem()
+            .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+        let parent = path
+            .parent()
+            .and_then(Path::file_name)
+            .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
         let mut previous: Option<bridge_format::GameView> = None;
-        for game in &file.games {
+        for (k, game) in file.games.iter().enumerate() {
             let view = game.view(previous.as_ref()).ok();
             if let Some(view) = &view {
                 if let Some(auction) = &view.auction {
-                    auctions.push(auction.clone());
-                    if auctions.len() >= limit {
-                        break 'files;
-                    }
+                    games.push(CorpusGame {
+                        index: games.len(),
+                        label: format!("{parent}/{name}#{k}"),
+                        auction: auction.clone(),
+                        deal: view.deal.as_ref().and_then(|d| d.complete()),
+                    });
                 }
             }
             previous = view;
         }
     }
-    auctions
+    games
 }
 
-/// One auction's reproduction-rate record.
-struct AuctionRecord {
-    path: String,
-    /// The last call resolved `Exact`'s node, formatted `"node:<id>"`, or `"off_system"` when no
-    /// call in the auction resolved `Exact` at all (11-testing.md §3: "ノード別 (最後に Exact
-    /// 解決したノード)").
+/// The corpus split (docs/design/15-phase4-plan.md D20): an odd enumeration index is the eval
+/// split, an even one the tune split.
+fn is_eval(index: usize) -> bool {
+    index % 2 == 1
+}
+
+// ------------------------------------------------------------------------------------------------
+// Generated fixture
+// ------------------------------------------------------------------------------------------------
+
+/// One generated auction and the deal that produced it.
+#[derive(Clone, PartialEq, Debug)]
+struct FixtureCase {
+    id: String,
+    deal: Deal,
+    auction: Auction,
+}
+
+/// The fixture file: a header, then one tab-separated line per case:
+/// `id  dealer  vulnerability  deal (PBN, N first)  calls (space-separated)`.
+fn fixture_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(GENERATED_FIXTURE)
+}
+
+fn format_fixture(cases: &[FixtureCase]) -> String {
+    let mut out = String::new();
+    out.push_str(
+        "# SAYC-generated auctions for the reproduction harness (tests/reproduction.rs, part (i)).\n\
+         # Random deals from seed 0x5A1C4001 (deal i: auction_seed(GEN_SEED, i)); board i + 1 gives\n\
+         # the dealer and vulnerability; replayed with PolicyParams::system_players(), the SAYC\n\
+         # natural fallback and ImplicitPass::Complement. Passed-out auctions and final contracts\n\
+         # above the 5 level are skipped. Regenerate with SAYC_REPRO_WRITE_FIXTURE=1 (see\n\
+         # write_generated_fixture); re-frozen on the stop-based SAYC (system stops, phase 4).\n\
+         # id\tdealer\tvul\tdeal\tcalls\n",
+    );
+    for case in cases {
+        out.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\n",
+            case.id,
+            case.auction.dealer(),
+            case.auction.vulnerability(),
+            case.deal,
+            case.auction
+        ));
+    }
+    out
+}
+
+fn parse_fixture(text: &str) -> Vec<FixtureCase> {
+    text.lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        .map(|line| {
+            let fields: Vec<&str> = line.split('\t').collect();
+            assert_eq!(fields.len(), 5, "fixture line {line:?}: expected 5 fields");
+            let dealer: Seat = fields[1].parse().expect("fixture dealer");
+            let vul: Vulnerability = fields[2].parse().expect("fixture vulnerability");
+            let deal: Deal = fields[3].parse().expect("fixture deal");
+            let calls: Vec<Call> = fields[4]
+                .split_whitespace()
+                .map(|c| c.parse().expect("fixture call"))
+                .collect();
+            let auction = Auction::from_calls(dealer, vul, calls).expect("fixture auction");
+            FixtureCase {
+                id: fields[0].to_string(),
+                deal,
+                auction,
+            }
+        })
+        .collect()
+}
+
+fn load_fixture() -> Vec<FixtureCase> {
+    let path = fixture_path();
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+    parse_fixture(&text)
+}
+
+/// Replays fixed-seed random deals with the system-players policy until `count` auctions pass the
+/// filter (not passed out, final level <= [`MAX_GENERATED_LEVEL`]). Also returns how many deals
+/// were skipped as `[passed out, above the level]`.
+fn generate_fixture(table: &Table, count: usize) -> (Vec<FixtureCase>, [usize; 2]) {
+    let ctx = bid_ctx(table, PolicyParams::system_players());
+    let mut out = Vec::new();
+    let mut skipped = [0usize; 2];
+    let mut i = 0usize;
+    while out.len() < count {
+        assert!(i < 100_000, "could not generate {count} auctions");
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(auction_seed(GEN_SEED, i));
+        let deal = common::random_deal(&mut rng);
+        let board = (i % 16) as u16 + 1;
+        let dealer = Seat::ALL[i % 4];
+        let vul = Vulnerability::from_board_number(board);
+        let replayed = replay(table, &deal, dealer, vul, &ctx);
+        match replayed.auction.contract() {
+            None => skipped[0] += 1,
+            Some(c) if c.bid.level() > MAX_GENERATED_LEVEL => skipped[1] += 1,
+            Some(_) => out.push(FixtureCase {
+                id: format!("gen-{i}"),
+                deal,
+                auction: replayed.auction,
+            }),
+        }
+        i += 1;
+    }
+    (out, skipped)
+}
+
+// ------------------------------------------------------------------------------------------------
+// Records and summaries
+// ------------------------------------------------------------------------------------------------
+
+/// One auction's record in a part of the report.
+struct Record {
+    id: String,
+    auction: String,
+    /// The last call resolved `Exact`'s node (`"node:<id>"`), or `"off_system"`.
     node_key: String,
-    /// The auction's very last call's `ResolutionKind` (11-testing.md §3's other axis), or
-    /// `"empty_auction"` for the vacuous zero-call auction (never produced by real corpus data,
-    /// kept only so the match is total).
+    /// The last call's `ResolutionKind`.
     kind_key: String,
-    /// Raw fraction of the rejection-sampled deals (every seat strictly satisfies the
-    /// interpretation) whose `choose_bid` replay reproduces this auction exactly; `None` when no
-    /// deal was kept.
-    raw_rate: Option<f64>,
-    /// Deals the rejection sampler kept, and how many uniform draws it took.
-    accepted: usize,
-    draws: usize,
-    /// The likelihood-weighted fraction of `requested` uniform samples whose replay reproduces
-    /// this auction (a near-0/1 statistic, see the module doc).
-    weighted_rate: f64,
-    /// Whether any of the `requested` likelihood-weighted uniform samples replayed.
-    any_reproduced: bool,
-    requested: usize,
-    produced: usize,
-    ess: f64,
+    outcome: Outcome,
 }
 
-/// The last call in `interp.per_call` resolved `Exact`, if any, and its node -- taken from its
-/// first alternative's [`CallExplanation`] (an `Exact` call's alternatives all come from the same
-/// trie position, so every alternative names the same node).
+/// The last call in `interp.per_call` resolved `Exact`, if any, and its node.
 fn last_exact_node(interp: &Interpretation) -> Option<NodeId> {
     interp
         .per_call
@@ -139,414 +622,834 @@ fn last_exact_node(interp: &Interpretation) -> Option<NodeId> {
         .and_then(|(_, _, ex)| ex.node)
 }
 
-fn node_key(interp: &Interpretation) -> String {
-    match last_exact_node(interp) {
-        Some(id) => format!("node:{}", id.0),
-        None => "off_system".to_string(),
-    }
-}
-
-fn kind_key(interp: &Interpretation) -> String {
-    match interp.per_call.last() {
-        Some(pc) => format!("{:?}", pc.kind),
-        None => "empty_auction".to_string(),
-    }
-}
-
-/// A distinct sub-seed per auction, so every auction's 1000 uniform draws are an independent,
-/// reproducible random stream (same construction as `rng_for`'s own `splitmix64` step, spelled
-/// out here rather than imported since only a `u64 -> u64` seed derivation is needed, not a full
-/// RNG).
-fn auction_seed(base: u64, index: usize) -> u64 {
-    base.wrapping_add((index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15))
-}
-
-/// Runs one auction's reproduction-rate check: 1000 uniformly-random deals, importance-weighted by
-/// `sequence_log_likelihood` of `auction` under `bid_ctx`, each replayed with `choose_bid` and
-/// compared back against `auction`.
-fn process_auction(
-    table: &bridge_bidding::Table,
-    bid_ctx: &BidContext<'_>,
+fn record(
+    id: String,
+    table: &Table,
     auction: &Auction,
-    seed: u64,
-) -> AuctionRecord {
-    let interp = interpret(table, auction, &InterpretOptions::default());
-    let sample_ctx = SampleContext {
-        known: KnownCards::EMPTY,
-        interpretation: &interp,
-        play_constraints: &[HandConstraint::ANY; 4],
-        play_soft: None,
-        bidding: Some(BiddingLikelihood {
-            table,
-            auction,
-            ctx: bid_ctx,
-        }),
-    };
-    let opts = SampleOptions {
-        seed,
-        ..SampleOptions::default()
-    };
-    let requested = 1000;
-    let (deals, sample_report) = sample_deals(&sample_ctx, &UniformProposal, requested, &opts)
-        .expect("UniformProposal + BiddingLikelihood always prepares and never hits EmptySupport");
-
-    let (raw_rate, accepted, draws) = rejection_rate(
-        table,
-        bid_ctx,
-        auction,
-        seed ^ 0xA5A5_5A5A_0F0F_F0F0,
-        TARGET_ACCEPTED,
-        MAX_DRAWS,
-    );
-
-    let log_weight_max = deals
-        .iter()
-        .map(|d| d.log_weight)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let mut weight_sum = 0.0f64;
-    let mut reproduced_weight = 0.0f64;
-    let mut any_reproduced = false;
-    for weighted in &deals {
-        let w = (weighted.log_weight - log_weight_max).exp();
-        weight_sum += w;
-        let replayed = replay(
-            table,
-            &weighted.deal,
-            auction.dealer(),
-            auction.vulnerability(),
-            bid_ctx,
-        );
-        if replayed.auction == *auction {
-            reproduced_weight += w;
-            any_reproduced = true;
-        }
-    }
-    let weighted_rate = if weight_sum > 0.0 {
-        reproduced_weight / weight_sum
-    } else {
-        0.0
-    };
-
-    AuctionRecord {
-        path: format!("{auction}"),
-        node_key: node_key(&interp),
-        kind_key: kind_key(&interp),
-        raw_rate,
-        accepted,
-        draws,
-        weighted_rate,
-        any_reproduced,
-        requested,
-        produced: deals.len(),
-        ess: sample_report.ess,
+    opts: &InterpretOptions,
+    outcome: Outcome,
+) -> Record {
+    let interp = interpret(table, auction, opts);
+    Record {
+        id,
+        auction: auction.to_string(),
+        node_key: last_exact_node(&interp)
+            .map_or_else(|| "off_system".to_string(), |id| format!("node:{}", id.0)),
+        kind_key: interp.per_call.last().map_or_else(
+            || "empty_auction".to_string(),
+            |pc| format!("{:?}", pc.kind),
+        ),
+        outcome,
     }
 }
 
-/// Rejection-samples deals from `auction`'s own strict interpretation: uniform deals are kept when
-/// every seat's hand satisfies it, until `target` are kept or `max_draws` were drawn. Returns the
-/// raw fraction of kept deals whose `replay` reproduces `auction` (`None` if none was kept), the
-/// kept count and the draw count.
-fn rejection_rate(
-    table: &bridge_bidding::Table,
-    bid_ctx: &BidContext<'_>,
-    auction: &Auction,
-    seed: u64,
-    target: usize,
-    max_draws: usize,
-) -> (Option<f64>, usize, usize) {
-    let strict = InterpretOptions {
-        strict: true,
-        ..InterpretOptions::default()
-    };
-    let interp = interpret(table, auction, &strict);
-    let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
-    let (mut accepted, mut reproduced, mut draws) = (0usize, 0usize, 0usize);
-    while accepted < target && draws < max_draws {
-        draws += 1;
-        let deal = common::random_deal(&mut rng);
-        if !bridge_core::Seat::ALL
-            .iter()
-            .all(|&seat| interp.satisfied_by(seat, deal.hand(seat)))
-        {
-            continue;
-        }
-        accepted += 1;
-        let replayed = replay(
-            table,
-            &deal,
-            auction.dealer(),
-            auction.vulnerability(),
-            bid_ctx,
-        );
-        if replayed.auction == *auction {
-            reproduced += 1;
-        }
-    }
-    let rate = (accepted > 0).then(|| reproduced as f64 / accepted as f64);
-    (rate, accepted, draws)
+fn sorted(values: &[f64]) -> Vec<f64> {
+    let mut v = values.to_vec();
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    v
 }
 
 fn median(values: &[f64]) -> f64 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    let mut sorted = values.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let n = sorted.len();
-    if n % 2 == 1 {
-        sorted[n / 2]
-    } else {
-        (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
+    let v = sorted(values);
+    let n = v.len();
+    match n {
+        0 => 0.0,
+        _ if n % 2 == 1 => v[n / 2],
+        _ => (v[n / 2 - 1] + v[n / 2]) / 2.0,
     }
 }
 
-/// The `p`-quantile (`0.0..=1.0`, nearest-rank on the sorted values) of `values`; `0.0` if empty.
+/// The `p`-quantile (nearest rank on the sorted values); `0.0` if empty.
 fn quantile(values: &[f64], p: f64) -> f64 {
-    if values.is_empty() {
+    let v = sorted(values);
+    if v.is_empty() {
         return 0.0;
     }
-    let mut sorted = values.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let rank = (p * (sorted.len() - 1) as f64).round() as usize;
-    sorted[rank.min(sorted.len() - 1)]
+    let rank = (p * (v.len() - 1) as f64).round() as usize;
+    v[rank.min(v.len() - 1)]
 }
 
-/// The ESS distribution of `records`: quantiles plus counts per bucket (`[1,2)`, `[2,5)`,
-/// `[5,10)`, `[10,30)`, `[30,100)`, `[100,inf)`; an ESS below 1 falls into the first bucket).
-fn ess_distribution(records: &[AuctionRecord]) -> serde_json::Value {
-    let ess: Vec<f64> = records.iter().map(|r| r.ess).collect();
-    let edges = [1.0, 2.0, 5.0, 10.0, 30.0, 100.0, f64::INFINITY];
-    let labels = ["<2", "2-5", "5-10", "10-30", "30-100", ">=100"];
-    let mut counts = [0usize; 6];
-    for &e in &ess {
-        let bucket = edges[1..].iter().position(|&hi| e < hi).unwrap_or(5);
-        counts[bucket] += 1;
-    }
-    let buckets: serde_json::Map<String, serde_json::Value> = labels
-        .iter()
-        .zip(counts)
-        .map(|(l, c)| ((*l).to_string(), json!(c)))
-        .collect();
-    json!({
-        "min": quantile(&ess, 0.0),
-        "p10": quantile(&ess, 0.1),
-        "p25": quantile(&ess, 0.25),
-        "median": quantile(&ess, 0.5),
-        "p75": quantile(&ess, 0.75),
-        "p90": quantile(&ess, 0.9),
-        "max": quantile(&ess, 1.0),
-        "buckets": buckets,
-    })
+/// The headline of one part: the median rate over the auctions with ESS (the kept count, for
+/// unit weights) >= [`MIN_ESS`], and how many there are.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Headline {
+    auctions: usize,
+    counted: usize,
+    median_rate: f64,
+    median_kept: f64,
 }
 
-/// The headline numbers: the median raw (rejection-sampled) rate over auctions with at least
-/// [`MIN_ACCEPTED`] kept deals, how many such auctions there are, and the share of all auctions
-/// for which any likelihood-weighted uniform sample replayed. The filter looks only at the kept
-/// count, never at the replay outcome.
-fn headline(records: &[AuctionRecord]) -> (f64, usize, f64) {
+fn headline(records: &[Record]) -> Headline {
     let rates: Vec<f64> = records
         .iter()
-        .filter(|r| r.accepted >= MIN_ACCEPTED)
-        .filter_map(|r| r.raw_rate)
+        .filter(|r| r.outcome.ess >= MIN_ESS)
+        .filter_map(|r| r.outcome.rate)
         .collect();
-    let any = records.iter().filter(|r| r.any_reproduced).count();
-    let any_share = if records.is_empty() {
-        0.0
-    } else {
-        any as f64 / records.len() as f64
-    };
-    (median(&rates), rates.len(), any_share)
+    let kept: Vec<f64> = records.iter().map(|r| r.outcome.kept as f64).collect();
+    Headline {
+        auctions: records.len(),
+        counted: rates.len(),
+        median_rate: median(&rates),
+        median_kept: median(&kept),
+    }
 }
 
-/// Groups `records` by `key`, sorted by descending group size, and computes each group's median
-/// `rate` (11-testing.md §3: "中央値・分位点").
-fn grouped_medians(
-    records: &[AuctionRecord],
-    key: impl Fn(&AuctionRecord) -> String,
-) -> Vec<serde_json::Value> {
-    use std::collections::HashMap;
-    let mut groups: HashMap<String, Vec<f64>> = HashMap::new();
-    for r in records.iter().filter(|r| r.accepted >= MIN_ACCEPTED) {
-        if let Some(rate) = r.raw_rate {
+/// Groups the counted records by `key` (largest group first) with each group's median rate.
+fn grouped_medians(records: &[Record], key: impl Fn(&Record) -> &str) -> Vec<Value> {
+    use std::collections::BTreeMap;
+    let mut groups: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
+    for r in records.iter().filter(|r| r.outcome.ess >= MIN_ESS) {
+        if let Some(rate) = r.outcome.rate {
             groups.entry(key(r)).or_default().push(rate);
         }
     }
-    let mut rows: Vec<(String, Vec<f64>)> = groups.into_iter().collect();
-    rows.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then_with(|| a.0.cmp(&b.0)));
+    let mut rows: Vec<(&str, Vec<f64>)> = groups.into_iter().collect();
+    rows.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then_with(|| a.0.cmp(b.0)));
     rows.into_iter()
-        .map(|(key, rates)| {
-            json!({
-                "key": key,
-                "count": rates.len(),
-                "median": median(&rates),
-            })
-        })
+        .map(|(key, rates)| json!({ "key": key, "count": rates.len(), "median": median(&rates) }))
         .collect()
 }
 
-/// Writes `<workspace>/target/reproduction_report.json` (11-testing.md §3's shape).
-fn write_json(records: &[AuctionRecord], corpus_dir: &Path) {
-    let (median_raw, counted, any_share) = headline(records);
-    let weighted: Vec<f64> = records.iter().map(|r| r.weighted_rate).collect();
-    let report = json!({
-        "auctions": records.len(),
-        "corpus_dir": corpus_dir.display().to_string(),
-        "method": "rejection sampling on the strict interpretation of every seat (uniform draws)",
-        "target_accepted": TARGET_ACCEPTED,
-        "max_draws": MAX_DRAWS,
-        "min_accepted": MIN_ACCEPTED,
-        "auctions_with_min_accepted": counted,
-        "median_raw_rate": median_raw,
-        "any_weighted_sample_reproduced_share": any_share,
-        "weighted_rate_median_all": median(&weighted),
-        "ess_distribution": ess_distribution(records),
-        "by_node": grouped_medians(records, |r| r.node_key.clone()),
-        "by_resolution_kind": grouped_medians(records, |r| r.kind_key.clone()),
-        "auctions_detail": records.iter().map(|r| json!({
-            "path": r.path,
+/// A part's summary: headline, kept/ESS distribution, rate distribution, groupings, detail.
+fn part_json(sampler: &Sampler, preset: &str, interpret_mode: &str, records: &[Record]) -> Value {
+    let h = headline(records);
+    let kept: Vec<f64> = records.iter().map(|r| r.outcome.kept as f64).collect();
+    let ess: Vec<f64> = records.iter().map(|r| r.outcome.ess).collect();
+    let counted: Vec<f64> = records
+        .iter()
+        .filter(|r| r.outcome.ess >= MIN_ESS)
+        .filter_map(|r| r.outcome.rate)
+        .collect();
+    let unweighted: Vec<f64> = records
+        .iter()
+        .filter(|r| r.outcome.ess >= MIN_ESS)
+        .filter_map(|r| r.outcome.unweighted_rate)
+        .collect();
+    let target = match sampler {
+        Sampler::StrictRejection { target, .. } => *target,
+        Sampler::Weighted { n, .. } => *n,
+    };
+    let count = |f: &dyn Fn(&Record) -> bool| records.iter().filter(|r| f(r)).count();
+    json!({
+        "sampler": sampler.label(),
+        "preset": preset,
+        "interpretation": interpret_mode,
+        "auctions": h.auctions,
+        "min_ess": MIN_ESS,
+        "auctions_reaching_min": h.counted,
+        "median_rate": h.median_rate,
+        "mean_rate": if counted.is_empty() { 0.0 } else { counted.iter().sum::<f64>() / counted.len() as f64 },
+        "rate_p10": quantile(&counted, 0.1),
+        "rate_p90": quantile(&counted, 0.9),
+        "rate_nonzero": counted.iter().filter(|&&r| r > 0.0).count(),
+        "rate_at_least_0_6": counted.iter().filter(|&&r| r >= 0.6).count(),
+        "median_unweighted_rate": median(&unweighted),
+        "any_reproduced": count(&|r| r.outcome.any_reproduced),
+        "errors": count(&|r| r.outcome.error.is_some()),
+        "kept": {
+            "zero": count(&|r| r.outcome.kept == 0),
+            "1-29": count(&|r| r.outcome.kept > 0 && (r.outcome.kept as f64) < MIN_ESS),
+            ">=30": count(&|r| r.outcome.kept as f64 >= MIN_ESS),
+            "reached_target": count(&|r| r.outcome.kept >= target),
+            "median": h.median_kept,
+            "p10": quantile(&kept, 0.1),
+            "p90": quantile(&kept, 0.9),
+        },
+        "ess": { "median": median(&ess), "p10": quantile(&ess, 0.1), "p90": quantile(&ess, 0.9) },
+        "by_resolution_kind": grouped_medians(records, |r| r.kind_key.as_str()),
+        "by_node": grouped_medians(records, |r| r.node_key.as_str()),
+        "detail": records.iter().map(|r| json!({
+            "id": r.id,
+            "auction": r.auction,
             "node": r.node_key,
             "resolution_kind": r.kind_key,
-            "raw_rate": r.raw_rate,
-            "accepted": r.accepted,
-            "draws": r.draws,
-            "weighted_rate": r.weighted_rate,
-            "any_reproduced": r.any_reproduced,
-            "requested": r.requested,
-            "produced": r.produced,
-            "ess": r.ess,
+            "kept": r.outcome.kept,
+            "attempts": r.outcome.attempts,
+            "ess": r.outcome.ess,
+            "rate": r.outcome.rate,
+            "unweighted_rate": r.outcome.unweighted_rate,
+            "any_reproduced": r.outcome.any_reproduced,
+            "error": r.outcome.error,
         })).collect::<Vec<_>>(),
-    });
-
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir
-        .parent()
-        .and_then(std::path::Path::parent)
-        .expect("crates/bridge-bidding is two levels under the workspace root");
-    let target_dir = workspace_root.join("target");
-    std::fs::create_dir_all(&target_dir).expect("create target/ directory");
-    std::fs::write(
-        target_dir.join("reproduction_report.json"),
-        serde_json::to_string_pretty(&report).expect("report serializes"),
-    )
-    .expect("write target/reproduction_report.json");
+    })
 }
 
-/// The reproduction-rate harness (task brief / 11-testing.md §3): up to 500 real corpus auctions,
-/// 1000 importance-weighted uniform samples each. `#[ignore]`d because it needs the vendored
-/// corpus (`BRIDGE_CORPUS_DIR`, or the `corpus/data` symlink checked out alongside this worktree)
-/// and takes noticeably longer than the default test suite. No pass/fail threshold is asserted
-/// here (the task brief: "report the number; no threshold yet" -- phase 4's own completion
-/// condition is a reported median >= 0.6, see `docs/design/11-testing.md` §3 and the roadmap).
-#[test]
-#[ignore = "needs BRIDGE_CORPUS_DIR (or the vendored corpus/data symlink); samples 1000 deals per auction, run with `cargo test --release -- --ignored`"]
-fn sayc_reproduction_rate() {
-    let Some(dir) = common::corpus_dir() else {
-        eprintln!("sayc_reproduction_rate: no corpus directory found; skipping");
-        return;
-    };
-    // `SAYC_REPRO_LIMIT` caps the auction count (default 500) for a quick partial run.
-    let limit: usize = match std::env::var("SAYC_REPRO_LIMIT") {
-        Ok(v) => v.parse().expect("SAYC_REPRO_LIMIT is a valid usize"),
-        Err(_) => 500,
-    };
-    let auctions = corpus_auctions(&dir, limit);
-    assert!(
-        !auctions.is_empty(),
-        "corpus directory {} yielded no auctions",
-        dir.display()
-    );
+fn headline_line(name: &str, records: &[Record]) -> String {
+    let h = headline(records);
+    let unweighted: Vec<f64> = records
+        .iter()
+        .filter(|r| r.outcome.ess >= MIN_ESS)
+        .filter_map(|r| r.outcome.unweighted_rate)
+        .collect();
+    format!(
+        "{name}: {} auction(s), {} with ESS >= {MIN_ESS}, median rate {:.4} (unweighted {:.4}), \
+         median kept {:.0}",
+        h.auctions,
+        h.counted,
+        h.median_rate,
+        median(&unweighted),
+        h.median_kept
+    )
+}
 
-    let table = common::compile_sayc("sayc.bml");
-    let bid_ctx = BidContext {
+// ------------------------------------------------------------------------------------------------
+// Per-call true-deal agreement
+// ------------------------------------------------------------------------------------------------
+
+/// Whether the position after `prefix` is on-system for its acting seat: at least one legal system
+/// candidate, as `choose_bid` decides it. Probed with the natural engine and the implicit pass
+/// switched off, where `choose_bid` either chooses a system call or reports the legal system
+/// candidates it rejected as `Rejected::Unsatisfied`.
+fn is_on_system(table: &Table, hand: bridge_core::Hand, prefix: &Auction) -> bool {
+    let probe = BidContext {
         scoring: Scoring::Imp,
-        natural: Some(table.natural.as_ref()),
-        implicit_pass: ImplicitPass::Complement,
-        policy: PolicyParams::default(),
+        natural: None,
+        implicit_pass: ImplicitPass::Never,
+        policy: PolicyParams::system_players(),
     };
+    match choose_bid(table, hand, prefix, &probe) {
+        BidChoice::Chosen(c) => c.source == ChoiceSource::System,
+        BidChoice::NoCandidate(nc) => nc.tried.iter().any(|t| t.reason == Rejected::Unsatisfied),
+    }
+}
 
+/// Agreement counts at one kind of position.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+struct Agree {
+    calls: usize,
+    agree: usize,
+    /// `choose_bid` found no candidate for the true hand.
+    gaps: usize,
+}
+
+impl Agree {
+    fn json(&self) -> Value {
+        json!({
+            "calls": self.calls,
+            "agree": self.agree,
+            "rate": if self.calls == 0 { 0.0 } else { self.agree as f64 / self.calls as f64 },
+            "gaps": self.gaps,
+        })
+    }
+}
+
+/// `[system, natural]` agreement of one auction's calls with `choose_bid` on the true deal.
+fn agreement(table: &Table, ctx: &BidContext<'_>, deal: &Deal, auction: &Auction) -> [Agree; 2] {
+    let mut out = [Agree::default(); 2];
+    let mut prefix = Auction::new(auction.dealer(), auction.vulnerability());
+    for &call in auction.calls() {
+        let hand = deal.hand(prefix.next_seat());
+        let slot = if is_on_system(table, hand, &prefix) {
+            0
+        } else {
+            1
+        };
+        out[slot].calls += 1;
+        match choose_bid(table, hand, &prefix, ctx) {
+            BidChoice::Chosen(c) => {
+                if c.call == call {
+                    out[slot].agree += 1;
+                }
+            }
+            BidChoice::NoCandidate(_) => out[slot].gaps += 1,
+        }
+        prefix
+            .push(call)
+            .expect("a validated auction's call is legal");
+    }
+    out
+}
+
+// ------------------------------------------------------------------------------------------------
+// The harness
+// ------------------------------------------------------------------------------------------------
+
+fn loadavg() -> String {
+    std::process::Command::new("sysctl")
+        .args(["-n", "vm.loadavg"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::fs::read_to_string("/proc/loadavg").ok())
+        .unwrap_or_default()
+}
+
+fn part_enabled(name: &str) -> bool {
+    match std::env::var("SAYC_REPRO_PARTS") {
+        Ok(parts) => parts.split(',').any(|p| p.trim() == name),
+        Err(_) => true,
+    }
+}
+
+fn workspace_target() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("crates/bridge-bidding is two levels under the workspace root")
+        .join("target")
+}
+
+/// The reproduction harness (11-testing.md §3): parts (i)-(iv) of the module doc, written to
+/// `target/reproduction_report.json`. `#[ignore]`d: it samples up to `SAYC_REPRO_TARGET` deals per
+/// auction. Parts (ii)-(iv) need the corpus (`BRIDGE_CORPUS_DIR` or `corpus/data`) and are skipped
+/// without it. Sizing: `SAYC_REPRO_PARTS` (comma list of generated, corpus, legacy, agreement),
+/// `SAYC_REPRO_TARGET`, `SAYC_REPRO_MAX_DRAWS`, `SAYC_REPRO_GENERATED` (fixture auctions used),
+/// `SAYC_REPRO_CORPUS_LIMIT` (subset auctions sampled), `SAYC_REPRO_LIMIT` (legacy auctions),
+/// `SAYC_REPRO_SAMPLER`. No threshold is asserted: the numbers are reported (phase 4 target:
+/// median >= 0.6 on (i) and on (ii)).
+#[test]
+#[ignore = "samples up to 1000 kept deals per auction; run with `cargo test --release -- --ignored`"]
+fn sayc_reproduction_rate() {
+    let table = common::compile_sayc("sayc.bml");
+    let system_ctx = bid_ctx(&table, PolicyParams::system_players());
+    let human_ctx = bid_ctx(&table, PolicyParams::human());
+    let sampler = headline_sampler();
+    let mut report = serde_json::Map::new();
+    report.insert("loadavg_start".into(), json!(loadavg()));
+    report.insert("headline_sampler".into(), json!(sampler.label()));
+    let mut lines = Vec::new();
     let started = std::time::Instant::now();
-    // Auctions are independent (each has its own seed), so they are spread over a few threads;
-    // results are put back in corpus order, so the report does not depend on the thread count.
-    let threads = std::thread::available_parallelism()
-        .map_or(1, std::num::NonZeroUsize::get)
-        .min(8);
-    let mut slots: Vec<Option<AuctionRecord>> = (0..auctions.len()).map(|_| None).collect();
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..threads)
-            .map(|t| {
-                let (table, bid_ctx, auctions) = (&table, &bid_ctx, &auctions);
-                scope.spawn(move || {
-                    (t..auctions.len())
-                        .step_by(threads)
-                        .map(|i| {
-                            let seed = auction_seed(0x5A1C_3001, i);
-                            (i, process_auction(table, bid_ctx, &auctions[i], seed))
-                        })
-                        .collect::<Vec<_>>()
+
+    // (i) the generated fixture, system-players preset.
+    if part_enabled("generated") {
+        let t = std::time::Instant::now();
+        let mut cases = load_fixture();
+        cases.truncate(env_usize("SAYC_REPRO_GENERATED", cases.len()));
+        let opts = InterpretOptions::for_context(&system_ctx);
+        let drift = par_map(&cases, |_, c| {
+            replay(
+                &table,
+                &c.deal,
+                c.auction.dealer(),
+                c.auction.vulnerability(),
+                &system_ctx,
+            )
+            .auction
+                != c.auction
+        })
+        .into_iter()
+        .filter(|&d| d)
+        .count();
+        let records = par_map(&cases, |i, c| {
+            let outcome = evaluate(
+                &sampler,
+                &table,
+                &system_ctx,
+                &c.auction,
+                &opts,
+                auction_seed(0x5A1C_4101, i),
+            );
+            record(c.id.clone(), &table, &c.auction, &opts, outcome)
+        });
+        let mut part = part_json(&sampler, "system_players", "mirror (for_context)", &records);
+        part["fixture"] = json!(GENERATED_FIXTURE);
+        part["fixture_drift"] = json!(drift);
+        part["seconds"] = json!(t.elapsed().as_secs_f64());
+        lines.push(format!(
+            "{} ({drift} fixture auction(s) no longer replay from their deal)",
+            headline_line("(i) generated", &records)
+        ));
+        report.insert("generated".into(), part);
+    }
+
+    let corpus = common::corpus_dir().map(|dir| (dir.clone(), corpus_auctions(&dir)));
+    match &corpus {
+        None => lines.push("corpus directory not found: parts (ii)-(iv) skipped".into()),
+        Some((dir, games)) => {
+            report.insert("corpus_dir".into(), json!(dir.display().to_string()));
+            report.insert("corpus_games".into(), json!(games.len()));
+            let eval: Vec<&CorpusGame> = games.iter().filter(|g| is_eval(g.index)).collect();
+            let eval_with_deal: Vec<(&CorpusGame, &Deal)> = eval
+                .iter()
+                .filter_map(|g| g.deal.as_ref().map(|d| (*g, d)))
+                .collect();
+
+            // (ii) the corpus SAYC-reproducible subset of the eval split, human preset.
+            if part_enabled("corpus") {
+                let t = std::time::Instant::now();
+                let reproducible: Vec<&CorpusGame> = par_map(&eval_with_deal, |_, (g, deal)| {
+                    replay(
+                        &table,
+                        deal,
+                        g.auction.dealer(),
+                        g.auction.vulnerability(),
+                        &human_ctx,
+                    )
+                    .auction
+                        == g.auction
                 })
-            })
-            .collect();
-        for h in handles {
-            for (i, record) in h.join().expect("reproduction worker panicked") {
-                slots[i] = Some(record);
+                .into_iter()
+                .zip(&eval_with_deal)
+                .filter(|(r, _)| *r)
+                .map(|(_, (g, _))| *g)
+                .collect();
+                let limit = env_usize("SAYC_REPRO_CORPUS_LIMIT", reproducible.len());
+                let sampled = &reproducible[..limit.min(reproducible.len())];
+                // The headline reads the corpus with the human preset (D18). Its strict support
+                // also holds the natural deviation pieces Y_c (weight delta) at on-system
+                // positions; the policy-weighted rejection sampler weights them by the
+                // likelihood (unit weights would overcount them, see `unweighted_rate`). The
+                // same subset is also reported under the system-players preset.
+                let run = |ctx: &BidContext<'_>| {
+                    let opts = InterpretOptions::for_context(ctx);
+                    par_map(sampled, |i, g| {
+                        let outcome = evaluate(
+                            &sampler,
+                            &table,
+                            ctx,
+                            &g.auction,
+                            &opts,
+                            auction_seed(0x5A1C_4201, i),
+                        );
+                        record(g.label.clone(), &table, &g.auction, &opts, outcome)
+                    })
+                };
+                let records = run(&human_ctx);
+                let records_system = run(&system_ctx);
+                let mut part = part_json(&sampler, "human", "mirror (for_context)", &records);
+                part["system_players"] = part_json(
+                    &sampler,
+                    "system_players",
+                    "mirror (for_context)",
+                    &records_system,
+                );
+                part["eval_games"] = json!(eval.len());
+                part["eval_games_with_deal"] = json!(eval_with_deal.len());
+                part["reproducible"] = json!(reproducible.len());
+                part["reproducible_share"] =
+                    json!(reproducible.len() as f64 / eval_with_deal.len().max(1) as f64);
+                part["seconds"] = json!(t.elapsed().as_secs_f64());
+                lines.push(format!(
+                    "{} (subset {} of {} eval games with a deal)",
+                    headline_line("(ii) corpus SAYC-reproducible subset", &records),
+                    reproducible.len(),
+                    eval_with_deal.len()
+                ));
+                lines.push(headline_line(
+                    "(ii') the same subset under system_players",
+                    &records_system,
+                ));
+                report.insert("corpus_subset".into(), part);
+            }
+
+            // (iii) the legacy definition: first 500 corpus auctions, both splits.
+            if part_enabled("legacy") {
+                let t = std::time::Instant::now();
+                let limit = env_usize("SAYC_REPRO_LIMIT", LEGACY_LIMIT);
+                let legacy: Vec<&CorpusGame> = games.iter().take(limit).collect();
+                let opts = InterpretOptions::legacy();
+                let weighted = Sampler::Weighted {
+                    proposal: ProposalKind::Uniform,
+                    n: WEIGHTED_N,
+                };
+                let pairs = par_map(&legacy, |i, g| {
+                    let seed = auction_seed(0x5A1C_3001, i);
+                    let raw = evaluate(
+                        &LEGACY_SAMPLER,
+                        &table,
+                        &system_ctx,
+                        &g.auction,
+                        &opts,
+                        seed,
+                    );
+                    let w = evaluate(
+                        &weighted,
+                        &table,
+                        &system_ctx,
+                        &g.auction,
+                        &opts,
+                        seed ^ 0xA5A5_5A5A_0F0F_F0F0,
+                    );
+                    (
+                        record(g.label.clone(), &table, &g.auction, &opts, raw),
+                        record(g.label.clone(), &table, &g.auction, &opts, w),
+                    )
+                });
+                let (raw, w): (Vec<Record>, Vec<Record>) = pairs.into_iter().unzip();
+                let weighted_rates: Vec<f64> = w.iter().filter_map(|r| r.outcome.rate).collect();
+                let any = w.iter().filter(|r| r.outcome.any_reproduced).count();
+                let mut part = part_json(&LEGACY_SAMPLER, "system_players", "legacy()", &raw);
+                part["weighted_uniform"] = json!({
+                    "sampler": weighted.label(),
+                    "rate_median": median(&weighted_rates),
+                    "any_reproduced": any,
+                    "ess_median": median(&w.iter().map(|r| r.outcome.ess).collect::<Vec<_>>()),
+                });
+                part["seconds"] = json!(t.elapsed().as_secs_f64());
+                lines.push(format!(
+                    "{}; likelihood-weighted uniform: any reproduced {any}/{}",
+                    headline_line(
+                        "(iii) legacy (first corpus auctions, legacy interpret)",
+                        &raw
+                    ),
+                    w.len()
+                ));
+                report.insert("legacy".into(), part);
+            }
+
+            // (iv) per-call true-deal agreement on the eval split.
+            if part_enabled("agreement") {
+                let t = std::time::Instant::now();
+                let per_game = par_map(&eval_with_deal, |_, (g, deal)| {
+                    agreement(&table, &human_ctx, deal, &g.auction)
+                });
+                let mut total = [Agree::default(); 2];
+                for [s, n] in &per_game {
+                    for (acc, x) in total.iter_mut().zip([s, n]) {
+                        acc.calls += x.calls;
+                        acc.agree += x.agree;
+                        acc.gaps += x.gaps;
+                    }
+                }
+                let all = Agree {
+                    calls: total[0].calls + total[1].calls,
+                    agree: total[0].agree + total[1].agree,
+                    gaps: total[0].gaps + total[1].gaps,
+                };
+                lines.push(format!(
+                    "(iv) true-deal agreement (eval split, {} games): system {}/{} = {:.3}, \
+                     natural {}/{} = {:.3}, all {:.3}",
+                    per_game.len(),
+                    total[0].agree,
+                    total[0].calls,
+                    total[0].agree as f64 / total[0].calls.max(1) as f64,
+                    total[1].agree,
+                    total[1].calls,
+                    total[1].agree as f64 / total[1].calls.max(1) as f64,
+                    all.agree as f64 / all.calls.max(1) as f64,
+                ));
+                report.insert(
+                    "agreement".into(),
+                    json!({
+                        "split": "eval (odd enumeration index)",
+                        "games": per_game.len(),
+                        "system_positions": total[0].json(),
+                        "natural_positions": total[1].json(),
+                        "all": all.json(),
+                        "seconds": t.elapsed().as_secs_f64(),
+                    }),
+                );
             }
         }
-    });
-    let records: Vec<AuctionRecord> = slots
-        .into_iter()
-        .map(|r| r.expect("every auction processed"))
-        .collect();
-    let elapsed = started.elapsed();
+    }
 
-    let (median_raw, counted, any_share) = headline(&records);
-    write_json(&records, &dir);
+    report.insert("seconds".into(), json!(started.elapsed().as_secs_f64()));
+    report.insert("loadavg_end".into(), json!(loadavg()));
+    let target = workspace_target();
+    std::fs::create_dir_all(&target).expect("create target/");
+    std::fs::write(
+        target.join("reproduction_report.json"),
+        serde_json::to_string_pretty(&Value::Object(report)).expect("report serializes"),
+    )
+    .expect("write target/reproduction_report.json");
+    for line in &lines {
+        eprintln!("sayc_reproduction_rate: {line}");
+    }
     eprintln!(
-        "sayc_reproduction_rate: {} auction(s); median raw reproduction rate (rejection-sampled \
-         from each auction's strict interpretation) over the {counted} auction(s) with >= \
-         {MIN_ACCEPTED} kept deals = {median_raw:.4}; share of auctions any likelihood-weighted \
-         uniform sample reproduced = {any_share:.3}; in {elapsed:?}",
-        records.len(),
+        "sayc_reproduction_rate: {:.1} s, loadavg {}",
+        started.elapsed().as_secs_f64(),
+        loadavg()
     );
 }
 
-/// The headline statistic is not tied to the rate: an auction many deals reproduce (SAYC passed
-/// out, where every kept deal has four hands that open nothing) counts in it with a high rate.
-/// Under the old ESS >= 30 filter such an auction could only enter with rate 0.
+/// Regenerates the generated fixture when `SAYC_REPRO_WRITE_FIXTURE=1`; otherwise compares the
+/// file with what the current system generates and reports how many cases differ (the fixture is
+/// frozen on purpose, so a difference is information, not a failure).
+#[test]
+#[ignore = "regenerates tests/data/repro_generated.txt with SAYC_REPRO_WRITE_FIXTURE=1"]
+fn write_generated_fixture() {
+    let table = common::compile_sayc("sayc.bml");
+    let (cases, [passed_out, too_high]) = generate_fixture(&table, GENERATED_COUNT);
+    eprintln!(
+        "generator: {} deals replayed, {passed_out} passed out and {too_high} above the {} level \
+         skipped",
+        cases.len() + passed_out + too_high,
+        MAX_GENERATED_LEVEL
+    );
+    if std::env::var("SAYC_REPRO_WRITE_FIXTURE").as_deref() == Ok("1") {
+        let path = fixture_path();
+        std::fs::create_dir_all(path.parent().expect("fixture has a parent"))
+            .expect("create tests/data");
+        std::fs::write(&path, format_fixture(&cases)).expect("write fixture");
+        eprintln!("wrote {} cases to {}", cases.len(), path.display());
+        return;
+    }
+    let frozen = load_fixture();
+    let differ = frozen.iter().zip(&cases).filter(|(a, b)| a != b).count()
+        + frozen.len().abs_diff(cases.len());
+    eprintln!(
+        "generated fixture: {differ} of {} case(s) differ from what the current system generates",
+        frozen.len()
+    );
+}
+
+// ------------------------------------------------------------------------------------------------
+// Default-suite checks
+// ------------------------------------------------------------------------------------------------
+
+/// The fixture parses into 100 distinct, complete, not-passed-out auctions at most at the 5 level,
+/// and writing it back gives the same cases.
+#[test]
+fn generated_fixture_is_well_formed() {
+    let cases = load_fixture();
+    assert_eq!(cases.len(), GENERATED_COUNT);
+    let ids: std::collections::HashSet<&str> = cases.iter().map(|c| c.id.as_str()).collect();
+    assert_eq!(ids.len(), cases.len(), "fixture ids are unique");
+    for c in &cases {
+        assert!(c.auction.is_complete(), "{}: incomplete", c.id);
+        assert!(!c.auction.is_passed_out(), "{}: passed out", c.id);
+        let level = c.auction.contract().expect("a contract").bid.level();
+        assert!(level <= MAX_GENERATED_LEVEL, "{}: level {level}", c.id);
+    }
+    assert_eq!(parse_fixture(&format_fixture(&cases)), cases);
+}
+
+/// The fixture generator is deterministic and keeps only auctions that pass its filter.
+#[test]
+fn fixture_generator_is_deterministic() {
+    let table = common::compile_sayc("sayc.bml");
+    let (a, _) = generate_fixture(&table, 3);
+    let (b, _) = generate_fixture(&table, 3);
+    assert_eq!(a, b);
+    assert!(a.iter().all(|c| !c.auction.is_passed_out()));
+}
+
+/// The corpus split rule: odd enumeration index = eval.
+#[test]
+fn corpus_split_is_odd_index() {
+    assert!(!is_eval(0));
+    assert!(is_eval(1));
+    assert_eq!((0..10).filter(|&i| is_eval(i)).count(), 5);
+}
+
+fn passed_out() -> Auction {
+    Auction::from_calls(
+        Seat::North,
+        Vulnerability::None,
+        vec![Call::Pass, Call::Pass, Call::Pass, Call::Pass],
+    )
+    .expect("passed-out auction is legal")
+}
+
+/// The headline is not tied to the rate: an auction many deals reproduce (SAYC passed out, where
+/// every kept deal has four hands that open nothing) counts in it with a high rate. Under
+/// `system_players` the strict mirror support of an auction is exactly the set of deals the
+/// policy bids that way, so every kept deal replays (a looser interpretation would fail this),
+/// and the likelihood is flat on it, so the policy weights are all equal.
 #[test]
 fn headline_counts_an_auction_that_many_deals_reproduce() {
     let table = common::compile_sayc("sayc.bml");
-    let bid_ctx = BidContext {
-        scoring: Scoring::Imp,
-        natural: Some(table.natural.as_ref()),
-        implicit_pass: ImplicitPass::Complement,
-        policy: PolicyParams::default(),
+    let ctx = bid_ctx(&table, PolicyParams::system_players());
+    let auction = passed_out();
+    let sampler = Sampler::StrictRejection {
+        target: 60,
+        max_draws: 20_000,
+        weight: RejectionWeight::Policy,
     };
-    let pass = bridge_core::Call::Pass;
-    let auction = Auction::from_calls(
-        bridge_core::Seat::North,
-        bridge_core::Vulnerability::None,
-        vec![pass, pass, pass, pass],
-    )
-    .expect("passed-out auction is legal");
-    let (rate, accepted, _) = rejection_rate(&table, &bid_ctx, &auction, 11, 60, 20_000);
-    assert!(accepted >= MIN_ACCEPTED, "only {accepted} deals kept");
-    let rate = rate.expect("some deal kept");
-    assert!(rate > 0.5, "passed-out rate {rate}");
+    let outcome = evaluate(
+        &sampler,
+        &table,
+        &ctx,
+        &auction,
+        &InterpretOptions::for_context(&ctx),
+        11,
+    );
+    assert!(
+        outcome.kept as f64 >= MIN_ESS,
+        "only {} deals kept",
+        outcome.kept
+    );
+    assert!(
+        (outcome.ess - outcome.kept as f64).abs() < 1e-6,
+        "ESS {} with {} kept: system_players weights are not flat",
+        outcome.ess,
+        outcome.kept
+    );
+    let rate = outcome.rate.expect("some deal kept");
+    assert!(rate >= 0.99, "passed-out rate {rate}");
+    assert_eq!(outcome.unweighted_rate, Some(rate));
 
-    let record = |raw_rate: Option<f64>, accepted: usize| AuctionRecord {
-        path: String::new(),
+    let rec = |rate: Option<f64>, kept: usize| Record {
+        id: String::new(),
+        auction: String::new(),
         node_key: String::new(),
         kind_key: String::new(),
-        raw_rate,
-        accepted,
-        draws: 0,
-        weighted_rate: 0.0,
-        any_reproduced: false,
-        requested: 0,
-        produced: 0,
-        ess: 1.0,
+        outcome: Outcome {
+            kept,
+            attempts: 0,
+            ess: kept as f64,
+            rate,
+            unweighted_rate: rate,
+            any_reproduced: false,
+            error: None,
+        },
     };
-    let (median, counted, _) = headline(&[record(Some(rate), accepted), record(Some(0.0), 5)]);
-    assert_eq!(counted, 1);
-    assert_eq!(median, rate);
+    let h = headline(&[rec(Some(rate), outcome.kept), rec(Some(0.0), 5)]);
+    assert_eq!(h.counted, 1);
+    assert_eq!(h.median_rate, rate);
+}
+
+/// The phase-4 fitted human preset (`PolicyParams::human()` at the phase-4 integration), pinned
+/// so that a later refit of `human()` does not move the margin asserted below.
+const FITTED_PHASE4: PolicyParams = PolicyParams {
+    epsilon: 0.3404,
+    deviation: 0.3959,
+    ..PolicyParams::system_players()
+};
+
+/// Under a preset with δ > 0 the strict support also holds the natural deviation pieces `Y_c`,
+/// whose likelihood is the smaller `δ` share. The policy-weighted rejection sampler weights
+/// each kept deal by `exp(ln L - max)` of `AuctionPolicy`, so the weights vary (ESS < kept) and
+/// the rate is the likelihood-weighted one; unit weights keep the same deals but overcount the
+/// deviation pieces, whose deals the policy mostly bids differently. On the passed-out auction
+/// the weighted rate is above the unweighted one: 0.931 against 0.835 at the 200 kept deals
+/// here under the fitted preset (`ε = 0.3404`, `δ = 0.3959`).
+///
+/// The size of the gap follows from the per-seat pass ratio. On this auction nearly every seat
+/// whose system call is a pass also passes under the natural engine, so the system and natural
+/// shares add up: such a hand has `p(Pass|h) = (1−ε) + ε/n`, against `(1−ε)δ + ε/n` for a hand
+/// that passes only as a natural deviation, with `n = 36` legal calls before any bid. The ratio
+/// `(1−ε+ε/n) / ((1−ε)δ+ε/n)` is about 3.3 under the phase-4 placeholder (`ε = 0.01`,
+/// `δ = 0.3`) and about 2.5 under the fitted preset (`(1−δ)/δ`, 2.3 and 1.5, holds only for
+/// the few seats where the system passes and the natural engine does not). With one deviating
+/// seat per deal that does not reproduce, the weighted rate is about `u / (u + (1−u)/R)` with
+/// `u = 0.835`: 0.944 and 0.926 (measured 0.948 and 0.931). The expected gap under the fitted
+/// preset is therefore about 0.09, and the asserted 0.05 keeps about half of it as headroom.
+/// The test pins that preset ([`FITTED_PHASE4`]) instead of calling `PolicyParams::human()`:
+/// it checks the weighting, and a refit with a larger `δ` would shrink the gap without any
+/// regression.
+#[test]
+fn policy_weighted_rejection_follows_the_likelihood() {
+    let table = common::compile_sayc("sayc.bml");
+    let ctx = bid_ctx(&table, FITTED_PHASE4);
+    let auction = passed_out();
+    let opts = InterpretOptions::for_context(&ctx);
+    let sampler = |weight| Sampler::StrictRejection {
+        target: 200,
+        max_draws: 50_000,
+        weight,
+    };
+    let unit = sampler(RejectionWeight::Unit).draw(&table, &ctx, &auction, &opts, 13);
+    let policy = sampler(RejectionWeight::Policy).draw(&table, &ctx, &auction, &opts, 13);
+    assert_eq!(unit.deals.len(), 200);
+    assert!(unit.deals.iter().all(|(_, w)| *w == 1.0));
+    let likelihood = AuctionPolicy::new(&table, &auction, &ctx);
+    let log_l: Vec<f64> = policy
+        .deals
+        .iter()
+        .map(|(d, _)| likelihood.log_likelihood(d))
+        .collect();
+    let max = log_l.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    for (((du, _), (dp, w)), l) in unit.deals.iter().zip(&policy.deals).zip(&log_l) {
+        assert_eq!(du, dp, "both weightings keep the same deals");
+        assert!((w - (l - max).exp()).abs() < 1e-12, "weight {w} vs L {l}");
+    }
+
+    let unit = evaluate(
+        &sampler(RejectionWeight::Unit),
+        &table,
+        &ctx,
+        &auction,
+        &opts,
+        13,
+    );
+    let weighted = evaluate(
+        &sampler(RejectionWeight::Policy),
+        &table,
+        &ctx,
+        &auction,
+        &opts,
+        13,
+    );
+    assert_eq!(weighted.unweighted_rate, unit.rate);
+    assert!(
+        weighted.ess < weighted.kept as f64 - 1.0,
+        "ESS {}",
+        weighted.ess
+    );
+    let (w, u) = (
+        weighted.rate.expect("deals kept"),
+        unit.rate.expect("deals kept"),
+    );
+    assert!(w > u + 0.05, "weighted rate {w} vs unweighted {u}");
+}
+
+/// Every generated fixture auction's true deal lies in the strict mirror support at every seat
+/// (the interpretation never under-covers the deal that produced the auction). A regression here
+/// would silently drive part (i)'s kept counts toward zero. Cases whose deal no longer replays to
+/// the recorded auction (fixture drift, after a SAYC change before the re-freeze) are skipped.
+#[test]
+fn generated_true_deals_lie_in_the_strict_mirror() {
+    let table = common::compile_sayc("sayc.bml");
+    let ctx = bid_ctx(&table, PolicyParams::system_players());
+    let strict = InterpretOptions {
+        strict: true,
+        ..InterpretOptions::for_context(&ctx)
+    };
+    let mut checked = 0usize;
+    for case in load_fixture() {
+        let dealer = case.auction.dealer();
+        let vul = case.auction.vulnerability();
+        if replay(&table, &case.deal, dealer, vul, &ctx).auction != case.auction {
+            continue;
+        }
+        checked += 1;
+        let interp = interpret(&table, &case.auction, &strict);
+        for seat in Seat::ALL {
+            assert!(
+                interp.satisfied_by(seat, case.deal.hand(seat)),
+                "{}: the true {seat:?} hand is outside the strict mirror of {}",
+                case.id,
+                case.auction
+            );
+        }
+    }
+    assert!(
+        checked >= GENERATED_COUNT / 2,
+        "only {checked} cases replay"
+    );
+}
+
+/// The weighted path (the phase-5 headline with `ConstraintProposal`) runs end to end with the
+/// uniform proposal: a passed-out auction is reproduced by most of the weight.
+#[test]
+fn weighted_sampler_reproduces_a_passed_out_auction() {
+    let table = common::compile_sayc("sayc.bml");
+    let ctx = bid_ctx(&table, PolicyParams::system_players());
+    let auction = passed_out();
+    let sampler = Sampler::Weighted {
+        proposal: ProposalKind::Uniform,
+        n: 200,
+    };
+    let outcome = evaluate(
+        &sampler,
+        &table,
+        &ctx,
+        &auction,
+        &InterpretOptions::for_context(&ctx),
+        12,
+    );
+    assert_eq!(outcome.kept, 200);
+    assert!(outcome.error.is_none());
+    assert!(outcome.any_reproduced);
+    let rate = outcome.rate.expect("deals drawn");
+    assert!(rate > 0.9, "weighted passed-out rate {rate}");
+}
+
+/// The opening position is on-system, and agreement on a generated case is complete (its calls
+/// are `choose_bid`'s own on its deal, as long as the fixture has not drifted).
+#[test]
+fn agreement_counts_system_positions() {
+    let table = common::compile_sayc("sayc.bml");
+    let ctx = bid_ctx(&table, PolicyParams::system_players());
+    let empty = Auction::new(Seat::North, Vulnerability::None);
+    let hand: bridge_core::Hand = "AK32.KQ2.QJ3.K32".parse().expect("hand");
+    assert!(is_on_system(&table, hand, &empty));
+
+    let case = &generate_fixture(&table, 1).0[0];
+    let [system, natural] = agreement(&table, &ctx, &case.deal, &case.auction);
+    assert_eq!(system.calls + natural.calls, case.auction.len());
+    assert_eq!(system.agree + natural.agree, case.auction.len());
+    assert!(system.calls >= 1);
 }
