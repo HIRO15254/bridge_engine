@@ -50,7 +50,7 @@ The double-dummy solver sources are fetched with `cargo xtask dds vendor` (phase
 | --- | --- | --- |
 | 0 | design documents, workspace skeleton | done |
 | 1 | `bridge-core`, `bridge-format`, corpus tooling | done: PBN corpus 724/724 games parsed, round trip exact, LIN 99/99 boards |
-| 2 | evaluation and the exact constraint sampler | next |
+| 2 | evaluation and the exact constraint sampler | done: `hcp` 0.8 ns, hand sampling ~0.2 µs/hand, exact counts (30,897,212,184 for 15-17 balanced), chi-square tests pass, thread-count invariant |
 | 3 | BML compiler, `interpret` / `choose_bid`, bidirectional consistency test | |
 | 4 | system definitions (SAYC) | |
 | 5 | deal sampler, play inference, DDS | |

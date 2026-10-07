@@ -55,7 +55,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.85
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --exclude xtask
+      # `+1.85` is required: rust-toolchain.toml would otherwise select stable.
+      - run: cargo +1.85 check --workspace --exclude xtask
 
   deny:
     runs-on: ubuntu-latest

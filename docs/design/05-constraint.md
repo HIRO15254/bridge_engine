@@ -162,7 +162,7 @@ pub struct SampleOptions {
     pub max_tries: u32,        // 256。residual/custom の棄却上限
     pub extra_features: u8,    // 1。DP 鍵に載せる追加の加法的特徴の数 (0 = K=1 高速パス、1 = K=2)
     pub burn_in: u32,          // 256。α 推定の試行数
-    pub allow_rejection: bool, // true。false なら Custom/residual を含む制約は PrepareError::NotSamplable
+    pub allow_rejection: bool, // true。false なら棄却リテラル (Custom/residual/スロット超過の加法的特徴/BergenStarting) を含む制約は PrepareError::NotSamplable
 }
 
 pub struct Sampler { terms: Vec<PreparedTerm>, cum: Vec<u64>, total: u64, pool: Hand, fixed: Hand, exact: bool }
@@ -253,11 +253,19 @@ Atom をリテラル `L1 = shape ∈ S`, `L2 = hcp ∈ [lo, hi]`, `L3.. = cards,
 
 結果は高々 `1 + 2 + 2·(|cards| + |eval|)` 個の **互いに素な** Atom。素なので `|¬A| = Σ|項|` が厳密に成り立ち、和集合サンプリングに多重度補正が要らない。「否定したリテラルだけを持つ Atom を 1 個ずつ」の方が小さいが重なるので採らない。リテラルは安価で、厳密な個数が得られることが目的だからである。
 
-`¬Custom` は否定フラグ付き `Custom`、`¬Or` / `¬And` は de Morgan、`¬¬x = x`。
+`HandConstraint::And` の否定も同じ排他的連鎖を使う。子を `C1, …, Cn` として、
+
+```
+¬(C1 ∧ … ∧ Cn) = ⋁_j ( C1 ∧ … ∧ C(j−1) ∧ ¬Cj )
+```
+
+`C1, …, C(j−1)` は肯定形のまま連言に残す。単純な de Morgan (`¬(C1∧…∧Cn) = ⋁_j ¬Cj`) は `¬Cj` 同士が互いに素とは限らず (2 個以上の子に違反する手は複数の disjunct に入る)、`count()` が単項の和である以上それは二重計上になる。`Atom::negate` と同じ理由で、この連鎖を使う。
+
+`¬Or` は単純な de Morgan (`¬(C1∨…∨Cn) = ¬C1∧…∧¬Cn`) でよい: これは論理積であって選言ではないので、素性は要求されない (`Dnf` の項として直積に展開されるときの素性は個々の `¬Cj` 側の性質に委ねられる)。`¬Custom` は否定フラグ付き `Custom`、`¬¬x = x`。
 
 ### 4.3 `to_dnf` の手順
 
-1. `Not` を押し下げる: `¬¬x = x`、`¬Or = And(¬…)`、`¬And = Or(¬…)`、`¬Atom = §4.2 の連鎖`、`¬Custom = Custom(negated)`。
+1. `Not` を押し下げる: `¬¬x = x`、`¬Or = And(¬…)`、`¬And = §4.2 の排他的連鎖`、`¬Atom = §4.2 の連鎖`、`¬Custom = Custom(negated)`。
 2. 再帰的に展開: `dnf(Atom) = [term]`、`dnf(Custom) = [ANY + custom リテラル]`、`dnf(Or) = 連結`、`dnf(And) = 直積を intersect`。
 3. `And` を展開する前に `Π |dnf(子)|` を見積もる。`max_terms` (256) を超えるなら、DNF が最大の子から順に `residual` へ退避し (残りの子の直積の各項に `And` で付ける)、見積もりが収まるまで繰り返す。`truncated = true` とし `tracing::warn!` (ノード名付き)。`Overflow::Error` なら `DnfError::TooLarge { estimated, max_terms }` を返す (システムコンパイルの `strict_dnf` で使う)。
 4. 単純化: 各 Atom を `normalize`、自明に充足不能な項を除去、同一項を除去。リテラル単位の包含除去 (`shapes ⊆`、`hcp ⊆`) は行わない: 否定由来の項は互いに素で包含が起きず、利用者の `Or` は小さいので O(k²) の検査に見合わない。
@@ -332,7 +340,8 @@ struct PreparedTerm {
     shapes: Vec<(Shape, u64 /* weight */, (u8, u8) /* hcp 窓 */)>,   // x 窓は K=2 のとき鍵に畳む
     cum: Vec<u64>, total: u64,
     term: DnfTerm,                         // residual / custom の検査に使う元の項
-    alpha: Option<f64>,                    // 棄却リテラルの推定受理率 (厳密なら None)
+    alpha: Option<f64>,                    // 棄却リテラルの推定受理率 (厳密なら None; 0 は保存しない、§8.3 参照)
+    s: f64,                                 // 1 − (1 − α)^max_tries (厳密なら 1.0); log_prob の正規化に使う (§8.3)
 }
 impl PreparedTerm {
     fn prepare(term: DnfTerm, pool: Hand, fixed: Hand, opts: &SampleOptions) -> PreparedTerm;
@@ -387,14 +396,21 @@ impl PreparedTerm {
 
 ### 8.3 `log_prob` の式 (residual 棄却込み)
 
-項 `i` の内部で棄却 (受理率 `α_i`) がある場合、密度は
+`log_prob` は `sample` が実際に返す分布、すなわち `max_tries` 回以内に受理して `Some` を返したという条件付きの密度を表す (呼び出し側が `None` で引き直す場合、その引き直しはこの条件付けと一致する)。項 `i` を選んだ後、その項の中で `max_tries` 回まで引き直して一度も受理できない確率があるので、項ごとの「一度は受理できる確率」
 
 ```
-P(h) = (1 / C) · Σ_{i ∋ h} 1 / α_i
-log_prob(h) = ln( Σ_{i ∋ h} 1 / α_i ) − ln C
+s_i = 1 − (1 − α_i)^max_tries   (棄却が要る項)
+s_i = 1                          (厳密な項)
 ```
 
-厳密な項では `α_i = 1`。それ以外は `prepare` の burn-in (`n = 256`) で推定し、返却された `tries` から呼び出し側が精緻化できる。`is_exact()` が `false` なら L4 は ESS を近似値として報告する。
+を使って
+
+```
+P(h) = (1 / z) · Σ_{i ∋ h} s_i / α_i,   z = Σ_i c_i · s_i
+log_prob(h) = ln( Σ_{i ∋ h} s_i / α_i ) − ln z
+```
+
+とする。厳密な項では `α_i = s_i = 1` なので `z = C = Σ c_i` に一致し、旧来の式に戻る。`α_i` は棄却が要る項について `prepare` の burn-in (`n = 256`) で推定し、返却された `tries` から呼び出し側が精緻化できる。`s_i` を掛けずに `Σ 1/α_i` と `C` だけを使うと (`max_tries → ∞` を仮定したことになり)、`α_i · max_tries` が小さい項の分だけ `log_prob` が実際の分布からずれる — その項は `sample` が `None` を返す頻度が高く、実際に返されるサンプルへの寄与は `s_i` 倍にしかならないため。`is_exact()` が `false` なら L4 は ESS を近似値として報告する。
 
 ### 8.4 確定カードの合成 (D3)
 
@@ -429,7 +445,8 @@ log_prob(h) = ln( Σ_{i ∋ h} 1 / α_i ) − ln C
 | `to_dnf` | O(Π 子サイズ)、256 項で打ち切り | + O(k²) の包含除去 |
 | `prepare`、フルデッキ、スートフィルタなし、K=1 | 20〜60 μs | 対 <= 105 × 121 積和、シェイプ <= 560 × 21 |
 | `prepare`、部分集合列挙が要るスート | +65 μs/スート (2 × 2^13 × 4 ns) | フィルタ・確定・縮小プールのあるスート。フルデッキ最悪 +260 μs |
-| `prepare`、プレイ途中 (未知 26 枚) | 3〜10 μs | スートあたり 2^6.5 |
+| `prepare`、プレイ途中 (未知 26 枚)、シェイプが絞られた項 | 3〜10 μs | スートあたり 2^6.5。実測 (`criterion`、`mid_play_26_pool_6_fixed` に `ShapeSet::BALANCED` を使う変種): 2.7〜3.3 μs |
+| `prepare`、プレイ途中 (未知 26 枚)、シェイプ無制約 (560 種) | 12〜15 μs | 上と同じスート列挙コストに、シェイプごとの対畳み込み (`(l0,l1)`・`(l2,l3)` ペア、最大 196 通り) が乗る。実測 (`criterion`、`mid_play_26_pool_6_fixed`): 12.0〜14.2 μs。09-sample.md §6.4 の「≲5 μs/`prepare`」予算はシェイプが絞られた項を前提とする; 無制約項を席 2 以降で使うなら (a)/(b)/(c) のいずれかで軽くする (フェーズ 5.4 で選ぶ) |
 | `prepare`、K=2 | ×3〜5 | スートあたり 160 状態、2 次元接頭和 |
 | `sample`、K=1 | 0.3〜0.5 μs | 乱数 9 回、約 80 演算 |
 | `sample`、K=2 | 1〜2 μs | <= 147 対状態の走査 |
