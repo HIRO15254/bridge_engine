@@ -22,9 +22,14 @@ smallvec = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+bridge-eval = { workspace = true }
+bridge-format = { workspace = true }
+bridge-sample = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
 rand_xoshiro = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [[bench]]
 name = "interpret"

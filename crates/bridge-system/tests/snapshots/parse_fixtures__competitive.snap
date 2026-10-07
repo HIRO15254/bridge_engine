@@ -1,0 +1,342 @@
+---
+source: crates/bridge-system/tests/parse_fixtures.rs
+expression: "(& file.blocks, & file.lints)"
+---
+(
+    [
+        Heading {
+            level: 1,
+            text: "Competitive table with a direct-seat history",
+            span: Span {
+                file: FileId(
+                    0,
+                ),
+                line: 1,
+                col: 0,
+                pasted_from: None,
+            },
+        },
+        BidTable(
+            BidTable {
+                hidden: false,
+                seat: Any,
+                vul: VulCond {
+                    we: Any,
+                    they: Any,
+                },
+                history: [
+                    CallToken {
+                        side: Them,
+                        pattern: Exact(
+                            Bid(
+                                1NT,
+                            ),
+                        ),
+                        raw: "(1N)---",
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 3,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                ],
+                history_desc: None,
+                rows: [
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Exact(
+                                    Double,
+                                ),
+                                raw: "D",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 4,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "Strength, ca 15+",
+                            alert: false,
+                            col: 4,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 4,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Exact(
+                                    Bid(
+                                        2C,
+                                    ),
+                                ),
+                                raw: "2C",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 5,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "At least 5-4 majors",
+                            alert: false,
+                            col: 4,
+                        },
+                        children: [
+                            BmlNode {
+                                calls: [
+                                    CallToken {
+                                        side: Them,
+                                        pattern: Exact(
+                                            Double,
+                                        ),
+                                        raw: "(D)",
+                                        span: Span {
+                                            file: FileId(
+                                                0,
+                                            ),
+                                            line: 6,
+                                            col: 2,
+                                            pasted_from: None,
+                                        },
+                                    },
+                                ],
+                                description: Description {
+                                    text: "",
+                                    alert: false,
+                                    col: 5,
+                                },
+                                children: [
+                                    BmlNode {
+                                        calls: [
+                                            CallToken {
+                                                side: Us,
+                                                pattern: Exact(
+                                                    Pass,
+                                                ),
+                                                raw: "P",
+                                                span: Span {
+                                                    file: FileId(
+                                                        0,
+                                                    ),
+                                                    line: 7,
+                                                    col: 4,
+                                                    pasted_from: None,
+                                                },
+                                            },
+                                        ],
+                                        description: Description {
+                                            text: "5+!c, suggestion to play",
+                                            alert: false,
+                                            col: 7,
+                                        },
+                                        children: [],
+                                        indent: 4,
+                                        span: Span {
+                                            file: FileId(
+                                                0,
+                                            ),
+                                            line: 7,
+                                            col: 4,
+                                            pasted_from: None,
+                                        },
+                                    },
+                                    BmlNode {
+                                        calls: [
+                                            CallToken {
+                                                side: Us,
+                                                pattern: Exact(
+                                                    Redouble,
+                                                ),
+                                                raw: "R",
+                                                span: Span {
+                                                    file: FileId(
+                                                        0,
+                                                    ),
+                                                    line: 8,
+                                                    col: 4,
+                                                    pasted_from: None,
+                                                },
+                                            },
+                                        ],
+                                        description: Description {
+                                            text: "Asking for better/longer major",
+                                            alert: false,
+                                            col: 7,
+                                        },
+                                        children: [],
+                                        indent: 4,
+                                        span: Span {
+                                            file: FileId(
+                                                0,
+                                            ),
+                                            line: 8,
+                                            col: 4,
+                                            pasted_from: None,
+                                        },
+                                    },
+                                ],
+                                indent: 2,
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 6,
+                                    col: 2,
+                                    pasted_from: None,
+                                },
+                            },
+                            BmlNode {
+                                calls: [
+                                    CallToken {
+                                        side: Them,
+                                        pattern: Exact(
+                                            Pass,
+                                        ),
+                                        raw: "(P)",
+                                        span: Span {
+                                            file: FileId(
+                                                0,
+                                            ),
+                                            line: 9,
+                                            col: 2,
+                                            pasted_from: None,
+                                        },
+                                    },
+                                ],
+                                description: Description {
+                                    text: "",
+                                    alert: false,
+                                    col: 5,
+                                },
+                                children: [
+                                    BmlNode {
+                                        calls: [
+                                            CallToken {
+                                                side: Us,
+                                                pattern: Exact(
+                                                    Bid(
+                                                        2D,
+                                                    ),
+                                                ),
+                                                raw: "2D",
+                                                span: Span {
+                                                    file: FileId(
+                                                        0,
+                                                    ),
+                                                    line: 10,
+                                                    col: 4,
+                                                    pasted_from: None,
+                                                },
+                                            },
+                                        ],
+                                        description: Description {
+                                            text: "Asking for better/longer major",
+                                            alert: false,
+                                            col: 7,
+                                        },
+                                        children: [],
+                                        indent: 4,
+                                        span: Span {
+                                            file: FileId(
+                                                0,
+                                            ),
+                                            line: 10,
+                                            col: 4,
+                                            pasted_from: None,
+                                        },
+                                    },
+                                ],
+                                indent: 2,
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 9,
+                                    col: 2,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 5,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Exact(
+                                    Bid(
+                                        2NT,
+                                    ),
+                                ),
+                                raw: "2N",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 11,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "5-5 minors",
+                            alert: false,
+                            col: 4,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 11,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                ],
+                span: Span {
+                    file: FileId(
+                        0,
+                    ),
+                    line: 3,
+                    col: 0,
+                    pasted_from: None,
+                },
+            },
+        ),
+    ],
+    [],
+)

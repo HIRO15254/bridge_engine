@@ -1,0 +1,5 @@
+* {prio:N} / {w:X} annotations (opaque to the parser; interpreted by the description compiler)
+
+1N 15--17 {prio:2}
+2C Stayman {w:0.6}
+2D Transfer to hearts {w:0.4}

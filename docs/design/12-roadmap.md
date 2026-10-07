@@ -27,7 +27,7 @@
 | 10 クレート + `xtask` の `Cargo.toml` と公開シグネチャ、`const` 表の実装 (`SHAPES` 等、`SUIT`) | テスト本体 (骨格に含まれるのは `const` 表の単体テストのみ)、ベンチの実行 (`benches/*.rs` は枠だけ) |
 | `ci.yml`、`corpus/manifest.toml` (sha256 は空)、`systems/README.md`、`xtask/src/main.rs` の枠 | コーパスデータ、外部 BML、DDS ソース (`vendor/`) の取得 |
 | `bridge-dds` の `build.rs` (ベンダリング検出付き)、`VENDOR.md`、`sys.rs` の宣言、`layout_probe.cpp` | DDS のビルド・レイアウトテストの実行 (`vendor/` が無いため cfg で除外) |
-| `cargo check` / `clippy` / wasm check が通る状態 | `systems/sayc.bml` の中身 (フェーズ 3.5) |
+| `cargo check` / `clippy` / wasm check が通る状態 | `systems/sayc/sayc.bml` の中身 (フェーズ 3.5) |
 
 ## 2. フェーズ 1: 実データが読める (`bridge-core`, `bridge-format`)
 
@@ -69,7 +69,7 @@
 | 3.2 | system: `CallPattern` 展開 + `AuctionTrie` (`resolve`/`children`/`resolve_lenient`) | `.bss` 期待出力と一致 |
 | 3.3 | system: 説明文コンパイラ v1 (正規化 → 節文法 → Pass 1/2 → 組立 → `Recognition`) + 認識率レポート | jdh8 ≥ 0.65、gpaulissen ≥ 0.5 |
 | 3.4 | system: lint (parse 系・展開系・制約系・カバレッジ系) | lint コードごとの unit |
-| 3.5 | `systems/sayc.bml` (オープニング) 執筆 + `#+META` 拡張 (D16) | コンパイル < 1 s、Error lint 0、`Custom` 0 |
+| 3.5 | `systems/sayc/sayc.bml` (オープニング) 執筆 + `#+META` 拡張 (D16) | コンパイル < 1 s、Error lint 0、`Custom` 0 |
 | 3.6 | bidding: 型 + `interpret` (Exact のみ、Step A/B、K=8) + ベンチ | `weights_sum_to_one` 等 unit、`interpret` < 10 μs |
 | 3.7 | bidding: `choose_bid` (合法性 lint、priority、tie-break、`ImplicitPass::Complement`) | `illegal_call_is_lint`、合成システムのテスト |
 | 3.8 | bidding: `call_distribution` / `sequence_log_likelihood` | argmax == `choose_bid` (τ = 0.01、10^5 局面) |
@@ -139,7 +139,7 @@
 
 | # | リスク | 対策 | 影響フェーズ |
 | --- | --- | --- | --- |
-| R1 | 公開 SAYC / 2-1 の BML が無い | フェーズ 3 で `systems/sayc.bml` を自作。Polish Club (jdh8) を早期テストに使う | 3, 4 |
+| R1 | 公開 SAYC / 2-1 の BML が無い | フェーズ 3 で `systems/sayc/sayc.bml` を自作。Polish Club (jdh8) を早期テストに使う | 3, 4 |
 | R2 | 散文的 BML の認識率が 20〜40% に留まる | lint + `NAT`/ナチュラル既定へのフォールバック。黙って捏造しない (未認識は `description` に残し `Recognition` で報告) | 3 |
 | R3 | `GF`/`INV`/`MIN`/`MAX` の文脈連鎖で `assumed` が伝播 | `Provenance.assumed` と `AssumedContext` lint | 3, 4 |
 | R4 | 配牌サンプラーの `prepare` コスト (席 2〜3 で 5〜12 回 × 20〜40 μs) | (a) 無制約席の組合せ的直接配り、(b) 対畳み込みの到達可能シェイプ限定、(c) 席 2 以降を「シェイプ + HCP のみ」の粗い項で提案し細部は重みで補正。フェーズ 5.4 のベンチで選ぶ | 5 |
@@ -174,5 +174,6 @@
 | 0 | 2026-09-18 | 設計文書 14 本、10 クレート + xtask の骨格。check / clippy / doc / fmt / test / wasm32 チェックすべて通過 |
 | 1 | 2026-09-18 | PBN コーパス 724/724 ゲーム解析（100%、2019 年世界選手権 4 大会 20 ファイル + PBN 2.1 参考例 2 ファイル）、export 形式でのラウンドトリップ 724 ゲーム不一致 0、BBO vugraph LIN 99/99 ボード、DDS `list100.txt` の deal 文字列 100/100。`bridge-core` 58 テスト、`bridge-format` 32 テスト + コーパステスト 4 本（`--ignored`） |
 | 2 | 2026-09-25 | `hcp` 0.8 ns（目標 < 10 ns）。手の抽出 約 0.2 µs/手（約 450 万手/秒、目標 10^5 手/秒）。`Sampler::prepare` フルデッキ 7〜14 µs、プレイ途中（未知 26 枚・6 枚固定）で形の制限なし 12 µs・バランス型限定 3 µs（負荷の低い環境での計測。見積り 3〜10 µs に対し制限なしのみ未達）。15〜17 HCP バランスの厳密数 30,897,212,184 と C(52,13) が一致、周辺分布の χ²（10^6 抽出を含む）通過、小プール全列挙で Σexp(log_prob)=1。eval は 8192 ホールディング全件一致。一様配牌 約 200 万配牌/秒。スレッド数不変（Single と 7 スレッドでバイト一致）。ワークスペースのテスト 191 件通過。Opus 統合レビューで確定した 15 件（否定の重なり、棄却項の log_prob、充足可能性の誤判定、準備の性能など）を修正済み |
+| 3 | 2026-09-26 | `systems/sayc/*.bml` (オープニング・応答・リビッド・競り合い・NT・2C・ウィーク・ツー・プリエンプト) がエラー lint 0 でコンパイルされ、`sayc.bml` のコンパイル 342 ms・外部最大の jdh8 `wj/1C.bml` 40 ms（release、目標 < 1 s）。replay 方式の生成器（他シートのコールを 5% の確率でランダムな合法コールに差し替える、フェーズ 3.11）による strict 双方向整合性 10^6 局面（seed `0x5a1c0002`、差し替えを含む接頭辞 173,235）で、gap 起因でない違反 0（完了条件）。システムにコールの無い手に強制した Pass が根本原因の gap 起因の違反 2,645 件はカバレッジの穴として別集計（`11-testing.md` §2 手順 6）。chosen 851,576 / `NoCandidate` 4,115 / `ImplicitPass` 144,309、`coverage_report.json` の頻度上位はディーラーの 0–11 HCP のパスなど正しいパスで、`NoCandidate` 上位は 1D-(3C) のレスポンダー 36、P-P-1D-(1H) のレスポンダー 31、1C-(1H) のレスポンダー 25（統合時に最多だった 1NT へのバランシング後のアドバンサー 505 件は `competition.bml` に表を足して解消）。`call_distribution` の argmax == `choose_bid` 10^5 局面 100%。`.bss` オラクル 228/228 一致（9 ファイル）、実 BML 54 本の Error lint 集合が期待 24 件と完全一致、認識率 jdh8 0.858・gjp 0.524（目標 0.65・0.5）。再現率（コーパス 500 オークション。各シートの strict な解釈を満たす一様配牌を棄却法で最大 1000 残し、`replay` が再現した素の割合）: 配牌が 30 以上残った 234 オークションの中央値 0.0（0 より大きいのは 83 件）、最終コールが Exact の 14 件は中央値 0.419、Natural の 220 件は 0.0（閾値はフェーズ 4）。以前の「ESS ≥ 30 の中央値」は再現 0 のオークションを構成上選ぶ統計量だったので廃止（`11-testing.md` §3）。ナチュラル推定: 隠しノード sayc 1,500・vendor 795、再現率 600 決定点・8,326 候補で一致率 0.331。`interpret` ベンチ: 12 コールは手組み 11.3 µs・実 SAYC 17.6 µs で目標 < 10 µs **未達**（負荷平均 9〜16 の共有機、10 コールの `sayc-1nt` 9.5 µs、8 コールの競り合い 7.4 µs）。ワークスペースのテスト 647 件通過（15 件 ignored）。再レビュー 3 で、説明文コンパイラの「明示が勝つ」規則（否定・可能性・別の Or 枝の断片では文脈語を捨てない）と、SAYC の全手を拾う行・兄弟に隠れた行（相手のマイケルズ、テイクアウトダブルとそのアドバンス、1NT-(2X) の 3 レベル、1M-4M、バランシングのジャンプ、マイナーへの 1♠ 応答、2C-2D 後のリビッド）を修正 |
 
 フェーズ 1 の注記: PBN の警告 196 件は、`[Play]` セクションの `-`（不明カード）による打ち切り 194 件、Latin-1 バイト 1 件、完了後の余分なパス 1 件で、すべて意図した緩和処理である。`1N` は PBN では非標準のため lenient でも `Raw` + 警告として扱う（LIN と `bridge-core` の `FromStr` は受理する）。

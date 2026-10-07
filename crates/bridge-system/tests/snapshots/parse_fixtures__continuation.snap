@@ -1,0 +1,115 @@
+---
+source: crates/bridge-system/tests/parse_fixtures.rs
+expression: "(& file.blocks, & file.lints)"
+---
+(
+    [
+        Heading {
+            level: 1,
+            text: "Continuation lines",
+            span: Span {
+                file: FileId(
+                    0,
+                ),
+                line: 1,
+                col: 0,
+                pasted_from: None,
+            },
+        },
+        BidTable(
+            BidTable {
+                hidden: false,
+                seat: Any,
+                vul: VulCond {
+                    we: Any,
+                    they: Any,
+                },
+                history: [],
+                history_desc: None,
+                rows: [
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Exact(
+                                    Bid(
+                                        1C,
+                                    ),
+                                ),
+                                raw: "1C",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 3,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "Polish club, one of three:\na) 12--14 NT\nb) 15+ hcp and 5+!c\nc) 18+ hcp any distribution",
+                            alert: false,
+                            col: 4,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 3,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Exact(
+                                    Bid(
+                                        1D,
+                                    ),
+                                ),
+                                raw: "1D",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 7,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "Natural, 4+ suit",
+                            alert: false,
+                            col: 4,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 7,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                ],
+                span: Span {
+                    file: FileId(
+                        0,
+                    ),
+                    line: 3,
+                    col: 0,
+                    pasted_from: None,
+                },
+            },
+        ),
+    ],
+    [],
+)

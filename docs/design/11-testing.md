@@ -22,6 +22,7 @@
 | サンプラー一般経路の draw χ² (単一スート `cards` 制約、`Controls` 加法特徴、`fixed` 併用。§4) | `bridge-constraint` `tests/sampler_chi_square.rs` | unit χ² (10^5 サンプル、全列挙との比較) | p ≥ 0.001、抽出手が全て厳密な上位集合に属する |
 | サンプラーベンチ (`Sampler::sample`、`prepare`) | `bridge-constraint` `benches/sampler.rs` | criterion | ≥ 10^5 手/秒/コア、`prepare` 20〜60 μs |
 | BML 実ファイル約 40 本のパース | `bridge-system` `tests/parse_real.rs` | 統合 (`systems/vendor/data/` 取得時) | Error lint 0、AST スナップショット一致 |
+| BML 実ファイル全 54 本の説明文コンパイル (roadmap 3.2-3.4) | `bridge-system` `tests/compile_real.rs` | 統合 (取得時) | `Error` lint の集合が `tests/data/real_expected_errors.txt` (`<path>\t<line>\t<code>\t<reason>`) と完全一致。新規の `Error` も、期待ファイルの陳腐化したエントリも失敗。現在 24 件 (統合レビュー confirmed#12-24 の説明文コンパイラ修正で 64 件から 40 件減。新規 0) で、各エントリはソースファイル自体の矛盾 (class b) か、既知のコンパイラ/語彙ギャップとして記録された未対応分 (class c)。修正可能だったコンパイラのバグ (class a) は全て直し、回帰テストを追加済み (`#INCLUDE` 先の誤帰属を含む、`tests/compile_real.rs`/`tests/common/mod.rs` 自体のバグも修正: `lint.span.file` をルートファイルのパスと取り違えていた)。トリアージ全件は `tests/data/real_lint_triage.md` (原因ごとにグループ化、file:line・行・lint・分類) |
 | BML 展開 == `.bss` 期待出力 (§5) | `bridge-system` `tests/bss_oracle.rs` | 統合 (取得時) | 一致 |
 | 説明文コンパイラの認識率 | `bridge-system` `tests/recognition.rs` | 統合 (取得時) | jdh8 ≥ 0.65、gpaulissen ≥ 0.5 |
 | `Custom` 非生成 (R10) | `bridge-system` `tests/no_custom.rs` | 統合 | 全ファイルで `Custom` 0、`postcard` 往復一致 |
@@ -88,6 +89,7 @@ fn forward_consistency() {
 3. 検出されるもの (仕様 §10): 生成器が制約外のビッドをした = システム定義の矛盾 (違反)、`NoCandidate` = カバレッジの穴 (集計)、制約は満たすが不自然なビッド = 定義が緩すぎる (再現率テストが拾う)。
 4. `NoCandidate` と `ImplicitPass` は「局面のトライ位置 (`Lookup.end`)」ごとに数え、頻度上位 50 件を報告する。`ImplicitPass` は本当の穴と分けて数える (兄弟の補集合は緩すぎることがある)。
 5. `Diagnostic::IllegalSystemCall` と `UnsatisfiableNode` はシステム定義の lint として JSON に載せ、違反には数えない。
+6. 実装の生成器 (`common::random_sayc_position_with_substitution`) は `replay` と同じく `NoCandidate` を `Pass` に置き換えて接頭辞を進め、その位置を記録する。手順 1 の `random_call_rate` (既定 0.05) による合法コールの一様な差し替えは、検査するシートより前の**他のシート**のコールにだけ行い、その位置も記録する (検査するシート自身のコールを差し替えると `satisfied_by` の違反が構成上必ず出るため)。`satisfied_by` の失敗の根本原因が強制 `Pass` である違反は「gap 起因」(`violations_gap_induced`) として別に数える: システムがその手にコールを持たないカバレッジの穴 (手順 3 の `NoCandidate`) の帰結であり、定義の矛盾ではない。合否は gap 起因でない違反 (`violations_not_gap_induced`) = 0 で判定する。`coverage_report.json` には実際の `random_call_rate` と、差し替えを含む接頭辞の数 (`random_call_prefixes`) を書く。2026-09-27 (フェーズ 3 再レビュー 3 の修正後) の実測: seed `0x5a1c0002`、`random_call_rate` 0.05、10^6 局面 (うち差し替えを含む接頭辞 173,235) でgap 起因でない違反 0、gap 起因 2,645、chosen 851,576 / `NoCandidate` 4,115 / `ImplicitPass` 144,309 (release で約 45 秒)。差し替えなし (0.0) だった 2026-09-26 の値は gap 起因 1,279、`NoCandidate` 2,410。
 
 `target/coverage_report.json` の形:
 
@@ -134,6 +136,8 @@ fn reproduction_rate() {
 
 再現率が低いノードは「解釈が緩すぎる」ノードで、下流のサンプリング精度が落ちる箇所と一致する。報告はノード別 (最後に Exact 解決したノード) と `ResolutionKind` 別の中央値・分位点。閾値はフェーズごとに文書化し、フェーズ 4 で中央値 ≥ 0.6 を完了条件にする。
 
+実装 (`crates/bridge-bidding/tests/reproduction.rs`) は `ConstraintProposal` が未実装 (フェーズ 5) のため、同じ分布を棄却法で作る: 一様な配牌を引き、4 シートすべての手が strict な解釈 (`InterpretOptions { strict: true, .. }` での `Interpretation::satisfied_by`) を満たすものだけを残す (1 オークションにつき最大 1000 配牌、引くのは最大 200,000 回)。率は残った配牌のうち `replay` がオークションを再現した割合 (重みなしの素の割合) で、見出しは残った配牌が 30 以上のオークションでの中央値。見出しに入るかどうかは残った配牌の数だけで決まり、再現したかどうかには依存しない (多くの配牌が再現するパスアウトのオークションで確かめるテスト `headline_counts_an_auction_that_many_deals_reproduce` がある)。以前の見出し (`sequence_log_likelihood` で重み付けした率の、ESS ≥ 30 のオークションでの中央値) は誤りだった: `choose_bid` が選ばないコールには方策が `epsilon / n_legal` の質量しか与えないので、再現する配牌が 1 つあればその重みが他を桁違いに上回り ESS ≈ 1 になる。ESS が高いのはどの配牌も再現しないときだけで、ESS ≥ 30 のフィルタは再現率 0 のオークションを構成上選んでいた (フェーズ 3 再レビュー 3)。この重み付き率はオークションごとに `weighted_rate` と `any_reproduced` として残すが、0/1 に近い統計量なので見出しには使わない。`SAYC_REPRO_LIMIT` でオークション数を絞れる。2026-09-27 (再レビュー 3 の修正後) の実測: 500 オークション中、配牌が 30 以上残ったのは 234 件 (0 件が 193、1〜29 件が 73、1000 件に達したのが 33) で、その素の再現率の中央値 0.0 (0 より大きいのは 83 件、p90 0.353、最大 1.0)。最終コールの `ResolutionKind` 別では `Natural` 220 件の中央値 0.0、`Exact` 14 件の中央値 0.419。尤度重み付きの一様サンプルが 1 つでも再現したオークションは 500 件中 25 件 (5%)。約 40 秒 (8 スレッド)。解釈を満たす手で測っても `Natural` で終わるオークションはほとんど再現しないので、率の低さは提案分布のせいではなく、システム外の部分の解釈 (ナチュラル推定) が緩いか、`choose_bid` の再生と食い違うことによる。どちらが主かはこの数値だけでは分けられない。
+
 ## 4. サンプラー厳密性テスト (`bridge-constraint`)
 
 | テスト | 内容 | 基準 |
@@ -156,17 +160,17 @@ fn reproduction_rate() {
 4. `example1..6` と実ファイル約 40 本で Error lint 0 (Warning/Info は数だけ記録)。
 5. 認識率 (`Recognition.ratio` の平均) を JSON に出し、jdh8 ≥ 0.65、gpaulissen ≥ 0.5 を閾値にする。
 
-## 6. ナチュラル推定の測定 (D8、`bridge-system` `tests/natural_metrics.rs`、`#[ignore]`)
+## 6. ナチュラル推定の測定 (D8、`bridge-bidding` `tests/natural_metrics.rs`、`#[ignore]`)
 
-正解データが無い問題に対して、システム定義とコーパスを擬似正解として使う。3 つとも JSON (`target/natural_metrics.json`) に出す。
+正解データが無い問題に対して、システム定義とコーパスを擬似正解として使う。3 つとも JSON (`target/natural_metrics.json`) に出す。測定 2 が `choose_bid` (`bridge-bidding` のみが持つ) を要求するため、3 つとも `bridge-system` ではなく `bridge-bidding` のテストとして置く (`bridge-bidding` は `bridge-system` に依存できるが逆はできない)。
 
 | # | 測定 | 手順 | 出力 |
 | --- | --- | --- | --- |
-| 1 | 隠しノード比較 | 実システム (`sayc.bml`、jdh8 Polish Club) の非人工ノードを 1 つずつ隠し、`classify` + `infer` の制約と元ノードの制約を比べる。各ノードで 1,000 手を元制約からサンプルし recall、推定制約からサンプルし precision、体積比 (`count()` の比) を出す | `Role × CallKind` 別の recall / precision / 体積比の平均と分位点 |
-| 2 | 再現率 | `C_nat` からサンプルした手を `choose_bid` (システム外なので `natural.candidates`) で再生し、元のコールと一致する率 | 規則別の一致率 |
-| 3 | コーパス充足 | コーパス実手について `infer` の制約が満たされる率と制約体積のパレート (体積が小さく充足率が高いほど良い) | 規則別の (充足率, log 体積) 点列 |
+| 1 | 隠しノード比較 | 実システム (`sayc.bml`、コンパイルできた jdh8/gjp ファイル) の非人工ノードを 1 つずつ隠し、`classify` + `infer` の制約と元ノードの制約を比べる。各ノードで 1,000 手を元制約からサンプルし recall、推定制約からサンプルし precision、体積比 (`count()` の比) を出す | `Role × CallKind` 別の recall / precision / 体積比の平均と分位点 (`sayc.bml` は自作なので `vendor` (jdh8+gjp) とは別枠) |
+| 2 | 再現率 | 各決定点 (測定 1 と同じノード集合、先手番のオープニング (空プレフィックス) を除く -- `choose_bid` のルート局面は `ctx.natural` に落ちる前に厳密な「経路なし」解決を返すため) で `NaturalInference::candidates` が返す各コールの制約から手をサンプルし、`choose_bid` (ノードを持たない空の `SystemIR` を `Table::uniform` で包んで渡すので、全プレフィックスがシステム外になり `ctx.natural` = `natural.candidates` が答える。自然ブランチの `CallContext` は `interpret` の自然ステップと同じく、プレフィックスの解釈からパートナー制約とフォーシング状況を埋める) で再生して元のコールと一致する率 | 規則別の一致率 |
+| 3 | コーパス充足 | コーパス実手 (PBN + LIN) の各コールについて `infer` の制約が満たされる率と制約体積のパレート (体積が小さく充足率が高いほど良い) | 規則別の (充足率, log 体積) 点列 |
 
-閾値は設けない (数値が出ることがフェーズ 3 の完了条件)。フェーズ 4 で値を見て `NaturalParams` を調整する。
+閾値は設けない (数値が出ることがフェーズ 3 の完了条件)。フェーズ 4 で値を見て `NaturalParams` を調整する。2026-09-26 のフェーズ 3 統合 (統合レビュー修正の 3 レーンと SAYC の 2 レーン `sayc-nt`/`sayc-comp` を統合した後) で実行した結果 (`target/natural_metrics.json`) は次の通り: 実際にコンパイルできた実システムは `sayc.bml` と gjp `common/` の 18 ファイル (jdh8 の全ファイルと残りの gjp ファイルは現時点でエラー付きコンパイルのため対象外 -- `compile_if_clean` が「エラー lint 0 のファイルだけを測定対象にする」という、このレーン独自の基準を採っている); 隠しノード比較は sayc で 2,325 の対象ノードのうち上限の 1,500 ノード (SAYC の中身が増えたため、統合レビュー修正時点の 421 ノードから増加)、vendor (gjp、うち 15 ファイルが対象ノードを持つ) で 795 ノードを評価した。recall/precision はいずれも 0〜1 の範囲に収まるが、`Role × CallKind` ごとの log2 体積比の平均はノード数の少ない群ほどばらつきが大きく、vendor/Opener/Bid_Reverse (7 ノード) の −4.96 から vendor/Responder/Bid_Cue_Jump (3 ノード) の +5.56 まで散らばる (体積比が大きいほど推定制約が実際より緩い)。再現率は 600 決定点・8,295 候補で全体一致率 0.329 (SAYC 統合前は 8,059 候補・0.336、統合レビュー修正前は 7,593 候補・0.331、2026-09-25 の値は 486 決定点・6,411 候補・0.340)、コーパス充足は 27 ファイル・724 局・8,169 コールを走査した。この測定で `rule_rebid_own` がウィーク・ツー/プリエンプト/ストロング 2C 後の自己スート・リビッドを常に `opening_hcp` (12–21) と比べていた実装漏れが見つかり、`crates/bridge-system/src/natural.rs` で修正済み (詳細は `06-system.md` §8.3 の該当注記を参照)。
 
 ## 7. DDS 差分テスト (`bridge-dds`)
 
@@ -319,7 +323,7 @@ jobs:
 | フェーズ完了時の重いテスト | `BRIDGE_CORPUS_DIR=corpus/data cargo test --release --workspace -- --ignored` (整合性 10^6、ESS、コーパス、DDS 差分、ナチュラル推定測定) |
 | ベンチ | `cargo bench --workspace` (`hcp` < 10 ns、手サンプル ≥ 10^5/s、配牌 ≥ 10^4/s、`interpret` < 10 μs、BML コンパイル < 1 s) |
 | 1 クレートのベンチ | `cargo bench -p bridge-constraint -- sampler` |
-| カバレッジレポート (フェーズ 4) | `cargo xtask coverage --system systems/sayc.bml --corpus corpus/data/pbn` |
+| カバレッジレポート (フェーズ 4) | `cargo xtask coverage --system systems/sayc/sayc.bml --corpus corpus/data/pbn` |
 | fuzz | `cargo +nightly fuzz run pbn_parse_lenient -- -max_total_time=600` (`crates/bridge-format/fuzz/`) |
 | スナップショット更新 | `cargo insta review` (`cargo install cargo-insta`) |
 | バインディング参照の再生成 | `cargo xtask dds regen-bindings` (libclang が必要) |

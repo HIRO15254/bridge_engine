@@ -1,0 +1,124 @@
+* Opening preempts
+
+Booklet section "OPENING PREEMPTS": a 3- or 4-level opening tends toward sound at
+equal or unfavorable vulnerability (within two or three tricks of the bid) and
+lighter at favorable vulnerability (within four tricks). The booklet gives no
+numeric HCP/length table, so the ranges below (7 cards for a 3-level preempt, 8+
+for a 4-level preempt, all in the 5--10/11 HCP band) are an interpolation from the
+"rule of 2/3/4" and standard practice; see NOTES.md #5. Vulnerability itself is not
+part of the description vocabulary, so the trick-count discipline is left to the
+sampler/user rather than encoded here.
+
+3C = {prio:51} 7=!c, 5--9 hcp
+3D = {prio:52} 7=!d, 5--9 hcp
+3H = {prio:53} 7=!h, 5--9 hcp
+3S = {prio:54} 7=!s, 5--9 hcp
+4C = {prio:55} 8+!c, 5--10 hcp
+4D = {prio:56} 8+!d, 5--10 hcp
+4H = {prio:57} 8+!h, 5--10 hcp
+4S = {prio:58} 8+!s, 5--10 hcp
+
+** Responses to a 3-level preempt
+
+A raise is to play (further preemption over a minor, game over a major); a new
+suit is forcing (13+ hcp and a five-card suit); 3NT is to play (14+ hcp); 4NT
+is Blackwood (18+ hcp with support). Every response has a real range, so a
+hand that fits none of them passes (NOTES.md "Notrump lane" #N6). After a new
+suit, opener raises with three-card support and otherwise rebids his own suit;
+a sign-off is followed by an explicit pass.
+
+3C-
+4N = !BW, 18+ hcp, 2+!c
+3D = F, 13+ hcp, 5+!d
+  4D = 3+!d
+  4C = unlimited
+3H = F, 13+ hcp, 5+!h
+  4H = 3+!h
+  4C = unlimited
+3S = F, 13+ hcp, 5+!s
+  4S = 3+!s
+  4C = unlimited
+3N = 14+ hcp
+  P = unlimited
+4C = 3+!c, 6--13 hcp
+  P = unlimited
+
+3D-
+4N = !BW, 18+ hcp, 2+!d
+3H = F, 13+ hcp, 5+!h
+  4H = 3+!h
+  4D = unlimited
+3S = F, 13+ hcp, 5+!s
+  4S = 3+!s
+  4D = unlimited
+3N = 14+ hcp
+  P = unlimited
+4D = 3+!d, 6--13 hcp
+  P = unlimited
+
+3H-
+4N = !BW, 18+ hcp, 2+!h
+4H = 2+!h, 12--17 hcp
+  P = unlimited
+3S = F, 13+ hcp, 5+!s
+  4S = 3+!s
+  4H = unlimited
+3N = 14+ hcp
+  P = unlimited
+
+3S-
+4N = !BW, 18+ hcp, 2+!s
+4S = 2+!s, 12--17 hcp
+  P = unlimited
+3N = 14+ hcp
+  P = unlimited
+
+** Responses to a 4-level preempt
+
+At the 4-level the only realistic continuations are to pass, raise a minor to
+game, or ask for aces with a slam-going hand; each has a real range.
+
+4C-
+4N = !BW, 18+ hcp
+5C = 2+!c, 13--17 hcp
+  P = unlimited
+
+4D-
+4N = !BW, 18+ hcp
+5D = 2+!d, 13--17 hcp
+  P = unlimited
+
+4H-
+4N = !BW, 18+ hcp
+
+4S-
+4N = !BW, 18+ hcp
+
+** Interference over a preempt
+
+After any overcall of a preempt, responder doubles for penalty with 13+ hcp
+and otherwise passes (NOTES.md "Notrump lane" #N6).
+
+3C-(bid)-
+D = 13+ hcp
+
+3D-(bid)-
+D = 13+ hcp
+
+3H-(bid)-
+D = 13+ hcp
+
+3S-(bid)-
+D = 13+ hcp
+
+4C-(bid)-
+D = 13+ hcp
+
+4D-(bid)-
+D = 13+ hcp
+
+4H-(bid)-
+D = 13+ hcp
+
+4S-(bid)-
+D = 13+ hcp

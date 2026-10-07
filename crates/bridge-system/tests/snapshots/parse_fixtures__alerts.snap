@@ -1,0 +1,187 @@
+---
+source: crates/bridge-system/tests/parse_fixtures.rs
+expression: "(& file.blocks, & file.lints)"
+---
+(
+    [
+        Heading {
+            level: 1,
+            text: "Alert markers vs. suit-symbol notation",
+            span: Span {
+                file: FileId(
+                    0,
+                ),
+                line: 1,
+                col: 0,
+                pasted_from: None,
+            },
+        },
+        BidTable(
+            BidTable {
+                hidden: false,
+                seat: Any,
+                vul: VulCond {
+                    we: Any,
+                    they: Any,
+                },
+                history: [],
+                history_desc: None,
+                rows: [
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Exact(
+                                    Bid(
+                                        1D,
+                                    ),
+                                ),
+                                raw: "1D",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 3,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "NF NEG, 0--7 HCP",
+                            alert: true,
+                            col: 5,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 3,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Exact(
+                                    Bid(
+                                        1H,
+                                    ),
+                                ),
+                                raw: "1H",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 4,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "F, 7+ HCP, 4+!h",
+                            alert: false,
+                            col: 5,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 4,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Exact(
+                                    Bid(
+                                        2NT,
+                                    ),
+                                ),
+                                raw: "2N",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 5,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "UNT, 5+!d, 5+!c",
+                            alert: true,
+                            col: 5,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 5,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                    BmlNode {
+                        calls: [
+                            CallToken {
+                                side: Us,
+                                pattern: Exact(
+                                    Bid(
+                                        2S,
+                                    ),
+                                ),
+                                raw: "2S",
+                                span: Span {
+                                    file: FileId(
+                                        0,
+                                    ),
+                                    line: 6,
+                                    col: 0,
+                                    pasted_from: None,
+                                },
+                            },
+                        ],
+                        description: Description {
+                            text: "!s shown, 5+ cards",
+                            alert: false,
+                            col: 5,
+                        },
+                        children: [],
+                        indent: 0,
+                        span: Span {
+                            file: FileId(
+                                0,
+                            ),
+                            line: 6,
+                            col: 0,
+                            pasted_from: None,
+                        },
+                    },
+                ],
+                span: Span {
+                    file: FileId(
+                        0,
+                    ),
+                    line: 3,
+                    col: 0,
+                    pasted_from: None,
+                },
+            },
+        ),
+    ],
+    [],
+)

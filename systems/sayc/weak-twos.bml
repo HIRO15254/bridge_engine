@@ -1,0 +1,188 @@
+* Weak two-bids
+
+Booklet section "SEQUENCE AFTER A WEAK TWO-BID OF 2D, 2H OR 2S". A weak two shows a
+six-card suit of reasonable quality and 5--11 HCP. The booklet also allows a good
+five-card suit or a poor seven-card suit "on rare occasions"; this file keeps the
+length at exactly six and treats those judgment calls as out of scope (NOTES.md
+#3). 2NT is forcing, asking for a minimum/maximum (and, opposite a maximum, a
+feature -- see NOTES.md #4); any raise is to play; a new suit shows 10+ hcp and
+a five-card suit, forcing one round ("RONF"), and -- like any other new suit --
+is a suit ranked *above* the opening at the cheapest available level (2-level)
+or, for a suit ranked below it, one level higher (review finding: this file
+previously wrote every new suit at the 3 level regardless of rank, so the two
+suits actually ranked above each of 2D and 2H were an unwarranted, undocumented
+jump instead of the plain 2-level bid RONF describes; see `NOTES.md` #24).
+
+Every response has a real range; nothing is a catch-all, so a hand that fits
+none of them passes (the implicit pass, NOTES.md "Notrump lane" #N5). A raise
+to game with four-card support is the further preempt (5--14 hcp); a
+three-card raise to the 3 level is competitive (6--14 hcp); 2NT asks with 15+
+hcp and at least a doubleton; 3NT is to play with 15+ hcp and shortness in
+opener's suit. After a new suit, opener raises with three-card support, bids
+2NT (or 3NT at the 3 level) with a maximum, and otherwise rebids his suit.
+
+2D = {prio:63} 6=!d, 5--11 hcp
+2H = {prio:64} 6=!h, 5--11 hcp
+2S = {prio:65} 6=!s, 5--11 hcp
+
+** After 2!d
+
+2D-
+3D = 3+!d, 6--14 hcp
+2N = F, 15+ hcp, 2+!d
+  3D = 5--8 hcp
+  3C = {prio:3} 9--11 hcp, stopper in !c
+  3H = {prio:2} 9--11 hcp, stopper in !h
+  3S = {prio:1} 9--11 hcp, stopper in !s
+  3N = {prio:0} 9--11 hcp
+2H = F, 10+ hcp, 5+!h
+  3H = 3+!h
+  2N = 9--11 hcp
+  3D = unlimited
+2S = F, 10+ hcp, 5+!s
+  3S = 3+!s
+  2N = 9--11 hcp
+  3D = unlimited
+3C = F, 10+ hcp, 5+!c
+  4C = 3+!c
+  3N = 9--11 hcp
+  3D = unlimited
+3N = 15+ hcp
+
+** After 2!h
+
+2H-
+4H = 4+!h, 5--14 hcp
+3H = 3=!h, 6--14 hcp
+2N = F, 15+ hcp, 2+!h
+  3H = 5--8 hcp
+  3C = {prio:3} 9--11 hcp, stopper in !c
+  3D = {prio:2} 9--11 hcp, stopper in !d
+  3S = {prio:1} 9--11 hcp, stopper in !s
+  3N = {prio:0} 9--11 hcp
+2S = F, 10+ hcp, 5+!s
+  3S = 3+!s
+  2N = 9--11 hcp
+  3H = unlimited
+3C = F, 10+ hcp, 5+!c
+  4C = 3+!c
+  3N = 9--11 hcp
+  3H = unlimited
+3D = F, 10+ hcp, 5+!d
+  4D = 3+!d
+  3N = 9--11 hcp
+  3H = unlimited
+3N = 15+ hcp
+
+** After 2!s
+
+2S-
+4S = 4+!s, 5--14 hcp
+3S = 3=!s, 6--14 hcp
+2N = F, 15+ hcp, 2+!s
+  3S = 5--8 hcp
+  3C = {prio:3} 9--11 hcp, stopper in !c
+  3D = {prio:2} 9--11 hcp, stopper in !d
+  3H = {prio:1} 9--11 hcp, stopper in !h
+  3N = {prio:0} 9--11 hcp
+3C = F, 10+ hcp, 5+!c
+  4C = 3+!c
+  3N = 9--11 hcp
+  3S = unlimited
+3D = F, 10+ hcp, 5+!d
+  4D = 3+!d
+  3N = 9--11 hcp
+  3S = unlimited
+3H = F, 10+ hcp, 5+!h
+  4H = 3+!h
+  3N = 9--11 hcp
+  3S = unlimited
+3N = 15+ hcp
+
+** Interference over a weak two
+
+After a takeout double of a weak two, responder raises with three-card support
+(further preemption), redoubles with 15+ hcp, and otherwise passes. After an
+overcall, responder raises with three-card support when the raise is still
+available at the 3 level, doubles for penalty with 13+ hcp, and otherwise
+passes; a new suit is not written. If the opponents intervene after our own
+2NT ask or new suit, opener doubles with a maximum and otherwise passes
+(NOTES.md "Notrump lane" #N5). `(bid)` is any overcall not listed more
+specifically.
+
+2D-(D)-
+3D = 3+!d, 0--14 hcp
+R = 15+ hcp
+
+2H-(D)-
+3H = 3+!h, 0--14 hcp
+R = 15+ hcp
+
+2S-(D)-
+3S = 3+!s, 0--14 hcp
+R = 15+ hcp
+
+2D-(2HS)-
+3D = 3+!d, 6--14 hcp
+D = 13+ hcp
+
+2D-(3C)-
+3D = 3+!d, 6--14 hcp
+D = 13+ hcp
+
+2H-(2S)-
+3H = 3+!h, 6--14 hcp
+D = 13+ hcp
+
+2H-(3CD)-
+3H = 3+!h, 6--14 hcp
+D = 13+ hcp
+
+2S-(3CDH)-
+3S = 3+!s, 6--14 hcp
+D = 13+ hcp
+
+2D-(bid)-
+D = 13+ hcp
+
+2H-(bid)-
+D = 13+ hcp
+
+2S-(bid)-
+D = 13+ hcp
+
+2D-2N-(bid)-
+D = 9--11 hcp
+
+2H-2N-(bid)-
+D = 9--11 hcp
+
+2S-2N-(bid)-
+D = 9--11 hcp
+
+2D-2H-(bid)-
+D = 9--11 hcp
+
+2D-2S-(bid)-
+D = 9--11 hcp
+
+2D-3C-(bid)-
+D = 9--11 hcp
+
+2H-2S-(bid)-
+D = 9--11 hcp
+
+2H-3C-(bid)-
+D = 9--11 hcp
+
+2H-3D-(bid)-
+D = 9--11 hcp
+
+2S-3C-(bid)-
+D = 9--11 hcp
+
+2S-3D-(bid)-
+D = 9--11 hcp
+
+2S-3H-(bid)-
+D = 9--11 hcp

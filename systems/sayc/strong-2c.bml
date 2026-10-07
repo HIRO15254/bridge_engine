@@ -1,0 +1,242 @@
+* The strong artificial 2!c opening
+
+Booklet section "A 2C OPENING, RESPONSES, AND LATER BIDDING". 2!c shows at least
+22 HCP, or the playing equivalent, and is unconditionally forcing to game except
+after the 2D-2NT balanced-hand rebid, where the auction can stop as low as 3 of a
+suit game.
+
+2C = {prio:100} 22+ hcp
+
+** Responses to 2!c
+
+The 2!d response is a conventional waiting bid: it can be a genuinely weak hand,
+or a good hand not suited to a positive response. 2H, 2S, 3C and 3D are natural
+and game forcing, showing at least a five-card suit and 8+ points; 2NT shows a
+balanced 8 HCP.
+
+After a positive response the auction is forcing to game: opener raises with
+three-card support, bids a five-card suit of his own, or bids notrump (the
+catch-all, since opener must bid something). NOTES.md "Notrump lane" #N4.
+
+2C-
+2D = {prio:-1} ART
+2H = F, 8+ hcp, 5+!h
+  3H = 3+!h
+  2S = 5+!s
+  3C = 5+!c
+  3D = 5+!d
+  2N = unlimited
+2S = F, 8+ hcp, 5+!s
+  3S = 3+!s
+  3C = 5+!c
+  3D = 5+!d
+  3H = 5+!h
+  2N = unlimited
+3C = F, 8+ hcp, 5+!c
+  4C = 3+!c
+  3D = 5+!d
+  3H = 5+!h
+  3S = 5+!s
+  3N = unlimited
+3D = F, 8+ hcp, 5+!d
+  4D = 3+!d
+  3H = 5+!h
+  3S = 5+!s
+  3N = unlimited
+2N = F, 8 hcp, bal
+  3C = 5+!c
+  3D = 5+!d
+  3H = 5+!h
+  3S = 5+!s
+  3N = unlimited
+
+*** After the 2!d waiting response
+
+Opener rebids 2NT with 22--24 HCP balanced (or with no five-card suit, such as
+4-4-4-1, since 2!c is forcing and there is no better call), and 3NT with 25+ and
+no five-card suit (NOTES.md #C8), using the same Stayman and
+Jacoby-transfer structure as a 2NT opening (responder's ranges shifted for the
+stronger 22--24 opener: game from 3 hcp, the quantitative 4NT at 9--10, 6NT at
+11+). A suit rebid is forcing to 3 of opener's major or 4 of opener's minor:
+responder raises with three-card support, shows a five-card suit of his own
+with 8+ hcp, and otherwise makes the waiting 2NT (after a major) or 3NT (after
+a minor) rather than passing a forcing bid.
+
+2C-2D-
+2N = 22--24 hcp and bal or 22--24 hcp and 0--4!s and 0--4!h and 0--4!d and 0--4!c
+  3C = !STAY, 3+ hcp, 4+!h or 4+!s
+    3D = 0--3!s, 0--3!h
+      3N = 3--8 hcp
+        P = unlimited
+      4N = 9--10 hcp
+        P = 22 hcp
+        6N = 23--24 hcp
+      6N = 11+ hcp
+        P = unlimited
+    3H = {prio:1} 4+!h
+      4H = 3--8 hcp, 4+!h
+        P = unlimited
+      6H = 9+ hcp, 4+!h
+        P = unlimited
+      3N = 3--8 hcp
+        4S = 4+!s
+        P = unlimited
+      4N = 9--10 hcp
+        P = 22 hcp
+        6N = 23--24 hcp
+      6N = 11+ hcp
+        P = unlimited
+    3S = {prio:0} 4+!s, not 4+!h
+      4S = 3--8 hcp, 4+!s
+        P = unlimited
+      6S = 9+ hcp, 4+!s
+        P = unlimited
+      3N = 3--8 hcp
+        P = unlimited
+      4N = 9--10 hcp
+        P = 22 hcp
+        6N = 23--24 hcp
+      6N = 11+ hcp
+        P = unlimited
+  3D = {prio:1} !TRF, 5+!h
+    3H = unlimited
+      P = 0--2 hcp
+      3N = 3--8 hcp, 5=!h
+        4H = 3+!h
+        P = unlimited
+      4H = 3--8 hcp, 6+!h
+        P = unlimited
+      4N = 9--10 hcp, 5=!h
+        6H = 23--24 hcp, 3+!h
+        6N = 23--24 hcp
+        P = 22 hcp
+      5H = 9--10 hcp, 6+!h
+        6H = 23--24 hcp
+        P = 22 hcp
+      6N = 11+ hcp, 5=!h
+        P = unlimited
+      6H = 11+ hcp, 6+!h
+        P = unlimited
+  3H = {prio:1} !TRF, 5+!s
+    3S = unlimited
+      P = 0--2 hcp
+      3N = 3--8 hcp, 5=!s
+        4S = 3+!s
+        P = unlimited
+      4S = 3--8 hcp, 6+!s
+        P = unlimited
+      4N = 9--10 hcp, 5=!s
+        6S = 23--24 hcp, 3+!s
+        6N = 23--24 hcp
+        P = 22 hcp
+      5S = 9--10 hcp, 6+!s
+        6S = 23--24 hcp
+        P = 22 hcp
+      6N = 11+ hcp, 5=!s
+        P = unlimited
+      6S = 11+ hcp, 6+!s
+        P = unlimited
+  3N = 3--8 hcp
+    P = unlimited
+  4N = 9--10 hcp
+    P = 22 hcp
+    6N = 23--24 hcp
+  6N = 11+ hcp
+    P = unlimited
+3N = 25+ hcp and bal or 25+ hcp and 0--4!s and 0--4!h and 0--4!d and 0--4!c
+2H = F, 5+!h
+  3H = F, 3+!h
+    4H = unlimited
+      P = unlimited
+  2S = F, 8+ hcp, 5+!s
+  3C = F, 8+ hcp, 5+!c
+  3D = F, 8+ hcp, 5+!d
+  2N = F, unlimited
+    3H = 6+!h
+    3C = 4+!c
+    3D = 4+!d
+    3S = 4+!s
+    3N = unlimited
+2S = F, 5+!s
+  3S = F, 3+!s
+    4S = unlimited
+      P = unlimited
+  3H = F, 8+ hcp, 5+!h
+  3C = F, 8+ hcp, 5+!c
+  3D = F, 8+ hcp, 5+!d
+  2N = F, unlimited
+    3S = 6+!s
+    3C = 4+!c
+    3D = 4+!d
+    3H = 4+!h
+    3N = unlimited
+3C = F, 5+!c
+  4C = 3+!c
+  3H = 8+ hcp, 5+!h
+  3S = 8+ hcp, 5+!s
+  3N = unlimited
+3D = F, 5+!d
+  4D = 3+!d
+  3H = 8+ hcp, 5+!h
+  3S = 8+ hcp, 5+!s
+  3N = unlimited
+
+A raise of responder's suit after a 2/1-style continuation is not automatically
+forcing to game; for example, after 2!c-2!d-2!h-2!s, a 3!h rebid is a non-forcing
+preference.
+
+2C-2D-2H-2S-
+3S = 3+!s
+2N = bal
+3H = NF, unlimited
+
+** Interference over 2!c
+
+If an opponent overcalls 2!c, responder passes with a weak hand (0--7) and
+doubles with values (8+); if an opponent doubles, responder redoubles with
+values and otherwise passes. If an opponent overcalls the 2!d waiting response,
+opener doubles for penalty with length in their suit, bids a five-card suit of
+his own, or bids notrump (NOTES.md "Notrump lane" #N4).
+
+2C-(D)-
+R = 8+ hcp
+
+2C-(2X)-
+P = 0--7 hcp
+D = 8+ hcp
+
+2C-(3X)-
+P = 0--7 hcp
+D = 8+ hcp
+
+2C-(bid)-
+P = 0--7 hcp
+D = 8+ hcp
+
+2C-2D-(D)-
+2N = bal
+2H = 5+!h
+2S = 5+!s
+3C = 5+!c
+3D = 5+!d
+
+2C-2D-(2X)-
+D = 4+#
+2Y = {prio:1} 5+#
+3C = 5+!c
+3D = 5+!d
+2N = unlimited
+
+2C-2D-(3X)-
+D = 4+#
+3Y = {prio:1} 5+#
+3N = unlimited
+
+2C-2D-(3C)-
+3D = 5+!d
+3H = 5+!h
+3S = 5+!s
+3N = unlimited
+
+2C-2D-(bid)-
+D = unlimited

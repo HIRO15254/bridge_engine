@@ -63,7 +63,12 @@ impl SystemIR {
     /// The candidate continuations for `owner`'s next call: `(call, node)` pairs whose
     /// conditions hold, or `None` when the prefix is off-system.
     pub fn continuations(&self, auction: &Auction, owner: Seat) -> Option<Vec<(Call, NodeId)>> {
-        todo!("phase 3")
+        let key = LookupKey::for_auction(auction, owner)?;
+        let lookup = self.index.resolve(&key);
+        if !lookup.is_exact(&key) {
+            return None;
+        }
+        Some(self.index.children(lookup.end, key.opener_pos, key.vul))
     }
 }
 
@@ -98,7 +103,10 @@ pub struct Node {
     /// Pattern path (shared with the row).
     pub path: Arc<[SidedPattern]>,
     /// Concrete calls from the opening bid up to and including this call, implicit passes
-    /// included.
+    /// included. An opponents' wildcard step (`(any)`/`(bid)`/`(suit)`, a trie
+    /// [`Edge::Class`](crate::trie::Edge::Class)) has no concrete call and is stored as a `Pass`
+    /// filler here (and as [`Node::call`] of the wildcard's own node); the trie path, not this
+    /// vector, is what identifies such a position.
     pub calls: Vec<Call>,
     /// This node's call.
     pub call: Call,
@@ -226,6 +234,31 @@ pub struct SystemMeta {
     pub extra: BTreeMap<String, String>,
 }
 
+impl Default for SystemMeta {
+    /// Defaults for a system with no `#+KEY:` values at all: empty name, Goren 3-2-1
+    /// distribution points, and SAYC-like natural inference.
+    fn default() -> SystemMeta {
+        SystemMeta {
+            name: String::new(),
+            description: String::new(),
+            authors: Vec::new(),
+            version: "0".to_string(),
+            date: None,
+            source_hash: [0; 32],
+            compiler_version: crate::COMPILER_VERSION.to_string(),
+            ir_format: crate::IR_FORMAT,
+            dist_method: DistMethod::GOREN_321,
+            tie_break: TieBreak::default(),
+            strength: StrengthVocab::default(),
+            balanced: BalancedDef::default(),
+            natural: NaturalParams::default(),
+            conventions: ConventionDefaults::default(),
+            recognition_threshold: 0.5,
+            extra: BTreeMap::new(),
+        }
+    }
+}
+
 /// Point thresholds that give meaning to `GF`, `INV`, `weak`, … (`#+STRENGTH:`).
 #[derive(Clone, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -317,5 +350,148 @@ impl Default for ConventionDefaults {
             stayman_major: true,
             splinter_support: 4,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bridge_core::{Auction, Bid, Vulnerability};
+
+    use super::*;
+    use crate::natural::{AdvanceParams, RebidParams, ResponseParams};
+
+    /// Arbitrary but complete natural-bidding parameters.
+    ///
+    /// `NaturalParams::default()` is a phase-3 stub (`todo!`, owned by another lane), so tests
+    /// that only need *some* valid value build one directly instead of depending on it.
+    fn dummy_natural_params() -> NaturalParams {
+        NaturalParams {
+            opening_hcp: 12..=21,
+            open_1m_len: 3,
+            open_1major_len: 5,
+            nt: vec![(1, 15..=17)],
+            weak_two: (6, 5..=10),
+            preempt: vec![(3, 7, 5..=10)],
+            strong_two_c: 22,
+            overcall: [(5, 8..=16), (5, 8..=16), (5, 8..=16)],
+            nt_overcall: 15..=18,
+            takeout_double: (12, 15, 3),
+            response: ResponseParams {
+                new_suit_1: (4, 6),
+                new_suit_2: (5, 10),
+                raise: (3, 6..=9),
+                jump_raise: (4, 10..=12),
+                nt: vec![(1, 6..=9)],
+                jump_shift: 17,
+            },
+            rebid: RebidParams {
+                reverse: 17,
+                jump_rebid: 16..=18,
+                nt_1: 12..=14,
+                nt_2: 18..=19,
+                raise: 16..=18,
+                jump_raise: 19..=20,
+            },
+            advance: AdvanceParams {
+                raise: (3, 6..=9),
+                new_suit: (5, 8),
+                cue: 10,
+            },
+            balancing_shift: -3,
+            implicit_raise_support: true,
+        }
+    }
+
+    fn bid(level: u8, strain: Strain) -> Call {
+        Call::Bid(Bid::new(level, strain).unwrap())
+    }
+
+    /// A minimal, otherwise-empty `SystemIR` wrapping the given trie, for exercising
+    /// [`SystemIR::continuations`] without a compiled system.
+    fn minimal_system(index: AuctionTrie) -> SystemIR {
+        SystemIR {
+            meta: SystemMeta {
+                name: String::new(),
+                description: String::new(),
+                authors: Vec::new(),
+                version: "0".to_string(),
+                date: None,
+                source_hash: [0; 32],
+                compiler_version: String::new(),
+                ir_format: 1,
+                dist_method: DistMethod::GOREN_321,
+                tie_break: TieBreak::default(),
+                strength: StrengthVocab::default(),
+                balanced: BalancedDef::default(),
+                natural: dummy_natural_params(),
+                conventions: ConventionDefaults::default(),
+                recognition_threshold: 0.5,
+                extra: BTreeMap::new(),
+            },
+            rows: Vec::new(),
+            nodes: Vec::new(),
+            index,
+            lints: Vec::new(),
+        }
+    }
+
+    /// Builds a trie with `1C` and `1C-(P)-1D` inserted (owner opened `1C`), matching the
+    /// off-system regression reported against `SystemIR::continuations`.
+    fn trie_with_opening_and_response() -> (AuctionTrie, NodeId, NodeId) {
+        let mut trie = AuctionTrie::new();
+        let opening = NodeId(1);
+        let response = NodeId(2);
+        trie.insert(
+            true,
+            &[bid(1, Strain::Clubs)],
+            SeatCond::Any,
+            VulCond::default(),
+            opening,
+        )
+        .unwrap();
+        trie.insert(
+            true,
+            &[bid(1, Strain::Clubs), Call::Pass, bid(1, Strain::Diamonds)],
+            SeatCond::Any,
+            VulCond::default(),
+            response,
+        )
+        .unwrap();
+        (trie, opening, response)
+    }
+
+    #[test]
+    fn continuations_is_none_when_prefix_is_off_system() {
+        let (trie, ..) = trie_with_opening_and_response();
+        let ir = minimal_system(trie);
+
+        // `1H` was never inserted anywhere: resolution stalls after the implicit pass
+        // (`matched_depth == 2`), so the prefix (up to and including `1H`) is off-system and
+        // `continuations` must return `None`, not the `1D` that happens to follow `1C-(P)` in
+        // the trie.
+        let auction = Auction::from_calls(
+            Seat::North,
+            Vulnerability::None,
+            [bid(1, Strain::Clubs), Call::Pass, bid(1, Strain::Hearts)],
+        )
+        .unwrap();
+
+        assert_eq!(ir.continuations(&auction, Seat::North), None);
+    }
+
+    #[test]
+    fn continuations_is_some_when_prefix_is_exact() {
+        let (trie, _, response) = trie_with_opening_and_response();
+        let ir = minimal_system(trie);
+
+        let auction = Auction::from_calls(
+            Seat::North,
+            Vulnerability::None,
+            [bid(1, Strain::Clubs), Call::Pass],
+        )
+        .unwrap();
+
+        let candidates = ir.continuations(&auction, Seat::North).unwrap();
+        assert_eq!(candidates, vec![(bid(1, Strain::Diamonds), response)]);
     }
 }
