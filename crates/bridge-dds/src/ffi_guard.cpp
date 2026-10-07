@@ -10,6 +10,8 @@
 //
 // Compiled only when the DDS sources are vendored (see build.rs).
 
+// `std::min`/`std::max` are called as `(std::min)(...)`: on Windows `dll.h` pulls in
+// `<windows.h>` (through `portab.h`), whose `min`/`max` macros would otherwise expand.
 #include <algorithm>
 
 #include "dll.h"
@@ -43,8 +45,8 @@ void set_resources_without_probe(int maxMemoryMB, int maxThreadsIn, int ncores)
   int memMaxMB = (maxMemoryMB <= 0 ? 1000000 :
     static_cast<int>(1.3 * maxMemoryMB));
   if (sizeof(void *) == 4)
-    memMaxMB = std::min(memMaxMB, 1800);
-  memMaxMB = std::max(memMaxMB, THREADMEM_SMALL_MAX_MB);
+    memMaxMB = (std::min)(memMaxMB, 1800);
+  memMaxMB = (std::max)(memMaxMB, THREADMEM_SMALL_MAX_MB);
 
   int thrMax;
   if (sysdep.IsSingleThreaded())
@@ -52,7 +54,7 @@ void set_resources_without_probe(int maxMemoryMB, int maxThreadsIn, int ncores)
   else if (sysdep.IsIMPL() || maxThreadsIn <= 0)
     thrMax = ncores;
   else
-    thrMax = std::min(maxThreadsIn, ncores);
+    thrMax = (std::min)(maxThreadsIn, ncores);
 
   int noOfThreads, noOfLargeThreads, noOfSmallThreads;
   if (thrMax * THREADMEM_LARGE_MAX_MB <= memMaxMB)
