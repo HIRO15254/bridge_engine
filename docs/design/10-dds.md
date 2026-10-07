@@ -52,7 +52,7 @@ crates/bridge-dds/
 └── tests/                  # フェーズ 5
     ├── layout.rs           # sizeof/offsetof の突き合わせ
     ├── differential.rs     # list100.txt (masterDD.txt は --ignored)
-    └── concurrency.rs      # 8 スレッド × 100 SolveBoard
+    └── concurrency.rs      # 8 スレッドの SolveBoard (既定 8 局面、ignored の _at_scale は 100 局面)
 ```
 
 `.gitignore` の `/crates/bridge-dds/vendor/` により DDS ソースはリポジトリに入らない。`VENDOR.md` (骨格でコミット済み) の内容:
@@ -68,7 +68,7 @@ crates/bridge-dds/
 
 `VENDOR.md` には DDS3 を採らない理由 (§2) も書いてある。ランタイムの状態 (`Runtime`、スレッドスロット) は `lib.rs` の非公開項目で、`api.rs` / `runtime.rs` / `stub.rs` のようなモジュール分割はしない: 未ベンダリング時は同じ関数が `DdsError::Unavailable` を返すだけなので、`#[cfg(dds_vendored)]` は関数本体の中に置く。
 
-未決: `cargo publish` 時に `vendor/` を同梱する方法 (`.gitignore` されたファイルは既定でパッケージに入らないため `include` を明示するか、公開前に取得を必須にする)。フェーズ 5.5 で決める。
+解決済み (フェーズ 5.5): `cargo publish` 時の `vendor/` の同梱。`.gitignore` されたファイルは既定でパッケージに入らないので、`crates/bridge-dds/Cargo.toml` の `include` で抽出済みソース (`vendor/dds-2.9.0/{src,include}/**`、`LICENSE`) だけを明示的に同梱する (`vendor/*.tar.gz` と `SHA256SUMS` は除外。`12-roadmap.md` R14、`VENDOR.md`)。
 
 ## 4. `build.rs`
 
@@ -298,7 +298,7 @@ unsafe extern "C" {
 
 - `deal` と `playTraceBin` は `dll.h` 通り **値渡し**。
 - `boards` (約 250 KB) と `solvedBoards` (約 60 KB) はスタックに置かず、必ず `Box::<T>::new_zeroed().assume_init()` でヒープに確保する。`playTracesBin` (約 85 KB) も同様。
-- 未決: `contractType.denom` のエンコード (`dll.h` のコメントでは 0 = NT, 1 = S, 2 = H, 3 = D, 4 = C と記憶しているが、`SolveBoard` のストレイン順と異なるためベンダリング時に `dll.h` で確認して `convert.rs` に固定する)。
+- 解決済み: `contractType.denom` のエンコード。ベンダリングした `dll.h` で 0 = NT, 1 = S, 2 = H, 3 = D, 4 = C (`SolveBoard` のストレイン順とは異なる) を確認し、`convert.rs` の `par_denom_letter` に固定した。`dealer_par` は `list100` の差分テストで上流の PAR 行と 100/100 一致する。
 
 ### 5.1 レイアウトプローブ
 
@@ -431,7 +431,7 @@ pub enum DdsError {
 
 ### 7.4 5.5–5.7 の健全性レビューで直したもの
 
-`unsafe` の見直し (全 FFI 構造体が `#[repr(C)]` でレイアウトテスト済み、大きな構造体 (`boards`/`solvedBoards`/`ddTableDeals`/`ddTablesRes`/`allParResults`) はヒープ確保、1 スロットを 2 スレッドが同時に使わない、非再入呼び出しのロックを呼び出し全体で保持) は問題なし。Rust から C へコールバックを渡す箇所は無いので Rust のパニックが FFI を越えることは無い。一方、次の 5 点は実際の不具合で、いずれも修正前に失敗するテストを付けた。
+`unsafe` の見直し (全 FFI 構造体が `#[repr(C)]` でレイアウトテスト済み、大きな構造体 (`boards`/`solvedBoards`/`ddTableDeals`/`ddTablesRes`/`allParResults`) はヒープ確保、1 スロットを 2 スレッドが同時に使わない、非再入呼び出しのロックを呼び出し全体で保持) は問題なし。Rust から C へコールバックを渡す箇所は無いので Rust のパニックが FFI を越えることは無い。一方、次の 5 点は実際の不具合で、4 を除く 4 点には修正前に失敗するテストを付けた (4 の例外ガード `ffi_guard.cpp` にはテストが無い)。
 
 1. **`Mode::ReuseTable` (DDS mode 2) でセグフォルト**。mode 2 は前回の呼び出しと同じ配牌・切り札かを確かめずに置換表のリセットを省く (`SolverIF.cpp`)。これが正しいのは「同じ `thrId` の前回の呼び出し」が同じ配牌・切り札だったときだけで、スロットを呼び出しごとに貸し出すこのラッパーでは呼び出し側に保証する手段が無い。無関係な配牌の置換表が残ったスロットで mode 2 を呼ぶと DDS 内部で SIGSEGV (安全な Rust から到達可能な未定義動作)。`tests/reuse_table.rs` (DDS を 1 スレッドに固定して必ず同じスロットに当てる) が再現する。
 2. **`Mode::Auto` (DDS mode 0) の強制 1 枚で得点 0**。mode 0 は合法手が 1 枚だけの局面を探索せずに返し、得点に番兵 `-2` を入れる。ラッパーは負値を 0 に丸めていたので、たとえば途中局面でシングルトンをフォローする手番の得点が誤って 0 トリックになった (`tests/edge_cases.rs`)。
@@ -449,7 +449,7 @@ pub enum DdsError {
 | レイアウト | `tests/layout.rs` | §5.1 の `sizeof`/`offsetof` 突き合わせ | 全構造体で一致 |
 | 差分 `list100` | `tests/differential.rs` | `hands/list100.txt` の各配牌で `calc_dd_table` と `TABLE` 行を比較。データはコーパス (`corpus/data/dds/list100.txt`) か、無ければ `cargo xtask dds vendor` が同じ DDS アーカイブ (SHA-256 検証済み) から展開する `vendor/dds-2.9.0/hands/list100.txt` を使う。CI の `dds` ジョブ (3 OS) は `BRIDGE_REQUIRE_LIST100=1` で実行し、データが無ければスキップせず失敗させる。nightly は `--include-ignored` (以前の `--ignored` は `#[ignore]` の無いこのテストを除外していた。フェーズ 5 レビューで修正) | 100% 一致 |
 | 差分 `masterDD` | 同 (`#[ignore]`) | 83,691 配牌 | 100% 一致 |
-| 並行 `SolveBoard` | `tests/concurrency.rs` | 8 スレッド × 100 局面を `solve_board`、逐次実行の結果と比較。`info().threads` の確認 | エラー 0、結果一致 |
+| 並行 `SolveBoard` | `tests/concurrency.rs` | 8 スレッドで `solve_board` を呼び、逐次実行の結果と比較 (`concurrent_solve_board_matches_sequential` は 8 局面、release の ignored `_at_scale` は 100 局面)。`info().threads` の確認 | エラー 0、結果一致 |
 | `analyse_play` | `tests/differential.rs` | `list100.txt` の `PLAY`/`TRACE` 行 | 一致 |
 | `dealer_par` | 同 | `PAR` 行 | 一致 |
 | バッチ境界 | `tests/batching.rs` | `calc_dd_tables` を 39/40/41 件、`solve_all_boards` を 199/200/201 件で呼び、単発の結果と比較。空入力 | 全件一致 |
@@ -513,8 +513,8 @@ pub mod dd {
 
 ## 11. 未決
 
-- 未決: `cargo publish` での `vendor/` 同梱方法 (§3)。
-- 未決: `contractType.denom` のエンコード確認 (§5)。
+- 解決済み: `cargo publish` での `vendor/` 同梱方法 (§3。`Cargo.toml` の `include`)。
+- 解決済み: `contractType.denom` のエンコード確認 (§5。`convert.rs` の `par_denom_letter`、`dealer_par` の差分 100/100)。
 - 解決済み: `openmp` feature の MSVC / Apple clang 対応 (§4。MSVC は `/openmp`、macOS は libomp のプローブで、無ければ STL にフォールバックする)。未確認: `openmp` feature の実経路 (Linux/gcc、MSVC `/openmp`、macOS の libomp) は実行していない。コードは対応済み。
 - 未決: DDS3 への移行時期。ラッパーの公開面はレガシー名と同一に保ち、`vendor/` と `build.rs` の差し替えだけで済むようにしておく。DDS3 の Emscripten ビルドは将来の `wasm32-emscripten` feature の候補 (対象外)。
 
