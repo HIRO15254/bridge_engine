@@ -36,13 +36,15 @@
 | `interpret` ベンチ (12 コール) | `bridge-bidding` `benches/interpret.rs` | criterion | < 10 μs |
 | `sequence_log_likelihood` ベンチ | 同 | criterion | 2〜5 μs / 配牌 |
 | スレッド数不変 `deterministic_across_threads` | `bridge-sample` `tests/determinism.rs` | unit、同一 seed で `Threads::Single` と 7 スレッドプール | `Vec<WeightedDeal>` と `SampleReport` (`elapsed` 除く) がバイト一致 |
-| `ConstraintProposal` の `log_prob` 整合 | `bridge-sample` `tests/proposal.rs` | 小プールで 10^5 提案のヒストグラム vs `exp(log_prob)` | χ² 通過 |
-| ESS スイート `uniform_vs_constraint_ess` | `bridge-sample` `tests/ess.rs` | `#[ignore]`、50 オークション × n = 1000 | `ConstraintProposal` の ESS 中央値 ≥ 0.5n。Uniform は比較用に報告 |
-| 配牌サンプラーベンチ | `bridge-sample` `benches/deals.rs` | criterion | ≥ 10^4 配牌/秒/コア |
+| `ConstraintProposal` の `log_prob` 整合 | `bridge-sample` `tests/log_prob.rs` | 小プールで 10^5 提案のヒストグラム vs `exp(log_prob)`（格子要約・軽い代替の畳み込み・残差棄却を含む。棄却がある文脈では失敗率も照合） | χ² 通過 |
+| 残差棄却の厳密性 | `bridge-sample` `tests/residual.rs` | 全列挙での `log_prob` の差、提案の χ²、`sample_deals` の重み付き推定の不偏性（Wald χ²）。`T = U` の文脈に加え、下限で `T` が切り詰められ、中間席が粗化と畳み込みを受ける文脈でも確認する。パイロットが `pilot_attempts` として試行あたり ESS に算入されること | 差 < 1e-9、p > 0.01 |
+| ESS スイート `uniform_vs_constraint_ess_suite` | `bridge-sample` `tests/ess_suite.rs` | `#[ignore]`、release、固定ケース 50 オークション × n = 1000、実ビディング尤度、`target/ess_report.json`（§13） | 既定の提案（残差棄却なし）で ESS/n の中央値 ≥ 0.5（全体・生成）、コーパス ≥ 0.4、予算切れ ≤ 2 件、試行あたり ESS ≥ 0.35。2026-09-29（固定ケース再生成後）: 0.5702 / 0.5695 / 0.5709、0 件、0.5702（達成。残差棄却あり下限 0.5 は 0.8420 / 0.8934 / 0.8201、試行あたり 0.5170。09-sample.md §10.2 の続き）。2026-10-02（最終ヘッド wip/p5final 8abe651、固定ケース再生成後）: 0.5471 / 0.7113 / 0.4608、0 件、0.5471（達成。残差棄却あり下限 0.5 は 0.7860 / 0.8513 / 0.7650、試行あたり 0.4627） |
+| ESS 固定ケースの鮮度 `ess_fixture_generated_cases_are_on_policy` | `bridge-sample` `tests/ess_suite.rs` | 生成 25 件の各コールを配牌の実際の手が現行の方策で `p ≥ 0.01` で選ぶこと（§13） | 外れたコール 0 |
+| 配牌サンプラーベンチ | `bridge-sample` `benches/deals.rs` | criterion | ≥ 10^4 配牌/秒/コア（達成。2026-10-02、3 回の中央値、loadavg 3.7〜4.0 で開始: Stayman 3NT 34.3 K、競り合い 31.8 K / 30.4 K、残差棄却ありは 30.5 K / 27.6 K / 14.6 K。09-sample.md §10.2 の最後） |
 | ショウアウトからのハード制約 `hard_constraints_from_showout` | `bridge-play` `tests/hard.rs` | unit (手組みの履歴、`hard_constraints`) | 長さ確定、`KnownCards` 一致、不整合は `PlayWarning::Inconsistent` |
 | リード・シグナル規則表 `lead_rules_table` | `bridge-play` `tests/leads.rs` | table-driven ((約束, リード札) → 期待制約の充足/不充足) | 全通過 |
 | DDS レイアウト | `bridge-dds` `tests/layout.rs` | unit (C++ プローブ) | 全構造体・全フィールドで一致 |
-| DDS 差分 `differential_dds` | `bridge-dds` `tests/differential.rs` | `list100.txt` (コーパス取得時)、`masterDD.txt` は `#[ignore]` | 100% 一致 |
+| DDS 差分 `differential_dds` | `bridge-dds` `tests/differential.rs` | `list100.txt` (コーパス、または `cargo xtask dds vendor` が展開する `vendor/dds-2.9.0/hands/list100.txt`。CI の `dds` ジョブで必須)、`masterDD.txt` は `#[ignore]` | 100% 一致 |
 | 並行 `SolveBoard` `concurrent_solve_board` | `bridge-dds` `tests/concurrency.rs` | 8 スレッド × 100 局面 | エラー 0、逐次結果と一致 |
 | wasm ビルド | CI `wasm` ジョブ | `cargo check --target wasm32-unknown-unknown` | 通る |
 
@@ -239,7 +241,7 @@ fn forward_consistency() {
 | `hcp(hand)` | `bridge-eval` | < 10 ns | 仕様 §9 |
 | `Sampler::sample` (`Atom` からのハンド生成) | `bridge-constraint` | ≥ 10^5 手/秒/コア (試算 0.3〜0.5 μs) | 仕様 §9、D2 |
 | `Sampler::prepare` (フルデッキ) | `bridge-constraint` | 20〜60 μs (列挙が要るスート 1 つにつき +65 μs、未知 26 枚で 3〜10 μs) | 計画 §4.3 |
-| 完全な配牌サンプリング (制約付き) | `bridge-sample` | ≥ 10^4 配牌/秒/コア | 仕様 §9 |
+| 完全な配牌サンプリング (制約付き) | `bridge-sample` | ≥ 10^4 配牌/秒/コア (実 SAYC の 3 ケース `deals/sayc/*` を含む。既定の残差棄却なしと、残差棄却ありの両方で測る) | 仕様 §9 |
 | `interpret` (12 コール) | `bridge-bidding` | < 10 μs | 仕様 §9 |
 | `sequence_log_likelihood` | `bridge-bidding` | 2〜5 μs / 配牌 | 計画 §6.4 |
 | `AuctionTrie::resolve` | `bridge-system` | 深さ × 約 30 ns | 計画 §5.5 |
@@ -362,6 +364,7 @@ jobs:
 | 外部 BML 取得 | `cargo xtask systems fetch` |
 | DDS 取得とテスト | `cargo xtask dds vendor && cargo test -p bridge-dds` |
 | フェーズ完了時の重いテスト | `BRIDGE_CORPUS_DIR=corpus/data cargo test --release --workspace -- --ignored` (整合性 10^6、ESS、コーパス、DDS 差分、ナチュラル推定測定) |
+| ESS スイート | `cargo test --release -p bridge-sample --all-features --test ess_suite -- --ignored --nocapture` (`ESS_SUITE_MODE=tune` でチューニング集合、`ESS_SUITE_WRITE_FIXTURE=1` で固定ケースの再生成、§13) |
 | ベンチ | `cargo bench --workspace` (`hcp` < 10 ns、手サンプル ≥ 10^5/s、配牌 ≥ 10^4/s、`interpret` < 10 μs、BML コンパイル < 1 s) |
 | 1 クレートのベンチ | `cargo bench -p bridge-constraint -- sampler` |
 | カバレッジレポート (フェーズ 4) | `cargo xtask coverage --system systems/sayc/sayc.bml --corpus corpus/data/pbn` |
@@ -377,3 +380,17 @@ jobs:
 - 未決: `random_position` の `random_call_rate` 既定値 0.05 (フェーズ 3.11 で Partial/Natural を入れた後に調整)。
 - 未決: `deny.toml` の最終的な許可ライセンス一覧 (§10)。
 - 未決: フェーズ 6 の上位 3 リード命中率の閾値 X (測定してから決める)。
+
+## 13. ESS スイートと評価データ (フェーズ 4)
+
+**評価データの分割 (D20).** コーパスのオークションは、`crates/bridge-bidding/tests/reproduction.rs` の `corpus_auctions` と同じ列挙 (`corpus/data/pbn` の PBN をパス順に、各ファイルのゲームを順に読み、`view()` がオークションを返したものに 0 から番号を振る。`view()` が失敗したゲームは前のゲームの引き継ぎも切る) で、偶数番目をチューニング分割、奇数番目を評価分割とする。`(ε, δ)` の最尤推定 (`PolicyParams::human()`) や受理率の下限などの調整はチューニング分割だけで行い、評価分割は判定にだけ使う。ESS スイートのコーパスケース (`crates/bridge-sample/tests/ess_suite.rs`) とリード評価 (`crates/bridge-lead/tests/corpus_eval.rs`、14-lead.md §4) はこの定義を共有する。
+
+**固定ケース.** ESS スイートは `crates/bridge-sample/tests/data/ess_cases.txt` の 50 ケースを使う。1 行 1 ケースで、タブ区切りの `label`、`source` (`generated` / `corpus`)、ディーラー、バルネラビリティ、配牌 (PBN)、コール列。`#` 行はコメント。生成 25 は deal seed `0x5A7C_0005_0003` の一様配牌を SAYC の `replay` で競らせたもの (スラムレベルとパスアウトを除く)、コーパス 25 は評価分割から完全な配牌と契約を持つものを等間隔に選んだもの。`ESS_SUITE_WRITE_FIXTURE=1` で現在の SAYC から作り直す。レーン S (レベル下限) とフェーズ 4.6 のナチュラルの調整が B から入った後に作り直した (それ以前の版は生成 25 件中 16 件が現行の方策から外れていた)。レーン D (SAYC の行) の変更が入った統合時に、下のテストが落ちればもう一度作り直す (最終ヘッド wip/p4int 4e0f30d のマージ後に実際に落ちた (13 / 25 件) ので、2026-10-02 に作り直した。50 行中 13 行 (生成 25 行のうち 13 行) が変わり、コーパス 25 行は不変)。固定後は SAYC を変えてもケースは変わらない (解釈と尤度は毎回計算し直す)。`ess_fixture_parses` (無視しないテスト) がファイルの形を、`ess_fixture_generated_cases_are_on_policy` (同) が生成ケースの各コールを配牌の実際の手が現行の方策で選ぶこと (`p ≥ 0.01`) を確認し、SAYC や方策の変更で固定ケースが古くなったら落ちる。
+
+**方策のプリセット.** 生成ケースは `PolicyParams::system_players()`、コーパスケースは `PolicyParams::human()` で重み付けし、解釈は `InterpretOptions::for_context` でその鏡像にする (09-sample.md §3.1)。
+
+**報告.** 各ケースで一様、残差棄却なし、残差棄却あり (既定の下限、`ESS_SUITE_RESIDUAL_MIN_ACCEPTANCE` で変更可) の 3 通りを同じ seed で引き、ESS/n、試行あたり ESS (残差棄却のパイロット 128 回を含む)、受理率、予算切れ、サンプリング時間を記録する。全体・生成・コーパス別の中央値、有効サンプルあたりの時間、棄却あり / なしの時間比、実行前後の loadavg を `target/ess_report.json` (チューニングモードでは `ess_report_tune.json`) に出す。`ESS_SUITE_BREAKDOWN=0` で方策の内訳 (09-sample.md §10.2 の on / shared / off 分類) を省く。`ESS_SUITE_THREADS=1` は単一スレッドで引く (配牌と ESS は同じで、時間が負荷に左右されにくい。時間比の判断にはこちらを使う)。
+
+**チューニングモード.** `ESS_SUITE_MODE=tune` は別の deal seed (`0x7E57_0005_0004`) とサンプリング seed、コーパスのチューニング分割から同じ規則でケースを作る (固定ファイルは使わない)。残差棄却を既定で無効にする判断 (有効サンプルあたりの時間が 1.16〜1.21 倍に悪化する) と受理率の下限 0.5 はここで決めた (09-sample.md §6.5)。
+
+**判定.** 評価モードで固定ケースがそろっているときだけ、既定の提案 (残差棄却なし) について assert する: ESS/n の中央値が全体・生成とも 0.5 以上、コーパスが 0.4 以上、予算切れが 2 件以下、試行あたり ESS の中央値が 0.35 以上。時間比 (棄却ありのサンプリング時間が棄却なしの 2 倍以内かと、既定を決める有効サンプルあたりの時間) は負荷に左右されるので表示だけにする。

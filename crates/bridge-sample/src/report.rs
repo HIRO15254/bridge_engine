@@ -21,7 +21,10 @@ pub struct SampleOptions {
     pub seed: u64,
     /// Proposal attempts per sample before it is counted as failed (default 16).
     pub max_attempts_per_sample: u32,
-    /// Stop after `n × max_attempt_factor` attempts in total (default 50).
+    /// The attempt budget: stop after `n × max_attempt_factor` proposal attempts in total
+    /// (default 20, i.e. `20n`; `09-sample.md` §6.5). A run that stops on the budget before
+    /// producing `n` deals sets [`SampleReport::budget_exhausted`] and warns
+    /// [`SampleWarning::BudgetExhausted`].
     pub max_attempt_factor: u32,
     /// Thread policy.
     pub threads: Threads,
@@ -32,7 +35,7 @@ impl Default for SampleOptions {
         SampleOptions {
             seed: 0,
             max_attempts_per_sample: 16,
-            max_attempt_factor: 50,
+            max_attempt_factor: 20,
             threads: Threads::Auto,
         }
     }
@@ -65,8 +68,20 @@ pub struct SampleReport {
     pub ess: f64,
     /// `ess / requested`.
     pub ess_ratio: f64,
+    /// Proposals the prepared proposal drew during setup, before the first slot (residual
+    /// rejection's pilot, `09-sample.md` §6.5; 0 for proposals without one). Not part of
+    /// `attempts`, the budget or `acceptance_rate`, which describe the sampling loop itself.
+    pub pilot_attempts: u64,
+    /// `ess / (attempts + pilot_attempts)` (0 when no attempt was made): the effective sample
+    /// size bought per proposal draw. Unlike `ess_ratio` it charges a rejecting proposal
+    /// (residual rejection, `09-sample.md` §6.5) for its rejected draws and its pilot, so
+    /// proposals that reject differently can be compared on it.
+    pub ess_per_attempt: f64,
     /// Largest log weight.
     pub log_weight_max: f64,
+    /// Whether sampling stopped because the attempt budget (`n × max_attempt_factor`) ran out
+    /// before `n` deals were produced.
+    pub budget_exhausted: bool,
     /// Wall time.
     pub elapsed: Duration,
     /// Warnings.
@@ -91,6 +106,13 @@ pub enum SampleWarning {
     /// Fewer deals than requested were produced.
     Truncated {
         /// Produced.
+        produced: usize,
+    },
+    /// The attempt budget (`n × max_attempt_factor`) ran out before `n` deals were produced.
+    BudgetExhausted {
+        /// Attempts made.
+        attempts: u64,
+        /// Deals produced.
         produced: usize,
     },
     /// No alternative of a seat is consistent with the known cards.

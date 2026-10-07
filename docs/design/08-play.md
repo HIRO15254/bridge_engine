@@ -123,7 +123,7 @@ pub fn hard_constraints(history: &PlayHistory) -> ([HandConstraint; 4], KnownCar
 4. トリックが完了したら `history.trick_winner(t)` を次のリーダーとする（勝者は `key(card) = (切り札 32 | リードスート 16 | 0) + rank` の最大。02-core.md）。
 5. 走査後、席 `s`・スート `u` について最小長 `min_len[s][u] = played[s].holding(u).len()`。`shown_out[s][u]` なら **元の手の `u` の長さはちょうど `min_len[s][u]`**（ショウアウト後は `u` を出せないので、出した枚数が元の枚数）。
 6. `hard[s] = HandConstraint::Atom(Atom { shapes: ShapeSet::from_suit_lens(lens), hcp: 0..=37, cards: [], eval: [] })`。`lens[u] = n..=n`（ショウアウト）または `min_len[s][u]..=13`（それ以外）。`ShapeSet` は 13 枚の合計を満たすシェイプしか含まないので、他スートの下限から導かれる上限は自動的に効く（D1: `suit_len` フィールドは持たず、シェイプ集合のマスクで表す）。
-7. **整合性検査**: 各スート `u` について `Σ_s min_len[s][u] ≤ 13`、各席について `Σ_u min_len[s][u] ≤ 13`、および `KnownCards` に入る既知カードが各スート 13 枚以下。違反は `PlayWarning::Inconsistent { suit }`（リボークまたは記録の誤り）。制約集合はそのまま返す（呼び出し側が `EmptySupport` として扱う）。
+7. **整合性検査**: 席 `s`・スート `u` の元の長さは区間 `min_len[s][u]..=max_len[s][u]`（`max_len` はショウアウトなら `min_len`、それ以外は 13）に入る。各スート `u` について `Σ_s min_len ≤ 13 ≤ Σ_s max_len`、各席について `Σ_u max_len ≥ 13` を検査する（`Σ_u min_len ≤ 13` は 1 席が 13 枚までしか出さないので常に成り立つ）。違反は `PlayWarning::Inconsistent { suit }`（リボークまたは記録の誤り）。席側の違反（4 スートすべてでショウアウト）は 4 スートすべてを報告する。`Σ_s min_len ≤ 13` は `PlayHistory::play` が同じカードの二重プレイを拒むので安全な API 経由では破れず防御的であり、実際に発火するのは上限側（4 席全員が同じスートでショウアウトし、確定長の和が 13 未満。必ずどこかでリボークを伴う）と席側である。制約集合はそのまま返す（呼び出し側が `EmptySupport` として扱う）。
 8. カードの同一性は `hard` に入れず、`KnownCards`（サンプラーの `fixed`）に入れる。`Sampler::prepare` は確定カードをスート表の構築時に合成する（D3）ので、`CardRequirement { mask: card, count: 1..=1 }` を並べるより速く、しかも厳密である。
 
 例: 4♥ by South。トリック 1: W ♠K、N ♠4、E ♠2、S ♠A。トリック 2: S ♥A、W ♥3、N ♥5、E ♣2。East はハートをフォローできなかったので `shown_out[E][♥]`、`min_len[E][♥] = 0` → `hard[E]` は `♥ = 0..=0`（ボイド確定）。他の席は `♠ ≥ 1, ♥ ≥ 1`。`known[E] = {♠2, ♣2}`。
@@ -178,17 +178,17 @@ fn lens(u: Suit, set: &[u8]) -> ShapeSet;        // 列挙した長さの和集�
 
 | イベント | 約束 | 制約 | w |
 | --- | --- | --- | --- |
-| パートナーのリードに 3rd hand がスポットでフォローし、トリックを取らない | attitude `Standard` | r ≥ 7: `honors(u) ≥ 1`。r ≤ 5: `honors(u) = 0`。r = 6: 両枝 0.35 ずつ | 0.7 |
+| パートナーのリードに 3rd hand がスポットでフォローし、トリックを取らず、それがその席のそのスートで最初の札である | attitude `Standard` | r ≥ 7: `honors(u) ≥ 1`。r ≤ 5: `honors(u) = 0`。r = 6: 両枝 0.35 ずつ | 0.7 |
 | 宣言者（またはダミー）がリードしたスートにディフェンダーが 2 度目のスポットを出す | count `Standard` | 1 枚目 > 2 枚目: `even[u]`。それ以外: `odd[u]`（`lens(u, &[3, 5, 7, 9, 11, 13])`） | 0.7 |
 
-`UpsideDown` では attitude は高低を反転し、count は高低 = 奇数になる。「トリックを取らない」は `trick_winner(t) != s` で判定する。2 枚目の count はスート `u` でその席が出した 2 枚がともにスポット（rank ≤ 9）で、どちらもトリックを取っていない場合にのみ発火する。
+attitude はその席がスート `u` で出す **最初の札** にだけ発火する。2 枚目以降（例: AK のリードに Q83 から 8 → 3 と出したときの 3）は保有の残りであって新たなシグナルではなく、同じ重みで発火させると最初のシグナルを打ち消してしまう（フェーズ 5 レビューで修正）。`UpsideDown` では attitude は高低を反転し、count は高低 = 奇数になる。「トリックを取らない」は `trick_winner(t) != s` で判定する。count はその席がスート `u` で出した **最初の 2 枚** を読む: 2 枚目を出した時点で、最初の 2 枚がともに宣言者側のリードへのフォローで、スポット（rank ≤ 9）で、トリックを取っていない場合にのみ発火する（ディスカードやパートナーのリードへのフォローで出した `u` の札も「最初の 2 枚」に数える）。オナーを先に出した後のスポット 2 枚（例: J-9-3 の 9-3）は保有の上からの高低ではないので、偶奇を示さない（フェーズ 5 レビューで修正。以前は最初の 2 枚の「スポットのフォロー」を読んでいた）。
 
 ### 7.4 ディスカード規則（そのディフェンダーの最初のディスカード。スート `v` の札、切り札でのラフは除く）
 
 | 約束 | 制約 | w |
 | --- | --- | --- |
 | `Attitude` | 高い札: `honors(v) ≥ 1`。低い札: `honors(v) = 0` | 0.6 |
-| `Lavinthal` | 高い札: 残り 2 スート（切り札とリードスートを除く）の高い方に `honors ≥ 1`。低い札: 低い方に `honors ≥ 1`（制約への写像は「未決」） | 0.6 |
+| `Lavinthal` | 高い札: 残り 2 スート（捨てたスート `v` と切り札を除く。NT では `v` とリードスートを除く）の高い方に `honors ≥ 1`。低い札: 低い方に `honors ≥ 1`。`UpsideDown` は高低を入れ替える（`Unknown` は `Standard` と読む）。選ばれたスートがリードスート（スーツコントラクトでサイドスートがリードされ、ディスカードした席はボイド）なら、その枝はオナー推論を持たず `ANY` | 0.6 |
 | `OddEven` | 奇数: `honors(v) ≥ 1`。偶数の高い札 / 低い札: Lavinthal と同じ（「未決」） | 0.6 |
 
 ### 7.5 適用条件
@@ -204,8 +204,10 @@ fn lens(u: Suit, set: &[u8]) -> ShapeSet;        // 列挙した長さの和集�
 
 1. `combos = [(ANY, 1.0)]` から始め、各イベントの `Vec<(HandConstraint, f32)>` と直積し `and` する。
 2. `is_satisfiable`（要約検査）で剪定する。`hard[s]` と矛盾する枝も落とす。
-3. 重み降順に K = 8 に切り詰め、正規化する。空になったら `[(ANY, 1.0)]` と `tracing::warn!`。
+3. 重み降順に並べ、K = 8 を超えたら上位 K − 1 個を残し、落とした組み合わせの重みの合計を `ANY` の枝に足す（残した中に `ANY` があればそこへ、なければ `(ANY, 落とした重み)` を追加）。そのうえで正規化する。単純に上位 K 個へ切り詰めると全 `ANY` の組み合わせも落ち、どの枝にも合わない合法な手の soft 質量が 0 になって、偽カードや読み違いを許すはずの soft 規則がハード制約として働いてしまう（フェーズ 5 レビューで修正）。空になったら `[(ANY, 1.0)]` と `tracing::warn!`。
 4. `into_seats` は `[(hard[s].and(soft_i), w_i)]` を返す。イベントのない席は `[(hard[s], 1.0)]`。
+
+`and` は `ANY` 側を落として相手をそのまま返す（各規則の `(ANY, 1 − w)` が `And([ANY, ANY, ..])` として積み上がらないように）。
 
 `SampleContext` は `hard` を `play_constraints`、`soft` を `play_soft` として別々に受け取る（09-sample.md §2.2）ので、サンプラーからは `into_seats` を呼ばず、`hard` / `soft` を直接渡す。`into_seats` は仕様互換の便宜 API である。
 
@@ -251,7 +253,10 @@ fn lens(u: Suit, set: &[u8]) -> ShapeSet;        // 列挙した長さの和集�
 | `lead_rules_table` | table-driven: (約束, リード札) → 標本ホールディングで満たす / 満たさない | 表の各行 |
 | `signal_rules_table` | table-driven: attitude / count / 初回ディスカード、`Standard` と `UpsideDown` | 表の各行 |
 | `combine_caps_at_k` | unit | 3 イベント × 2 枝で K = 8 に収まり、合計 1 |
+| `combine_truncation_keeps_the_any_remainder` | unit | 3 × 2 × 2 枝を K = 8 に切り詰めても `ANY` の余り枝が残り、`hard` を満たすどの手も soft 質量 > 0 |
 | `declarer_side_has_no_events` | unit | 宣言者・ダミーのカードで `events` が空 |
+| `tests/review.rs`（フェーズ 5 レビュー） | table-driven | ショウアウト 9 行、リボーク / `Inconsistent` 4 行、`KnownCards::with_play` と記録の一致、リード表 25 行（`lead_constraints` 単体と `interpret_play` 経由で vs suit / vs NT の表選択）、シグナル位置 7 行、初回ディスカード 14 行、全 4 席を宣言者にしてディフェンダーのみ発火、`hard` と矛盾する枝の剪定、K = 8 |
+| `bridge-sample/tests/play_sampling.rs` | 端から端まで | 実際の配牌を 7 トリック + 1 枚合法にプレイ（East が切り札で、South がハートでショウアウト）し、`interpret_play` の `hard` / `soft` と視点の `KnownCards`（自分の手 + ダミー + 既出カード）で `ConstraintProposal` から宣言者視点・ディフェンダー視点で各 300 ディールを引く。全ディールで既知カードと既出カードが正しい席にあり、ショウアウトしたスートの長さが既出枚数と一致し、履歴を標本の手で再生して合法（リボークなし）、`hard` を満たし、重みが有限。ESS 比は宣言者視点 0.67、ディフェンダー視点 0.82（閾値 0.5） |
 
 実装順（計画 §12）: 5.1 `hard_constraints` + `KnownCards::with_play`（`KnownCards` の他のメソッドは `bridge-constraint` 2.7 で先行）→ 5.8 `lead_constraints` / `signal_constraints` の表と `interpret_play` の結合（フェーズ 6 には不要。ずれても可）。
 
@@ -264,6 +269,6 @@ fn lens(u: Suit, set: &[u8]) -> ShapeSet;        // 列挙した長さの和集�
 | 1 | `ThirdFifth` の 4 枚からの 3rd を枝に加えるか | 加えない |
 | 2 | 中盤のリードに §7.2 を適用するか | トリック 0 のみ |
 | 3 | A / Q のオナーリード規則 | なし |
-| 4 | `Lavinthal` / `OddEven` の制約への写像 | 残り 2 スートのオナー有無、w = 0.6 |
+| 4 | `Lavinthal` / `OddEven` の制約への写像 | 捨てたスートと切り札（NT ではリードスート）を除く 2 スートのオナー有無、w = 0.6。当初の「切り札とリードスートを除く」はスーツコントラクトで捨てたスート自身を指し得たのでフェーズ 5 で修正 |
 | 5 | `honors(u)` に T を含めるか（attitude 規則） | 含めない（A K Q J） |
 | 6 | 高低の境界（≥ 7 / ≤ 5）を手札との相対で判定するか | 絶対値。相対判定は方策モデルの領域 |

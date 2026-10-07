@@ -22,6 +22,9 @@ size_t dds_sizeof_ddTablesRes() { return sizeof(ddTablesRes); }
 size_t dds_sizeof_parResults() { return sizeof(parResults); }
 size_t dds_sizeof_allParResults() { return sizeof(allParResults); }
 size_t dds_sizeof_parResultsMaster() { return sizeof(parResultsMaster); }
+size_t dds_offsetof_parResultsMaster_contracts() { return offsetof(parResultsMaster, contracts); }
+size_t dds_sizeof_contractType() { return sizeof(contractType); }
+size_t dds_offsetof_contractType_seats() { return offsetof(contractType, seats); }
 size_t dds_sizeof_playTraceBin() { return sizeof(playTraceBin); }
 size_t dds_sizeof_playTracesBin() { return sizeof(playTracesBin); }
 size_t dds_sizeof_solvedPlay() { return sizeof(solvedPlay); }

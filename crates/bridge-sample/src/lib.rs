@@ -7,11 +7,6 @@
 //! `(seed, i)` only, so results are identical whatever the thread count.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
-// `constraint_proposal.rs` (phase 5, out of this lane's scope) still has `todo!()` bodies whose
-// unused parameters and never-constructed `PreparedConstraint` would otherwise warn; keeping the
-// crate-level allow was checked to still be necessary for that reason alone (removing it and
-// re-running clippy only surfaces warnings from that file, none from the phase-2 code here).
-#![allow(dead_code, unused_variables)]
 
 mod constraint_proposal;
 mod proposal;
@@ -22,6 +17,8 @@ mod weights;
 
 use core::ops::Range;
 
+use bridge_bidding::{AuctionPolicy, Explanation, Interpretation, ResolutionKind};
+use bridge_constraint::{HandConstraint, SampleOptions as ConstraintSampleOptions, Sampler};
 use bridge_core::{Deal, Seat};
 
 pub use bridge_constraint::KnownCards;
@@ -50,7 +47,9 @@ pub enum SampleError {
 /// how many chunks were needed or on the thread count (§2.3, §7 of `09-sample.md`). A rejected
 /// attempt (`propose` returning `None`, or a non-finite log weight) is retried within the same
 /// slot; a slot that never succeeds contributes nothing. Each chunk's slots are folded into
-/// `deals`/`attempts` in slot order, stopping as soon as `deals.len()` reaches `n`: a chunk's
+/// `deals`/`attempts` in slot order, stopping as soon as `deals.len()` reaches `n` or `attempts`
+/// reaches the attempt budget `n × max_attempt_factor` (so the budget is honoured to within one
+/// slot's `max_attempts_per_sample`; `SampleReport::budget_exhausted` records it): a chunk's
 /// surplus slots (past the `n`-th accepted deal) are counted in neither, so a discarded surplus
 /// deal never inflates `attempts` (and so understates `acceptance_rate`) without a matching
 /// contribution to `produced`. Whether to run another chunk is still decided at a chunk boundary,
@@ -59,12 +58,31 @@ pub enum SampleError {
 /// result does not depend on how many chunks were needed or on the thread count (§2.3, §7 of
 /// `09-sample.md`).
 ///
-/// Not yet checked here (tracked as an open issue): whether a seat's hard play constraint, or
-/// its interpretation alternatives, admit any hand at all given the known cards.
-/// `bridge_constraint::Sampler` now supports exactly this check (`Sampler::prepare(...).
-/// count() == 0`), but `sample_deals` does not yet call it; until it does, an unsatisfiable seat
-/// simply never contributes a finite-weight deal, which surfaces as `Truncated`/`LowEss` rather
-/// than as `SampleError::EmptySupport` or `SampleWarning::EmptySupport`.
+/// Before `proposal.prepare` is even called, every seat is probed against `ctx.known.pool()`
+/// (§2.3 of `09-sample.md`):
+///
+/// - A seat already fully known (`needed(seat) == 0`: the viewer, or an exposed dummy) has
+///   nothing to sample, but its fixed hand must still satisfy its own hard play constraint
+///   (`ctx.play_constraints[s]`), or no deal exists at all: `Err(SampleError::EmptySupport)`,
+///   zero attempts.
+/// - Otherwise, if the hard play constraint admits no hand at all once the known cards are
+///   fixed (via `bridge_constraint::Sampler`), no proposal could ever produce a deal, so sampling
+///   returns `Err(SampleError::EmptySupport)` immediately, with zero attempts.
+/// - If a seat's interpretation alternatives (`ctx.interpretation.seats[s]`) are all inconsistent
+///   with the known cards (once each is AND-ed with the hard constraint just checked), the
+///   auction's evidence for that seat cannot be used at all; sampling continues with that seat
+///   dealt (and weighted) as `ANY` instead — its `seats[s]` becomes a single unconstrained
+///   alternative and its `per_call` entries are dropped, so `Interpretation::likelihood` also
+///   treats it as vacuous — and `SampleWarning::EmptySupport { seat }` records the fallback.
+/// - Whichever `Sampler`s this probe prepares (the hard constraint's, and each alternative's
+///   combined with it) are also checked for exactness: if any that survives with `count() > 0`
+///   is not `Sampler::is_exact()` (a `Custom` node, a DNF residual, or any other rejection-sampled
+///   term), `SampleWarning::CustomConstraint { seat }` records that `log_prob`'s density for that
+///   seat is approximate — `Sampler`'s own rejection loop only ever under-estimates a term's true
+///   mass, never over-estimates it, so `log_prob` and hence the importance weight can be biased.
+///
+/// This probing context (not `ctx` itself) is what `proposal.prepare`, `run_chunk` and
+/// `ln_likelihood` below actually use.
 pub fn sample_deals(
     ctx: &SampleContext<'_>,
     proposal: &dyn Proposal,
@@ -89,27 +107,122 @@ pub fn sample_deals(
         }
     }
 
-    let prepared = proposal.prepare(ctx)?;
-
+    // §2.3 support checks. A `Sampler` here is used only as a support probe (`count() == 0`?);
+    // its own internal weighting is irrelevant, so the constraint crate's own default options
+    // are enough.
+    let support_opts = ConstraintSampleOptions::default();
+    let pool = ctx.known.pool();
     let mut warnings = Vec::new();
+    let mut fallback_to_any = [false; 4];
     for seat in Seat::ALL {
-        let hard_samplable = ctx.play_constraints[seat.index() as usize].is_samplable();
-        let alternatives_samplable = ctx.interpretation.seats[seat.index() as usize]
-            .iter()
-            .all(|(constraint, _, _)| constraint.is_samplable());
-        if !hard_samplable || !alternatives_samplable {
+        let idx = seat.index() as usize;
+        let fixed = ctx.known.known[idx];
+        let hard = &ctx.play_constraints[idx];
+
+        if ctx.known.needed(seat) == 0 {
+            // Already fully known (the viewer, or an exposed dummy): nothing to sample, but the
+            // fixed hand must still satisfy this seat's own hard play constraint, or no deal
+            // exists at all (§2.3 of `09-sample.md`) — the probe below (built around `Sampler`,
+            // which needs at least one card to draw) can't check this case, so it is checked
+            // directly instead.
+            if !hard.satisfies(fixed) {
+                return Err(SampleError::EmptySupport);
+            }
+            continue;
+        }
+
+        let hard_sampler = Sampler::prepare(hard, pool, fixed, &support_opts)
+            .map_err(|e| SampleError::Prepare(e.to_string()))?;
+        if hard_sampler.count() == 0 {
+            return Err(SampleError::EmptySupport);
+        }
+        // `hard`'s own exactness matters even if this seat later falls back to `ANY` below,
+        // since `ConstraintProposal` (and any other `Proposal`) still ANDs every alternative
+        // with `hard`.
+        let mut inexact = !hard_sampler.is_exact();
+
+        let alternatives = &ctx.interpretation.seats[idx];
+        if alternatives.is_empty() {
+            // No calls at all for this seat: `Interpretation::likelihood` already treats this as
+            // vacuously `ANY` (07-bidding.md §4.4 point 1), so there is nothing to fall back from.
+            if inexact {
+                warnings.push(SampleWarning::CustomConstraint { seat });
+            }
+            continue;
+        }
+        let mut any_consistent = false;
+        for (constraint, _, _) in alternatives {
+            let combined = constraint.clone().and(hard.clone());
+            if let Ok(sampler) = Sampler::prepare(&combined, pool, fixed, &support_opts) {
+                if sampler.count() > 0 {
+                    any_consistent = true;
+                    if !sampler.is_exact() {
+                        inexact = true;
+                    }
+                }
+            }
+        }
+        if !any_consistent {
+            warnings.push(SampleWarning::EmptySupport { seat });
+            fallback_to_any[idx] = true;
+        } else if inexact {
             warnings.push(SampleWarning::CustomConstraint { seat });
         }
     }
 
+    // Seats that fell back are dealt (and weighted) as `ANY` from here on: both `seats[s]` (what
+    // `ConstraintProposal` and any other `Proposal` build alternatives from) and `per_call`
+    // (what `Interpretation::likelihood` sums over in the `ctx.bidding.is_none()` branch below)
+    // are overridden so that neither channel still constrains that seat.
+    let fallback_interpretation;
+    let effective_interpretation: &Interpretation = if fallback_to_any.iter().any(|&f| f) {
+        let mut interpretation = ctx.interpretation.clone();
+        for seat in Seat::ALL {
+            if fallback_to_any[seat.index() as usize] {
+                interpretation.seats[seat.index() as usize] = vec![(
+                    HandConstraint::ANY,
+                    1.0,
+                    Explanation {
+                        text: String::new(),
+                        node: None,
+                        resolution: ResolutionKind::Fallback,
+                        parts: Vec::new(),
+                    },
+                )];
+                interpretation.per_call.retain(|call| call.seat != seat);
+            }
+        }
+        fallback_interpretation = interpretation;
+        &fallback_interpretation
+    } else {
+        ctx.interpretation
+    };
+    let effective_ctx = SampleContext {
+        known: ctx.known,
+        interpretation: effective_interpretation,
+        play_constraints: ctx.play_constraints,
+        play_soft: ctx.play_soft,
+        bidding: ctx.bidding,
+    };
+    let ctx = &effective_ctx;
+
+    let prepared = proposal.prepare(ctx)?;
+
+    // The bidding likelihood of this auction, prepared once for every deal of the run
+    // (07-bidding.md §6.2's fast path; equal to `sequence_log_likelihood`).
+    let policy = ctx
+        .bidding
+        .map(|b| AuctionPolicy::new(b.table, b.auction, b.ctx));
+    let policy = policy.as_ref();
+
     let mut deals: Vec<WeightedDeal> = Vec::new();
     let mut attempts: u64 = 0;
+    let max_attempts_total = (n as u64).saturating_mul(u64::from(opts.max_attempt_factor));
     if n > 0 && opts.max_attempts_per_sample > 0 {
-        let max_attempts_total = (n as u64).saturating_mul(u64::from(opts.max_attempt_factor));
         let mut chunk_start: usize = 0;
         loop {
             let chunk_end = chunk_start + n;
-            let results = run_chunk(ctx, prepared.as_ref(), opts, chunk_start..chunk_end);
+            let results = run_chunk(ctx, policy, prepared.as_ref(), opts, chunk_start..chunk_end);
 
             // A chunk always has exactly `n` slots, so it can push `deals.len()` from below `n`
             // to above it; once that happens, the remaining slots in this same chunk are surplus
@@ -119,17 +232,22 @@ pub fn sample_deals(
             // without a matching contribution to `produced` (which would otherwise understate
             // `acceptance_rate`). Slot order (not thread count) decides which slots are "surplus",
             // so this stays independent of `opts.threads` per §2.3/§7.
+            //
+            // The attempt budget is applied the same way: slots are folded in slot order only
+            // while `attempts` is below the budget, so the reported attempts exceed the budget
+            // by less than one slot's `max_attempts_per_sample`, and whichever slots count is
+            // again a function of slot order alone.
             let mut chunk_attempts = 0u64;
             for (slot_attempts, result) in results {
-                if deals.len() >= n {
+                if deals.len() >= n || attempts >= max_attempts_total {
                     break;
                 }
                 chunk_attempts += slot_attempts;
+                attempts += slot_attempts;
                 if let Some(weighted) = result {
                     deals.push(weighted);
                 }
             }
-            attempts += chunk_attempts;
             chunk_start = chunk_end;
 
             if deals.len() >= n || attempts >= max_attempts_total || chunk_attempts == 0 {
@@ -143,6 +261,10 @@ pub fn sample_deals(
     if produced < n {
         warnings.push(SampleWarning::Truncated { produced });
     }
+    let budget_exhausted = produced < n && attempts >= max_attempts_total;
+    if budget_exhausted {
+        warnings.push(SampleWarning::BudgetExhausted { attempts, produced });
+    }
 
     let log_weights: Vec<f64> = deals.iter().map(|d| d.log_weight).collect();
     let ess = effective_sample_size(&log_weights);
@@ -154,20 +276,26 @@ pub fn sample_deals(
         .iter()
         .copied()
         .fold(f64::NEG_INFINITY, f64::max);
+    let pilot_attempts = prepared.pilot_attempts();
     let acceptance_rate = if attempts > 0 {
         produced as f64 / attempts as f64
     } else {
         0.0
     };
+    let draws = attempts + pilot_attempts;
+    let ess_per_attempt = if draws > 0 { ess / draws as f64 } else { 0.0 };
 
     let report = SampleReport {
         requested: n,
         produced,
         attempts,
+        pilot_attempts,
         acceptance_rate,
         ess,
         ess_ratio,
+        ess_per_attempt,
         log_weight_max,
+        budget_exhausted,
         #[cfg(not(target_arch = "wasm32"))]
         elapsed: start.elapsed(),
         #[cfg(target_arch = "wasm32")]
@@ -179,9 +307,12 @@ pub fn sample_deals(
         requested = report.requested,
         produced = report.produced,
         attempts = report.attempts,
+        pilot_attempts = report.pilot_attempts,
         acceptance_rate = report.acceptance_rate,
         ess = report.ess,
         ess_ratio = report.ess_ratio,
+        ess_per_attempt = report.ess_per_attempt,
+        budget_exhausted = report.budget_exhausted,
         log_weight_max = report.log_weight_max,
         elapsed_us = report.elapsed.as_micros() as u64,
         "deal sampling finished"
@@ -197,6 +328,7 @@ pub fn sample_deals(
 #[cfg(feature = "parallel")]
 fn run_chunk(
     ctx: &SampleContext<'_>,
+    policy: Option<&AuctionPolicy>,
     prepared: &(dyn PreparedProposal + Send + Sync),
     opts: &SampleOptions,
     slots: Range<usize>,
@@ -206,10 +338,10 @@ fn run_chunk(
     match opts.threads {
         Threads::Auto => slots
             .into_par_iter()
-            .map(|slot| process_slot(ctx, prepared, opts, slot))
+            .map(|slot| process_slot(ctx, policy, prepared, opts, slot))
             .collect(),
         Threads::Single => slots
-            .map(|slot| process_slot(ctx, prepared, opts, slot))
+            .map(|slot| process_slot(ctx, policy, prepared, opts, slot))
             .collect(),
     }
 }
@@ -219,12 +351,13 @@ fn run_chunk(
 #[cfg(not(feature = "parallel"))]
 fn run_chunk(
     ctx: &SampleContext<'_>,
+    policy: Option<&AuctionPolicy>,
     prepared: &dyn PreparedProposal,
     opts: &SampleOptions,
     slots: Range<usize>,
 ) -> Vec<(u64, Option<WeightedDeal>)> {
     slots
-        .map(|slot| process_slot(ctx, prepared, opts, slot))
+        .map(|slot| process_slot(ctx, policy, prepared, opts, slot))
         .collect()
 }
 
@@ -233,6 +366,7 @@ fn run_chunk(
 /// attempts made and the produced deal, if any.
 fn process_slot(
     ctx: &SampleContext<'_>,
+    policy: Option<&AuctionPolicy>,
     prepared: &(impl PreparedProposal + ?Sized),
     opts: &SampleOptions,
     slot: usize,
@@ -245,7 +379,7 @@ fn process_slot(
             continue;
         };
         let ln_pi = prepared.log_prob(&deal);
-        let ln_l = ln_likelihood(ctx, &deal);
+        let ln_l = ln_likelihood(ctx, policy, &deal);
         let log_weight = ln_l - ln_pi;
         if log_weight.is_finite() {
             return (attempts, Some(WeightedDeal { deal, log_weight }));
@@ -255,23 +389,19 @@ fn process_slot(
 }
 
 /// `ln L(d)` (§3 of `09-sample.md`): `-∞` if any seat violates its hard play constraint;
-/// otherwise the bidding term (`sequence_log_likelihood` when `ctx.bidding` is known, else the
-/// sum of `interpretation.likelihood`) plus, per seat with a non-empty soft list, the log of its
-/// mixture mass (a seat with no soft alternatives contributes nothing, not `-∞`).
-fn ln_likelihood(ctx: &SampleContext<'_>, deal: &Deal) -> f64 {
+/// otherwise the bidding term (`policy`, the [`AuctionPolicy`] built from `ctx.bidding`, when the
+/// bidding is known, else the sum of `interpretation.likelihood`) plus, per seat with a non-empty
+/// soft list, the log of its mixture mass (a seat with no soft alternatives contributes nothing,
+/// not `-∞`).
+fn ln_likelihood(ctx: &SampleContext<'_>, policy: Option<&AuctionPolicy>, deal: &Deal) -> f64 {
     for seat in Seat::ALL {
         if !ctx.play_constraints[seat.index() as usize].satisfies(deal.hand(seat)) {
             return f64::NEG_INFINITY;
         }
     }
 
-    let mut ln_l = match &ctx.bidding {
-        Some(bidding) => bridge_bidding::sequence_log_likelihood(
-            bidding.table,
-            deal,
-            bidding.auction,
-            bidding.ctx,
-        ),
+    let mut ln_l = match policy {
+        Some(policy) => policy.log_likelihood(deal),
         None => Seat::ALL
             .into_iter()
             .map(|seat| f64::from(ctx.interpretation.likelihood(seat, deal.hand(seat)).ln()))
@@ -299,9 +429,14 @@ fn ln_likelihood(ctx: &SampleContext<'_>, deal: &Deal) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use bridge_bidding::{CallExplanation, CallInterpretation, Interpretation, ResolutionKind};
-    use bridge_constraint::{Atom, HandConstraint, KnownCards, ShapeSet};
-    use bridge_core::{Bid, Call, Hand, Strain};
+    use bridge_bidding::{
+        CallExplanation, CallInterpretation, Explanation, Interpretation, ResolutionKind,
+    };
+    use bridge_constraint::{
+        Atom, CardRequirement, CustomPred, HandConstraint, KnownCards, ShapeSet,
+    };
+    use bridge_core::{Bid, Call, Card, Hand, Rank, Strain, Suit};
+    use std::sync::Arc;
 
     use super::*;
 
@@ -375,7 +510,7 @@ mod tests {
                 }
             }
             let deal = Deal::new(hands).expect("52 cards split into four 13-card hands");
-            let ln_l = ln_likelihood(&ctx, &deal);
+            let ln_l = ln_likelihood(&ctx, None, &deal);
             if constraint.satisfies(deal.hand(Seat::North)) {
                 satisfied = true;
                 assert!(ln_l.is_finite(), "satisfying North hand got ln_l = {ln_l}");
@@ -482,7 +617,7 @@ mod tests {
         let mut accepted = 0usize;
         let mut expected_attempts = 0u64;
         for slot in 0.. {
-            let (slot_attempts, result) = process_slot(&ctx, prepared.as_ref(), &opts, slot);
+            let (slot_attempts, result) = process_slot(&ctx, None, prepared.as_ref(), &opts, slot);
             expected_attempts += slot_attempts;
             if result.is_some() {
                 accepted += 1;
@@ -517,6 +652,112 @@ mod tests {
         assert_eq!(report.acceptance_rate, n as f64 / expected_attempts as f64);
         for weighted in &deals {
             assert!(constraint.satisfies(weighted.deal.hand(Seat::North)));
+        }
+    }
+
+    /// A proposal whose every draw is rejected unless `rng`'s next word falls in the lowest
+    /// `1 / accept_one_in` of its range: a stand-in for residual rejection with a known,
+    /// hand-independent acceptance probability.
+    struct RarelyAccepting {
+        accept_one_in: u64,
+    }
+
+    impl Proposal for RarelyAccepting {
+        fn prepare<'c>(
+            &self,
+            ctx: &'c SampleContext<'c>,
+        ) -> Result<Box<dyn PreparedProposal + Send + Sync + 'c>, SampleError> {
+            Ok(Box::new(PreparedRarely {
+                inner: UniformProposal.prepare(ctx)?,
+                accept_one_in: self.accept_one_in,
+            }))
+        }
+    }
+
+    struct PreparedRarely<'c> {
+        inner: Box<dyn PreparedProposal + Send + Sync + 'c>,
+        accept_one_in: u64,
+    }
+
+    impl PreparedProposal for PreparedRarely<'_> {
+        fn propose(&self, rng: &mut dyn rand_core::Rng) -> Option<Deal> {
+            if rng.next_u64() % self.accept_one_in != 0 {
+                return None;
+            }
+            self.inner.propose(rng)
+        }
+
+        fn log_prob(&self, deal: &Deal) -> f64 {
+            self.inner.log_prob(deal)
+        }
+    }
+
+    /// The attempt budget `n × max_attempt_factor` is honoured (to within one slot's
+    /// `max_attempts_per_sample`) whatever the chunking, and running out of it is reported both
+    /// as `budget_exhausted` and as a `BudgetExhausted` warning; a run that finishes within the
+    /// budget reports neither. `ess_per_attempt` is `ess / attempts` (no pilot here).
+    #[test]
+    fn attempt_budget_is_honoured_and_reported() {
+        let (interpretation, _) = north_1nt_interpretation();
+        let play_constraints = [
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+        ];
+        let ctx = SampleContext {
+            known: KnownCards::EMPTY,
+            interpretation: &interpretation,
+            play_constraints: &play_constraints,
+            play_soft: None,
+            bidding: None,
+        };
+        let n = 50usize;
+        for threads in [Threads::Single, Threads::Auto] {
+            let opts = SampleOptions {
+                seed: 11,
+                max_attempts_per_sample: 4,
+                max_attempt_factor: 20,
+                threads,
+            };
+            // About one draw in 100 passes the proposal and about one in 20 of those the 1NT
+            // likelihood: 20n = 1000 attempts give about 0.5 deals.
+            let (deals, report) =
+                sample_deals(&ctx, &RarelyAccepting { accept_one_in: 100 }, n, &opts)
+                    .expect("sampling runs");
+            let budget = (n * 20) as u64;
+            assert!(report.produced < n, "the budget should run out first");
+            assert_eq!(report.produced, deals.len());
+            assert!(
+                report.attempts >= budget && report.attempts < budget + 4,
+                "attempts {} not within one slot of the budget {budget}",
+                report.attempts
+            );
+            assert!(report.budget_exhausted);
+            assert!(report.warnings.contains(&SampleWarning::BudgetExhausted {
+                attempts: report.attempts,
+                produced: report.produced,
+            }));
+            assert!((report.ess_per_attempt - report.ess / report.attempts as f64).abs() < 1e-12);
+
+            // Accepting every draw (only the 1NT likelihood rejects, about 19 in 20): a budget of
+            // 400n is reached long after the quota.
+            let generous = SampleOptions {
+                max_attempts_per_sample: 64,
+                max_attempt_factor: 400,
+                ..opts
+            };
+            let (_, report) =
+                sample_deals(&ctx, &RarelyAccepting { accept_one_in: 1 }, n, &generous)
+                    .expect("sampling runs");
+            assert_eq!(report.produced, n);
+            assert!(!report.budget_exhausted);
+            assert!(
+                !report
+                    .warnings
+                    .iter()
+                    .any(|w| matches!(w, SampleWarning::BudgetExhausted { .. }))
+            );
         }
     }
 
@@ -569,6 +810,222 @@ mod tests {
         // the produced count exactly, up to floating-point slop.
         if report.produced > 0 {
             assert!((report.ess - report.produced as f64).abs() < 1e-6);
+        }
+    }
+
+    /// A hard play constraint that admits no hand at all (an atom with an empty `ShapeSet`)
+    /// must fail before any attempt is made, whatever the known cards are (§2.3 of
+    /// `09-sample.md`).
+    #[test]
+    fn empty_support_early_return() {
+        let unsatisfiable = HandConstraint::Atom(Atom {
+            shapes: ShapeSet::EMPTY,
+            hcp: 0..=37,
+            cards: Vec::new(),
+            eval: Vec::new(),
+        });
+        let play_constraints = [
+            unsatisfiable,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+        ];
+        let interpretation = Interpretation {
+            seats: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            per_call: Vec::new(),
+            divergence: None,
+        };
+        let ctx = SampleContext {
+            known: KnownCards::EMPTY,
+            interpretation: &interpretation,
+            play_constraints: &play_constraints,
+            play_soft: None,
+            bidding: None,
+        };
+
+        let result = sample_deals(&ctx, &UniformProposal, 10, &SampleOptions::default());
+        assert!(
+            matches!(result, Err(SampleError::EmptySupport)),
+            "expected Err(SampleError::EmptySupport), got {result:?}"
+        );
+    }
+
+    /// North's fixed card (the club ace) contradicts North's only bidding alternative ("never
+    /// holds the club ace"); the hard play constraint alone is fine (`ANY`). Sampling must warn
+    /// and fall back to dealing North as `ANY` rather than failing every attempt (§2.3).
+    #[test]
+    fn seat_fallback_warns() {
+        let club_ace = Card::new(Suit::Clubs, Rank::Ace);
+        let north_fixed = Hand::EMPTY.with(club_ace);
+        let known = KnownCards::from_viewer(Seat::North, north_fixed);
+        assert_eq!(known.needed(Seat::North), 12);
+
+        let never_club_ace = HandConstraint::Atom(Atom {
+            shapes: ShapeSet::ALL,
+            hcp: 0..=37,
+            cards: vec![CardRequirement {
+                mask: north_fixed,
+                count: 0..=0,
+            }],
+            eval: Vec::new(),
+        });
+        let explanation = Explanation {
+            text: "never the club ace".to_string(),
+            node: None,
+            resolution: ResolutionKind::Exact,
+            parts: Vec::new(),
+        };
+        let interpretation = Interpretation {
+            seats: [
+                vec![(never_club_ace, 1.0, explanation)],
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ],
+            per_call: Vec::new(),
+            divergence: None,
+        };
+        let play_constraints = [
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+        ];
+        let ctx = SampleContext {
+            known,
+            interpretation: &interpretation,
+            play_constraints: &play_constraints,
+            play_soft: None,
+            bidding: None,
+        };
+        let opts = SampleOptions {
+            seed: 7,
+            max_attempts_per_sample: 32,
+            max_attempt_factor: 100,
+            threads: Threads::Single,
+        };
+
+        let n = 20;
+        let (deals, report) = sample_deals(&ctx, &UniformProposal, n, &opts)
+            .expect("the ANY fallback lets every attempt succeed");
+
+        assert_eq!(
+            report.produced, n,
+            "the fallback should let every slot succeed, same as an unconstrained seat"
+        );
+        assert!(
+            report
+                .warnings
+                .contains(&SampleWarning::EmptySupport { seat: Seat::North }),
+            "warnings = {:?}",
+            report.warnings
+        );
+        for weighted in &deals {
+            assert!(
+                weighted.deal.hand(Seat::North).contains(club_ace),
+                "the known club ace must still be in North's hand"
+            );
+        }
+    }
+
+    /// A fully-known seat (`needed == 0`) whose fixed hand violates its own hard play constraint
+    /// makes no deal possible at all, whatever the other seats hold — this must be caught
+    /// up front (§2.3 of `09-sample.md`), not discovered by exhausting the attempt budget.
+    #[test]
+    fn known_seat_hard_violation() {
+        // North is fully known (all clubs — no spades at all), but its hard play constraint
+        // requires at least one spade.
+        let north_hand = Hand::EMPTY.with_holding(Suit::Clubs, bridge_core::Holding::FULL);
+        let known = KnownCards::from_viewer(Seat::North, north_hand);
+        assert_eq!(known.needed(Seat::North), 0);
+
+        let requires_a_spade = HandConstraint::Atom(Atom {
+            shapes: ShapeSet::ALL,
+            hcp: 0..=37,
+            cards: vec![CardRequirement {
+                mask: Hand::EMPTY.with_holding(Suit::Spades, bridge_core::Holding::FULL),
+                count: 1..=13,
+            }],
+            eval: Vec::new(),
+        });
+        let play_constraints = [
+            requires_a_spade,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+        ];
+        let interpretation = Interpretation {
+            seats: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            per_call: Vec::new(),
+            divergence: None,
+        };
+        let ctx = SampleContext {
+            known,
+            interpretation: &interpretation,
+            play_constraints: &play_constraints,
+            play_soft: None,
+            bidding: None,
+        };
+
+        let result = sample_deals(&ctx, &UniformProposal, 20, &SampleOptions::default());
+        assert!(
+            matches!(result, Err(SampleError::EmptySupport)),
+            "expected Err(SampleError::EmptySupport), got {result:?}"
+        );
+    }
+
+    /// A seat whose only alternative is a `HandConstraint::Custom` predicate is not
+    /// `Sampler::is_exact()` — `log_prob`'s density for it is only approximate — and that must be
+    /// surfaced as `SampleWarning::CustomConstraint`, not silently dropped (the §2.3 probe used to
+    /// check `HandConstraint::is_samplable()` instead, which is blind to inexactness that isn't a
+    /// bare `Custom` node, and in any case never ran the check for a seat with no calls at all).
+    #[test]
+    fn custom_constraint_warns_for_inexact_alternative() {
+        let never_void_in_spades = HandConstraint::Custom(CustomPred {
+            name: "never void in spades".to_string(),
+            f: Arc::new(|hand: Hand| !hand.holding(Suit::Spades).is_empty()),
+        });
+        let interpretation = Interpretation {
+            seats: [
+                vec![(never_void_in_spades, 1.0, empty_explanation())],
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ],
+            per_call: Vec::new(),
+            divergence: None,
+        };
+        let play_constraints = [
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+            HandConstraint::ANY,
+        ];
+        let ctx = SampleContext {
+            known: KnownCards::EMPTY,
+            interpretation: &interpretation,
+            play_constraints: &play_constraints,
+            play_soft: None,
+            bidding: None,
+        };
+
+        let (_, report) = sample_deals(&ctx, &UniformProposal, 20, &SampleOptions::default())
+            .expect("a Custom predicate is still satisfiable by most deals, just not exactly");
+        assert!(
+            report
+                .warnings
+                .contains(&SampleWarning::CustomConstraint { seat: Seat::North }),
+            "warnings = {:?}",
+            report.warnings
+        );
+    }
+
+    fn empty_explanation() -> Explanation {
+        Explanation {
+            text: String::new(),
+            node: None,
+            resolution: ResolutionKind::Exact,
+            parts: Vec::new(),
         }
     }
 }

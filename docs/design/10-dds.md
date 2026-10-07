@@ -1,6 +1,6 @@
 # 10. `bridge-dds`: DDS v2.9.0 の FFI ラッパー
 
-本文書は D10 の決定、すなわち DDS (Bo Haglund, Soren Hein) の v2.9.0 を `cc` でビルドし、手書きの `#[repr(C)]` バインディングを C++ 側の `sizeof`/`offsetof` プローブで検証する方式を確定する。DDS のソースは `crates/bridge-dds/vendor/` に置くが git には含めず `cargo xtask dds vendor` で取得し、未取得でも `cargo:warning` を出してワークスペース全体のビルドは通す。安全ラッパーは `SolveBoard` の `thrId` スロットで Rust スレッド間の並行を許し、非再入のバルク関数は `Mutex` で直列化する。
+本文書は D10 の決定、すなわち DDS (Bo Haglund, Soren Hein) の v2.9.0 を `cc` でビルドし、手書きの `#[repr(C)]` バインディングを C++ 側の `sizeof`/`offsetof` プローブで検証する方式を確定する。DDS のソースは `crates/bridge-dds/vendor/` に置くが git には含めず `cargo xtask dds vendor` で取得し、未取得でも `cargo:warning` を出してワークスペース全体のビルドは通す。安全ラッパーは `SolveBoard`/`AnalysePlayBin` の `thrId` スロットで Rust スレッド間の並行を許し、非再入のバルク関数はスロットを全部集めることで直列化する (両者が同じ `thrId` 空間を奪い合わないよう、単なる別ロックではなく同じスロットプールを使う。§7.2 参照)。
 
 ## 1. 検証済みの DDS の事実
 
@@ -52,7 +52,7 @@ crates/bridge-dds/
 └── tests/                  # フェーズ 5
     ├── layout.rs           # sizeof/offsetof の突き合わせ
     ├── differential.rs     # list100.txt (masterDD.txt は --ignored)
-    └── concurrency.rs      # 8 スレッド × 100 SolveBoard
+    └── concurrency.rs      # 8 スレッドの SolveBoard (既定 8 局面、ignored の _at_scale は 100 局面)
 ```
 
 `.gitignore` の `/crates/bridge-dds/vendor/` により DDS ソースはリポジトリに入らない。`VENDOR.md` (骨格でコミット済み) の内容:
@@ -68,11 +68,11 @@ crates/bridge-dds/
 
 `VENDOR.md` には DDS3 を採らない理由 (§2) も書いてある。ランタイムの状態 (`Runtime`、スレッドスロット) は `lib.rs` の非公開項目で、`api.rs` / `runtime.rs` / `stub.rs` のようなモジュール分割はしない: 未ベンダリング時は同じ関数が `DdsError::Unavailable` を返すだけなので、`#[cfg(dds_vendored)]` は関数本体の中に置く。
 
-未決: `cargo publish` 時に `vendor/` を同梱する方法 (`.gitignore` されたファイルは既定でパッケージに入らないため `include` を明示するか、公開前に取得を必須にする)。フェーズ 5.5 で決める。
+解決済み (フェーズ 5.5): `cargo publish` 時の `vendor/` の同梱。`.gitignore` されたファイルは既定でパッケージに入らないので、`crates/bridge-dds/Cargo.toml` の `include` で抽出済みソース (`vendor/dds-2.9.0/{src,include}/**`、`LICENSE`) だけを明示的に同梱する (`vendor/*.tar.gz` と `SHA256SUMS` は除外。`12-roadmap.md` R14、`VENDOR.md`)。
 
 ## 4. `build.rs`
 
-要件: 27 個の `.cpp` を `-std=c++11 -O3` でビルド、`DDS_THREADS_STL` を定義 (std::thread、外部依存なし、MSVC/clang/gcc で動く)、feature `openmp` で `DDS_THREADS_OPENMP`、`wasm32` は何もしない (`lib.rs` が `compile_error!`)、`vendor/` 未取得なら警告して FFI を cfg で除外する (フェーズ 0 で確定済み)。
+要件: 27 個の `.cpp` を `-std=c++11 -O3` でビルド、`DDS_THREADS_STL` を定義 (std::thread、外部依存なし、MSVC/clang/gcc で動く)、feature `openmp` で `DDS_THREADS_OPENMP` (MSVC 以外は OpenMP ランタイムのプローブに成功したときだけ。補足を参照)、`wasm32` は何もしない (`lib.rs` が `compile_error!`)、`vendor/` 未取得なら警告して FFI を cfg で除外する (フェーズ 0 で確定済み)。
 
 ```rust
 //! Compiles the vendored DDS 2.9.0 sources with `cc`.
@@ -104,10 +104,14 @@ fn main() {
         return;
     }
 
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let msvc = target_env == "msvc";
+
     let mut build = cc::Build::new();
     build
         .cpp(true)
-        .std("c++11")
+        .std(if msvc { "c++14" } else { "c++11" }) // MSVC の /std は c++14 から
         .opt_level(3)
         .include("vendor/dds-2.9.0/include")
         .include(src)
@@ -117,18 +121,43 @@ fn main() {
         .flag_if_supported("-Wno-unused-parameter")
         .flag_if_supported("-Wno-deprecated-declarations");
     if std::env::var("CARGO_FEATURE_OPENMP").is_ok() {
-        build.define("DDS_THREADS_OPENMP", None).flag("-fopenmp");
-        println!("cargo:rustc-link-lib=gomp");
+        if msvc {
+            // MSVC は vcomp を同梱し /openmp で自動リンクするので、プローブしない。
+            build.define("DDS_THREADS_OPENMP", None).flag("/openmp");
+        } else {
+            let (flags, link_lib): (&[&str], &str) = if target_os == "macos" {
+                (&["-Xpreprocessor", "-fopenmp"], "omp") // Homebrew の libomp
+            } else {
+                (&["-fopenmp"], "gomp")
+            };
+            // 小さな OpenMP プログラムをコンパイルしてリンクできたときだけ OpenMP にする。
+            if probe_openmp(&target_env, flags, link_lib) {
+                build.define("DDS_THREADS_OPENMP", None);
+                for flag in flags {
+                    build.flag(flag);
+                }
+                println!("cargo:rustc-link-lib={link_lib}");
+            } else {
+                // ランタイムが無いホストでビルドを落とさず、STL のバックエンドだけで組む。
+                println!("cargo:warning=bridge-dds: no OpenMP runtime found ... std::thread backend instead");
+            }
+        }
     }
     build.compile("dds");
     println!("cargo:rustc-cfg=dds_vendored");
 }
+
+// `omp.h` を使う 3 行のプログラムを `flags` と `-l{link_lib}` で試しにビルドする。
+// 成功すれば true、ツールチェーンが OpenMP を持たなければ false (ビルドは落とさない)。
+fn probe_openmp(target_env: &str, flags: &[&str], link_lib: &str) -> bool { /* … */ }
 ```
+
+このリストは骨格を示す抜粋で、実際の `build.rs` は `src/ffi_guard.cpp` のコンパイル、`include/portab.h` の存在確認 (無ければ「未取得」扱い)、警告の抑制 (`.warnings(false)`)、MSVC 向けの `-EHsc` と `_CRT_SECURE_NO_WARNINGS` も持つ。食い違えば `build.rs` が正である。
 
 補足:
 
 - `DDS_THREADS_STL` は 2.9.0 の `Makefile_linux_shared` にあるバックエンドの 1 つ。マクロ無指定だと DDS は単一スレッドになる。
-- `openmp` は gcc (`-fopenmp`, `libgomp`) を前提にし、CI では Linux のみ有効化する。未決: MSVC (`/openmp`) と Apple clang (`libomp`) の対応。
+- `openmp` は `DDS_THREADS_STL` に加えて `DDS_THREADS_OPENMP` を定義する (DDS は定義されたバックエンドのうち番号の小さいものを取るので OpenMP が選ばれ、STL のコードは使われない)。MSVC は `/openmp` (同梱の vcomp、プローブなし)。それ以外は Linux/gcc が `-fopenmp` + `gomp`、macOS が `-Xpreprocessor -fopenmp` + `omp` (Homebrew の libomp、Apple clang は OpenMP を持たない) で小さな OpenMP プログラムのコンパイルとリンクをプローブし、失敗すれば `cargo:warning` を出して std::thread のバックエンドだけで組む。MSVC と Apple clang の対応は済んでいる (`VENDOR.md`)。CI で `--features openmp` を走らせるのは ubuntu だけで、Linux の実経路・MSVC の `/openmp`・macOS の libomp は実行では未確認 (`12-roadmap.md` 節「フェーズ 5 の完了」。Homebrew の libomp が無い Mac では probe が失敗して STL に戻る経路を確かめた)。
 - Windows: `dll.h` の `DLLEXPORT` は `__declspec(dllexport)` だが静的リンクなので問題ない。`STDCALL = __stdcall` は 32 bit x86 でのみ意味を持つが、`sys.rs` は `extern "C"` だけを宣言し、x86 Windows は「未検証・未サポート」と明記する (R6。`sys.rs` の NOTE コメント)。
 - edition 2024 では `unsafe extern "C" { … }` ブロック。
 - `wasm32-unknown-unknown` には libc もスレッドもないため `lib.rs` で `compile_error!`。ファサードは `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]` で本クレートを optional に持つ。
@@ -269,7 +298,7 @@ unsafe extern "C" {
 
 - `deal` と `playTraceBin` は `dll.h` 通り **値渡し**。
 - `boards` (約 250 KB) と `solvedBoards` (約 60 KB) はスタックに置かず、必ず `Box::<T>::new_zeroed().assume_init()` でヒープに確保する。`playTracesBin` (約 85 KB) も同様。
-- 未決: `contractType.denom` のエンコード (`dll.h` のコメントでは 0 = NT, 1 = S, 2 = H, 3 = D, 4 = C と記憶しているが、`SolveBoard` のストレイン順と異なるためベンダリング時に `dll.h` で確認して `convert.rs` に固定する)。
+- 解決済み: `contractType.denom` のエンコード。ベンダリングした `dll.h` で 0 = NT, 1 = S, 2 = H, 3 = D, 4 = C (`SolveBoard` のストレイン順とは異なる) を確認し、`convert.rs` の `par_denom_letter` に固定した。`dealer_par` は `list100` の差分テストで上流の PAR 行と 100/100 一致する。
 
 ### 5.1 レイアウトプローブ
 
@@ -335,7 +364,7 @@ pub struct Position<'a> {
 
 pub enum Target { Max, ListLegal, Tricks(u8) }        // -1 / 0 / 1..=13
 pub enum Solutions { One, AllOptimal, AllRanked }     // 1 / 2 / 3 (AllRanked = every legal card scored; the lead advisor's query)
-pub enum Mode { Auto, Search, ReuseTable }            // 0 / 1 / 2
+pub enum Mode { Auto, Search, ReuseTable }            // DDS には常に 1 を渡す (§7.4)
 
 pub struct CardScore { pub card: Card, pub equals: Holding, pub score: u8 }   // `equals`: lower cards of the same suit with the same score
 pub struct FutureTricks { pub nodes: u32, pub cards: Vec<CardScore> }
@@ -353,12 +382,12 @@ pub fn info() -> Result<DdsInfo, DdsError>;
 
 #[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
 pub enum DdsError {
-    #[error("DDS error {code}: {message}")] Code { code: i32, message: String },   // via ErrorMessage()
-    #[error(transparent)] Deal(#[from] DealError),
-    #[error("too many boards: {0} > 200")] TooManyBoards(usize),
+    #[error("DDS error {code}: {message}")] Code { code: i32, message: String },   // via ErrorMessage() or synthesized (bad `trick`)
     #[error("DDS is not available in this build (run `cargo xtask dds vendor` and rebuild)")] Unavailable,
 }
 ```
+
+（5.5–5.7 の見直しで `Deal(#[from] DealError)` と `TooManyBoards(usize)` は削除した: `calc_dd_tables`/`solve_all_boards` は内部でチャンク分割するので `TooManyBoards` を構築する経路が無く、`Deal` から不正な `Deal` を作る経路もこのクレートには無い — どちらも宣言されているだけで一度も構築されない死んだヴァリアントだった。実際に発生する不正は `Code`（DDS 自身の戻りコード、または `trick`/`target` の検証失敗をラッパーが `RETURN_SUIT_OR_RANK`/`RETURN_DUPLICATE_CARDS`/`RETURN_CARD_COUNT`/`RETURN_TARGET_WRONG_HI` として合成したもの。§7.4）だけなので、`match` で網羅していても取りこぼしは無い。）
 
 `Position` にコンストラクタは無い: オープニングリードは `Position { deal, trump, leader: contract.leader(), trick: &[] }`、プレイ途中は残りカードの `Deal` (13 枚ずつでない配牌は `Deal` にならないので、`solve_board` は `deal` から `trick` と既出カードを引いた残りを内部で `remainCards` に変換する) と `history.current_trick()` を渡す。`ParResult.contracts` は `parResultsMaster.contracts` を DDS の文字列形式 (`"NS 4S"` 等) に整形したもので、構造化した `ParContract` 型は持たない。
 
@@ -366,11 +395,11 @@ pub enum DdsError {
 
 | 関数 | DDS 呼び出し | ロック | 備考 |
 | --- | --- | --- | --- |
-| `calc_dd_table` | `CalcDDtable` (内部でスレッド並列) | `batch` | 単発。`resTable` を `DdTable::new` に変換 (ストレイン軸反転) |
-| `calc_dd_tables` | `CalcAllTables` を 40 件ずつ (`MAXNOOFTABLES` = 200 boards / 5 strains)、`mode = -1` (パー計算なし)、`trumpFilter = [0; 5]` (全ストレイン) | `batch` (チャンクごと) | |
+| `calc_dd_table` | `CalcDDtable` (内部でスレッド並列) | `slots` を全部 | 単発。`resTable` を `DdTable::new` に変換 (ストレイン軸反転) |
+| `calc_dd_tables` | `CalcAllTables` を 40 件ずつ (`MAXNOOFTABLES` = 200 boards / 5 strains)、`mode = -1` (パー計算なし)、`trumpFilter = [0; 5]` (全ストレイン) | `slots` を全部 (チャンクごと) | `tests/batching.rs` が 39/40/41 の境界を検査 |
 | `solve_board` | `SolveBoard(dl, target, solutions, mode, &mut fut, thrId)` | `slots` から 1 スロット (ブロッキング取得) | Rust スレッド間で並行可 |
-| `solve_all_boards` | `SolveAllChunksBin(bop, solvedp, chunkSize = 1)` を 200 件ずつ | `batch` | 200 超は `TooManyBoards` ではなく分割。`boards` はヒープ |
-| `analyse_play` | `AnalysePlayBin(dl, play, &mut solved, thrId)` | `slots` | 戻り値 `tricks[0..=n]` (`tricks[0]` = プレイ前の DD 結果)。`trump`/`leader` は `PlayHistory::trump()`/`leader()` |
+| `solve_all_boards` | `SolveAllChunksBin(bop, solvedp, chunkSize = 1)` を 200 件ずつ | `slots` を全部 | 200 超はエラーにせず分割 (`tests/batching.rs` が 199/200/201 の境界を検査)。`boards` はヒープ |
+| `analyse_play` | `AnalysePlayBin(dl, play, &mut solved, thrId)` | `slots` から 1 スロット | 戻り値 `tricks[0..=n]` (`tricks[0]` = プレイ前の DD 結果、常に `n + 1` 要素)。DDS 自身は最後のトリック (強制) を解析せず 49〜52 枚のプレイに対して 49 要素しか返さないので、ラッパーが 48 枚目の後の値を繰り返して `n + 1` 要素に埋める (強制トリック中に結果は変わらない。フェーズ 5 レビューで修正)。`trump`/`leader` は `PlayHistory::trump()`/`leader()` |
 | `dealer_par` | `DealerParBin(&mut table, &mut pres, dealer, vul)` | なし (純関数) | |
 | `info` | `GetDDSInfo` | なし | `versionString`, `noOfThreads`, `threading`, `systemString` を写す |
 
@@ -378,27 +407,61 @@ pub enum DdsError {
 
 ### 7.2 スレッドスロットと Mutex の規則
 
-1. `init` は `OnceLock<Runtime>` (非公開) で 1 回だけ `SetResources(max_memory_mb, max_threads)` を呼び、続けて `GetDDSInfo` で `noOfThreads` を読んでスロット数とする。`SetMaxThreads` は使わない (DDS3 では no-op)。`init` を呼ばずにラッパー関数を呼んだ場合は `DdsConfig::default()` で暗黙に初期化する。
+1. `init` は `OnceLock<Runtime>` (非公開) で 1 回だけ `bdds_SetResources(max_memory_mb, max_threads, ncores)` (`ffi_guard.cpp` による、ハードウェア探索を除いた `SetResources` の再実装。§7.3) を呼び、続けて `GetDDSInfo` で `noOfThreads` を読んでスロット数とする。`SetMaxThreads` は使わない (DDS3 では no-op)。`init` を呼ばずにラッパー関数を呼んだ場合は `DdsConfig::default()` で暗黙に初期化する。
 2. `SolveBoard` と `AnalysePlayBin` は `thrId` (0..threads) ごとに独立した作業領域を使うので、空きスロットを 1 つ貸し出す間だけ並行して呼べる。空きが無ければ `Condvar` で待つ (非ブロッキング版は持たない)。
-3. `SolveAllChunksBin`、`CalcAllTables`、`CalcDDtable`、`AnalyseAllPlaysBin` は 2.9 のドキュメント通り非再入なので `batch: Mutex<()>` を保持している間だけ呼ぶ。バルク呼び出しは DDS 内部で全スレッドを使うため、同時に `solve_board` を走らせても速くならない。
+3. `SolveAllChunksBin`、`CalcAllTables`、`CalcDDtable`、`AnalyseAllPlaysBin` は 2.9 のドキュメント通り非再入である「だけ」ではなく、バルク呼び出し自身も DDS 内部でこの同じ `thrId` 空間 (`track[]` などの per-thread-index 状態) を使って複数スレッドを回す。そのためバルク呼び出しは `slots` の全スロットを (空くまで `Condvar` で待って) 取ってから DDS を呼び、呼び終えたら全部返す。単に別の `Mutex` でバルク呼び出し同士だけを排他しても、バルク呼び出し中に外部から `solve_board`/`analyse_play` が同じ `thrId` に触れてしまい、DDS 内部状態が壊れる (`Moves::GetTrickData` の `"Sum N is not four"` や `ABsearch.cpp` のアサート落ち。`--include-ignored` で `masterdd_matches_upstream` と `list100_matches_upstream` が同一プロセス内で並行実行されたときに実際に踏んだ)。`tests/concurrency.rs` の `concurrent_bulk_and_slot_calls_do_not_corrupt_each_other` はこの組み合わせの恒久的な回帰テスト (元の再現手順はその場限りのリポプロで、コミットされたテストは無かった)。`acquire_slot` はバルク呼び出しが待機/保持中は新規スロットを渡さない (`batch_waiting` フラグ) ので、バルク呼び出し側が `solve_board`/`analyse_play` の絶え間ない要求で永久に待たされることもない。バルク呼び出しは DDS 内部で全スレッドを使うため、同時に `solve_board` を走らせても速くならない。
 4. `FreeMemory()` はプロセス寿命の間呼ばない (ドキュメントに明記)。
-5. `Runtime` は `Send + Sync`。`Position` の検証 (`trick.len() <= 3`、`trick` のカードが `deal` に含まれる、枚数の整合) はラッパーで行い、それ以外の不正は DDS の戻りコードを `DdsError::Code` に変換する (`ErrorMessage` の 80 バイト行)。
+5. `Runtime` は `Send + Sync`。`Position` の検証 (`trick.len() <= 3`、`trick` に重複が無い、`trick[i]` の持ち主が `leader` から数えて i 番目の席 = 枚数の整合) と `Target::Tricks(n)` の `n <= 13` はラッパーで行い (§7.4)、それ以外の不正は DDS の戻りコードを `DdsError::Code` に変換する (`ErrorMessage` の 80 バイト行。全メッセージは 80 バイト未満で、未知のコードには `"Not a DDS error code"` が入る)。
+6. スロットは `acquire_slot`/`acquire_all_slots` が返す RAII ガード (`SlotGuard`/`AllSlotsGuard`) の `Drop` で返却する。取得から返却までの間に Rust 側のパニックが起きてもスロットが漏れない (漏れると以後のバルク呼び出しが永久に待つ)。ロックは FFI 呼び出しの全区間で保持され、呼び出しが戻った直後に `drop` で明示的に返す。
 
 ### 7.3 `popen` メモリ探索の緩和 (R6)
 
-2.9 の `System.cpp` は搭載メモリを macOS で `popen("sysctl -n hw.memsize")`、Linux で `popen("free -k …")` により調べる。サンドボックスやコンテナではこれが失敗し、既定値が不適切になりうる。対策として `DdsConfig::default()` (`max_memory_mb = 0`) は 0 を DDS に渡さず、`threads × 95` MB を明示して `SetResources` に渡す。`info()` の `threads` と `system` で DDS が実際に何を設定したかを確認でき、`tests/concurrency.rs` はこれを検査する。
+2.9 の `System.cpp` は搭載メモリを macOS で `popen("sysctl -n hw.memsize")`、Linux で `popen("free -k | tail -n+3 | head -n1 | awk '{print $NF}'")` により調べる (`System::GetHardware`)。上流の `SetResources` は引数の `maxMemoryMB` にかかわらず **必ず** この探索を行い、メモリ上限を `min(1.3 × maxMemoryMB, 0.7 × 探索値)` とする。探索が失敗して 0 を読むと (サンドボックスや `PATH` に `sysctl` が無い macOS、最近の procps で上のパイプラインが Swap 行を読んでしまう swap 無しの Linux、`free` が無いイメージ)、スレッド数 0 で `Memory` が作られ、`InitDebugFiles` の `Memory::GetPtr(0)` が `Memory::GetPtr: 0 vs. 0` を出力して `exit(1)` する。`popen` 自体が失敗すると `fscanf(NULL)` で落ちる。いずれも C++ 内部でプロセスを終了させるので、`noexcept` ガードでも Rust 側でも捕まえられない。`max_memory_mb ≤ 23` も `floor(1.3 × M / 30) = 0` スレッドで同じ経路に入る (フェーズ 5 レビューで発見。以前の文書は「明示値を渡せば探索を避けられる」としていたが誤り)。
+
+対策 (ベンダリングしたソースは無改変のまま):
+
+- `ffi_guard.cpp` の `bdds_SetResources(maxMemoryMB, maxThreads, ncores)` は `Init.cpp` の `SetResources` の本体を写したもので、`GetHardware` を呼ばない。コア数は Rust 側の `std::thread::available_parallelism()` を渡し、メモリ上限は `1.3 × maxMemoryMB` (32 ビットでは 1800 MB 上限) で、探索値による 70% 上限は無くなる。さらにメモリ上限を 1 スレッド分 (`THREADMEM_SMALL_MAX_MB` = 30 MB) 以上に、スレッド数を 1 以上に切り上げる。`sysdep`/`memory`/`scheduler`/`threadMgr`/`_initialized` と `InitDebugFiles`/`InitConstants` は `Init.cpp` の非 static な大域なので `extern` 宣言で足りる。
+- `Runtime::new` は `max_memory_mb` を `MIN_MEMORY_MB` (= 24 = ceil(30 / 1.3)) 未満なら 24 に切り上げ、`tracing::warn!` を出す。`DdsConfig::default()` (`max_memory_mb = 0`) は従来どおり `threads × 95` MB を明示する。
+- 生の `sys::SetResources`/`SetMaxThreads` は探索を行うので安全ラッパーからは呼ばない (`sys.rs` に注記)。このビルドでは `dds.cpp` のライブラリ初期化 (`DllMain`/`USES_CONSTRUCTOR`) も有効にならないので、探索はどこからも走らない。
+- 回帰テスト `tests/fatal_paths.rs` は自分のテストバイナリを子プロセスとして起動し、`PATH=/nonexistent` (探索失敗) と `max_memory_mb` = 1/20/23/24 で `init` → `info` → `calc_dd_table` が正常終了することを確かめる (修正前は子プロセスが終了コード 1 で落ちるのを確認済み)。
+
+残る `exit(1)` は `TransTableS.cpp`/`TransTableL.cpp` の `malloc`/`calloc` 失敗時 (メモリ枯渇) だけで、設定から到達する経路ではない (Rust 自身もメモリ確保失敗では abort する)。
+
+`info()` の `threads` と `system` で DDS が実際に何を設定したかを確認でき、`tests/concurrency.rs` はこれを検査する。
+
+### 7.4 5.5–5.7 の健全性レビューで直したもの
+
+`unsafe` の見直し (全 FFI 構造体が `#[repr(C)]` でレイアウトテスト済み、大きな構造体 (`boards`/`solvedBoards`/`ddTableDeals`/`ddTablesRes`/`allParResults`) はヒープ確保、1 スロットを 2 スレッドが同時に使わない、非再入呼び出しのロックを呼び出し全体で保持) は問題なし。Rust から C へコールバックを渡す箇所は無いので Rust のパニックが FFI を越えることは無い。一方、次の 5 点は実際の不具合で、4 を除く 4 点には修正前に失敗するテストを付けた (4 の例外ガード `ffi_guard.cpp` にはテストが無い)。
+
+1. **`Mode::ReuseTable` (DDS mode 2) でセグフォルト**。mode 2 は前回の呼び出しと同じ配牌・切り札かを確かめずに置換表のリセットを省く (`SolverIF.cpp`)。これが正しいのは「同じ `thrId` の前回の呼び出し」が同じ配牌・切り札だったときだけで、スロットを呼び出しごとに貸し出すこのラッパーでは呼び出し側に保証する手段が無い。無関係な配牌の置換表が残ったスロットで mode 2 を呼ぶと DDS 内部で SIGSEGV (安全な Rust から到達可能な未定義動作)。`tests/reuse_table.rs` (DDS を 1 スレッドに固定して必ず同じスロットに当てる) が再現する。
+2. **`Mode::Auto` (DDS mode 0) の強制 1 枚で得点 0**。mode 0 は合法手が 1 枚だけの局面を探索せずに返し、得点に番兵 `-2` を入れる。ラッパーは負値を 0 に丸めていたので、たとえば途中局面でシングルトンをフォローする手番の得点が誤って 0 トリックになった (`tests/edge_cases.rs`)。
+   → 1 と 2 の対策として `Mode` の 3 値はすべて DDS に `1` (常に探索) として渡す。`Mode` 型は互換のため残し、rustdoc に理由を書いた。失うものは無い: mode 0/1 でも DDS は同じ `thrId` で配牌が同一か類似 (同じボードの後の局面など) かつ切り札が同じなら置換表を自動で引き継ぐ。mode 0 の近道が効くのは合法手 1 枚の局面だけで、その場合も探索量は同じボードの通常局面と変わらない。
+3. **DDS の入力エラーでカレントディレクトリに `dump.txt`**。`SolveBoard` の入力検査 (`BoardRangeChecks`/`BoardValueChecks`) は失敗のたびに `DumpInput` で `dump.txt` を書く。型付き API から到達できたのは `Target::Tricks(n > 13)` (`RETURN_TARGET_WRONG_HI`) と手番違いの `trick` カード (`RETURN_CARD_COUNT`) の 2 つで、どちらもラッパーが DDS を呼ぶ前に同じコードで弾くようにした (`check_target`、`position_deal`)。`Position` は常に完全な配牌から高々 3 枚を引いたものなので 13 トリックが残り、`RETURN_TARGET_TOO_HIGH` 等の他の検査には到達しない。`analyse_play` は合法性検査済みの `PlayHistory` しか受け取らない。
+4. **C++ 例外が `extern "C"` を越えて Rust へ巻き戻る**。DDS は例外を一切捕まえないので、コンテナの `std::bad_alloc` や STL スレッドの `std::system_error` がそのまま Rust のフレームへ巻き戻る (未定義動作)。`src/ffi_guard.cpp` に `noexcept` の薄いラッパー (`bdds_SolveBoard` 等、ラッパーが呼ぶ全エントリポイント + `SetResources`/`GetDDSInfo`) を置き、`catch (...)` を `RETURN_UNKNOWN_FAULT` に変える。`lib.rs` はこれらだけを呼ぶ (`ErrorMessage` は `strcpy` の `switch` なので投げない)。`SetResources` の失敗は `tracing::error!` で報告する。
+5. **ファサードの `lead_scores` が同等カードを落とす** (§9)。
+
+あわせて、DDS から読み戻す枚数 (`futureTricks.cards`、`solvedPlay.number`、`parResultsMaster.number`) は配列長で頭打ちにし、壊れた値でも範囲外添字にならないようにした。`DealerParBin` は書き込み可能な大域状態を持たない (`DealerPar.cpp` の大域は読み取り専用の表だけ) ことを確認したので、ロックなしのままとする。
 
 ## 8. テスト
 
 | テスト | 場所 | 内容 | 基準 |
 | --- | --- | --- | --- |
 | レイアウト | `tests/layout.rs` | §5.1 の `sizeof`/`offsetof` 突き合わせ | 全構造体で一致 |
-| 差分 `list100` | `tests/differential.rs` | `hands/list100.txt` の各配牌で `calc_dd_table` と `TABLE` 行を比較 (`BRIDGE_CORPUS_DIR` 必須) | 100% 一致 |
+| 差分 `list100` | `tests/differential.rs` | `hands/list100.txt` の各配牌で `calc_dd_table` と `TABLE` 行を比較。データはコーパス (`corpus/data/dds/list100.txt`) か、無ければ `cargo xtask dds vendor` が同じ DDS アーカイブ (SHA-256 検証済み) から展開する `vendor/dds-2.9.0/hands/list100.txt` を使う。CI の `dds` ジョブ (3 OS) は `BRIDGE_REQUIRE_LIST100=1` で実行し、データが無ければスキップせず失敗させる。nightly は `--include-ignored` (以前の `--ignored` は `#[ignore]` の無いこのテストを除外していた。フェーズ 5 レビューで修正) | 100% 一致 |
 | 差分 `masterDD` | 同 (`#[ignore]`) | 83,691 配牌 | 100% 一致 |
-| 並行 `SolveBoard` | `tests/concurrency.rs` | 8 スレッド × 100 局面を `solve_board`、逐次実行の結果と比較。`info().threads` の確認 | エラー 0、結果一致 |
+| 並行 `SolveBoard` | `tests/concurrency.rs` | 8 スレッドで `solve_board` を呼び、逐次実行の結果と比較 (`concurrent_solve_board_matches_sequential` は 8 局面、release の ignored `_at_scale` は 100 局面)。`info().threads` の確認 | エラー 0、結果一致 |
 | `analyse_play` | `tests/differential.rs` | `list100.txt` の `PLAY`/`TRACE` 行 | 一致 |
 | `dealer_par` | 同 | `PAR` 行 | 一致 |
-| ベンチ | `benches/dds.rs` | `calc_dd_table`、`solve_board(AllRanked)` | 目標なし。数値を記録 |
+| バッチ境界 | `tests/batching.rs` | `calc_dd_tables` を 39/40/41 件、`solve_all_boards` を 199/200/201 件で呼び、単発の結果と比較。空入力 | 全件一致 |
+| バルクとスロットの混在 | `tests/concurrency.rs` | `calc_dd_tables`/`solve_all_boards` と他スレッドの `solve_board` を同時に走らせる (§7.2 規則 3 の回帰テスト) | 異常終了なし、結果一致 |
+| `init` の冪等性 | `tests/init.rs` (専用バイナリ) | 2 回目の `init` が別設定でもエラーにならず最初の設定を保つ | 一致 |
+| エラー経路 | `tests/edge_cases.rs`、`tests/position_trick.rs` | `Target::Tricks(14)`、手番違い・重複・4 枚の `trick` が `DdsError::Code` になり `dump.txt` が作られない。強制 1 枚の局面が全 `Mode`/`Solutions` で正しい得点 | 期待コード、ファイルなし |
+| `ReuseTable` | `tests/reuse_table.rs` (専用バイナリ、DDS 1 スレッド) | 無関係な配牌の後の `Mode::ReuseTable` が新規探索と一致 (§7.4) | 一致、クラッシュなし |
+| 計時 | `tests/timing.rs` (`#[ignore]`、release) | 疑似乱数 100 配牌で `calc_dd_table`、`calc_dd_tables`、`solve_board(AllRanked)` の平均時間 | 目標なし。数値を記録 (下記) |
+
+`NoSlot` 相当のエラーは無い: スロットが空かなければ `Condvar` で待つ (§7.2 規則 2)。`TooManyBoards` も無い: 上限を超える入力は内部で分割する (§7 の注記)。
+
+計時 (2026-09-26、10 コアの macOS、release、`tests/timing.rs`、3 回の最良値。別ワークフローのビルドと同時実行のため `vm.loadavg` を併記): `calc_dd_table` 78.8 ms/配牌 (load 7.55)、`calc_dd_tables` 36.3 ms/配牌 (load 7.55)、`solve_board(Target::Max, AllRanked)` 40.0 ms/回 (load 10.00)。`calc_dd_table` と `calc_dd_tables` は DDS 内部で全スレッドを使う値、`solve_board` は 1 スロットでの逐次値。負荷の高い環境での値なので上限の目安として扱う。
 
 ## 9. ファサード `bridge::dd`
 
@@ -428,7 +491,8 @@ pub mod dd {
 
 - `DdTable` は DDS なしでも使える (PBN の `OptimumResultTable` の読み書き、`03-format.md` §2.2)。定義は `bridge-core` に置き、ここで再エクスポートする。
 - `DoubleDummy` の引数は `bridge-core` の型だけ (`Deal`, `Strain`, `Seat`, `Card`) なので、`dds` feature の有無でトレイトの形は変わらない。`Position` 等の `bridge-dds` の型はファサードから再エクスポートしない: 細かい制御が要るアプリは `bridge-dds` に直接依存する。
-- `dds()` は `cfg(all(feature = "dds", not(target_arch = "wasm32")))` かつ `bridge_dds::is_available()` のときだけ `Some` を返す。バックエンドは `calc_dd_table` と `solve_board(Target::Max, Solutions::AllRanked, Mode::Auto)` を呼び、`DdsError` は `DdError::Backend(e.to_string())` に写す。
+- `dds()` は `cfg(all(feature = "dds", not(target_arch = "wasm32")))` かつ `bridge_dds::is_available()` のときだけ `Some` を返す。バックエンドは `calc_dd_table` と `solve_board(Target::Max, Solutions::AllRanked, Mode::Auto)` を呼び、`DdsError` は `DdError::Backend(e.to_string())` に写す。DDS の `AllRanked` は同等カードの代表 1 枚だけを返し、残りを `equals` に入れるので、`lead_scores` は `equals` を展開して手札の全カードを (代表と同じ得点で) 返す (5.5–5.7 の見直しまでは代表だけを返しており、`AKQ2.T98.T98.T98` で 13 枚中 5 枚しか返らなかった。`tests/dds.rs` の `lead_scores_lists_every_card_including_equivalent_ones`)。
+- `tests/dd_from_pbn.rs`: DDS なしで PBN の `OptimumResultTable` から `DdTable` を読めることと、DDS があるときはその表が `dds()` での計算結果と一致することを確かめる。`tests/dd_without_feature.rs` は `dds` feature なしで `dds()` が `None` を返すこと、`tests/dds.rs` の `dds_none_iff_unavailable` は feature ありで `dds().is_some() == is_available()` を確かめる。
 - 上位アプリは `bridge::dd::dds()` が `None` なら `DdError::Unavailable` を扱う。wasm では常に `None`。
 
 ## 10. `xtask` コマンド
@@ -449,9 +513,9 @@ pub mod dd {
 
 ## 11. 未決
 
-- 未決: `cargo publish` での `vendor/` 同梱方法 (§3)。
-- 未決: `contractType.denom` のエンコード確認 (§5)。
-- 未決: `openmp` feature の MSVC / Apple clang 対応 (§4)。
+- 解決済み: `cargo publish` での `vendor/` 同梱方法 (§3。`Cargo.toml` の `include`)。
+- 解決済み: `contractType.denom` のエンコード確認 (§5。`convert.rs` の `par_denom_letter`、`dealer_par` の差分 100/100)。
+- 解決済み: `openmp` feature の MSVC / Apple clang 対応 (§4。MSVC は `/openmp`、macOS は libomp のプローブで、無ければ STL にフォールバックする)。未確認: `openmp` feature の実経路 (Linux/gcc、MSVC `/openmp`、macOS の libomp) は実行していない。コードは対応済み。
 - 未決: DDS3 への移行時期。ラッパーの公開面はレガシー名と同一に保ち、`vendor/` と `build.rs` の差し替えだけで済むようにしておく。DDS3 の Emscripten ビルドは将来の `wasm32-emscripten` feature の候補 (対象外)。
 
 アーカイブの sha256 は `VENDOR.md` ではなく `vendor/SHA256SUMS` (git-ignored) に記録するので、コミット sha を文書に固定する作業は無い。`DoubleDummy::lead_scores` は `bridge-core` の型だけを取るので、`Position` を `bridge-core` へ移す必要は無くなった。
